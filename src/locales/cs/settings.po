@@ -545,9 +545,8 @@ msgid "Auto"
 msgstr "Automaticky"
 
 #: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Auto-apply board config changes"
-msgstr "Automaticky použít změny konfigurace nástěnky"
+msgid "Auto-apply changes"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -940,12 +939,6 @@ msgstr "Indexované commity"
 msgctxt "card density"
 msgid "Compact"
 msgstr "Kompaktní"
-
-#: src/renderer/components/settings/settings-registry.ts
-#: src/renderer/components/settings/tabs/BoardTab.tsx
-#, fuzzy
-msgid "Config sync"
-msgstr "Synchronizace konfigurace"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
 #, fuzzy
@@ -1651,11 +1644,6 @@ msgstr "Klávesové zkratky fungující kdekoli v aplikaci."
 msgid "Hover a tile to try it on the whole app, click to keep it."
 msgstr "Najetím na dlaždici ji vyzkoušíte v celé aplikaci, kliknutím ji ponecháte."
 
-#: src/renderer/components/settings/tabs/BoardTab.tsx
-#, fuzzy
-msgid "How changes to the shared board config are applied."
-msgstr "Způsob použití změn sdílené konfigurace nástěnky."
-
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
 #, fuzzy
 msgid "How it works"
@@ -1872,6 +1860,11 @@ msgstr "Kangentic používá vaši konfiguraci SSH, agenta a klíče stejně jak
 msgid "Kangentic-operated relay"
 msgstr "Relay provozovaný Kangentic"
 
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/BoardTab.tsx
+msgid "kangentic.json"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Keep"
 msgstr ""
@@ -1922,6 +1915,11 @@ msgstr "Graf znalostí"
 msgctxt "noun"
 msgid "Label"
 msgstr "Popisek"
+
+#: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
+msgid "Labels"
+msgstr "Štítky"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
@@ -2551,6 +2549,11 @@ msgid "Preview while you speak: streaming is instant, chunked is accurate."
 msgstr "Náhled během mluvení: streamování je okamžité, po částech je přesnější."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
+msgid "Priority"
+msgstr "Priorita"
+
+#: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #, fuzzy
 msgid "Privacy"
@@ -3093,6 +3096,14 @@ msgid "Show each task's #N number on its card"
 msgstr "Zobrazit na kartě číslo úlohy #N"
 
 #: src/renderer/components/settings/settings-registry.ts
+msgid "Show each task's labels on its card"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Show each task's priority meter on its card"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Show the status bar at the bottom of the window"
 msgstr "Zobrazit stavový řádek v dolní části okna"
@@ -3418,6 +3429,10 @@ msgstr "Nejnovější zpráva agenta"
 #, fuzzy
 msgid "The agent's recent messages, one line each"
 msgstr "Nedávné zprávy agenta, každá na jednom řádku"
+
+#: src/renderer/components/settings/tabs/BoardTab.tsx
+msgid "The board your team shares: columns, automations and shortcuts."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy

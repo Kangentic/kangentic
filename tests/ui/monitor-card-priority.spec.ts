@@ -1,18 +1,19 @@
 /**
- * UI tests for priority on the Agent Monitor card (#1053).
+ * UI tests for priority and labels on the Agent Monitor card (#1053, #1146).
  *
- * Intent: a monitor card draws the same pill row as the board card, priority
- * first and then labels. A card whose only pill is its priority, under an agent
- * message trail, keeps the rule above its footer, as a labelled card does. A row
- * with no priority (0, or a row built before the field existed) draws no
- * priority pill.
+ * Intent: a monitor card draws them as the board card does. The priority meter
+ * sits in the title row, after the title and before #N, and the label row holds
+ * labels only. The rule above the footer closes the label row, so a card under an
+ * agent message trail with no labels has none and a labelled one keeps it. A row
+ * with no priority (0, or a row built before the field existed) draws no meter.
+ * The Task tab's Priority and Labels settings hide each here too.
  *
- * Without it a user loses the priority of every task in the monitor, or sees a
- * priority-only card with its footer jammed against the agent's output with no
- * rule between them.
+ * Without it a user loses the priority of every task in the monitor, sees a
+ * footer jammed against a label row with no rule between them, or finds the
+ * settings hide labels on the board but not in the monitor.
  *
- * Only a browser proves the footer half: the rule is a computed border style on
- * a rendered element, which a unit test over the view model cannot see.
+ * Only a browser proves the footer half: the rule is a computed border on a
+ * rendered element, which a unit test over the view model cannot see.
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
@@ -29,6 +30,7 @@ const LABEL_SESSION_ID = 'sess-label-only';
 const preConfig = `
   window.__mockPreConfigure(function (state) {
     var timestamp = new Date().toISOString();
+    state.config.showTaskNumbers = true;
     state.projects.push({
       id: '${PROJECT_ID}', name: 'Monitor Priority', path: '/mock/monitor-priority',
       github_url: null, default_agent: 'claude', last_opened: timestamp, created_at: timestamp,
@@ -49,10 +51,10 @@ const preConfig = `
         shell: 'bash', cwd: '/mock/monitor-priority', startedAt: timestamp, exitCode: null,
       });
       state.activityCache[seed.id] = 'thinking';
+      // A trail on both rows, so whether the footer draws its rule depends on
+      // the label row alone.
+      state.messageTrailCache[seed.id] = [{ uuid: 'm-' + seed.id, ts: 1, text: 'The tap works.' }];
     });
-    // The agent trail on the priority-only row, so the footer rule is asked for
-    // by the priority and not by the absence of a trail.
-    state.messageTrailCache['${PRIORITY_SESSION_ID}'] = [{ uuid: 'm1', ts: 1, text: 'The tap works.' }];
     return { currentProjectId: '${PROJECT_ID}' };
   });
 
@@ -81,43 +83,94 @@ const preConfig = `
   ];
 `;
 
-let browser: Browser;
-let page: Page;
-
-test.beforeAll(async () => {
+async function openMonitor(): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady(VITE_URL);
-  browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
-  page = await context.newPage();
-  await page.addInitScript({ path: MOCK_SCRIPT });
-  await page.addInitScript(preConfig);
-  await gotoVite(page, VITE_URL);
-  await page.waitForSelector('text=Kangentic', { timeout: 15000 });
-  await page.locator('[data-testid="agent-monitor-button"]').click();
-  await page.locator('[data-testid="monitor-grid"]').waitFor({ state: 'visible', timeout: 10000 });
-});
+  const launched = await chromium.launch({ headless: true });
+  const context = await launched.newContext({ viewport: { width: 1920, height: 1080 } });
+  const opened = await context.newPage();
+  await opened.addInitScript({ path: MOCK_SCRIPT });
+  await opened.addInitScript(preConfig);
+  await gotoVite(opened, VITE_URL);
+  await opened.waitForSelector('text=Kangentic', { timeout: 15000 });
+  await opened.locator('[data-testid="agent-monitor-button"]').click();
+  await opened.locator('[data-testid="monitor-grid"]').waitFor({ state: 'visible', timeout: 10000 });
+  return { browser: launched, page: opened };
+}
 
-test.afterAll(async () => {
-  await browser?.close();
-});
+/** Write a global config field through the real path the Task tab's switches use. */
+async function setConfig(target: Page, partial: Record<string, boolean>): Promise<void> {
+  await target.evaluate((value) => {
+    const stores = (window as unknown as {
+      __zustandStores?: { config: { getState: () => { updateConfig: (partial: Record<string, boolean>) => Promise<void> } } };
+    }).__zustandStores;
+    return stores?.config.getState().updateConfig(value);
+  }, partial);
+}
 
-test.describe('Monitor card priority pill', () => {
-  test('a priority-only card under an agent trail shows the pill and keeps the footer rule', async () => {
-    const card = page.locator(`[data-testid="monitor-card"][data-session-id="${PRIORITY_SESSION_ID}"]`);
-    // The trail must be showing, or the rule is there for the old reason and
-    // this passes without the fix.
+const monitorCard = (target: Page, sessionId: string) => target.locator(`[data-testid="monitor-card"][data-session-id="${sessionId}"]`);
+
+/**
+ * Whether the card's footer draws its rule, read off its border WIDTH: Tailwind's
+ * preflight gives every element `border-style: solid` at 0px.
+ */
+async function footerRule(target: Page, sessionId: string): Promise<'rule' | 'none'> {
+  const footer = monitorCard(target, sessionId).locator('[data-testid="monitor-card-usage"]');
+  await expect(footer).toBeVisible();
+  const width = await footer.evaluate((element) => parseFloat(getComputedStyle(element).borderTopWidth));
+  return width > 0 ? 'rule' : 'none';
+}
+
+test.describe('Monitor card priority and labels', () => {
+  let browser: Browser;
+  let page: Page;
+
+  test.beforeAll(async () => {
+    ({ browser, page } = await openMonitor());
+  });
+
+  test.afterAll(async () => {
+    await browser?.close();
+  });
+
+  test('a priority-only card shows the meter before #N and no rule under its trail', async () => {
+    const card = monitorCard(page, PRIORITY_SESSION_ID);
+    // The trail must be showing, or a missing rule proves nothing.
     await expect(card.locator('[data-testid="monitor-card-trail"]')).toBeVisible();
-    const pill = card.locator('[data-testid="priority-pill"]');
-    await expect(pill).toHaveAccessibleName('Priority: High');
-    await expect(pill.locator('[data-testid="priority-meter"] [data-filled]')).toHaveCount(3);
-    const footer = card.locator('[data-testid="monitor-card-usage"]');
-    await expect(footer).toBeVisible();
-    await expect.poll(() => footer.evaluate((element) => getComputedStyle(element).borderTopStyle)).toBe('solid');
+    const mark = card.locator('[data-testid="priority-pill"]');
+    await expect(mark).toHaveAccessibleName('Priority: High');
+    await expect(mark).toHaveAttribute('data-variant', 'inline');
+    await expect(mark.locator('[data-testid="priority-meter"] [data-filled]')).toHaveCount(3);
+    await expect(card.locator('[data-testid="priority-pill"] + [data-testid="monitor-card-display-id"]')).toHaveText('#1040');
+    await expect(card.locator('[data-testid="task-pills"]')).toHaveCount(0);
+    await expect.poll(() => footerRule(page, PRIORITY_SESSION_ID)).toBe('none');
   });
 
-  test('a row with no priority draws no priority pill and keeps its label', async () => {
-    const card = page.locator(`[data-testid="monitor-card"][data-session-id="${LABEL_SESSION_ID}"]`);
-    await expect(card.getByText('bug', { exact: true })).toBeVisible();
+  test('a labelled card keeps its label row and the rule under it, and draws no meter without a priority', async () => {
+    const card = monitorCard(page, LABEL_SESSION_ID);
+    await expect(card.locator('[data-testid="task-pills"]')).toHaveText('bug');
     await expect(card.locator('[data-testid="priority-pill"]')).toHaveCount(0);
+    await expect.poll(() => footerRule(page, LABEL_SESSION_ID)).toBe('rule');
   });
+});
+
+test('the Priority and Labels settings hide each on monitor cards', async () => {
+  test.setTimeout(60_000);
+  const { browser, page } = await openMonitor();
+  try {
+    await test.step('Priority off removes the meter', async () => {
+      await setConfig(page, { showTaskPriority: false });
+      await expect(monitorCard(page, PRIORITY_SESSION_ID).locator('[data-testid="priority-pill"]')).toHaveCount(0);
+      await expect(monitorCard(page, LABEL_SESSION_ID).locator('[data-testid="task-pills"]')).toHaveText('bug');
+      await setConfig(page, { showTaskPriority: true });
+    });
+
+    await test.step('Labels off removes the label row and its rule', async () => {
+      await setConfig(page, { showTaskLabels: false });
+      await expect(monitorCard(page, LABEL_SESSION_ID).locator('[data-testid="task-pills"]')).toHaveCount(0);
+      await expect(monitorCard(page, PRIORITY_SESSION_ID).locator('[data-testid="priority-pill"]')).toHaveCount(1);
+      await expect.poll(() => footerRule(page, LABEL_SESSION_ID)).toBe('none');
+    });
+  } finally {
+    await browser.close();
+  }
 });

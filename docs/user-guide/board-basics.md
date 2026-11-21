@@ -104,7 +104,7 @@ Kangentic can export your board layout to a `kangentic.json` file in the project
 
 ### Sharing with Your Team
 
-When you open a project, Kangentic automatically writes `kangentic.json` with the current board state. Commit and push this file. When teammates pull it, Kangentic detects the change and applies it at once, or shows a banner offering to apply it when Auto-apply board config changes is off (see [Applying Changes](#applying-changes)).
+When you open a project, Kangentic automatically writes `kangentic.json` with the current board state. Commit and push this file. When teammates pull it, Kangentic detects the change and applies it at once, or shows a banner offering to apply it when Auto-apply changes (Settings > Board > kangentic.json) is off (see [Applying Changes](#applying-changes)).
 
 The sync runs both ways. Opening a project also reads an existing `kangentic.json` back INTO your database first, before that write - so editing the file by hand is a genuine way to change the board, not just a record of it. That read happens with no banner and no prompt, and the file wins where the two disagree. A file that cannot be read, such as one with git merge conflict markers, is never overwritten: the board loads from the database and a banner says the file needs fixing. See [Board Config Sync](../settings/board-config.md#board-config-sync-kangenticjson) for the full rules.
 
@@ -114,7 +114,7 @@ Create a `kangentic.local.json` in the project root for personal customizations 
 
 ### Applying Changes
 
-When `kangentic.json` changes on disk (for example, after you pull a teammate's commit), the board applies the change at once. To review each change first, turn off Auto-apply board config changes in the Board settings tab: a reconciliation banner then appears at the top of the board, and you click "Apply" to reconcile the file into your database, or dismiss to ignore it. A change to your own `kangentic.local.json` applies at once, with no banner.
+When `kangentic.json` changes on disk (for example, after you pull a teammate's commit), the board applies the change at once. To review each change first, turn off Auto-apply changes on the Board settings tab's kangentic.json card: a reconciliation banner then appears at the top of the board, and you click "Apply" to reconcile the file into your database, or dismiss to ignore it. A change to your own `kangentic.local.json` applies at once, with no banner.
 
 If a teammate removes a column that still has your tasks, the column becomes a "ghost" (hidden but preserved). Once you move all tasks out of the ghost column, it is automatically deleted.
 

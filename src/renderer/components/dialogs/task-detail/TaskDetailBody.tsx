@@ -267,7 +267,9 @@ export function TaskDetailBody({
   // Single source of truth shared with canShowDescription in TaskDetailWindow.
   const hasDescriptionContent = taskHasDescriptionContent(task, savedAttachments.length);
 
-  // The board card's row, so the detail and the card cannot disagree.
+  // Priority first, then labels, on one row. A card draws the meter in its
+  // title row instead (#1146), and the Task tab's Priority and Labels settings,
+  // which hide them on cards, never reach this row.
   const labelsAndPriorityRow = hasLabelsOrPriority && (
     <TaskPills priority={taskPriority} labels={taskLabels} labelColors={labelColors} />
   );

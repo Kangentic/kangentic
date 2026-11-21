@@ -116,7 +116,7 @@ Font and cursor start where your platform's own terminal does: Cascadia Mono wit
 
 ## Board Settings
 
-Applies to every project (Settings > Board, not a per-project override). Two cards: **Board layout** and **Config sync**.
+Applies to every project (Settings > Board, not a per-project override). Two cards: **Board layout** and **kangentic.json**.
 
 | Setting | Card | Description |
 |---------|------|-------------|
@@ -124,7 +124,7 @@ Applies to every project (Settings > Board, not a per-project override). Two car
 | Shrink empty columns | Board layout | Narrow a column with no tasks to its header (off by default) |
 | Terminal panel | Board layout | Show the terminal panel below the board (on by default) |
 | Status bar | Board layout | Show the status bar at the bottom of the window (on by default) |
-| Auto-apply board config changes | Config sync | Apply a detected `kangentic.json` change at once instead of asking you to confirm it (on by default). See [Applying Changes](board-basics.md#applying-changes) |
+| Auto-apply changes | kangentic.json | Apply a detected `kangentic.json` change at once instead of asking you to confirm it (on by default). See [Applying Changes](board-basics.md#applying-changes) |
 
 ## Task Settings
 
@@ -135,6 +135,10 @@ Applies to every project (Settings > Task, not a per-project override). These de
 | Card Density | Amount of detail shown on task cards (compact, default, comfortable) |
 | Card Preview | The text under each card's title: the latest agent message (default), recent agent messages one line each, or the task description |
 | Ticket Numbers | Show each task's `#N` number as a muted badge on its card (on by default) |
+| Priority | Show each task's priority meter in its card's title row, before `#N` (on by default) |
+| Labels | Show each task's labels on its card (on by default). Turn it off to drop the label row, for example on a board with many imported labels |
+
+Priority and Labels apply to board cards, the Done list, workflow canvas cards and Agent Monitor cards. The task window and the Backlog list always show both.
 
 With Card Preview at its default, a card whose agent is running prints that agent's newest message in place of the description, in a shaded terminal panel, wrapped to three lines at default density, five at comfortable, one at compact. **Recent** prints the agent's newest messages one line each and newest last in those same lines, for a sense of the agent's last few steps instead of one whole thought. The text updates live as the agent works. The panel appears exactly when the card's activity glyph does, including while the agent is waiting on you, and the moment the session pauses or ends the card goes back to showing the task description. A task with no session, or whose agent has not said anything yet, shows its description too. The Agent Monitor's cards honor the same setting and render it the same way. The Task tab also holds the Context Bar toggles below.
 
@@ -244,7 +248,7 @@ These are global-only settings that apply to the entire app.
 | Restore Window Position | Remember window size and position between launches |
 | Click opens links in | Which browser a click on a link opens: your default browser (the default) or the Kangentic browser beside the task's terminal. Ctrl click (Cmd on macOS) opens the other one. Applies to terminal links, PR pills and a task's artifacts. |
 
-The Board tab has its own Auto-apply board config changes switch. See [Board Settings](#board-settings).
+The Board tab's kangentic.json card has its own Auto-apply changes switch. See [Board Settings](#board-settings).
 
 ## Performance Settings
 

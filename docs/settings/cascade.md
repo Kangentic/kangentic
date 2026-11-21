@@ -91,7 +91,7 @@ These settings appear only in App Settings and cannot be overridden per-project:
 - `sidebarVisible`, `boardLayout`, `sidebar.width`
 - `columnWidth`, `shrinkEmptyColumns`, `terminalPanelVisible`, `animationsEnabled`, `statusBarVisible`,
   `graphicsAccelerationEnabled`, `graphicsAccelerationOffBy`, `diffViewMode`
-- `cardDensity`, `cardPreview`, `showTaskNumbers` (Task tab)
+- `cardDensity`, `cardPreview`, `showTaskNumbers`, `showTaskPriority`, `showTaskLabels` (Task tab)
 - `linkClickTarget` (Behavior tab)
 - `diffDefaultScope`, `diffIgnoreWhitespace`, `diffCollapseUnchanged`, `diffWrapLines`, `diffUseInlineWhenNarrow`, `diffFileSort`, `diffFlatList`
 - `monitor` (the Agent Monitor's own toolbar controls, not a Settings-panel entry)

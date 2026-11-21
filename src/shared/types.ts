@@ -4759,6 +4759,10 @@ export interface AppConfig {
    */
   shrinkEmptyColumns: boolean;
   showTaskNumbers: boolean; // show each task's #N (display_id) on its board card
+  /** Draw the priority meter in a card's title row (board, Done list, Monitor cards). The task window and the Backlog list always show it. */
+  showTaskPriority: boolean;
+  /** Draw a card's label row (board, Done list, Monitor cards). The task window and the Backlog list always show the labels. */
+  showTaskLabels: boolean;
   terminalPanelVisible: boolean;
   animationsEnabled: boolean;
   statusBarVisible: boolean;
@@ -5430,7 +5434,7 @@ export interface AppConfig {
    *  turning it off afterwards sticks. Same unreadable-file deferral and retirement as
    *  `hasMigratedWindowLightDismissDefault`. */
   hasMigratedIdleTimeoutDefault: boolean;
-  /** One-shot marker for turning Auto-apply board config changes on by default. `save()`
+  /** One-shot marker for turning kangentic.json Auto-apply changes on by default. `save()`
    *  writes the whole config, so every install that ran while the default was off carries a
    *  saved `skipBoardConfigConfirm: false`, which cannot be told from a deliberate off. The
    *  migration in `ConfigManager.load()` turns it on once; the marker bounds it to one rewrite,
@@ -5628,6 +5632,8 @@ export const DEFAULT_CONFIG: AppConfig = {
   columnWidth: 'default',
   shrinkEmptyColumns: false,
   showTaskNumbers: true,
+  showTaskPriority: true,
+  showTaskLabels: true,
   terminalPanelVisible: true,
   animationsEnabled: true,
   statusBarVisible: true,

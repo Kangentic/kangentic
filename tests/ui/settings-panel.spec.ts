@@ -128,9 +128,11 @@ test.describe('Settings Panel', () => {
     await openSettings();
     await page.getByTestId('settings-tab-list').getByRole('button', { name: 'Board' }).click();
     await expect(page.getByText('Column width', { exact: true })).toBeVisible();
-    // Config Sync section: moved here from Behavior - it is board data
-    // reconciliation (kangentic.json), not session/window behavior.
-    await expect(page.locator('text=Auto-Apply Board Config Changes')).toBeVisible();
+    // The kangentic.json card: moved here from Behavior - it is board data
+    // reconciliation, not session/window behavior. The card is named for the
+    // file, so the row under it is just "Auto-apply changes".
+    await expect(page.getByRole('region', { name: 'kangentic.json' })).toBeVisible();
+    await expect(page.getByRole('switch', { name: 'Auto-apply changes', exact: true })).toBeVisible();
     await expect(page.getByText('Terminal panel', { exact: true })).toBeVisible();
     await expect(page.getByText('Status bar', { exact: true })).toBeVisible();
     // Animations LEFT for the Performance tab: it toggles .no-motion on <html>,
@@ -162,6 +164,9 @@ test.describe('Settings Panel', () => {
     // Ticket Numbers toggle row (showTaskNumbers) - goes RED if its CardToggleRow is
     // removed from TaskTab.tsx, while leaving all other assertions green.
     await expect(page.locator('text=Ticket Numbers')).toBeVisible();
+    // Priority, then Labels, under Ticket numbers (#1146), both on by default.
+    await expect(page.getByTestId('setting-row-showTaskPriority')).toHaveAttribute('aria-checked', 'true');
+    await expect(page.getByTestId('setting-row-showTaskLabels')).toHaveAttribute('aria-checked', 'true');
     await expect(page.getByText('Context Bar')).toBeVisible();
     await closeSettings();
   });

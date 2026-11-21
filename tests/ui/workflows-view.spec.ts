@@ -574,12 +574,15 @@ test.describe('Workflows header', () => {
       const dialog = byTestId(page, 'workflow-rename-dialog');
       await expect(dialog).toBeVisible();
       const cancel = byTestId(page, 'workflow-rename-cancel');
-      expect(await cancel.evaluate((element) => getComputedStyle(element).borderTopStyle)).toBe('solid');
+      // Read the border WIDTH: Tailwind's preflight gives every element
+      // `border-style: solid` at 0px, so the style alone reads solid with no
+      // border drawn.
+      expect(await cancel.evaluate((element) => parseFloat(getComputedStyle(element).borderTopWidth))).toBeGreaterThan(0);
       // The footer sits under a rule, as every confirm's does.
       expect(await cancel.evaluate((element) => {
         const footer = element.closest('.border-t');
-        return footer ? getComputedStyle(footer).borderTopStyle : 'none';
-      })).toBe('solid');
+        return footer ? parseFloat(getComputedStyle(footer).borderTopWidth) : 0;
+      })).toBeGreaterThan(0);
       // `accent-on` is the token: the label is not left at the body's color.
       const confirm = byTestId(page, 'workflow-rename-confirm');
       expect(await confirm.evaluate((element) => getComputedStyle(element).color))

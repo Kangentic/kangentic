@@ -50,8 +50,10 @@ export function BoardTab({ globalConfig }: { globalConfig: AppConfig }) {
 
       <SettingsCard
         icon={<RefreshCw size={16} />}
-        label={t`Config sync`}
-        description={t`How changes to the shared board config are applied.`}
+        // The card is named for the file its switch acts on, so the row
+        // under it needs no "board config" of its own.
+        label={t`kangentic.json`}
+        description={t`The board your team shares: columns, automations and shortcuts.`}
         searchIds={['skipBoardConfigConfirm']}
       >
         <CardToggleRow
