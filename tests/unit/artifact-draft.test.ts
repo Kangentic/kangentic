@@ -104,6 +104,15 @@ describe('draftRenameArtifact and draftNameOf', () => {
     expect(draftNameOf(cleared, list[0])).toBe('');
   });
 
+  // A re-add from an agent only fills an empty name, but a person who pastes a
+  // link the task already holds and types a name over a published title means it.
+  it('names a saved, published link that was pasted again and then named', () => {
+    const list: TaskArtifact[] = [{ ...saved(FIGMA, 'Published title'), name_from: 'publish', source: 'publish' }];
+    const pasted = draftAddArtifact(NONE, FIGMA);
+    const renamed = draftRenameArtifact(pasted, list, FIGMA, 'Typed name');
+    expect(previewArtifacts(list, renamed).map((artifact) => [artifact.name, artifact.name_from])).toEqual([['Typed name', undefined]]);
+  });
+
   it('reads the saved name when nothing was typed', () => {
     expect(draftNameOf(NONE, saved(FIGMA, 'Saved name'))).toBe('Saved name');
     expect(draftNameOf(NONE, saved(FIGMA))).toBe('');

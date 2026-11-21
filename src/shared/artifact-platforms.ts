@@ -53,6 +53,12 @@ export interface ArtifactPlatform {
   patterns: readonly ArtifactLinkPattern[];
   /** A readable name read out of the link itself, when the link carries one. */
   nameFromUrl?: (url: URL) => string | null;
+  /**
+   * The fragment points inside the page (a board of a canvas), so links that
+   * differ only in it are one artifact (`artifactKey`). Left unset where the
+   * fragment is the document itself, as for Excalidraw, draw.io and Mermaid.
+   */
+  fragmentIsAnchor?: true;
 }
 
 function words(slug: string): string | null {
@@ -149,6 +155,8 @@ export const ARTIFACT_PLATFORMS: readonly ArtifactPlatform[] = [
   // ── Made by an AI tool ──
   {
     id: 'claude', name: 'Claude', kind: 'ai', detection: 'messages',
+    // A design canvas links each board as `#page-...` or `#artboard-...`.
+    fragmentIsAnchor: true,
     patterns: [
       { host: 'claude.ai', path: /^\/(artifact|public\/artifacts|code\/artifact)\// },
       // The old artifact host. It redirects, and links to it are still around.
@@ -304,16 +312,19 @@ export function artifactPlatformOf(link: string | URL): ArtifactPlatform | null 
 
 /**
  * One key per artifact, so the same link added twice is one row. The scheme and
- * host are lowercased and a trailing slash dropped. The query and the fragment
- * stay: for Figma they name the frame, and for Excalidraw, draw.io and Mermaid
- * the fragment IS the document.
+ * host are lowercased and a trailing slash dropped. The query stays: for Figma
+ * it names the frame. The fragment stays too, since for Excalidraw, draw.io and
+ * Mermaid it IS the document, except on a platform whose fragment only points
+ * inside the page (`fragmentIsAnchor`): every board of one Claude canvas is one
+ * artifact.
  */
 export function artifactKey(link: string): string {
   const url = parseArtifactUrl(link);
   if (!url) return link.trim();
   const host = url.hostname.toLowerCase().replace(/^www\./, '');
   const path = url.pathname.length > 1 ? url.pathname.replace(/\/+$/, '') : '';
-  return `https://${host}${url.port ? `:${url.port}` : ''}${path}${url.search}${url.hash}`;
+  const hash = url.hash !== '' && artifactPlatformOf(url)?.fragmentIsAnchor ? '' : url.hash;
+  return `https://${host}${url.port ? `:${url.port}` : ''}${path}${url.search}${hash}`;
 }
 
 /** The name a link carries for itself, when its platform knows how to read one. */

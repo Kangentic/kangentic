@@ -13,6 +13,8 @@
  * `taskRepo.create` and the "no task left behind" case fails.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import os from 'node:os';
+import path from 'node:path';
 import { openTestDatabase } from './helpers/test-database';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { TaskRepository } from '../../src/main/db/repositories/task-repository';
@@ -25,9 +27,11 @@ import { handleCreateTask, handleUpdateTask } from '../../src/main/agent/command
 import { handleFindTask, handleGetCurrentTask } from '../../src/main/agent/commands/search-commands';
 import { MAX_TASK_ARTIFACTS } from '../../src/shared/task-artifacts';
 import {
+  alreadyLinkedNotes,
   artifactRoomRefusal,
   formatArtifactLines,
   parseArtifactInputs,
+  parseArtifactRenames,
   parseArtifactUrls,
   unknownArtifactUrls,
 } from '../../src/main/agent/commands/artifact-params';
@@ -220,6 +224,134 @@ describe('artifact parameters over the task handlers', () => {
       });
     });
 
+    describe('a link the task already holds under a name', () => {
+      const CANVAS = 'https://claude.ai/artifact/WpdicMm97cV1F6AUGU3RFA';
+
+      /** A task whose canvas a publish linked and titled, as the Artifact hook does. */
+      async function publishedTask(): Promise<string> {
+        const { taskId } = await createTask({});
+        tasks.applyArtifactChanges(taskId, { add: [{ url: CANVAS, name: 'Browser pane says why' }], source: 'publish' });
+        return taskId;
+      }
+
+      // The Design agent re-added its own publish as "Design canvas" and
+      // replaced the title the publish gave it.
+      it('keeps the publish title on an MCP re-add, writes nothing, and says what it is called', async () => {
+        const taskId = await publishedTask();
+        const before = tasks.getById(taskId);
+        const result = await handleUpdateTask(updateParams(taskId, { addArtifacts: [{ url: `${CANVAS}#page-1`, name: 'Design canvas' }] }), context);
+        expect(result.success).toBe(true);
+        expect(result.message).toContain('Nothing to update');
+        expect(result.message).toContain(`- ${CANVAS}#page-1 was already on the task as "Browser pane says why"; that name was kept. Use renameArtifacts to change it.`);
+        expect(tasks.getById(taskId)?.artifacts).toEqual(before?.artifacts);
+        expect(tasks.getById(taskId)?.updated_at).toBe(before?.updated_at);
+      });
+
+      it('does not report artifacts as updated when only another field changed', async () => {
+        const taskId = await publishedTask();
+        const result = await handleUpdateTask(updateParams(taskId, { title: 'New title', addArtifacts: [CANVAS] }), context);
+        expect(result.success).toBe(true);
+        expect(result.message).toContain('Updated title for "New title".');
+        expect(result.message).toContain(`Already on the task:\n- ${CANVAS} was already on the task as "Browser pane says why".`);
+      });
+
+      it('renameArtifacts renames it alone, and a later publish keeps the new name', async () => {
+        const taskId = await publishedTask();
+        const result = await handleUpdateTask({ taskId, renameArtifacts: [{ url: CANVAS, name: 'Pane reason canvas' }] }, context);
+        expect(result.success).toBe(true);
+        expect(result.message).toContain('Updated artifacts');
+        expect(tasks.getById(taskId)?.artifacts[0]).toMatchObject({ name: 'Pane reason canvas' });
+        expect(tasks.getById(taskId)?.artifacts[0].name_from).toBeUndefined();
+
+        tasks.applyArtifactChanges(taskId, { add: [{ url: CANVAS, name: 'Republished title' }], source: 'publish' });
+        expect(tasks.getById(taskId)?.artifacts[0].name).toBe('Pane reason canvas');
+      });
+
+      // Red: leave `removeArtifacts` out of the notes and the replacement is reported as already held.
+      it('replaces a held name when the same call removes the link and adds it back, with no already-on-the-task note', async () => {
+        const { taskId } = await createTask({ artifacts: [{ url: CANVAS, name: 'Old' }] });
+        const result = await handleUpdateTask(
+          updateParams(taskId, { removeArtifacts: [CANVAS], addArtifacts: [{ url: CANVAS, name: 'New' }] }),
+          context,
+        );
+        expect(result.success).toBe(true);
+        expect(result.message).toContain('Updated artifacts');
+        expect(result.message).not.toMatch(/already on the task/i);
+        expect(tasks.getById(taskId)?.artifacts).toEqual([expect.objectContaining({ url: CANVAS, name: 'New' })]);
+      });
+
+      // Red: report a rename to the held name as a change and updated_at moves with the write.
+      it('renameArtifacts to the name a link already has changes nothing and says so', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        try {
+          vi.setSystemTime(new Date('2026-03-01T00:00:00.000Z'));
+          const { taskId } = await createTask({ artifacts: [{ url: CANVAS, name: 'Chosen' }] });
+          const before = tasks.getById(taskId);
+          vi.setSystemTime(new Date('2026-03-02T00:00:00.000Z'));
+
+          const result = await handleUpdateTask({ taskId, renameArtifacts: [{ url: CANVAS, name: ' Chosen ' }] }, context);
+
+          expect(result.success).toBe(true);
+          expect(result.message).toContain('Nothing to update');
+          expect(result.message).toContain(`- ${CANVAS} is already named "Chosen".`);
+          expect(tasks.getById(taskId)?.updated_at).toBe(before?.updated_at);
+          expect(tasks.getById(taskId)?.artifacts).toEqual(before?.artifacts);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it('renameArtifacts to nothing on a link with no name says it already has none', async () => {
+        const { taskId } = await createTask({ artifacts: [CANVAS] });
+        const result = await handleUpdateTask({ taskId, renameArtifacts: [{ url: CANVAS, name: null }] }, context);
+        expect(result.success).toBe(true);
+        expect(result.message).toContain('Nothing to update');
+        expect(result.message).toContain(`- ${CANVAS} already has no name.`);
+      });
+
+      // Red: skip the name_from check in the rename merge and this reads as "already named".
+      it('renameArtifacts to the text a publish title already has makes it a chosen name', async () => {
+        const taskId = await publishedTask();
+        const result = await handleUpdateTask({ taskId, renameArtifacts: [{ url: CANVAS, name: 'Browser pane says why' }] }, context);
+        expect(result.success).toBe(true);
+        expect(result.message).toContain('Updated artifacts');
+        expect(result.message).not.toContain('Nothing to update');
+        const stored = tasks.getById(taskId)?.artifacts[0];
+        expect(stored?.name).toBe('Browser pane says why');
+        expect(stored?.name_from).toBeUndefined();
+      });
+
+      // Red: return the "Nothing to update" success before the attachment check and the failure is lost.
+      it('reports the attachment failure when every file fails and the add only re-adds a held named link', async () => {
+        const { taskId } = await createTask({ artifacts: [{ url: CANVAS, name: 'Held name' }] });
+        const missingFile = path.join(os.tmpdir(), `kangentic-missing-${Date.now()}`, 'nope.txt');
+        const result = await handleUpdateTask(
+          updateParams(taskId, { attachments: [{ filePath: missingFile }], addArtifacts: [CANVAS] }),
+          context,
+        );
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('Failed to attach any of the 1 requested file(s)');
+        expect(result.message).toBeUndefined();
+      });
+
+      it('lists a note line for each of two held named links the call adds again', async () => {
+        const { taskId } = await createTask({ artifacts: [{ url: CANVAS, name: 'Canvas name' }, { url: MIRO, name: 'Flow' }] });
+        const result = await handleUpdateTask(updateParams(taskId, { addArtifacts: [CANVAS, MIRO] }), context);
+        expect(result.success).toBe(true);
+        expect(result.message).toContain('Nothing to update');
+        expect(result.message).toContain(`- ${CANVAS} was already on the task as "Canvas name".`);
+        expect(result.message).toContain(`- ${MIRO} was already on the task as "Flow".`);
+      });
+
+      it('renameArtifacts refuses a link the task does not have, and lists what it has', async () => {
+        const taskId = await publishedTask();
+        const result = await handleUpdateTask({ taskId, renameArtifacts: [{ url: MIRO, name: 'Flow' }] }, context);
+        expect(result.success).toBe(false);
+        expect(result.error).toContain(`renameArtifacts names a link this task does not have: ${MIRO}`);
+        expect(result.error).toContain(`- Browser pane says why (Claude): ${CANVAS} [published by an agent]`);
+      });
+    });
+
     it('refuses a bad addArtifacts without touching the task', async () => {
       const { taskId } = await createTask({});
       const result = await handleUpdateTask(updateParams(taskId, { title: 'Renamed', addArtifacts: ['nonsense'] }), context);
@@ -285,6 +417,50 @@ describe('parseArtifactInputs', () => {
     expect(result).toHaveProperty('error');
     expect((result as { error: string }).error).toContain('addArtifacts');
     expect((result as { error: string }).error).toContain(fragment);
+  });
+});
+
+describe('parseArtifactRenames', () => {
+  it('is null when not sent, trims the link, and reads an empty name as a clear', () => {
+    expect(parseArtifactRenames(undefined, 'renameArtifacts')).toBeNull();
+    expect(parseArtifactRenames([{ url: ` ${FIGMA} `, name: 'Checkout' }, { url: MIRO, name: '  ' }, { url: MIRO, name: null }], 'renameArtifacts')).toEqual([
+      { url: FIGMA, name: 'Checkout' },
+      { url: MIRO, name: null },
+      { url: MIRO, name: null },
+    ]);
+  });
+
+  it.each([
+    ['a non-list', FIGMA, 'must be a list'],
+    ['a bare link', [FIGMA], 'each entry needs a "url" and a "name"'],
+    ['a missing name', [{ url: FIGMA }], 'needs a "name", text or null'],
+    ['a non-text name', [{ url: FIGMA, name: 5 }], 'needs a "name", text or null'],
+    ['more than 50 entries', Array.from({ length: 51 }, (_, position) => ({ url: `https://example.org/${position}`, name: 'x' })), 'at most 50'],
+    ['a missing url', [{ name: 'x' }], 'each entry needs a "url"'],
+    ['a blank url', [{ url: '   ', name: 'x' }], 'each entry needs a "url"'],
+  ])('refuses %s, naming the parameter', (_label, value, fragment) => {
+    const result = parseArtifactRenames(value, 'renameArtifacts');
+    expect((result as { error: string }).error).toContain('renameArtifacts');
+    expect((result as { error: string }).error).toContain(fragment);
+  });
+});
+
+describe('alreadyLinkedNotes', () => {
+  const held = [row(FIGMA, { name: 'Checkout' }), row(MIRO)];
+
+  it('notes a held named link once, and says a different name was kept', () => {
+    expect(alreadyLinkedNotes(held, [{ url: FIGMA, name: 'Other' }, { url: FIGMA }])).toEqual([
+      `- ${FIGMA} was already on the task as "Checkout"; that name was kept. Use renameArtifacts to change it.`,
+    ]);
+    expect(alreadyLinkedNotes(held, [{ url: FIGMA, name: ' Checkout ' }])).toEqual([`- ${FIGMA} was already on the task as "Checkout".`]);
+  });
+
+  it('says nothing for a new link or one whose empty name the add fills', () => {
+    expect(alreadyLinkedNotes(held, [{ url: 'https://example.org/new' }, { url: MIRO, name: 'Flow' }])).toEqual([]);
+  });
+
+  it('says nothing for a held link the same call removes first', () => {
+    expect(alreadyLinkedNotes(held, [{ url: FIGMA, name: 'New' }], [FIGMA])).toEqual([]);
   });
 });
 

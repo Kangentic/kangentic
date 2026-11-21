@@ -1,15 +1,19 @@
 import type Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
 import { LINEAGE_DELTA_SET_SQL } from '../repositories/usage-history-repository';
+import { parseStringList } from '../string-list';
 import { seedDefaultSwimlanes } from './default-data';
 import { migrateSpawnAgentConfig } from './spawn-agent-config-migration';
 import { runAutomationsMigration } from './automations-migration';
 import { worktreeFolderFromPath } from '../../../shared/worktree-folder';
 import { SWIMLANE_ROLES } from '../../../shared/types';
+import { artifactKey } from '../../../shared/artifact-platforms';
+import { artifactNamesByKey, borrowArtifactNames, foldArtifacts, parseStoredArtifacts } from '../../../shared/task-artifacts';
 import { writeTransaction } from '../transaction';
 
 const WORKFLOW_HOLDS_RELEASED_FLAG = 'workflow_task_holds_released_at';
 const TEXT_MATCH_NOT_STRIPPED_FLAG = 'text_match_not_stripped_at';
+const ARTIFACTS_FOLDED_FLAG = 'artifacts_folded_at';
 
 export function runProjectMigrations(db: Database.Database): void {
   db.exec(`
@@ -1876,6 +1880,8 @@ export function runProjectMigrations(db: Database.Database): void {
   db.exec('CREATE INDEX IF NOT EXISTS idx_task_moves_to_column ON task_moves(to_swimlane_id, at DESC)');
 
   runWorkflowsMigration(db);
+  // After the workflows step, which adds the artifact columns it reads.
+  foldStoredArtifacts(db);
 
   // Migration: one row per headless agent call Kangentic makes on the user's
   // behalf (a Condition check, a workflow step check, a task summary batch, a
@@ -2457,4 +2463,51 @@ function migrateWorkflows(db: Database.Database): void {
   if (!taskArtifactColumns.has('dismissed_artifacts')) {
     db.exec("ALTER TABLE tasks ADD COLUMN dismissed_artifacts TEXT NOT NULL DEFAULT '[]'");
   }
+}
+
+/**
+ * Folds the artifact rows stored before a Claude link's fragment stopped being
+ * part of its key (`fragmentIsAnchor`): one canvas linked as several
+ * `#page-...` / `#artboard-...` rows becomes one row, and dismissed links are
+ * re-keyed the same way. Then each nameless row takes the name another task in
+ * the project gives the same link, as a link arriving now does
+ * (`TaskRepository.withBorrowedNames`).
+ *
+ * Once per database, through `schema_meta`: a later change to the key rules
+ * gets its own flag, and the name pass need not scan every task on each open.
+ */
+function foldStoredArtifacts(db: Database.Database): void {
+  const folded = db.prepare('SELECT value FROM schema_meta WHERE key = ?').get(ARTIFACTS_FOLDED_FLAG);
+  if (folded !== undefined) return;
+  writeTransaction(db, () => {
+    const rows = db.prepare(`
+      SELECT id, artifacts, dismissed_artifacts FROM tasks
+      WHERE artifacts <> '[]' OR dismissed_artifacts <> '[]'
+      ORDER BY created_at, id
+    `).all() as Array<{ id: string; artifacts: string; dismissed_artifacts: string }>;
+
+    const states = rows.map((row) => {
+      const fold = foldArtifacts({ artifacts: parseStoredArtifacts(row.artifacts), dismissed: parseStringList(row.dismissed_artifacts) });
+      return { id: row.id, ...fold };
+    });
+
+    const nameless = new Set<string>();
+    for (const state of states) {
+      for (const artifact of state.artifacts) {
+        if (artifact.name === null) nameless.add(artifactKey(artifact.url));
+      }
+    }
+    const names = artifactNamesByKey(states.map((state) => state.artifacts), nameless);
+
+    const update = db.prepare('UPDATE tasks SET artifacts = ?, dismissed_artifacts = ? WHERE id = ?');
+    for (const state of states) {
+      const artifacts = borrowArtifactNames(state.artifacts, names);
+      if (!state.changed && artifacts === state.artifacts) continue;
+      update.run(JSON.stringify(artifacts), JSON.stringify(state.dismissed), state.id);
+    }
+    // OR REPLACE: another process opening the same database may have folded
+    // it between the read above and this transaction's lock. The fold is
+    // idempotent, so a second run is harmless; a key clash would fail the open.
+    db.prepare('INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)').run(ARTIFACTS_FOLDED_FLAG, new Date().toISOString());
+  })();
 }

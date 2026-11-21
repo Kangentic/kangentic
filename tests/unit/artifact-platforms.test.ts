@@ -291,6 +291,15 @@ describe('artifactKey', () => {
     const base = artifactKey('https://figma.com/design/AbC123xyz/File?node-id=1-2');
     expect(artifactKey('https://figma.com/design/AbC123xyz/File?node-id=3-4')).not.toBe(base);
     expect(artifactKey('https://excalidraw.com/#json=a,b')).not.toBe(artifactKey('https://excalidraw.com/#json=c,d'));
+    expect(artifactKey('https://app.diagrams.net/#Gabc')).not.toBe(artifactKey('https://app.diagrams.net/#Gdef'));
+    expect(artifactKey('https://mermaid.live/edit#pako:abc')).not.toBe(artifactKey('https://mermaid.live/edit#pako:def'));
+  });
+
+  it('keys a Claude artifact without its fragment, which only points at a board inside it', () => {
+    const canvas = 'https://claude.ai/artifact/WpdicMm97cV1F6AUGU3RFA';
+    expect(artifactKey(`${canvas}#page-dcb81aee8d83`)).toBe(artifactKey(canvas));
+    expect(artifactKey(`${canvas}#artboard-1`)).toBe(artifactKey(canvas));
+    expect(artifactKey('https://claude.ai/artifact/OtherId123')).not.toBe(artifactKey(canvas));
   });
 
   it('falls back to the trimmed text for a non-link', () => {

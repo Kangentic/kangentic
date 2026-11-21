@@ -4,8 +4,9 @@
  * they typed that a later scan overwrites, or a task row that grows without
  * bound when a detector misfires.
  *
- * Red-green: drop the `dismissed.includes(key)` check for `detected` adds and
- * the dismissal test fails; drop the cap check and the 50 cap test fails.
+ * Red-green: drop the `dismissedKeys().has(key)` check for `detected` adds and
+ * the dismissal test fails; drop the cap check and the 50 cap test fails; drop
+ * `nameReplaces` and a re-add takes a publish title away.
  */
 import { describe, it, expect } from 'vitest';
 import { artifactKey } from '../../src/shared/artifact-platforms';
@@ -14,6 +15,9 @@ import {
   MAX_TASK_ARTIFACTS,
   applyArtifactChanges,
   artifactDisplayName,
+  artifactNamesByKey,
+  borrowArtifactNames,
+  foldArtifacts,
   hasArtifactChanges,
   listArtifacts,
   parseStoredArtifacts,
@@ -88,7 +92,7 @@ describe('applyArtifactChanges: adding', () => {
 describe('applyArtifactChanges: adding a link already on the task', () => {
   const state: ArtifactState = { artifacts: [row(FIGMA)], dismissed: [] };
 
-  it.each(['user', 'agent'] as const)('names it when %s gives a name, without moving it', (source) => {
+  it.each(['user', 'agent', 'publish', 'detected'] as const)('fills an empty name when %s gives one, without moving it', (source) => {
     const withOther: ArtifactState = { artifacts: [row(FIGMA), row(MIRO)], dismissed: [] };
     const result = applyArtifactChanges(withOther, { add: [{ url: FIGMA, name: 'Checkout' }], source }, NOW);
     expect(result.artifacts.map((artifact) => artifact.url)).toEqual([FIGMA, MIRO]);
@@ -97,11 +101,41 @@ describe('applyArtifactChanges: adding a link already on the task', () => {
     expect(result.added).toEqual([]);
   });
 
-  it('never renames when the add is a detection', () => {
-    const named: ArtifactState = { artifacts: [row(FIGMA, { name: 'Mine' })], dismissed: [] };
-    const result = applyArtifactChanges(named, { add: [{ url: FIGMA, name: 'Other' }], source: 'detected' }, NOW);
-    expect(result.artifacts[0].name).toBe('Mine');
+  it('renames when a person adds it again with a name (the edit form)', () => {
+    const named: ArtifactState = { artifacts: [row(FIGMA, { name: 'Mine', name_from: 'publish' })], dismissed: [] };
+    const result = applyArtifactChanges(named, { add: [{ url: FIGMA, name: 'Typed' }], source: 'user' }, NOW);
+    expect(result.artifacts[0]).toEqual(row(FIGMA, { name: 'Typed' }));
+  });
+
+  // A publish named the canvas, then the agent re-added it over MCP as
+  // "Design canvas". The re-add must not take the publish title away.
+  it.each(['agent', 'detected'] as const)('keeps an existing name when %s adds it again', (source) => {
+    const named: ArtifactState = { artifacts: [row(FIGMA, { name: 'Browser pane says why', name_from: 'publish' })], dismissed: [] };
+    const result = applyArtifactChanges(named, { add: [{ url: FIGMA, name: 'Design canvas' }], source }, NOW);
+    expect(result.artifacts[0].name).toBe('Browser pane says why');
     expect(result.changed).toBe(false);
+  });
+
+  it('lets a later publish title replace an earlier title or a borrowed name', () => {
+    for (const nameFrom of ['publish', 'borrowed'] as const) {
+      const named: ArtifactState = { artifacts: [row(FIGMA, { name: 'Old title', name_from: nameFrom })], dismissed: [] };
+      const result = applyArtifactChanges(named, { add: [{ url: FIGMA, name: 'New title' }], source: 'publish' }, NOW);
+      expect(result.artifacts[0]).toEqual(row(FIGMA, { name: 'New title', name_from: 'publish' }));
+    }
+  });
+
+  it('never lets a publish title replace a name someone chose', () => {
+    const named: ArtifactState = { artifacts: [row(FIGMA, { name: 'Typed' })], dismissed: [] };
+    const result = applyArtifactChanges(named, { add: [{ url: FIGMA, name: 'Published title' }], source: 'publish' }, NOW);
+    expect(result.artifacts[0].name).toBe('Typed');
+    expect(result.changed).toBe(false);
+  });
+
+  it('marks a new row named by its publish, or by a borrowed name', () => {
+    const published = applyArtifactChanges(EMPTY, { add: [{ url: FIGMA, name: 'Title' }], source: 'publish' }, NOW);
+    expect(published.artifacts[0]).toEqual(row(FIGMA, { name: 'Title', name_from: 'publish', source: 'publish' }));
+    const borrowed = applyArtifactChanges(EMPTY, { add: [{ url: MIRO, name: 'Flow', nameFrom: 'borrowed' }], source: 'detected' }, NOW);
+    expect(borrowed.artifacts[0]).toEqual(row(MIRO, { name: 'Flow', name_from: 'borrowed', source: 'detected' }));
   });
 
   it('is unchanged when nothing new is said', () => {
@@ -187,6 +221,119 @@ describe('applyArtifactChanges: renaming', () => {
     expect(applyArtifactChanges(state, { rename: [{ url: FIGMA, name: 'Old' }] }, NOW).changed).toBe(false);
     expect(applyArtifactChanges(state, { rename: [{ url: MIRO, name: 'X' }] }, NOW).changed).toBe(false);
   });
+
+  // Red: keep `name_from` through withName and a cleared publish row still claims a source.
+  it('leaves no name_from key on a publish row renamed to nothing', () => {
+    const published: ArtifactState = { artifacts: [row(FIGMA, { name: 'Title', name_from: 'publish' })], dismissed: [] };
+    const cleared = applyArtifactChanges(published, { rename: [{ url: FIGMA, name: null }] }, NOW);
+    expect(cleared.changed).toBe(true);
+    expect(cleared.artifacts[0].name).toBeNull();
+    expect(cleared.artifacts[0]).not.toHaveProperty('name_from');
+  });
+
+  it('makes the name a chosen one, so the next publish keeps it', () => {
+    const published: ArtifactState = { artifacts: [row(FIGMA, { name: 'Title', name_from: 'publish' })], dismissed: [] };
+    const renamed = applyArtifactChanges(published, { rename: [{ url: FIGMA, name: 'Title' }] }, NOW);
+    expect(renamed.changed).toBe(true);
+    expect(renamed.artifacts[0]).toEqual(row(FIGMA, { name: 'Title' }));
+    const republished = applyArtifactChanges(renamed, { add: [{ url: FIGMA, name: 'Other title' }], source: 'publish' }, NOW);
+    expect(republished.artifacts[0].name).toBe('Title');
+  });
+});
+
+describe('applyArtifactChanges: a Claude canvas and its boards', () => {
+  const CANVAS = 'https://claude.ai/artifact/WpdicMm97cV1F6AUGU3RFA';
+
+  it('keeps one row for the canvas and its deep links', () => {
+    const state: ArtifactState = { artifacts: [row(CANVAS, { name: 'Jira import design' })], dismissed: [] };
+    const result = applyArtifactChanges(state, { add: [{ url: `${CANVAS}#page-dcb81aee8d83` }, { url: `${CANVAS}#artboard-1` }], source: 'detected' }, NOW);
+    expect(result.artifacts).toEqual(state.artifacts);
+    expect(result.changed).toBe(false);
+  });
+
+  it('holds a dismissal stored with a fragment against the canvas', () => {
+    const state: ArtifactState = { artifacts: [], dismissed: [`${CANVAS}#page-1`] };
+    const result = applyArtifactChanges(state, { add: [{ url: CANVAS }], source: 'detected' }, NOW);
+    expect(result.artifacts).toEqual([]);
+  });
+
+  // Red: compare dismissals by their raw text and the remove appends a second
+  // entry for the canvas, which `dismissed` would then carry twice.
+  it('does not dismiss a canvas a second time when its dismissal is stored with a fragment', () => {
+    const state: ArtifactState = { artifacts: [row(CANVAS)], dismissed: [`${CANVAS}#page-1`] };
+    const result = applyArtifactChanges(state, { remove: [CANVAS] }, NOW);
+    expect(result.artifacts).toEqual([]);
+    expect(result.changed).toBe(true);
+    expect(result.dismissed).toEqual([`${CANVAS}#page-1`]);
+  });
+
+  // Red: clear a dismissal by raw text and the fragment entry stays, so
+  // detection would never be allowed to ignore it again after the next removal.
+  it('clears a dismissal stored with a fragment when a person puts the canvas back', () => {
+    const state: ArtifactState = { artifacts: [], dismissed: [`${CANVAS}#page-1`, artifactKey(MIRO)] };
+    const result = applyArtifactChanges(state, { add: [{ url: CANVAS }], source: 'user' }, NOW);
+    expect(result.artifacts.map((artifact) => artifact.url)).toEqual([CANVAS]);
+    expect(result.dismissed).toEqual([artifactKey(MIRO)]);
+  });
+});
+
+describe('foldArtifacts', () => {
+  const CANVAS = 'https://claude.ai/artifact/WpdicMm97cV1F6AUGU3RFA';
+
+  it('folds a canvas linked several times into its first row, named by the first name in the group', () => {
+    const state: ArtifactState = {
+      artifacts: [row(CANVAS), row(FIGMA), row(`${CANVAS}#page-1`, { name: 'Canvas', name_from: 'publish' }), row(`${CANVAS}#artboard-2`, { name: 'Later' })],
+      dismissed: [],
+    };
+    const folded = foldArtifacts(state);
+    expect(folded.changed).toBe(true);
+    expect(folded.artifacts).toEqual([row(CANVAS, { name: 'Canvas', name_from: 'publish' }), row(FIGMA)]);
+  });
+
+  it('keeps the first row name and link when it has one', () => {
+    const state: ArtifactState = { artifacts: [row(`${CANVAS}#page-1`, { name: 'First' }), row(CANVAS, { name: 'Second' })], dismissed: [] };
+    expect(foldArtifacts(state).artifacts).toEqual([row(`${CANVAS}#page-1`, { name: 'First' })]);
+  });
+
+  it('re-keys dismissed links and keeps each once, at its newest place', () => {
+    const state: ArtifactState = { artifacts: [], dismissed: [`${CANVAS}#page-1`, artifactKey(FIGMA), `${CANVAS}#page-2`] };
+    expect(foldArtifacts(state).dismissed).toEqual([artifactKey(FIGMA), CANVAS]);
+  });
+
+  // Red: drop the `.slice(-MAX_DISMISSED_ARTIFACTS)` in foldArtifacts and the list keeps all 205.
+  it('caps the re-keyed dismissed list at MAX_DISMISSED_ARTIFACTS, keeping the newest', () => {
+    const total = MAX_DISMISSED_ARTIFACTS + 5;
+    const dismissed = Array.from({ length: total }, (_, position) => `https://example.org/gone-${position}`);
+    const folded = foldArtifacts({ artifacts: [], dismissed });
+    expect(folded.dismissed).toHaveLength(MAX_DISMISSED_ARTIFACTS);
+    expect(folded.dismissed[0]).toBe(artifactKey(dismissed[5]));
+    expect(folded.dismissed[MAX_DISMISSED_ARTIFACTS - 1]).toBe(artifactKey(dismissed[total - 1]));
+    expect(folded.dismissed).not.toContain(artifactKey(dismissed[0]));
+    expect(folded.changed).toBe(true);
+  });
+
+  it('reports no change for a list that is already one row per link', () => {
+    const state: ArtifactState = { artifacts: [row(CANVAS), row(FIGMA)], dismissed: [artifactKey(MIRO)] };
+    expect(foldArtifacts(state).changed).toBe(false);
+  });
+});
+
+describe('artifactNamesByKey and borrowArtifactNames', () => {
+  const CANVAS = 'https://claude.ai/artifact/G1CN5cN1G4eS6JF6EbHqv7';
+
+  it('takes the first name the lists give a link, in list order', () => {
+    const lists = [[row(CANVAS)], [row(`${CANVAS}#page-1`, { name: 'Jira import design' })], [row(CANVAS, { name: 'Later name' })]];
+    const names = artifactNamesByKey(lists, new Set([artifactKey(CANVAS), artifactKey(MIRO)]));
+    expect([...names]).toEqual([[artifactKey(CANVAS), 'Jira import design']]);
+  });
+
+  it('names only nameless rows, marked borrowed, and returns the same list when it names none', () => {
+    const names = new Map([[artifactKey(CANVAS), 'Jira import design']]);
+    const list = [row(CANVAS), row(FIGMA, { name: 'Own' })];
+    expect(borrowArtifactNames(list, names)).toEqual([row(CANVAS, { name: 'Jira import design', name_from: 'borrowed' }), row(FIGMA, { name: 'Own' })]);
+    const named = [row(FIGMA, { name: 'Own' })];
+    expect(borrowArtifactNames(named, names)).toBe(named);
+  });
 });
 
 describe('applyArtifactChanges: nothing to do', () => {
@@ -211,6 +358,17 @@ describe('parseStoredArtifacts', () => {
       { url: 'ftp://example.org/x' },
     ]);
     expect(parseStoredArtifacts(raw)).toEqual([{ url: FIGMA, name: 'A', source: 'agent', added_at: NOW }]);
+  });
+
+  it('reads a publish row and where its name came from, and drops a mark on a nameless row', () => {
+    const raw = JSON.stringify([
+      { url: FIGMA, name: 'Title', name_from: 'publish', source: 'publish', added_at: NOW },
+      { url: MIRO, name: null, name_from: 'borrowed', source: 'detected', added_at: NOW },
+    ]);
+    expect(parseStoredArtifacts(raw)).toEqual([
+      { url: FIGMA, name: 'Title', name_from: 'publish', source: 'publish', added_at: NOW },
+      { url: MIRO, name: null, source: 'detected', added_at: NOW },
+    ]);
   });
 
   it('defaults a bad source to user, a bad or empty name to null, and a missing time to empty', () => {

@@ -8,7 +8,7 @@
  */
 
 import { artifactKey, artifactPlatformOf, parseArtifactUrl } from '../../../shared/artifact-platforms';
-import { artifactDisplayName, MAX_ARTIFACT_URL_LENGTH, MAX_TASK_ARTIFACTS } from '../../../shared/task-artifacts';
+import { artifactDisplayName, cleanArtifactName, MAX_ARTIFACT_URL_LENGTH, MAX_TASK_ARTIFACTS } from '../../../shared/task-artifacts';
 import type { TaskArtifact, TaskArtifactInput } from '../../../shared/types';
 
 const SHAPE_HINT = 'Send a list such as [{ "url": "https://www.figma.com/design/abc/Checkout", "name": "Checkout flow" }]; "name" is optional.';
@@ -56,6 +56,60 @@ export function parseArtifactUrls(value: unknown, parameter: string): string[] |
   return (value as string[]).map((entry) => entry.trim()).filter((entry) => entry !== '');
 }
 
+const RENAME_HINT = 'Send a list such as [{ "url": "https://www.figma.com/design/abc/Checkout", "name": "Checkout flow" }]; a null or empty "name" clears it.';
+
+/** The renames, null when the parameter was not sent, or an error to return. An empty name clears. */
+export function parseArtifactRenames(value: unknown, parameter: string): Array<{ url: string; name: string | null }> | { error: string } | null {
+  if (value === null || value === undefined) return null;
+  if (!Array.isArray(value)) return { error: `${parameter} must be a list. ${RENAME_HINT}` };
+  if (value.length > MAX_TASK_ARTIFACTS) {
+    return { error: `${parameter} holds ${value.length} links; a task keeps at most ${MAX_TASK_ARTIFACTS}.` };
+  }
+  const renames: Array<{ url: string; name: string | null }> = [];
+  for (const entry of value) {
+    if (typeof entry !== 'object' || entry === null) return { error: `${parameter}: each entry needs a "url" and a "name". ${RENAME_HINT}` };
+    const { url, name } = entry as { url?: unknown; name?: unknown };
+    if (typeof url !== 'string' || url.trim() === '') return { error: `${parameter}: each entry needs a "url". ${RENAME_HINT}` };
+    if (name === undefined || (name !== null && typeof name !== 'string')) {
+      return { error: `${parameter}: each entry needs a "name", text or null. ${RENAME_HINT}` };
+    }
+    renames.push({ url: url.trim(), name: typeof name === 'string' && name.trim() !== '' ? name : null });
+  }
+  return renames;
+}
+
+/**
+ * One line per added link the task already held, saying what it is called,
+ * so an agent learns its publish was already linked instead of reporting a
+ * rename that did not happen. Read off the task before the write. A link whose
+ * empty name the add fills is an ordinary change and gets no line, and so does
+ * a link `remove` takes off first, since the add then puts it back new.
+ */
+export function alreadyLinkedNotes(
+  artifacts: readonly TaskArtifact[],
+  add: readonly TaskArtifactInput[],
+  remove: readonly string[] = [],
+): string[] {
+  const removedKeys = new Set(remove.map((url) => artifactKey(url)));
+  const held = new Map(artifacts
+    .map((artifact) => [artifactKey(artifact.url), artifact] as const)
+    .filter(([key]) => !removedKeys.has(key)));
+  const noted = new Set<string>();
+  const notes: string[] = [];
+  for (const entry of add) {
+    const key = artifactKey(entry.url);
+    const row = held.get(key);
+    if (row === undefined || noted.has(key)) continue;
+    const sentName = cleanArtifactName(entry.name);
+    if (row.name === null && sentName !== null) continue;
+    noted.add(key);
+    const kept = row.name !== null && sentName !== null && sentName !== row.name;
+    notes.push(`- ${entry.url} was already on the task as "${artifactDisplayName(row)}"`
+      + (kept ? '; that name was kept. Use renameArtifacts to change it.' : '.'));
+  }
+  return notes;
+}
+
 /**
  * The links in `urls` the task does not hold, so a removal that names nothing
  * is said and not silently ignored. Matched the way the repository matches
@@ -90,6 +144,7 @@ export function artifactRoomRefusal(
 const SOURCE_TEXT: Record<TaskArtifact['source'], string> = {
   user: 'added by the user',
   agent: 'added by an agent',
+  publish: 'published by an agent',
   detected: 'detected',
 };
 

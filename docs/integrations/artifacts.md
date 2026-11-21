@@ -7,6 +7,7 @@ sources:
   - resource: src/shared/artifact-platforms.ts
   - resource: src/shared/task-artifacts.ts
   - resource: src/main/artifacts/artifact-linking.ts
+  - resource: src/main/db/repositories/task-repository.ts
   - resource: src/main/artifacts/artifact-detection.ts
   - resource: src/main/artifacts/artifact-domain-report.ts
   - resource: src/main/agent/commands/artifact-params.ts
@@ -28,7 +29,8 @@ card, in its window's header and on a completed task's strip, and every agent th
 receives it in its opening message.
 
 An artifact is a link and nothing more. Kangentic stores the URL, an optional name, who added it
-and when (`TaskArtifact`, in the `tasks.artifacts` JSON column). The platform, its logo and its
+and when, plus `name_from` when the name is a publish title or borrowed from another task
+(`TaskArtifact`, in the `tasks.artifacts` JSON column). The platform, its logo and its
 display name are read from the URL each time, so a platform added in a later release lights up
 links saved before it.
 
@@ -37,8 +39,8 @@ links saved before it.
 | Source | Recorded as | What it adds |
 |---|---|---|
 | The task's edit form, under Pull Request | `user` | Any http or https link |
-| An agent over MCP (`kangentic_create_task` `artifacts`, `kangentic_update_task` `addArtifacts` and `removeArtifacts`) | `agent` | Any http or https link |
-| An agent's publish (Claude's Artifact tool) | `agent` | The published link, when it is a recognised platform |
+| An agent over MCP (`kangentic_create_task` `artifacts`, `kangentic_update_task` `addArtifacts`, `removeArtifacts` and `renameArtifacts`) | `agent` | Any http or https link |
+| An agent's publish (Claude's Artifact tool) | `publish` | The published link, when it is a recognised platform |
 | The task description | `detected` | Recognised links, documents included |
 | The agent's own messages | `detected` | Recognised links, documents left out |
 | Terminal output, only for an agent with no transcript reader | `detected` | Recognised links, documents left out |
@@ -49,11 +51,16 @@ The rules that hold for all of them (`applyArtifactChanges` in `src/shared/task-
   `kangentic_update_task` refuse a link past that and say so. A detected link past it is left off.
 - Only an http or https link with no whitespace or control character in it is kept.
 - The same link is one row. Links are compared with `artifactKey`: host case, `www.` and a
-  trailing slash do not matter, the query and the fragment do, since for Figma they name the frame
-  and for Excalidraw, draw.io and Mermaid the fragment is the document.
+  trailing slash do not matter, and the query does, since for Figma it names the frame. The
+  fragment counts too, because for Excalidraw, draw.io and Mermaid it is the document. A platform
+  whose fragment only points inside the page sets `fragmentIsAnchor`, and its fragment is left out
+  of the key. Claude is the one that does: a canvas links each board as `#page-...` or
+  `#artboard-...`, and every board of one canvas is one row.
+- Adding a link the task already holds never moves it and never takes its name away (see
+  [Names](#names)).
 - A link someone removes is dismissed, and detection never adds it back. A person or an agent
-  adding it by hand does. A task remembers its newest 200 removed links, and they move with it to
-  another project.
+  adding it by hand does. Dismissed links are compared by key too. A task remembers its newest 200
+  removed links, and they move with it to another project.
 - A detected link is written without bumping the task's `updated_at`, so an agent publishing
   mid-run does not reorder the board. An edit a person or an agent asks for is an update like any
   other.
@@ -162,12 +169,41 @@ no sample link in the test or no mention in this doc.
 
 ## Names
 
-An artifact shows the first of these that exists (`artifactDisplayName`): the name a person or an
-agent gave it, the publish's title, a name read from the link (Figma's file name, a Notion,
-Whimsical or Substack slug, a GitHub issue, pull request or discussion as `owner/repo #12`, a Jira
-key), then the link cut down to host and
+An artifact shows the first of these that exists (`artifactDisplayName`): its stored name, then a
+name read from the link (Figma's file name, a Notion, Whimsical or Substack slug, a GitHub issue,
+pull request or discussion as `owner/repo #12`, a Jira key), then the link cut down to host and
 path. Two links that share a name, such as two frames of one Figma file, are told apart in a list:
 the second adds its `node-id`, or its place (`listArtifacts`).
+
+The stored name comes from one of three places, and the row records the last two in `name_from`:
+
+- **A chosen name.** A person typed it in the edit form, or an agent set it with `name` on an add
+  or with `renameArtifacts`. It carries no `name_from`, and so does every name stored before the
+  field existed.
+- **A publish title** (`name_from: 'publish'`), from the publish that linked the page.
+- **A borrowed name** (`name_from: 'borrowed'`). A link that arrives with no name, from any source,
+  takes the name another task in the project already gives it (`TaskRepository.withBorrowedNames`).
+  The oldest task that named it wins. So a canvas one task calls "Jira import design" is not a bare
+  link on the next task that mentions it.
+
+What an add does to a link the task already holds, by source (`applyArtifactChanges`):
+
+| Source | An empty name | A name the row already has |
+|---|---|---|
+| `user` (the edit form) | Filled | Replaced, and becomes a chosen name |
+| `publish` | Filled | Replaced only when it was a publish title or borrowed |
+| `agent` (an MCP add) | Filled | Kept |
+| `detected` | Filled | Kept |
+
+So a page an agent republishes under a new title takes that title, but a name a person typed
+outlives every later publish. An agent's MCP re-add of its own publish leaves the title alone, and
+`kangentic_update_task` tells the agent what the link is already called. A rename (the edit form,
+`renameArtifacts`) always applies and makes the name a chosen one.
+
+Rows stored before these rules were folded once per database by a migration
+(`foldStoredArtifacts`, flag `artifacts_folded_at` in `schema_meta`). Each Claude canvas's deep-link
+rows became its first row, named by the first name in the group, dismissed links were re-keyed, and
+nameless rows borrowed the project's name for their link.
 
 ## Where it shows
 

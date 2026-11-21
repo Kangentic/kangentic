@@ -158,9 +158,10 @@ pick is stored as given and following the columns is stored as their value. A co
 is kept as it was, so each task keeps the pick it had. Leaving the workflow clears it with the
 other workflow columns, and a value this build does not know reads as NULL.
 
-`artifacts` is the task's artifact list, a JSON array of `{ url, name, source, added_at }` in the
-order added (`TaskArtifact`; see [Artifacts](../integrations/artifacts.md)). `source` is `user`,
-`agent` or `detected`. `dismissed_artifacts` is a JSON array of the links a person or an agent took
+`artifacts` is the task's artifact list, a JSON array of `{ url, name, source, name_from?, added_at }`
+in the order added (`TaskArtifact`; see [Artifacts](../integrations/artifacts.md)). `source` is
+`user`, `agent`, `publish` or `detected`. `name_from` is `publish` or `borrowed` for a name nobody
+chose, and absent for a chosen one. `dismissed_artifacts` is a JSON array of the links a person or an agent took
 off the task, as `artifactKey` strings, so detection never adds one back. Neither is in `update()`'s
 column list: both are written by `writeArtifactChanges`, one read-merge-write inside the caller's
 transaction. `TaskRepository.applyArtifactChanges` (detection) leaves `updated_at` alone, so a link
@@ -247,7 +248,7 @@ Key/value flags for data migrations that cannot answer "have I run" from the dat
 | key | TEXT | PRIMARY KEY | |
 | value | TEXT | NOT NULL | |
 
-Six keys so far. `folder_owner_token` is this database's half of the ownership proof, mirrored in `.kangentic/project-owner.json` and written only when the database claims the folder (see [On Project Open](../architecture/worktrees/worktree-lifecycle.md#on-project-open)). The automations migration writes `automations_migrated_at`. That migration is one-way and deliberately
+Seven keys so far. `folder_owner_token` is this database's half of the ownership proof, mirrored in `.kangentic/project-owner.json` and written only when the database claims the folder (see [On Project Open](../architecture/worktrees/worktree-lifecycle.md#on-project-open)). The automations migration writes `automations_migrated_at`. That migration is one-way and deliberately
 leaves its source rows in `actions` and `swimlane_transitions` for an older build to read, so the
 presence of converted rows proves nothing: a board could legitimately have automations and no
 transitions, or both.
@@ -273,6 +274,12 @@ task's workflow can live in another database, so it also releases such a task on
 `!` off every saved `column_automations.final_line` (migration 107 in
 [migrations.md](migrations.md)). A leading `!` was ignored as punctuation before; after this key is
 written it is one a user typed, meaning not, and a repeat run would strip it.
+
+`artifacts_folded_at` marks the one run of `foldStoredArtifacts` (migration 113 in
+[migrations.md](migrations.md)), which folds the artifact rows stored before a Claude link's fragment
+stopped being part of its `artifactKey`. It also re-keys `dismissed_artifacts` and gives a nameless
+row the name another task in the project gives the link. A later change to the key rules gets its
+own key, so the fold does not rerun.
 
 Distinct from `project_meta`, which holds live per-project state (the `display_id` high-water
 mark) rather than migration bookkeeping.

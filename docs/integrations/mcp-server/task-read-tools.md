@@ -45,7 +45,7 @@ filtered and count-free and cannot answer that.
 
 ## kangentic_find_task
 
-Find a task or backlog item by display ID, UUID, branch name, title keyword, or PR number. Returns matching board tasks (with full `branch_name`, `worktree_path`, PR info) and any matching backlog items. A task with [artifacts](../artifacts.md) prints an Artifacts block under its description: each link with its name, its platform, and who added it (the user, an agent, or detected).
+Find a task or backlog item by display ID, UUID, branch name, title keyword, or PR number. Returns matching board tasks (with full `branch_name`, `worktree_path`, PR info) and any matching backlog items. A task with [artifacts](../artifacts.md) prints an Artifacts block under its description: each link with its name, its platform, and who added it (the user, an agent, a publish, or detection).
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
