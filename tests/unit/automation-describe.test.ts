@@ -1,8 +1,8 @@
 /**
  * The row grammar every automation shares (`src/shared/automation-describe.ts`):
  * line two is the verb and the type's one required value, with no timing and
- * nothing optional, and every option that is on is a mark beside the name, in
- * the editor's card order.
+ * nothing optional, and every option that is on is a mark beside the name, the
+ * guards first.
  *
  * The UI tier (`edit-automation-guards.spec.ts`) checks the marks render; this
  * file pins which rows earn which mark, including the cases that must earn none.
@@ -104,7 +104,7 @@ describe('the row sentence', () => {
 });
 
 describe('the marks beside a row name', () => {
-  it('reads in the editor card order: Condition, Frequency, then the action', () => {
+  it('puts the guards first: Condition, Frequency, then the action', () => {
     const marks = marksOf('move_to_column', 'turn_end', { message: '{{agentReply}}' }, { condition: 'The review is clean', max_runs: 3 });
     expect(marks.map((mark) => mark.kind)).toEqual(['condition', 'frequency', 'message']);
     expect(marks.map((mark) => mark.label)).toEqual([
