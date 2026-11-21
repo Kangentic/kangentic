@@ -340,7 +340,9 @@ const GROUP_BODY_STYLE: React.CSSProperties = {
  * tweens through a 0fr/1fr grid row and the chevron turns with it
  * (`.card-group-body` and `.card-group-chevron` in index.css, which honor the
  * Animations setting and the web build's reduced motion), and the body is hidden once shut,
- * so a closed group's items leave the tab order.
+ * so a closed group's items leave the tab order. The Edit automation dialog's
+ * `RuleCard` draws its body the same way: a change to the style or the inner
+ * wrapper here belongs there too.
  */
 export function CardGroupTile({ label, count, open, onToggle, children, testId }: CardGroupTileProps) {
   const bodyId = useId();
