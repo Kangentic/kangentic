@@ -982,9 +982,10 @@
   transition-duration: 0s;
 }
 
-/* A settings group tile's open and close (`CardGroupTile`). The body's one
-   grid row tweens between 0fr and 1fr, so it sizes to its content with no
-   measured height. Visibility tweens with it: it stays visible for the whole
+/* A settings group tile's open and close (`CardGroupTile`), and the Edit
+   automation dialog's sections (`RuleCard`), which share it so the two
+   accordions move on one clock. The body's one grid row tweens between 0fr
+   and 1fr, so it sizes to its content with no measured height. Visibility tweens with it: it stays visible for the whole
    of a close and turns on at the start of an open, so a closed body leaves the
    tab order and the accessibility tree once it has shut. */
 .card-group-body {

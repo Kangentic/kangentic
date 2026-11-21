@@ -43,11 +43,13 @@ export type { AutomationTemplatePickerProps };
 
 /**
  * The ONE place an automation is edited: a Name, then one section for each
- * part of the rule, Trigger, Action, Condition and Frequency, as a
+ * part of the rule, Trigger, Condition, Action and Frequency, as a
  * one-column accordion with one section open at a time (#872, canvas board
- * F1b). A closed Trigger or Action shows its value; Condition and Frequency
- * keep their switch and a static description, since the switch says whether
- * each is on and opening the section shows what it holds.
+ * F1b). The order is the order the rule is said in (#1151): when it runs,
+ * whether it applies, what it does, how often. Action still opens first. A
+ * closed Trigger or Action shows its value; Condition and Frequency keep their
+ * switch and a static description, since the switch says whether each is on
+ * and opening the section shows what it holds.
  *
  * Everything type-specific is rendered from the manifest, so a new automation
  * type needs no change here at all.
@@ -66,7 +68,7 @@ const SLOW_TYPES = new Set<AutomationType>(['run_script', 'webhook']);
 const PROSE_MAX_ROWS = 8;
 
 /** The accordion's sections, in the order the dialog stacks them. */
-type SectionId = 'trigger' | 'action' | 'condition' | 'frequency';
+type SectionId = 'trigger' | 'condition' | 'action' | 'frequency';
 
 /**
  * Cached until the catalog changes, not an inline literal: `SegmentedControl`
@@ -397,6 +399,32 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
           )}
         </RuleCard>
 
+        {/* Above the Action it gates, so the reader sees whether the action is
+            conditional before reading what it does (#1151). */}
+        <RuleCard
+          testId="edit-automation-card-condition"
+          icon={<Funnel size={16} />}
+          title={t`Condition`}
+          description={t`Runs only when all match.`}
+          checked={conditionOn}
+          onToggle={setConditionOn}
+          switchLabel={t`Condition`}
+          {...sectionProps('condition')}
+        >
+          {/* Off, the lines dim and stay as written; Add condition stays live,
+              and adding a line switches the Condition on. */}
+          <ConditionList
+            lines={conditionLines}
+            onChange={changeConditionLines}
+            linesOff={!conditionOn}
+            trigger={local.trigger}
+            reportsUserMessages={props.reportsUserMessages}
+            automationAgentReady={props.automationAgentReady}
+            onOpenAutomationSettings={props.onOpenAutomationSettings}
+            templatePicker={props.templatePicker}
+          />
+        </RuleCard>
+
         <RuleCard
           testId="edit-automation-card-action"
           // The chosen type's own icon (a speech bubble for Send message), so
@@ -455,30 +483,6 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
         </RuleCard>
 
         <RuleCard
-          testId="edit-automation-card-condition"
-          icon={<Funnel size={16} />}
-          title={t`Condition`}
-          description={t`Runs only when all match.`}
-          checked={conditionOn}
-          onToggle={setConditionOn}
-          switchLabel={t`Condition`}
-          {...sectionProps('condition')}
-        >
-          {/* Off, the lines dim and stay as written; Add condition stays live,
-              and adding a line switches the Condition on. */}
-          <ConditionList
-            lines={conditionLines}
-            onChange={changeConditionLines}
-            linesOff={!conditionOn}
-            trigger={local.trigger}
-            reportsUserMessages={props.reportsUserMessages}
-            automationAgentReady={props.automationAgentReady}
-            onOpenAutomationSettings={props.onOpenAutomationSettings}
-            templatePicker={props.templatePicker}
-          />
-        </RuleCard>
-
-        <RuleCard
           testId="edit-automation-card-frequency"
           icon={<Repeat size={16} />}
           title={t`Frequency`}
@@ -520,14 +524,26 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
 
 /**
  * One section of the rule: a header (icon, title, one line, the switch alone on
- * the right where the section has one) over its fields, shown only while the
- * section is open. A click on the header opens the section; the switch's own
- * click is the switch's.
+ * the right where the section has one) over its fields.
  *
- * The header's geometry is `settings-card.tsx`'s (a tile-shaped header target,
- * the icon in a 16px column, the switch on the right edge), reused by choice:
- * `settings-card-design.md` scopes out dialogs, but one tile shape in Settings
- * and in this dialog reads as one design.
+ * Closed, the WHOLE card is the click target and its hover tints it border to
+ * border (#1151): the tint used to fill an inset box, which left a gap to the
+ * border and matched the open body's fill, so a hovered card looked half open.
+ * Open, the header neither tints nor shows a hand, because a click on it would
+ * open what is already open. The switch's own click is the switch's.
+ *
+ * The body stays mounted and tweens through a 0fr/1fr grid row, the chevron
+ * turning on the same clock: `CardGroupTile`'s mechanism and classes
+ * (`.card-group-body`, `.card-group-chevron` in index.css), so the Animations
+ * setting and reduced motion already switch it off, and a closed body is
+ * hidden once shut, leaving the tab order. Opening one section closes another
+ * on the same 200 ms. The first paint does not animate: the section the dialog
+ * opens with is already open.
+ *
+ * The header's geometry is `settings-card.tsx`'s (the icon in a 16px column,
+ * the switch on the right edge), reused by choice: `settings-card-design.md`
+ * scopes out dialogs, but one tile shape in Settings and in this dialog reads
+ * as one design.
  */
 function RuleCard({
   testId, icon, title, description, checked, onToggle, switchLabel, open, onOpen, children,
@@ -547,16 +563,28 @@ function RuleCard({
 }) {
   const hasSwitch = checked !== undefined;
   const bodyId = `${testId}-body`;
+  const bodyRef = useRef<HTMLDivElement>(null);
   return (
-    <section data-testid={testId} data-open={open ? 'true' : 'false'} aria-label={title} className="rounded-lg border border-edge">
+    <section
+      data-testid={testId}
+      data-open={open ? 'true' : 'false'}
+      aria-label={title}
+      onClick={open ? undefined : (event) => {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        // A click in a portaled menu bubbles here through React, though the
+        // DOM puts it outside the card, and a click in a body still sliding
+        // shut belongs to that body. Neither opens the section again.
+        if (!event.currentTarget.contains(target) || bodyRef.current?.contains(target)) return;
+        if (target.closest('[role="switch"], a')) return;
+        onOpen();
+      }}
+      className={`rounded-lg border border-edge transition-colors ${
+        open ? '' : 'cursor-pointer select-none hover:bg-surface-hover/70'
+      }`}
+    >
       <div className="px-3 py-1.5">
-        <div
-          onClick={(event) => {
-            if (event.target instanceof Element && event.target.closest('[role="switch"], a')) return;
-            onOpen();
-          }}
-          className="flex cursor-pointer select-none items-center gap-3 rounded-md px-4 py-2 transition-colors hover:bg-surface-hover/40"
-        >
+        <div className="flex items-center gap-3 px-4 py-2">
           <span className="flex w-4 flex-shrink-0 justify-center text-fg-muted" aria-hidden="true">
             {icon}
           </span>
@@ -565,7 +593,7 @@ function RuleCard({
             aria-expanded={open}
             aria-controls={bodyId}
             data-testid={`${testId}-header`}
-            className="min-w-0 flex-1 cursor-pointer text-left focus:outline-none focus-visible:underline"
+            className={`min-w-0 flex-1 text-left focus:outline-none focus-visible:underline ${open ? 'cursor-default' : 'cursor-pointer'}`}
           >
             <span className="block text-sm font-semibold text-fg">{title}</span>
             <span data-testid={`${testId}-description`} className="mt-0.5 block truncate text-xs text-fg-tertiary">{description}</span>
@@ -583,17 +611,25 @@ function RuleCard({
           <ChevronDown
             size={16}
             aria-hidden="true"
-            className={`flex-shrink-0 text-fg-faint transition-transform ${open ? 'rotate-180' : ''}`}
+            className={`card-group-chevron flex-shrink-0 text-fg-faint ${open ? 'rotate-180' : ''}`}
           />
         </div>
       </div>
-      {open && (
-        <div id={bodyId} data-testid={bodyId} className="px-3 pb-3">
-          <div className="flex flex-col gap-3 rounded-md bg-surface-hover/40 px-4 py-3">
-            {children}
+      <div
+        ref={bodyRef}
+        id={bodyId}
+        data-testid={bodyId}
+        className="card-group-body"
+        style={{ gridTemplateRows: open ? '1fr' : '0fr', visibility: open ? 'visible' : 'hidden' }}
+      >
+        <div className="min-h-0 overflow-hidden">
+          <div className="px-3 pb-3">
+            <div className="flex flex-col gap-3 rounded-md bg-surface-hover/40 px-4 py-3">
+              {children}
+            </div>
           </div>
         </div>
-      )}
+      </div>
     </section>
   );
 }

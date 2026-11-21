@@ -226,6 +226,9 @@ async function openTriggerSection(): Promise<void> {
     await trigger.locator('[data-testid="edit-automation-card-trigger-header"]').click();
   }
   await expect(trigger).toHaveAttribute('data-open', 'true');
+  // The body slides open and turns visible on the tween's first frame, so wait
+  // for it before focusing a control inside (#1151).
+  await expect(trigger.locator('[data-testid="edit-automation-card-trigger-body"]')).toBeVisible();
 }
 
 /**

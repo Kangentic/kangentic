@@ -83,11 +83,12 @@ column, to copy. A copy is independent of the original. A type the column cannot
 disabled, with the reason.
 
 **Editing one.** Clicking the row opens a dialog with the name, then one section for each part of
-the rule, one open at a time: **Trigger** (when it runs), **Action** (the type and its own fields),
-**Condition** and **Frequency**. It opens on Action. A closed Trigger or Action shows its value; a
-closed Condition or Frequency keeps its switch, which says whether it is on. The pencil opens the
-dialog too, for a pointer that is already over it; the switch and the trash keep their own jobs. A
-name is required and must be unique on its column. Every text field takes template variables:
+the rule, in the order the rule reads: **Trigger** (when it runs), **Condition** (whether it
+applies), **Action** (the type and its own fields) and **Frequency** (how often). One is open at a
+time, and opening another slides the open one shut (instantly with Animations off). It opens on
+Action. A closed Trigger or Action shows its value; a closed Condition or Frequency keeps its
+switch, which says whether it is on. The pencil opens the dialog too, for a pointer that is already
+over it; the switch and the trash keep their own jobs. A name is required and must be unique on its column. Every text field takes template variables:
 type `{{` to pick one, or use the braces button joined to the field's right edge. A known variable
 is highlighted; an unknown one is flagged and sent as written.
 

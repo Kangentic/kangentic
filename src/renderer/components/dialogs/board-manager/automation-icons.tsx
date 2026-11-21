@@ -74,7 +74,7 @@ const MARK_ICONS: Record<AutomationRowMarkKind, ReactElement> = {
 
 /**
  * The marks after a row's name (`describeAutomationMarks`): every option that
- * is on, in the editor's card order, one tone for all of them, each tip naming
+ * is on, the guards first and then the action's own, one tone for all of them, each tip naming
  * its card and value. Shared by the column panel's rows and the Add automation
  * picker's copy rows, so a row reads the same in both. The marks never shrink,
  * so a long name truncates before they do. The tip keeps a multi-line value's
