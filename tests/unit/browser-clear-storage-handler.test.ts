@@ -158,6 +158,9 @@ vi.mock('../../src/main/browser/browser-pane-registry', () => ({
     register: fakeRegistryRegister,
     unregister: fakeRegistryUnregister,
     unregisterByWebContentsId: fakeRegistryUnregisterByWebContentsId,
+    // BROWSER_PANE_USER_CLOSE looks up the guest's owner to clear the reason the
+    // agent gave (decision 46) before it retires the guest.
+    ownerKeyForWebContents: vi.fn(() => null),
     setVisibility: fakeRegistrySetVisibility,
     // registerBrowserHandlers installs the lane hand-off, which subscribes to
     // both registry callbacks. Omitting them makes every test in this file
