@@ -300,7 +300,8 @@ export function TaskDetailHeader({
     <div ref={headerRef} className="flex items-center gap-3 px-4 h-[54px] min-w-0">
       {/* Leading cluster: pause / id. flex-shrink-0 so it never compresses, and
           so it measures as one unit for the overflow calc. Priority is not here:
-          it shows in the description's pill row, ahead of the labels, as on the card. */}
+          it shows in the description's pill row, ahead of the labels. A card draws
+          it in its title row instead (#1146). */}
       <div ref={leadingRef} className="flex items-center gap-3 flex-shrink-0">
       {/* Pause / Resume toggle */}
       {canToggle && (
