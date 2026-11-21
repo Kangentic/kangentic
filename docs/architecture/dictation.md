@@ -19,6 +19,8 @@ sources:
   - resource: src/main/transcription/models/model-registry.ts
   - resource: src/shared/dictation-presets.ts
     title: DICTATION_PRESETS, resolveDictationSlots
+  - resource: src/shared/pop-out.ts
+    title: DICTATION_CHANNELS
   - resource: src/main/transcription/dictation-session-owners.ts
   - resource: src/renderer/components/dictation/WindowDictation.tsx
   - resource: src/renderer/components/dictation/DictationHost.tsx
@@ -120,7 +122,10 @@ One engine serves every window, so a press in one window while another window's 
 recording or finalizing is refused, and the chip says "Finishing in another window". A window is
 never refused by its own session: its hook overlaps starts when a release beats the start. A window
 that is destroyed, crashes or loads a new page mid-hold cannot cancel its own session, so main
-cancels it, or the engine would stay pinned and every other window's press refused.
+cancels it, or the engine would stay pinned and every other window's press refused. The worker ends
+a session after ten minutes and that expiry never reaches main, so a session older than eleven
+minutes (`OTHER_WINDOW_HOLD_BOUND_MS`) stops refusing other windows. It still sends its text to its
+own window.
 
 Mouse back and forward navigation lives beside it in `useBrowserMouseNavigation`, mounted in every
 window through `WindowDictation`, whether dictation is on or off. A button push-to-talk holds is
