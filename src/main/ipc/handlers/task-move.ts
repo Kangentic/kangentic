@@ -909,16 +909,31 @@ export async function handleTaskMove(
        * racing that burst.
        *
        * No `startAgent`: on the keep-alive branches the session is live by
-       * construction, and on the suspending one the column cannot hold a row
-       * that needs an agent (`canColumnRun` blocks `send_message` wherever
-       * "Start an agent here" is off). For a paused agent (`agentPaused`) a row
-       * that needs it is skipped with that reason, and runs at its Resume.
+       * construction, and on the suspending ones (a column with "Start an agent
+       * here" off, To Do's reset, Done's archive) the column cannot hold a row
+       * that needs an agent: `canColumnRun` blocks `send_message` wherever
+       * "Start an agent here" is off, and in To Do and Done runs only the types
+       * that need neither an agent nor a worktree (`systemColumnEnterRefusal`).
+       * For a paused agent (`agentPaused`) a row that needs it is skipped with
+       * that reason, and runs at its Resume.
        */
       const armEnterAutomations = (deliveredMessageId: string | null, agentPaused = false): void => {
         runEnterAutomations = async (): Promise<void> => {
         if (!toLane) return;
         try {
+          // A newer move of this task aborted this one before its group began.
+          // That move owns the task now: the group would read the task state
+          // the newer move is changing, and its first row would throw the abort
+          // only to log it as a failure. Inside the try, so the finally still
+          // clears the card's label.
+          if (signal.aborted) return;
           const enterRepos = getProjectRepos(context, resolvedProjectId);
+          // The task as the move left it, not the Phase 1 snapshot: a reset,
+          // a suspend or an archive ran since, and the group's template values
+          // and a script's folder read the worktree, branch, PR and session
+          // from it. After To Do's reset the task has no worktree, branch or PR
+          // link; after Done's archive it keeps its branch and PR, not its worktree.
+          const enterTask = enterRepos.tasks.getById(task.id) ?? task;
           const enterEngine = createTransitionEngine(
             context,
             enterRepos.automations,
@@ -929,7 +944,7 @@ export async function handleTaskMove(
             resolvedProjectId,
             resolvedProjectPath,
           );
-          const enterSummary = await enterEngine.executeTransition(task, toLane, 'enter', {
+          const enterSummary = await enterEngine.executeTransition(enterTask, toLane, 'enter', {
             signal,
             alreadyDelivered: deliveredMessageId ? new Set([deliveredMessageId]) : undefined,
             agentPaused,
@@ -963,15 +978,16 @@ export async function handleTaskMove(
             fromColumn: fromLane ?? null,
             toColumn: toLane,
           });
-          reportAutomationFailures(context, enterSummary, task, resolvedProjectId, 'enter');
+          reportAutomationFailures(context, enterSummary, enterTask, resolvedProjectId, 'enter');
         } catch (enterError) {
           // The LIST could not run at all. The move is already committed and
           // the session is untouched, so it goes on, as on exit.
           console.error(`[TASK_MOVE] Enter automations failed for task ${input.taskId.slice(0, 8)}:`, enterError);
         } finally {
-          // This group runs on the WARM path only, which by definition has no
-          // spawn behind it, so Phase 3's clear never fires for it. Without
-          // this the card kept the last row's name until the TTL.
+          // This group runs only on moves Phase 1 finishes (the warm paths, a
+          // park, To Do and Done), which by definition have no spawn behind
+          // them, so Phase 3's clear never fires for it. Without this the card
+          // kept the last row's name until the TTL.
           clearSpawnProgress(context.mainWindow, task.id);
         }
         };
@@ -1062,6 +1078,9 @@ export async function handleTaskMove(
         if (resolvedProjectPath) {
           WorktreeManager.scheduleBackgroundPrune(resolvedProjectPath);
         }
+        // To Do's enter rows run after the reset, outside the lock. Only the
+        // types that need no agent and no worktree can (#1141).
+        armEnterAutomations(null);
         return null;
       }
 
@@ -1164,6 +1183,10 @@ export async function handleTaskMove(
           tasks.setWorktreeSkipReason(task.id, null);
         }
 
+        // Done's enter rows run after the suspend and the worktree set-aside,
+        // outside the lock, on the archived task. Only the types that need no
+        // agent and no worktree can (#1141).
+        armEnterAutomations(null);
         // Archive already happened synchronously right after tasks.move above.
         return null;
       }
@@ -1202,12 +1225,13 @@ export async function handleTaskMove(
           tasks.update({ id: task.id, session_id: null });
           console.log(`[TASK_MOVE] Suspended session for task ${task.id.slice(0, 8)} (target column has auto_spawn=false)`);
         }
-        // A non-spawning column still runs its enter rows. Only `send_message`
-        // needs the agent, and `canColumnRun` already blocks that type wherever
-        // "Start an agent here" is off, so nothing here can try to talk to the
-        // session this branch just suspended. A notify, a script or a webhook
-        // on a column the user deliberately keeps agent-free is a real and
-        // legal thing to build, and it silently never fired.
+        // A non-spawning column still runs its enter rows, as To Do and Done
+        // do above. Only `send_message` needs the agent, and `canColumnRun`
+        // already blocks that type wherever "Start an agent here" is off, so
+        // nothing here can try to talk to the session this branch just
+        // suspended. A notify, a script or a webhook on a column the user
+        // deliberately keeps agent-free is a real and legal thing to build,
+        // and it silently never fired.
         armEnterAutomations(null);
         return null;
       }

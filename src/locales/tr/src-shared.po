@@ -134,6 +134,10 @@ msgstr ""
 msgid "A task cannot wait for itself."
 msgstr "Bir görev kendini bekleyemez."
 
+#: src/shared/automation-manifest.ts
+msgid "A task in {columnName} has no worktree to run in."
+msgstr ""
+
 #: src/shared/workflow-refusals.ts
 #, fuzzy
 msgid "A task visits at least one column."
@@ -723,6 +727,10 @@ msgstr "Herhangi bir projedeki sonraki terminal"
 msgid "Next terminal in this project"
 msgstr "Bu projedeki sonraki terminal"
 
+#: src/shared/automation-manifest.ts
+msgid "No agent runs in {columnName}."
+msgstr ""
+
 #: src/shared/automation-describe.ts
 #, fuzzy
 msgid "No message yet."
@@ -757,11 +765,6 @@ msgstr "Bu tetikleyicide sunulmuyor."
 #, fuzzy
 msgid "Nothing runs at a turn end in {column}."
 msgstr "{column} sütununda tur sonunda hiçbir şey çalışmaz."
-
-#: src/shared/automation-manifest.ts
-#, fuzzy
-msgid "Nothing runs when a task enters To Do or Done."
-msgstr "Bir görev Yapılacaklar veya Tamamlandı sütununa girdiğinde hiçbir şey çalışmaz."
 
 #: src/shared/automation-describe.ts
 #, fuzzy

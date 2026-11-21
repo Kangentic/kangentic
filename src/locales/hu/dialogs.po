@@ -2176,11 +2176,6 @@ msgstr ""
 msgid "Not image data"
 msgstr "Nem képadat"
 
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
-msgid "Not offered on this trigger."
-msgstr "Ennél az eseményindítónál nem érhető el."
-
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 #, fuzzy
 msgid "not readable"
@@ -2215,13 +2210,6 @@ msgstr "Nincs újdonság itt: {baseBranch}."
 #, fuzzy
 msgid "Nothing runs at a turn end in {terminalName}."
 msgstr "A kör végén semmi sem fut itt: {terminalName}."
-
-#: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
-msgid "Nothing runs when a task enters {columnName}."
-msgstr "Semmi sem fut, amikor egy feladat ide kerül: {columnName}."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy

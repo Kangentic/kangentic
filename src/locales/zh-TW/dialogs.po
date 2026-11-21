@@ -1811,10 +1811,6 @@ msgstr ""
 msgid "Not image data"
 msgstr "非影像資料"
 
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-msgid "Not offered on this trigger."
-msgstr "此觸發條件不提供。"
-
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 msgid "not readable"
 msgstr "無法讀取"
@@ -1842,12 +1838,6 @@ msgstr "{baseBranch} 上沒有新內容。"
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Nothing runs at a turn end in {terminalName}."
 msgstr "在 {terminalName} 中，輪次結束時不會執行任何項目。"
-
-#: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#: src/renderer/components/dialogs/BoardManagerDialog.tsx
-msgid "Nothing runs when a task enters {columnName}."
-msgstr "任務進入 {columnName} 時不會執行任何項目。"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Nothing to search by"

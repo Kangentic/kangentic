@@ -38,9 +38,9 @@ When a task moves from one column to another, the IPC handler (`task:move`) chec
 
 | Priority | Condition | Action |
 |----------|-----------|--------|
-| 1 | Target is **To Do** (role=`todo`) | Drop the PR link of a task that did its own work as the move commits (`forgetPRLinkOnTodoReset`, see [PR linking](../../integrations/pull-requests/pr-linking.md#where-pr-state-is-persisted)), then kill session, reap what the task left running, remove worktree (and branch when `git.autoCleanup` is on) |
-| 2 | Target is **Done** (role=`done`) | Suspend session (resumable), reap what the task left running, archive task |
-| 2.5 | Target has `auto_spawn=false` (non-todo, non-done) | Suspend session |
+| 1 | Target is **To Do** (role=`todo`) | Drop the PR link of a task that did its own work as the move commits (`forgetPRLinkOnTodoReset`, see [PR linking](../../integrations/pull-requests/pr-linking.md#where-pr-state-is-persisted)), then kill session, reap what the task left running, remove worktree (and branch when `git.autoCleanup` is on), then run the destination's On enter group after the lock (Notify and Webhook only) |
+| 2 | Target is **Done** (role=`done`) | Suspend session (resumable), reap what the task left running, archive task, then run the destination's On enter group after the lock (Notify and Webhook only) |
+| 2.5 | Target has `auto_spawn=false` (non-todo, non-done) | Suspend session, then run the destination's On enter group after the lock |
 | 3 | Task has **active session** | A model or effort change suspends and respawns with the destination's CLI flags. A column message alone is injected into the running session. A permission-only change, or none, keeps it alive. |
 | 4 | Task has **no session** | Resume suspended session (with the column's message as the resume prompt, or typed in once the agent is ready where the resume cannot carry it) OR create worktree (if enabled) + run the destination's On enter group |
 
@@ -340,7 +340,7 @@ Two special roles affect behavior:
 | `todo` | Task moves here → session killed (not suspended), leftover processes reaped, worktree removed |
 | `done` | Task moves here → session suspended (resumable), leftover processes reaped, worktree directory removed (retried once 10 s later if the removal fails), task archived |
 
-Both roles still run their On EXIT group (in Phase 1, before the kill or the suspend), and neither runs an On enter group: the Column Manager offers only the exit group there, and `canColumnRun` blocks an enter row written by hand.
+Both roles still run their On EXIT group (in Phase 1, before the kill or the suspend). Their On enter group runs after the kill or the suspend, once the move releases the task lock, and only Notify and Webhook rows run in it, because by then no agent runs and the task has no worktree. `canColumnRun` refuses every other type there with its own reason (`systemColumnEnterRefusal`, from each type's `systemColumnEnter` in the manifest). See [Triggers](triggers.md).
 
 All other columns (including Planning, Executing, Code Review, etc.) are custom columns with no special role. Their behavior is controlled by `auto_spawn`, their automations, `permission_mode`, `plan_exit_target_id`, and `plan_approval`.
 

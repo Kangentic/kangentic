@@ -1126,9 +1126,6 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       // the `title` says which.
       const isTerminal = laneDraft.role === 'todo' || laneDraft.role === 'done';
       const terminalName = translateText(COLUMN_ROLE_NAMES[laneDraft.role === 'todo' ? 'todo' : 'done']);
-      // Named `columnName` so the On enter reason below is the same message, one
-      // ID, as the Automations pane's and the Edit automation dialog's.
-      const columnName = terminalName;
       const defaultLabel = t({ message: 'Default', context: 'board overview value' });
       const startAgentLabel = t`Start an agent here`;
       const handoffLabel = t`Hand off context when the agent changes`;
@@ -1223,11 +1220,9 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
         // counted and not named. This view answers "what happens when a task
         // moves", and an off row is visible and fixable one click away.
         //
-        // An enter row can never fire on To Do or Done, so that cell dashes
-        // there while On exit stays a real count.
-        onEnter: isTerminal
-          ? { label: '0', changed: false, applicable: false, reason: t`Nothing runs when a task enters ${columnName}.` }
-          : { label: String(counts.enter), changed: counts.enter > 0, applicable: true, reason: nameRows('enter') },
+        // To Do and Done count their enter rows too: Notify and Webhook run
+        // there, and a refused type is not counted (`canColumnRun`).
+        onEnter: { label: String(counts.enter), changed: counts.enter > 0, applicable: true, reason: nameRows('enter') },
         // No agent works in To Do or Done, so no turn ends there either; nor in
         // a column with no agent, or one whose agent reports no turn end.
         onTurnEnd: isTerminal

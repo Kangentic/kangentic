@@ -8,11 +8,13 @@ import {
   RETIRED_ACTION_TYPES,
   automationMoveTargetName,
   automationMovesTask,
+  canColumnOfferTrigger,
   canColumnRun,
   canTriggerRun,
   isAutomationType,
   isRetiredActionType,
   stableAutomationTypes,
+  systemColumnEnterRefusal,
   USER_MESSAGES_UNREPORTED_REASON,
 } from '../../src/shared/automation-manifest';
 import type { AutomationColumnFacts } from '../../src/shared/automation-manifest';
@@ -199,13 +201,85 @@ describe('automation describe()', () => {
   });
 });
 
-describe('canColumnRun', () => {
-  it('refuses an enter row on To Do and Done', () => {
-    for (const type of stableAutomationTypes()) {
-      expect(canColumnRun(type, TODO_COLUMN, 'enter').ok).toBe(false);
-      expect(canColumnRun(type, DONE_COLUMN, 'enter').ok).toBe(false);
+/**
+ * #1141: a move into To Do or Done has stopped the agent and taken the worktree
+ * away before the enter group runs, so only the types that need neither run
+ * there. The reasons are user-facing copy pinned verbatim, so a reword fails here.
+ */
+describe('canColumnRun: On task enter in To Do and Done', () => {
+  function reasonFor(type: AutomationType, column: AutomationColumnFacts): string | null {
+    const result = canColumnRun(type, column, 'enter');
+    return result.ok ? null : englishText(result.reason);
+  }
+
+  it('runs Notify and Webhook in both', () => {
+    for (const column of [TODO_COLUMN, DONE_COLUMN]) {
+      expect(reasonFor('notify', column)).toBeNull();
+      expect(reasonFor('webhook', column)).toBeNull();
     }
   });
+
+  it('refuses Send message and the legacy Start agent: no agent runs there', () => {
+    expect(reasonFor('send_message', TODO_COLUMN)).toBe('No agent runs in To Do.');
+    expect(reasonFor('send_message', DONE_COLUMN)).toBe('No agent runs in Done.');
+    expect(reasonFor('spawn_agent', DONE_COLUMN)).toBe('No agent runs in Done.');
+  });
+
+  it('refuses Run script in both: the task has no worktree there', () => {
+    expect(reasonFor('run_script', TODO_COLUMN)).toBe('A task in To Do has no worktree to run in.');
+    expect(reasonFor('run_script', DONE_COLUMN)).toBe('A task in Done has no worktree to run in.');
+  });
+
+  it('keeps Move to column on its own turn-end-only reason', () => {
+    expect(reasonFor('move_to_column', DONE_COLUMN)).toBe('Move to column runs only at a turn end.');
+  });
+
+  it('refuses every type that does not declare it runs there', () => {
+    // A new type must say so in the manifest: it is refused until it does.
+    const runs = (Object.keys(AUTOMATION_MANIFEST) as AutomationType[])
+      .filter((type) => canColumnRun(type, DONE_COLUMN, 'enter').ok)
+      .sort();
+    expect(runs).toEqual(['notify', 'webhook']);
+  });
+
+  it('leaves other columns as they were', () => {
+    // "Start an agent here is off." still names the setting where it exists.
+    expect(reasonFor('send_message', NO_AGENT_COLUMN)).toBe('Start an agent here is off.');
+    expect(reasonFor('run_script', NO_AGENT_COLUMN)).toBeNull();
+    expect(canTriggerRun(TODO_COLUMN, 'enter').ok).toBe(true);
+  });
+
+  it('refuses only on enter: a refused type still runs on exit there', () => {
+    // The refusal is about the state a move INTO the column leaves; a task
+    // leaving To Do or Done still has what it had.
+    for (const column of [TODO_COLUMN, DONE_COLUMN]) {
+      expect(systemColumnEnterRefusal('run_script', column, 'exit')).toBeNull();
+      expect(systemColumnEnterRefusal('send_message', column, 'turn_end')).toBeNull();
+      expect(canColumnRun('run_script', column, 'exit').ok).toBe(true);
+    }
+    expect(systemColumnEnterRefusal('run_script', NO_AGENT_COLUMN, 'enter')).toBeNull();
+  });
+
+  it('gives the Edit automation dialog the same reason, minus the agent setting', () => {
+    // The dialog's Trigger options read `canColumnOfferTrigger`: the system
+    // column's reason, but not "Start an agent here is off.", which the dialog
+    // shows on the row and not on the trigger.
+    const offered = canColumnOfferTrigger('send_message', DONE_COLUMN, 'enter');
+    expect(offered.ok === false && englishText(offered.reason)).toBe('No agent runs in Done.');
+    expect(canColumnOfferTrigger('send_message', NO_AGENT_COLUMN, 'enter').ok).toBe(true);
+    for (const type of Object.keys(AUTOMATION_MANIFEST) as AutomationType[]) {
+      for (const column of [TODO_COLUMN, DONE_COLUMN, AGENT_COLUMN]) {
+        for (const trigger of ['enter', 'turn_end', 'exit'] as const) {
+          const offer = canColumnOfferTrigger(type, column, trigger);
+          // Whatever the dialog disables, the engine skips for the same reason.
+          if (!offer.ok) expect(canColumnRun(type, column, trigger)).toEqual(offer);
+        }
+      }
+    }
+  });
+});
+
+describe('canColumnRun', () => {
 
   it('allows an exit row on To Do and Done', () => {
     // A task LEAVING Done is a real move, and an exit automation is the only

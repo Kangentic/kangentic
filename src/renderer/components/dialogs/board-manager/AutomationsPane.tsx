@@ -294,20 +294,18 @@ function AutomationGroup({ trigger, registerList, ...props }: AutomationsPanePro
   trigger: AutomationTrigger;
   registerList: (node: HTMLUListElement | null) => void;
 }) {
-  const { t } = useLingui();
   const rows = rowsFor(props.drafts, trigger);
-  const columnName = props.column.name;
-  // A group no row could ever run in (On task enter in To Do or Done; On agent
-  // turn end with no agent here, or one that reports no turn end) is replaced
-  // by the reason rather than shown empty with an Add control that would build
-  // something inert. The shared rule, so the engine skips exactly these.
+  // A group no row could ever run in (On agent turn end in To Do or Done, with
+  // no agent here, or with one that reports no turn end) is replaced by the
+  // reason rather than shown empty with an Add control that would build
+  // something inert. The shared rule, so the engine skips exactly these. On
+  // task enter is never blocked whole: To Do and Done refuse it per type, on
+  // the row's switch and in the Add menu.
   //
   // Rows already in a blocked group stay listed under the reason: the column's
   // agent can change, and a list that vanished would read as deleted.
   const group = canTriggerRun(columnFacts({ ...props.column, reportsTurnEnd: props.reportsTurnEnd }), trigger);
-  const blockedReason = group.ok
-    ? null
-    : (trigger === 'enter' ? t`Nothing runs when a task enters ${columnName}.` : translateText(group.reason));
+  const blockedReason = group.ok ? null : translateText(group.reason);
 
   return (
     <section data-testid="column-automation-group" data-trigger={trigger}>

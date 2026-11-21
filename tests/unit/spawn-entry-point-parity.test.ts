@@ -237,10 +237,11 @@ describe("spawn entry-point parity: task-move's allowlisted engine calls never s
     const calls = source.match(ENGINE_SINK_PATTERN_GLOBAL) ?? [];
     expect(calls).toHaveLength(2);
     // The source column as the task leaves, and the destination column as it
-    // arrives on a warm move. A third call, or either of these turning into a
-    // `resumeSuspendedSession`, fails here.
+    // arrives on a move Phase 1 finishes (warm, parked, To Do, Done), on the
+    // task re-read after the move's teardown. A third call, or either of these
+    // turning into a `resumeSuspendedSession`, fails here.
     expect(source).toMatch(/executeTransition\(\s*task,\s*fromLane,\s*'exit'/);
-    expect(source).toMatch(/executeTransition\(\s*task,\s*toLane,\s*'enter'/);
+    expect(source).toMatch(/executeTransition\(\s*enterTask,\s*toLane,\s*'enter'/);
   });
 
   it('passes no startAgent on either, so neither can become a spawn path', () => {

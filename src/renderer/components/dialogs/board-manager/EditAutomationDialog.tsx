@@ -1,8 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, Funnel, Repeat, Zap } from 'lucide-react';
-import { i18n } from '@lingui/core';
 import { plural } from '@lingui/core/macro';
-import { msg } from '@lingui/core/runtime-macro';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { translateText } from '../../../i18n/translate';
 import { cachePerCatalog, cachePerCatalogBy } from '../../../i18n/catalog-cache';
@@ -12,7 +10,7 @@ import {
   AUTOMATION_TRIGGERS,
   EXIT_GROUP_BUDGET_MS,
   automationFieldUnavailableReason,
-  canTriggerRun,
+  canColumnOfferTrigger,
   isTypeOfferedOnTrigger,
   stableAutomationTypes,
 } from '../../../../shared/automation-manifest';
@@ -116,15 +114,9 @@ function triggerOptionsFor(
 /** Why each trigger is unavailable for this type in this column, or null where it is fine. */
 function triggerReasons(type: AutomationType, column: Swimlane, reportsTurnEnd: boolean | undefined): Array<string | null> {
   const facts = { autoSpawn: column.auto_spawn, role: column.role, reportsTurnEnd };
-  const columnName = column.name;
   return AUTOMATION_TRIGGERS.map((trigger) => {
-    const group = canTriggerRun(facts, trigger);
-    if (!group.ok) return trigger === 'enter' ? i18n._(msg`Nothing runs when a task enters ${{ columnName }}.`) : translateText(group.reason);
-    if (!isTypeOfferedOnTrigger(type, trigger)) {
-      const typeReason = AUTOMATION_MANIFEST[type].triggerUnavailableReason;
-      return typeReason ? translateText(typeReason) : i18n._(msg`Not offered on this trigger.`);
-    }
-    return null;
+    const offered = canColumnOfferTrigger(type, facts, trigger);
+    return offered.ok ? null : translateText(offered.reason);
   });
 }
 

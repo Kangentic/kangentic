@@ -134,6 +134,10 @@ msgstr ""
 msgid "A task cannot wait for itself."
 msgstr "Egy feladat nem várhat önmagára."
 
+#: src/shared/automation-manifest.ts
+msgid "A task in {columnName} has no worktree to run in."
+msgstr ""
+
 #: src/shared/workflow-refusals.ts
 #, fuzzy
 msgid "A task visits at least one column."
@@ -723,6 +727,10 @@ msgstr "Következő terminál bármely projektben"
 msgid "Next terminal in this project"
 msgstr "Következő terminál ebben a projektben"
 
+#: src/shared/automation-manifest.ts
+msgid "No agent runs in {columnName}."
+msgstr ""
+
 #: src/shared/automation-describe.ts
 #, fuzzy
 msgid "No message yet."
@@ -757,11 +765,6 @@ msgstr "Ennél az eseményindítónál nem érhető el."
 #, fuzzy
 msgid "Nothing runs at a turn end in {column}."
 msgstr "Kör végén semmi sem fut itt: {column}."
-
-#: src/shared/automation-manifest.ts
-#, fuzzy
-msgid "Nothing runs when a task enters To Do or Done."
-msgstr "Semmi sem fut, amikor egy feladat a Teendők vagy a Kész oszlopba kerül."
 
 #: src/shared/automation-describe.ts
 #, fuzzy

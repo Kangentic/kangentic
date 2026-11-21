@@ -2176,11 +2176,6 @@ msgstr ""
 msgid "Not image data"
 msgstr "Nejsou to obrazová data"
 
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
-msgid "Not offered on this trigger."
-msgstr "U tohoto spouštěče není k dispozici."
-
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 #, fuzzy
 msgid "not readable"
@@ -2215,13 +2210,6 @@ msgstr "V {baseBranch} není nic nového."
 #, fuzzy
 msgid "Nothing runs at a turn end in {terminalName}."
 msgstr "Na konci tahu v {terminalName} se nic nespustí."
-
-#: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
-msgid "Nothing runs when a task enters {columnName}."
-msgstr "Když úkol vstoupí do sloupce {columnName}, nic se nespustí."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
