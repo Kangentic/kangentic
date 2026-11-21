@@ -25,6 +25,11 @@ msgstr "V polích pro heslo je diktování vypnuté"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
 #, fuzzy
+msgid "Finishing in another window"
+msgstr "Dokončuje se v jiném okně"
+
+#: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Inserting..."
 msgstr "Vkládání..."
 

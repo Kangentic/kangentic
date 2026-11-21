@@ -25,6 +25,11 @@ msgstr "Dyktowanie jest wyłączone w polach hasła"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
 #, fuzzy
+msgid "Finishing in another window"
+msgstr "Kończę w innym oknie"
+
+#: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Inserting..."
 msgstr "Wstawianie..."
 

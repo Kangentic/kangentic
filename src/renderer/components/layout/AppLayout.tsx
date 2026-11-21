@@ -54,9 +54,7 @@ import { useRemoteDetailOwnersSync } from '../../hooks/useRemoteDetailOwnersSync
 import { useMobileTerminalStreamsSync } from '../../hooks/useMobileTerminalStreamsSync';
 import { useSshHostsSync } from '../../hooks/useSshHostsSync';
 import { useMonitorDetailOwnership } from '../monitor/useMonitorDetailOwnership';
-import { useDictation } from '../../hooks/useDictation';
-import { useBrowserMouseNavigation } from '../../hooks/useBrowserMouseNavigation';
-import { DictationSurface } from '../dictation/DictationSurface';
+import { WindowDictation } from '../dictation/WindowDictation';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import { useCycleShortcuts } from '../../hooks/useCycleShortcuts';
 import { StatsPage } from '../stats/StatsPage';
@@ -253,10 +251,6 @@ export function AppLayout() {
   // because that layer unmounts whenever the monitor is closed or detached while its
   // window store survives - see `useMonitorDetailOwnership`.
   useMonitorDetailOwnership();
-  useDictation();
-  // Mouse back/forward over a Browser pane, for every button push-to-talk does
-  // not hold. This window is the one dictation runs in.
-  useBrowserMouseNavigation({ canDictate: true });
 
   // Idle-warm the lazy stats chunk (recharts) once per session, off the
   // startup path: the first stats open then resolves from the module cache
@@ -715,7 +709,7 @@ export function AppLayout() {
       <ToastContainer />
       {/* Dev only: the restart notice and hotkey for main-process changes. */}
       {__KANGENTIC_DEV__ && <DevRestartController />}
-      <DictationSurface />
+      <WindowDictation />
       <WindowLayer />
     </div>
   );

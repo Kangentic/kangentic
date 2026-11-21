@@ -19,6 +19,9 @@ sources:
   - resource: src/main/transcription/models/model-registry.ts
   - resource: src/shared/dictation-presets.ts
     title: DICTATION_PRESETS, resolveDictationSlots
+  - resource: src/main/transcription/dictation-session-owners.ts
+  - resource: src/renderer/components/dictation/WindowDictation.tsx
+  - resource: src/renderer/components/dictation/DictationHost.tsx
 ---
 # Dictation
 
@@ -31,9 +34,9 @@ rule. A password field REFUSES outright rather than falling through to a termina
 chip. Because the default binding is a mouse button that also means "back", press DURATION separates
 the two: a hold dictates, and a tap under `NAVIGATION_TAP_MS` instead navigates an active Browser
 pane's history. That split applies only to a button push-to-talk holds (`pushToTalkMouseButtons`):
-dictation on, a mouse binding, and the main window, the only window dictation runs in. Every other
-back or forward press is plain navigation in `useBrowserMouseNavigation`, so the buttons still
-navigate with dictation off and in a popped-out pane. See `docs/architecture/embedded-browser/decision-log.md` decisions 21 and 24 for the target rules in full.
+dictation on and a mouse binding, in any window, since every window runs its own push-to-talk
+(below). Every other back or forward press is plain navigation in `useBrowserMouseNavigation`, so the
+buttons still navigate with dictation off and in a popped-out pane. See `docs/architecture/embedded-browser/decision-log.md` decisions 21 and 24 for the target rules in full.
 Global-only (App Settings only; no per-project override).
 Engines run on-device via `sherpa-onnx-node`; a Cloud refinement option routes only the final clip to
 an OpenAI-compatible endpoint. The engines live in the `kangentic-dictation` utility process, which
@@ -96,6 +99,35 @@ words) went from 3.45% to 3.79% word error at normal level, one word, and from 7
 models that run, one line each (Live model, Refinement model) with its size, its download share
 or None, and a License line links each running model's license. Parakeet unified and Nemotron
 streaming are licensed by NVIDIA Corporation under the NVIDIA Open Model License.
+
+## Every window dictates
+
+Each window is its own renderer: the main window, and every pop-out (a Browser pane, the Command
+Terminal, the Agent Monitor, the Knowledge Graph). So each mounts its own `useDictation` and chip
+through `WindowDictation`: `AppLayout` in the main window, and `PopOutSurfaceRoot` beside the frame
+in each pop-out. The hook sits in a null-rendering leaf (`DictationHost`), so a change to its hook
+list remounts only that leaf and never a window holding a Browser pane guest. A press is read, and
+its target resolved, in the window that has focus. Only the main window warms the engine, since
+every window reads the same config. A pop-out never falls back to the bottom
+panel's terminal, which only the main window has; with nothing focused there, the chip says so.
+
+Main sends a session's partial and final text to the window whose `start` made it, and to no other
+(`DictationSessionOwners` in `src/main/transcription/dictation-session-owners.ts`). Model download
+progress goes to every window, through each pop-out surface's fan-out list (`DICTATION_CHANNELS`).
+Each pop-out's own `BrowserWindow` `blur` ends its holds, as the main window's does.
+
+One engine serves every window, so a press in one window while another window's session is still
+recording or finalizing is refused, and the chip says "Finishing in another window". A window is
+never refused by its own session: its hook overlaps starts when a release beats the start. A window
+that is destroyed, crashes or loads a new page mid-hold cannot cancel its own session, so main
+cancels it, or the engine would stay pinned and every other window's press refused.
+
+Mouse back and forward navigation lives beside it in `useBrowserMouseNavigation`, mounted in every
+window through `WindowDictation`, whether dictation is on or off. A button push-to-talk holds is
+`useDictation`'s, which tells a tap from a hold; any other is the navigation hook's. Both read
+`pushToTalkMouseButtons`, which answers the same in every window, so one of them acts on each press.
+In a popped-out pane a hold on the default Mouse:Back dictates and a tap navigates, as in the main
+window.
 
 ## A hold and its release
 

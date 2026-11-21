@@ -22,16 +22,15 @@ const NO_BUTTONS: ReadonlySet<NavigationMouseButton> = new Set();
  * a sibling listener: if the two disagreed, a press would navigate twice or not
  * at all.
  *
- * `canDictate` is false in a pop-out window. Dictation runs only in the main
- * window (main sends every transcription event to it alone), so a pop-out has no
- * hold to protect and its buttons only navigate.
+ * Every window answers the same way, a pop-out included: each window runs its own
+ * push-to-talk, so a button push-to-talk holds in a pop-out has a hold to protect
+ * there too.
  */
-export function pushToTalkMouseButtons({ canDictate, enabled, combo }: {
-  canDictate: boolean;
+export function pushToTalkMouseButtons({ enabled, combo }: {
   enabled: boolean;
   combo: string;
 }): ReadonlySet<NavigationMouseButton> {
-  if (!canDictate || !enabled) return NO_BUTTONS;
+  if (!enabled) return NO_BUTTONS;
   const tokens = mouseComboTokens(combo);
   const buttons = new Set<NavigationMouseButton>();
   if (tokens.includes('Mouse:Back')) buttons.add('back');
@@ -48,8 +47,8 @@ export function usePushToTalkCombo(): string {
 }
 
 /** `pushToTalkMouseButtons` for this window, from the live config. */
-export function usePushToTalkMouseButtons({ canDictate }: { canDictate: boolean }): ReadonlySet<NavigationMouseButton> {
+export function usePushToTalkMouseButtons(): ReadonlySet<NavigationMouseButton> {
   const enabled = useConfigStore((state) => state.globalConfig.dictation?.enabled ?? false);
   const combo = usePushToTalkCombo();
-  return useMemo(() => pushToTalkMouseButtons({ canDictate, enabled, combo }), [canDictate, enabled, combo]);
+  return useMemo(() => pushToTalkMouseButtons({ enabled, combo }), [enabled, combo]);
 }

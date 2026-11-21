@@ -21,12 +21,17 @@ import type { DictationModelProgress } from '../../shared/types';
 /**
  * `busy` is a REFUSAL, not a phase of an utterance: the press was declined
  * because the target terminal still has an auto-submit paste landing, and fresh
- * bytes would split it. It exists because the alternative was doing nothing at
- * all, and a push-to-talk button that goes dead for two seconds with no feedback
- * reads as broken rather than as busy - which is exactly how it was reported.
- * It clears itself on a timer; nothing transitions out of it.
+ * bytes would split it, or because another window's dictation is still
+ * recording or sending (`busyReason`). It exists because the alternative was
+ * doing nothing at all, and a push-to-talk button that goes dead for two
+ * seconds with no feedback reads as broken rather than as busy - which is
+ * exactly how it was reported. It clears itself on a timer; nothing
+ * transitions out of it.
  */
 export type DictationStatus = 'idle' | 'recording' | 'finalizing' | 'error' | 'busy';
+
+/** Why a press was refused as `busy`. */
+export type DictationBusyReason = 'terminal-paste' | 'other-window';
 
 /** Which KIND of surface this dictation is writing into. Null means nothing
  *  resolved, which the chip renders as its own state rather than as a silent
@@ -86,6 +91,8 @@ interface DictationState {
   partialText: string;
   finalText: string;
   error: string | null;
+  /** Why the current `busy` refusal happened, or null when not busy. */
+  busyReason: DictationBusyReason | null;
   /** First-use model download progress, or null when not downloading. */
   modelProgress: DictationModelProgress | null;
 
@@ -108,6 +115,8 @@ interface DictationState {
    *  Carries that session so the refusal is anchored to the terminal the user is
    *  looking at, rather than appearing in a corner they are not. */
   setBusy: (sessionId: string) => void;
+  /** Decline a press: another window's dictation is still recording or sending. */
+  setBusyInOtherWindow: () => void;
   setModelProgress: (progress: DictationModelProgress | null) => void;
   reset: () => void;
 }
@@ -120,6 +129,7 @@ interface DictationHmrSnapshot {
   partialText: string;
   finalText: string;
   error: string | null;
+  busyReason: DictationBusyReason | null;
 }
 
 // @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
@@ -138,11 +148,13 @@ const dictationStoreInitializer: StateCreator<DictationState> = (set) => ({
   partialText: preserved?.partialText ?? '',
   finalText: preserved?.finalText ?? '',
   error: preserved?.error ?? null,
+  busyReason: preserved?.busyReason ?? null,
   modelProgress: null,
 
   beginRecording: (dictationSessionId, target) =>
     set({
       status: 'recording',
+      busyReason: null,
       dictationSessionId,
       targetSessionId: target.sessionId,
       targetKind: target.kind,
@@ -157,11 +169,25 @@ const dictationStoreInitializer: StateCreator<DictationState> = (set) => ({
     }),
   setPartial: (text) => set({ partialText: text }),
   setFinalizing: () => set({ status: 'finalizing' }),
-  setError: (message) => set({ status: 'error', error: message }),
+  setError: (message) => set({ status: 'error', error: message, busyReason: null }),
   setBusy: (sessionId) => set({
     status: 'busy',
+    busyReason: 'terminal-paste',
     targetKind: 'terminal',
     targetSessionId: sessionId,
+    error: null,
+    partialText: '',
+    finalText: '',
+  }),
+  setBusyInOtherWindow: () => set({
+    status: 'busy',
+    busyReason: 'other-window',
+    targetKind: null,
+    targetSessionId: null,
+    targetElement: null,
+    contentEditableElement: null,
+    guestAnchor: null,
+    refusal: null,
     error: null,
     partialText: '',
     finalText: '',
@@ -181,6 +207,7 @@ const dictationStoreInitializer: StateCreator<DictationState> = (set) => ({
       partialText: '',
       finalText: '',
       error: null,
+      busyReason: null,
       modelProgress: null,
     }),
 });
@@ -221,6 +248,7 @@ if (import.meta.hot) {
       partialText: state.partialText,
       finalText: state.finalText,
       error: state.error,
+      busyReason: state.busyReason,
     } satisfies DictationHmrSnapshot;
   });
 }

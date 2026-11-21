@@ -38,6 +38,7 @@ function LiveDictationChipContent() {
   // on, and a hint that said "Release to send" there would be a lie.
   const willSubmit = useDictationStore((state) => state.willSubmit);
   const refusal = useDictationStore((state) => state.refusal);
+  const busyReason = useDictationStore((state) => state.busyReason);
   const modelProgress = useDictationStore((state) => state.modelProgress);
   const { contentClassName, onAnimationEnd } = useOverlayPhase(() => undefined, { variant: 'popover' });
   // Sit against the thing the words are actually landing in: the focused text
@@ -71,16 +72,18 @@ function LiveDictationChipContent() {
   const noTarget = targetKind === null && (recording || status === 'finalizing');
 
   // Declined, not recording: the target terminal's previous auto-submit is still
-  // landing and fresh bytes would split its bracketed paste. Named plainly, in
-  // the attention tone, because the button doing nothing for a second or two is
-  // what made this read as broken.
+  // landing and fresh bytes would split its bracketed paste, or another window's
+  // dictation is still recording or sending. Named plainly, in the attention
+  // tone, because the button doing nothing for a second or two is what made
+  // this read as broken.
   const busy = status === 'busy';
+  const busyLabel = busyReason === 'other-window' ? t`Finishing in another window` : t`Still sending the last one`;
 
   // `error` arrives worded (and translated) by whatever set it, so it shows as given.
   const label = error
     ? error
     : busy
-      ? t`Still sending the last one`
+      ? busyLabel
       : downloading
       ? t`Preparing model... ${downloadPercent}%`
       : noTarget

@@ -25,6 +25,11 @@ msgstr "암호 필드에서는 받아쓰기가 꺼집니다"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
 #, fuzzy
+msgid "Finishing in another window"
+msgstr "다른 창에서 마무리하는 중"
+
+#: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Inserting..."
 msgstr "삽입 중..."
 

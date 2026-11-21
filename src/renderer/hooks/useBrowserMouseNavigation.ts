@@ -35,11 +35,11 @@ function navigatePane(pane: BrowserNavigationTarget | null, button: NavigationMo
  * Mouse back and forward navigate the Browser pane, the same as its toolbar
  * arrows, in whichever window the pane is in and whether dictation is on or off.
  *
- * Mounted once per window: in `AppLayout` (`canDictate: true`) and in every
- * pop-out root (`canDictate: false`). A button push-to-talk holds in this window
- * is left to `useDictation`, which tells a tap (navigate) from a hold (dictate);
- * every other press is handled here. See `utils/push-to-talk-buttons.ts` for why
- * the two must read one answer.
+ * Mounted once per window through `WindowDictation`: in `AppLayout` and in every
+ * pop-out root. A button push-to-talk holds in this window is left to
+ * `useDictation`, which tells a tap (navigate) from a hold (dictate); every
+ * other press is handled here. See `utils/push-to-talk-buttons.ts` for why the
+ * two must read one answer.
  *
  * Two paths, because a guest consumes the mouse. A press over the host's own UI
  * (the pane's toolbar, its note bar) is a DOM `pointerdown` on this window. A
@@ -47,8 +47,8 @@ function navigatePane(pane: BrowserNavigationTarget | null, button: NavigationMo
  * as `browser:guestMouseButton` to the window that hosts the guest, and that
  * press navigates on its release, as a browser does.
  */
-export function useBrowserMouseNavigation({ canDictate }: { canDictate: boolean }): void {
-  const pushToTalkButtons = usePushToTalkMouseButtons({ canDictate });
+export function useBrowserMouseNavigation(): void {
+  const pushToTalkButtons = usePushToTalkMouseButtons();
 
   useEffect(() => {
     const onPointerDown = (event: PointerEvent): void => {

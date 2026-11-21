@@ -25,6 +25,11 @@ msgstr "Диктовка недоступна в полях пароля"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
 #, fuzzy
+msgid "Finishing in another window"
+msgstr "Завершается в другом окне"
+
+#: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Inserting..."
 msgstr "Вставка..."
 

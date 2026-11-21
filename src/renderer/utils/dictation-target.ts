@@ -21,6 +21,7 @@ import {
   type TextTargetElement,
 } from './text-target';
 import type { WebviewElement } from '../components/browser/webview-types';
+import { readPopOutDescriptor } from '../pop-out/read-descriptor';
 
 /**
  * Resolving the ONE place dictated text should be injected into. The renderer
@@ -182,6 +183,11 @@ export function resolveFocusedCommandSessionId(input: {
   return entry?.sessionId ?? null;
 }
 
+/** Whether this renderer is a pop-out window rather than the main window. */
+function isPopOutWindow(): boolean {
+  return typeof window !== 'undefined' && readPopOutDescriptor() !== null;
+}
+
 /**
  * Where dictated text goes. A terminal is written to over IPC by session id; a
  * text input is written to directly in the renderer, so the element itself is
@@ -251,7 +257,11 @@ export function resolveDictationTarget(): DictationTarget | null {
     return { kind: 'terminal', sessionId: lastFocusedTerminalSessionId };
   }
 
-  // 3. The bottom panel's derived session.
+  // 3. The bottom panel's derived session. The main window's alone: a pop-out
+  //    has no bottom panel, and a session derived for one would be a terminal
+  //    nobody in this window can see. A pop-out with nothing resolved above
+  //    resolves to no target, which the chip says.
+  if (isPopOutWindow()) return null;
   const currentProjectId = useProjectStore.getState().currentProject?.id ?? null;
   const sessionState = useSessionStore.getState();
   const panelSessionId = derivePanelSessionId({

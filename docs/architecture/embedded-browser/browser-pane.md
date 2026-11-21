@@ -246,7 +246,7 @@ The Browser tab in `AppSettingsPanel` (per-project, above the separator) exposes
 | Clear browser data action in settings | Done | `IPC.BROWSER_CLEAR_STORAGE`; see Settings above |
 | Orphaned cookie jars from deleted tasks and projects | Done | reclaimed by a startup sweep over `<userData>/Partitions`; see decision 32 |
 | Carrying an IdP login across a project's tasks so sign-in is not repeated | Done | non-loopback (IdP) cookies shared project-wide via the identity jar, loopback hosts isolated; empirically confirmed a copied Google session authenticates; see decision 33 |
-| Pop-out window for second-monitor workflow | Done | child `BrowserWindow` via the pop-out surface registry; see decision 7 |
+| Pop-out window for second-monitor workflow | Done | child `BrowserWindow` via the pop-out surface registry; see decision 7. Dictation works in it, into the note input and into a field in the page: each pop-out mounts its own push-to-talk and main sends a session's text to the window that started it. Mouse Back and Forward navigate a popped-out pane, with dictation on or off ([Dictation](../dictation.md#every-window-dictates)) |
 | DOM tree picker (vs free-form `getSelection()`) | Future | nice-to-have |
 | File downloads from embedded webview | Done | saved to the OS Downloads folder with a toast; see decision 13 |
 | Permission requests (camera, mic, geo) from embedded webview | Done | deny-by-default request AND check handlers on the guest session; see decisions 5 and 14 |

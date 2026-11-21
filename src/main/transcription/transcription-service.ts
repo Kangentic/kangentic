@@ -518,6 +518,13 @@ export class TranscriptionService extends EventEmitter {
     });
   }
 
+  /** Whether a session is still recording or finalizing. A session leaves this
+   *  set when it is finalized or cancelled, so a window that started one and
+   *  never ended it (a crash) holds nothing once main cancels it. */
+  isActive(dictationSessionId: string): boolean {
+    return this.active.has(dictationSessionId);
+  }
+
   /** Abort a dictation session without committing any text (engine stays warm). */
   cancel(dictationSessionId: string): void {
     const entry = this.active.get(dictationSessionId);

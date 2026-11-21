@@ -125,6 +125,7 @@ import { POP_OUT_SURFACES, POPOUT_ARG_PREFIX, resolveSurfaceTitle } from '../../
 import { cascadePopOutPosition } from '../../src/main/pop-out/cascade';
 import { initMainI18n } from '../../src/main/i18n/main-i18n';
 import { readLocaleArgument } from '../../src/shared/i18n/locales';
+import { IPC } from '../../src/shared/ipc-channels';
 
 /** Shape of the mocked BrowserWindow beyond the real Electron interface, so
  *  tests can inspect the constructor options and the position/maximize spies
@@ -199,6 +200,19 @@ describe('PopOutWindowManager.open()', () => {
     expect(popOutWindow.show).toHaveBeenCalledTimes(1);
     expect(mockApplyDevTaskbarIdentity.mock.invocationCallOrder[0])
       .toBeLessThan(popOutWindow.show.mock.invocationCallOrder[0]);
+  });
+
+  it('ends a held push-to-talk in the pop-out that lost OS focus, and in no other window', () => {
+    // Each pop-out runs its own push-to-talk, and a release after the window
+    // lost focus lands anywhere and tells nobody.
+    const blurred = manager.open('browser', { taskId: 'task-1', projectId: 'project-1' });
+    const other = manager.open('browser', { taskId: 'task-2', projectId: 'project-1' });
+    const sendOf = (win: unknown) => (win as { webContents: { send: ReturnType<typeof vi.fn> } }).webContents.send;
+
+    asMockWindow(blurred).emit('blur');
+
+    expect(sendOf(blurred)).toHaveBeenCalledWith(IPC.TRANSCRIBE_WINDOW_BLUR);
+    expect(sendOf(other)).not.toHaveBeenCalledWith(IPC.TRANSCRIBE_WINDOW_BLUR);
   });
 
   it('applies the cascade offset via setPosition for the 2nd window of a kind, but not for the 1st', () => {

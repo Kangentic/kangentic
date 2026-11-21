@@ -18,6 +18,7 @@ import {
   resolveBrowserNavigationTarget,
   resolveBrowserNavigationTargetForGuest,
 } from '../utils/browser-navigation-registry';
+import { readPopOutDescriptor } from '../pop-out/read-descriptor';
 import {
   PUSH_TO_TALK_ACTION_ID as ACTION_ID,
   usePushToTalkCombo,
@@ -47,6 +48,16 @@ const BUSY_NOTICE_MS = 1600;
  *  Only a STANDALONE utterance equal to one of these clears (safe + predictable);
  *  the phrase appearing inside a longer sentence is committed verbatim. */
 const CLEAR_PHRASES = ['scratch that', 'clear that', 'start over', 'clear'];
+
+/** Clear a `busy` refusal after it has been read. Self-clearing, because
+ *  nothing transitions OUT of a refusal: no capture was started, so no release
+ *  will arrive to end it. Guarded on the status still being `busy` so a press
+ *  that succeeds in the meantime is not reset out from under itself. */
+function clearBusyNoticeLater(): void {
+  window.setTimeout(() => {
+    if (useDictationStore.getState().status === 'busy') useDictationStore.getState().reset();
+  }, BUSY_NOTICE_MS);
+}
 
 function isClearCommand(text: string): boolean {
   const normalized = text.trim().toLowerCase().replace(/[.,!?]+$/, '').trim();
@@ -80,7 +91,8 @@ export function toPreviewCase(text: string): string {
 
 /**
  * Bridge so the popup / docked-bar Send / Clear / Cancel buttons reach the
- * single mounted hook instance, which owns the finalize + commit + clear logic.
+ * hook instance mounted in this window (each window is its own renderer, with
+ * its own copy of this module), which owns the finalize + commit + clear logic.
  * Re-registered on every mount, so resetting on a Fast Refresh is correct.
  *
  * `moveToInput` is how a Browser pane hands a running hold to its note when
@@ -102,7 +114,10 @@ export const dictationPopupActions: {
 };
 
 /**
- * Push-to-talk orchestration. Mounted once from AppLayout. Press (held key /
+ * Push-to-talk orchestration. Mounted once per window through the
+ * `DictationHost` leaf in `WindowDictation`, in the main window and in each
+ * pop-out, since every window is its own renderer with its own focus. Main
+ * sends a session's text back to the window that started it. Press (held key /
  * mouse button) requests the mic, starts a dictation session, captures audio
  * (downsampled to 16 kHz mono PCM) and streams it to the main funnel. The live
  * surface (popup / docked bar / live) is chosen by the `experience` setting:
@@ -132,7 +147,9 @@ export function useDictation(): void {
   // rebindable, so neither direction may be assumed. Only these go through
   // tap-vs-hold arbitration here; every other back or forward press is plain
   // navigation, owned by `useBrowserMouseNavigation`, which reads this same set.
-  const pushToTalkButtons = usePushToTalkMouseButtons({ canDictate: true });
+  // Every window answers the same way, a pop-out included, since each runs its
+  // own push-to-talk.
+  const pushToTalkButtons = usePushToTalkMouseButtons();
   const boundToMouseBack = pushToTalkButtons.has('back');
   const boundToMouseForward = pushToTalkButtons.has('forward');
 
@@ -245,13 +262,7 @@ export function useDictation(): void {
       // Say so. Silently dropping the press is what made a two-second wait read
       // as a broken button.
       useDictationStore.getState().setBusy(target.sessionId);
-      // Self-clearing, because nothing transitions OUT of a refusal: no capture
-      // was started, so no release will arrive to end it. Guarded on the status
-      // still being `busy` so a press that succeeds in the meantime is not reset
-      // out from under itself.
-      window.setTimeout(() => {
-        if (useDictationStore.getState().status === 'busy') useDictationStore.getState().reset();
-      }, BUSY_NOTICE_MS);
+      clearBusyNoticeLater();
       return;
     }
     activeRef.current = true;
@@ -277,9 +288,11 @@ export function useDictation(): void {
         },
       });
     }
-    partialUnsubscribeRef.current = window.electronAPI.dictation.onPartial((_dictationSessionId, text) => {
+    // Main sends a session's text only to the window that started it. Matching
+    // the id as well keeps a routing slip from typing another window's words here.
+    partialUnsubscribeRef.current = window.electronAPI.dictation.onPartial((dictationSessionId, text) => {
       const state = useDictationStore.getState();
-      if (state.status !== 'recording') return;
+      if (state.status !== 'recording' || state.dictationSessionId !== dictationSessionId) return;
       const preview = toPreviewCase(text);
       state.setPartial(preview);
       // Live experience: replace the previous partial with the new one straight
@@ -288,7 +301,8 @@ export function useDictation(): void {
         sinkRef.current?.write(sanitizeInline(preview));
       }
     });
-    finalUnsubscribeRef.current = window.electronAPI.dictation.onFinal((_dictationSessionId, text) => {
+    finalUnsubscribeRef.current = window.electronAPI.dictation.onFinal((dictationSessionId, text) => {
+      if (useDictationStore.getState().dictationSessionId !== dictationSessionId) return;
       useDictationStore.setState({ finalText: sentenceCaseFinalRef.current ? toPreviewCase(text) : text });
     });
 
@@ -317,13 +331,25 @@ export function useDictation(): void {
         return;
       }
 
-      const result = await window.electronAPI.dictation.start({
+      const outcome = await window.electronAPI.dictation.start({
         engineMode: optionsRef.current.engineMode,
         modelId: optionsRef.current.modelId,
         liveModelId: optionsRef.current.liveModelId,
         mode: optionsRef.current.mode,
         language: optionsRef.current.language,
       });
+      // Another window's dictation is still recording or sending, and one engine
+      // serves every window. Main started nothing, so there is nothing to
+      // cancel; say so, as the busy terminal refusal above does.
+      if ('refused' in outcome) {
+        if (superseded()) return;
+        activeRef.current = false;
+        cleanupSubscriptions();
+        useDictationStore.getState().setBusyInOtherWindow();
+        clearBusyNoticeLater();
+        return;
+      }
+      const result = outcome;
       startedSessionId = result.dictationSessionId;
       if (superseded()) {
         void window.electronAPI.dictation.cancel(result.dictationSessionId).catch(() => undefined);
@@ -692,8 +718,13 @@ export function useDictation(): void {
   // `prewarm(null)` killed the warm worker on every reload, so the real config
   // a moment later paid a full model load. Gated on `configLoaded`, never on
   // `loading`, which the HMR re-sync flips and would re-run the warm.
+  //
+  // The main window alone warms. Every window reads the same global config, and
+  // each `prewarm` in main is a full pass that supersedes the one before, so a
+  // pop-out opening would re-run it for an engine that is already warm.
   useEffect(() => {
     if (!configLoaded) return;
+    if (readPopOutDescriptor() !== null) return;
     if (!enabled) {
       window.electronAPI.dictation.prewarm(null);
       return;
@@ -829,7 +860,7 @@ export function useDictation(): void {
       const wasTap = pressedAt !== null && event.at - pressedAt < NAVIGATION_TAP_MS;
       if (wasTap) {
         const pane = resolveBrowserNavigationTargetForGuest(event.webContentsId);
-  const canNavigate = pane
+        const canNavigate = pane
           && (event.button === 'forward' ? pane.canGoForward() : pane.canGoBack());
         if (canNavigate) {
           traceHold('end', 'navigation-tap', null);
@@ -934,12 +965,13 @@ export function useDictation(): void {
       stopCapture();
       cleanupSubscriptions();
       // The store OUTLIVES this hook: it is pinned in `import.meta.hot.data`, so
-      // a Fast Refresh remount of AppLayout (which is where this hook is called,
-      // and the boundary every non-component module in this graph propagates up
-      // to) gives a fresh `activeRef` a store still reading `recording`. Release
-      // then hits `if (!activeRef.current) return` and does nothing, so the chip
-      // is stuck for the rest of the dev session and its rAF loop keeps
-      // measuring every frame. Reconcile the two rather than leave the orphan.
+      // a Fast Refresh remount of `DictationHost` (which is where this hook is
+      // called, and the boundary every non-component module in this graph
+      // propagates up to) gives a fresh `activeRef` a store still reading
+      // `recording`. Release then hits `if (!activeRef.current) return` and does
+      // nothing, so the chip is stuck for the rest of the dev session and its
+      // rAF loop keeps measuring every frame. Reconcile the two rather than
+      // leave the orphan.
       const { status, dictationSessionId } = useDictationStore.getState();
       // activity-state-ok: the dictation store's own status enum, not ActivityState
       if (status === 'idle') return;

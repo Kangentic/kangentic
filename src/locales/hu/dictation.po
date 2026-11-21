@@ -25,6 +25,11 @@ msgstr "A diktálás jelszómezőkben ki van kapcsolva"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
 #, fuzzy
+msgid "Finishing in another window"
+msgstr "Befejezés egy másik ablakban"
+
+#: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Inserting..."
 msgstr "Beszúrás..."
 

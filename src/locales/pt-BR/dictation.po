@@ -25,6 +25,11 @@ msgstr "O ditado fica desativado em campos de senha"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
 #, fuzzy
+msgid "Finishing in another window"
+msgstr "Finalizando em outra janela"
+
+#: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Inserting..."
 msgstr "Inserindo..."
 
