@@ -158,9 +158,9 @@ describe('making a worktree on the host', () => {
   it('is an error, and makes nothing, when the host cannot say whether the worktree is there', async () => {
     const run = vi.fn(async () => answer(''));
     const { backend, pathPresence } = backendWith(run);
-    pathPresence.mockRejectedValueOnce(new Error('Kangentic has no connection set up for host h1'));
+    pathPresence.mockRejectedValueOnce(new Error('Lab box is not connected.'));
 
-    await expect(backend.ensureWorktree({ ...task, worktree_path: path.join(shellFolder, '.kangentic', 'worktrees', '7') }, gitConfig)).rejects.toThrow('no connection set up');
+    await expect(backend.ensureWorktree({ ...task, worktree_path: path.join(shellFolder, '.kangentic', 'worktrees', '7') }, gitConfig)).rejects.toThrow('Lab box is not connected.');
     expect(run).not.toHaveBeenCalled();
   });
 

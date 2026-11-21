@@ -98,9 +98,9 @@ describe('a remote project', () => {
   });
 
   it('passes the host\'s own failure up, so an unreachable host fails the spawn in its words', async () => {
-    const resolver = createRemoteLaunchResolver(makeDeps({ hostInfo: vi.fn(async () => { throw new Error('Kangentic has no connection set up for host host-a'); }) }));
+    const resolver = createRemoteLaunchResolver(makeDeps({ hostInfo: vi.fn(async () => { throw new Error('Lab box is not connected.'); }) }));
 
-    await expect(resolver.resolve({ projectPath: shellFolder, cwd: shellFolder, adapter: claude })).rejects.toThrow('no connection set up');
+    await expect(resolver.resolve({ projectPath: shellFolder, cwd: shellFolder, adapter: claude })).rejects.toThrow('Lab box is not connected.');
   });
 
   it('gives the place the helper\'s file jobs for this host, and only for it', async () => {

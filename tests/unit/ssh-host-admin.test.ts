@@ -1231,8 +1231,8 @@ describe('the program on a host', () => {
   it('passes a host that cannot be asked up as an error, and refuses a host that is not set up', async () => {
     const rig = makeRig();
     rig.hosts.push({ id: 'h1', name: 'Lab', destination: 'lab', key_path: null, key_created: false, created_at: '' });
-    rig.hostService.programInfo.mockRejectedValueOnce(new Error('Kangentic has no connection set up for host h1'));
-    await expect(rig.admin.hostProgram('h1')).rejects.toThrow('no connection set up');
+    rig.hostService.programInfo.mockRejectedValueOnce(new Error('Lab is not connected.'));
+    await expect(rig.admin.hostProgram('h1')).rejects.toThrow('Lab is not connected.');
     await expect(rig.admin.hostProgram('missing')).rejects.toThrow('not set up');
   });
 });
@@ -1255,8 +1255,8 @@ describe('checking a folder on a host', () => {
     rig.hostService.pathPresence.mockResolvedValueOnce(['absent', 'absent']);
     expect((await rig.admin.probeRemoteFolder('h1', '/home/dev/none')).exists).toBe(false);
 
-    rig.hostService.pathPresence.mockRejectedValueOnce(new Error('Kangentic has no connection set up for host h1'));
-    await expect(rig.admin.probeRemoteFolder('h1', '/home/dev/none')).rejects.toThrow('no connection set up');
+    rig.hostService.pathPresence.mockRejectedValueOnce(new Error('Lab is not connected.'));
+    await expect(rig.admin.probeRemoteFolder('h1', '/home/dev/none')).rejects.toThrow('Lab is not connected.');
   });
 
   it('refuses a folder outside the host\'s home with the home it must be in, before asking the host about it', async () => {
