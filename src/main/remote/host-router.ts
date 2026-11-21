@@ -16,7 +16,7 @@ import type { Duplex } from 'node:stream';
 import type { PtyHostCommand, PtyHostEvent, PtyHostMethod, PtyHostRequestMap, RendererPort } from '../pty/host/protocol';
 import type { PtyHostRequestOptions } from '../pty/host/pty-host-client';
 import { commandRoute } from './host-routes';
-import { HostUnreachableError, LinkHub } from './link/link-hub';
+import { HOST_NOT_CONNECTED_SENTENCE, HostUnreachableError, LinkHub } from './link/link-hub';
 import { PortForwarder, type PortForwarderOptions } from './link/port-forward';
 import { openSshStream } from './link/ssh-connection';
 import type { HelperMethod, RemoteHostConnection, RemoteHostRequest, RemoteRequestParams } from './protocol/messages';
@@ -61,7 +61,7 @@ export class HostRouter {
     this.forwarder = new PortForwarder({
       requestListening: async (hostId) => {
         const link = this.hub.linkOf(hostId);
-        if (!link) throw new HostUnreachableError(hostId, `Kangentic has no connection set up for host ${hostId}`);
+        if (!link) throw new HostUnreachableError(hostId, HOST_NOT_CONNECTED_SENTENCE);
         return (await link.requestHelper('listeningPorts', {})).ports;
       },
       log: (line) => options.log?.(`[forward] ${line}`),
@@ -137,7 +137,7 @@ export class HostRouter {
         return this.forwarder.list(request.hostId);
       case 'helper': {
         const link = this.hub.linkOf(request.hostId);
-        if (!link) throw new HostUnreachableError(request.hostId, `Kangentic has no connection set up for host ${request.hostId}`);
+        if (!link) throw new HostUnreachableError(request.hostId, HOST_NOT_CONNECTED_SENTENCE);
         const params = request.params as RemoteRequestParams<HelperMethod>;
         return request.raw
           ? link.requestHelperRaw(request.method as HelperMethod, params, Buffer.from(request.raw), request.timeoutMs)

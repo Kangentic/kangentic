@@ -13,6 +13,7 @@ import { installHost, type HostAsset, type InstalledHost } from './link/host-ins
 import { createSshRunner, type SshRunner } from './link/ssh-run';
 import type { HelperMethod, HelperRequestMap, HelperSessionRecord, HostFileSearch, HostFileWrite, HostInfo, RemoteHostConnection, RemoteHostRequest, RemoteSessionRoute } from './protocol/messages';
 import { assertSafeDestination } from './ssh-client';
+import { HOST_NOT_CONNECTED_SENTENCE, HOST_UNREACHABLE_ERROR_NAME, HostUnreachableError } from './link/host-unreachable-error';
 import { RefusalError } from '../../shared/refusal';
 
 export { assertSafeDestination, InvalidSshDestinationError } from './ssh-client';
@@ -63,6 +64,24 @@ export interface RemoteHostServiceDeps {
 /** How long past a run's own bound the link waits, so the host's answer to a timeout gets back here. */
 const COMMAND_ANSWER_GRACE_MS = 10_000;
 
+/**
+ * The longest a request waits for its host's connect to finish. Above `ConnectTimeout=15`, since a
+ * connect runs the install's ssh first (Sentry DESKTOP-4N: a task opened 5 s after launch asked the
+ * host before its link existed).
+ */
+export const HOST_READY_WAIT_MS = 30_000;
+
+type HelperRequest = Extract<RemoteHostRequest, { op: 'helper' }>;
+
+/**
+ * A failed connect's words on one line. Every non-empty line is kept: ssh's cause can follow a warning
+ * line (a host key it just added), and a passphrase prompt follows the refusal (`withKeyPrompt`).
+ */
+function messageOf(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0).join(' ');
+}
+
 export class HostProgramMissingError extends Error {
   constructor() {
     super('This build of Kangentic does not include the program to install on a host. A development build makes it with npm run build:host.');
@@ -76,6 +95,10 @@ export class RemoteHostService {
   private readonly connecting = new Map<string, Promise<void>>();
   /** Hosts disconnected while a connect was on its way, which must not add the host afterwards. */
   private readonly droppedWhileConnecting = new Set<string>();
+  /** A connect asked for after a disconnect, waiting for the dropped one to end. `whenReady` waits on it. */
+  private readonly queuedReconnects = new Map<string, Promise<void>>();
+  /** Why a host's last connect failed, in its own words, until a connect succeeds or it is disconnected. */
+  private readonly lastConnectFailure = new Map<string, string>();
 
   constructor(private readonly deps: RemoteHostServiceDeps) {}
 
@@ -96,9 +119,22 @@ export class RemoteHostService {
     const running = this.connecting.get(hostId);
     if (running) {
       if (!this.droppedWhileConnecting.has(hostId)) return running;
-      return running.catch(() => undefined).then(() => this.connect(hostId));
+      const queued = this.queuedReconnects.get(hostId);
+      if (queued) return queued;
+      const reconnect = running.catch(() => undefined).then(() => {
+        this.queuedReconnects.delete(hostId);
+        return this.connect(hostId);
+      });
+      this.queuedReconnects.set(hostId, reconnect);
+      return reconnect;
     }
-    const connecting = this.install(hostId).finally(() => {
+    const connecting = this.install(hostId).then(
+      () => { this.lastConnectFailure.delete(hostId); },
+      (error: unknown) => {
+        if (!this.droppedWhileConnecting.has(hostId)) this.lastConnectFailure.set(hostId, messageOf(error));
+        throw error;
+      },
+    ).finally(() => {
       this.connecting.delete(hostId);
       this.droppedWhileConnecting.delete(hostId);
     });
@@ -157,6 +193,7 @@ export class RemoteHostService {
     if (this.connecting.has(hostId)) this.droppedWhileConnecting.add(hostId);
     this.connected.delete(hostId);
     this.infoByHost.delete(hostId);
+    this.lastConnectFailure.delete(hostId);
     await this.deps.send({ op: 'removeHost', hostId });
   }
 
@@ -181,7 +218,7 @@ export class RemoteHostService {
 
   /** One file whose bytes are too large for the JSON body of a request (an MCP answer), up to 1 MiB. */
   async writeFileRaw(hostId: string, filePath: string, content: string, mode?: number): Promise<HelperRequestMap['writeFileRaw']['result']> {
-    return await this.deps.send({
+    return await this.sendHelper({
       op: 'helper',
       hostId,
       method: 'writeFileRaw',
@@ -228,7 +265,7 @@ export class RemoteHostService {
    * bound, so a long run (a `run_script` automation) ends with the host's answer, not a timeout here.
    */
   async runCommand(hostId: string, request: HelperRequestMap['runCommand']['params']): Promise<HelperRequestMap['runCommand']['result']> {
-    return await this.deps.send({
+    return await this.sendHelper({
       op: 'helper',
       hostId,
       method: 'runCommand',
@@ -303,6 +340,83 @@ export class RemoteHostService {
   }
 
   private async helper<M extends HelperMethod>(hostId: string, method: M, params: HelperRequestMap[M]['params']): Promise<HelperRequestMap[M]['result']> {
-    return await this.deps.send({ op: 'helper', hostId, method, params }) as HelperRequestMap[M]['result'];
+    return await this.sendHelper({ op: 'helper', hostId, method, params }) as HelperRequestMap[M]['result'];
+  }
+
+  /**
+   * Every request to a host's helper passes here. It waits for a connect still under way, and turns the
+   * router's "This host is not connected." into a sentence that names the host and why its last connect failed.
+   */
+  private async sendHelper(request: HelperRequest): Promise<unknown> {
+    await this.whenReady(request.hostId);
+    try {
+      return await this.deps.send(request);
+    } catch (error) {
+      // By name: the router's refusal crosses the pty host's transport as a plain Error.
+      if (error instanceof Error && error.name === HOST_UNREACHABLE_ERROR_NAME) {
+        throw new HostUnreachableError(request.hostId, this.notConnectedSentence(request.hostId), { cause: error });
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Resolves once a connect under way for the host has added its link, so a start in the first seconds
+   * after launch reaches the host rather than a link that does not exist yet. Bounded by
+   * `HOST_READY_WAIT_MS`. A connect that fails, one that a disconnect overtook, and one still running at
+   * the bound each reject with a `HostUnreachableError` that says so. A Reconnect queued behind a dropped
+   * connect is waited for in its place, within the same bound. With no connect under way it waits for
+   * nothing. A connect never asks the helper itself (the install runs `ssh` directly), so no request here
+   * waits on a connect that waits on it.
+   */
+  private async whenReady(hostId: string): Promise<void> {
+    let pending = this.pendingConnect(hostId);
+    if (!pending) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), HOST_READY_WAIT_MS);
+      timer.unref?.();
+    });
+    try {
+      while (pending) {
+        const current = pending;
+        let outcome: 'ready' | 'timeout';
+        try {
+          outcome = await Promise.race([current.then(() => 'ready' as const), timedOut]);
+        } catch (error) {
+          pending = this.newerConnect(hostId, current);
+          if (pending) continue;
+          throw new HostUnreachableError(hostId, this.notConnectedSentence(hostId), { cause: error });
+        }
+        if (outcome === 'timeout') throw new HostUnreachableError(hostId, `${this.hostName(hostId)} is still connecting.`);
+        if (this.connected.has(hostId)) return;
+        pending = this.newerConnect(hostId, current);
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+    throw new HostUnreachableError(hostId, this.notConnectedSentence(hostId));
+  }
+
+  /** A queued Reconnect first: the connect it waits behind was dropped and will not add the link. */
+  private pendingConnect(hostId: string): Promise<void> | undefined {
+    return this.queuedReconnects.get(hostId) ?? this.connecting.get(hostId);
+  }
+
+  /** A connect that started after `settled` ended, which a waiter on `settled` waits for next. */
+  private newerConnect(hostId: string, settled: Promise<void>): Promise<void> | undefined {
+    const next = this.pendingConnect(hostId);
+    return next !== settled ? next : undefined;
+  }
+
+  private hostName(hostId: string): string {
+    return this.deps.hosts.getById(hostId)?.name || 'This host';
+  }
+
+  private notConnectedSentence(hostId: string): string {
+    const reason = this.lastConnectFailure.get(hostId);
+    if (reason) return `${this.hostName(hostId)} is not connected: ${reason}`;
+    const name = this.deps.hosts.getById(hostId)?.name;
+    return name ? `${name} is not connected.` : HOST_NOT_CONNECTED_SENTENCE;
   }
 }

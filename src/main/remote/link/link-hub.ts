@@ -28,6 +28,9 @@ import type { PtyHostRequestOptions, PtyHostTransport } from '../../pty/host/pty
 import { commandRoute, requestRoute } from '../host-routes';
 import type { RemoteSessionRoute } from '../protocol/messages';
 import { RemoteLink, type RemoteLinkHandlers, type RemoteLinkOptions } from './remote-link';
+import { HOST_NOT_CONNECTED_SENTENCE, HostUnreachableError } from './host-unreachable-error';
+
+export { HOST_NOT_CONNECTED_SENTENCE, HostUnreachableError } from './host-unreachable-error';
 
 export interface HubHostOptions extends Omit<RemoteLinkOptions, 'log'> {
   log?: (line: string) => void;
@@ -38,13 +41,6 @@ export class UnsupportedOnHostError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'UnsupportedOnHostError';
-  }
-}
-
-export class HostUnreachableError extends Error {
-  constructor(readonly hostId: string, message: string) {
-    super(message);
-    this.name = 'HostUnreachableError';
   }
 }
 
@@ -112,7 +108,7 @@ export class LinkHub implements PtyHostTransport {
    */
   async adopt(hostId: string, routes: readonly RemoteSessionRoute[]): Promise<Array<{ sessionId: string; rejoined: boolean }>> {
     const link = this.links.get(hostId);
-    if (!link) throw new HostUnreachableError(hostId, `Kangentic has no connection set up for host ${hostId}`);
+    if (!link) throw new HostUnreachableError(hostId, HOST_NOT_CONNECTED_SENTENCE);
     for (const route of routes) this.route(hostId, route.ptyId, route.sessionId);
     let outcomes: Array<{ sessionId: string; rejoined: boolean }>;
     try {
@@ -226,7 +222,7 @@ export class LinkHub implements PtyHostTransport {
     const hostId = params.hostId;
     const link = hostId ? this.links.get(hostId) : undefined;
     if (!hostId || !link) {
-      throw new HostUnreachableError(hostId ?? '', hostId ? `Kangentic has no connection set up for host ${hostId}` : 'a spawn that names no host reached the link hub');
+      throw new HostUnreachableError(hostId ?? '', hostId ? HOST_NOT_CONNECTED_SENTENCE : 'a spawn that names no host reached the link hub');
     }
     // Routed before the answer, so a command that follows the spawn finds its host.
     this.route(hostId, params.ptyId, params.sessionId);

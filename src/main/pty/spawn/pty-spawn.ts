@@ -374,6 +374,8 @@ export function recordSpawnFailure(params: {
   shellExe: string;
   /** The launch's fixed values (`preflightTagsOf`): the agent, its version, the start path. */
   launchTags: LaunchTags;
+  /** The link refused a remote spawn (`isRemoteLinkRefusal`): counted, never filed, and it spends no key. */
+  remoteLinkRefusal?: boolean;
 }): void {
   const shell = shellLabelOf(params.shellExe);
   trackEvent('app_error', {
@@ -387,6 +389,7 @@ export function recordSpawnFailure(params: {
     platform: process.platform,
     arch: process.arch,
   });
+  if (params.remoteLinkRefusal === true) return;
   // Handled failure: forward to Sentry with the diagnostic as tags, so spawn
   // failures can be searched by errno and shell. The message is the sanitized
   // form (paths already stripped upstream of Sentry's own normalization, since

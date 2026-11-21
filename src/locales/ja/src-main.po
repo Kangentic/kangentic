@@ -254,6 +254,10 @@ msgid "Linear sign-in timed out."
 msgstr "Linear へのサインインがタイムアウトしました。"
 
 #: src/main/updater.ts
+msgid "macOS needs an administrator to install this update."
+msgstr ""
+
+#: src/main/updater.ts
 #, fuzzy
 msgid "Move Kangentic to Applications to keep it updated."
 msgstr "Kangentic を最新の状態に保つには、アプリケーションフォルダーに移動してください。"

@@ -5,8 +5,9 @@
  * What a user loses if it breaks: a prompt the app cannot show hanging a connection, a typed address
  * turning into an ssh option, or a host whose program was never installed being dialed anyway.
  */
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  HOST_READY_WAIT_MS,
   HostProgramMissingError,
   InvalidSshDestinationError,
   RemoteHostService,
@@ -14,8 +15,10 @@ import {
   sshArgsFor,
   type RemoteHostServiceDeps,
 } from '../../src/main/remote/remote-host-service';
+import { HOST_NOT_CONNECTED_SENTENCE, HostUnreachableError } from '../../src/main/remote/link/host-unreachable-error';
 import type { SshHost } from '../../src/shared/types';
 import type { RemoteHostRequest } from '../../src/main/remote/protocol/messages';
+import type { InstalledHost } from '../../src/main/remote/link/host-installer';
 
 const host = (overrides: Partial<SshHost> = {}): SshHost => ({
   id: 'host-a',
@@ -485,5 +488,285 @@ describe('asking a host', () => {
     const request = sent.find((candidate) => candidate.op === 'helper');
     expect(request).toMatchObject({ method: 'runCommand' });
     expect(request?.op === 'helper' && request.timeoutMs).toBeGreaterThan(600_000);
+  });
+});
+
+// Sentry DESKTOP-4N: a paused task opened 5 s after launch asked its host before the connect
+// started at launch had added the link, and failed with a sentence that named the host's id.
+describe('a request while the host is still connecting', () => {
+  function connectingService(overrides: Partial<RemoteHostServiceDeps> = {}) {
+    let finishInstall: (() => void) | null = null;
+    let failInstall: ((error: Error) => void) | null = null;
+    const made = makeService({
+      install: () => new Promise((resolve, reject) => {
+        finishInstall = () => resolve({ directory: '/home/dev/.kangentic/host/1.2.3', relayCommand: 'node relay.js', installed: true });
+        failInstall = reject;
+      }),
+      ...overrides,
+    });
+    return {
+      ...made,
+      finishInstall: () => finishInstall?.(),
+      failInstall: (error: Error) => failInstall?.(error),
+    };
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('waits for the link to be added, then asks the host', async () => {
+    const { service, sent, finishInstall } = connectingService();
+    const connecting = service.connect('host-a');
+
+    const asked = service.runCommand('host-a', { file: 'git', args: ['status'], timeoutMs: 5_000 });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(sent.some((request) => request.op === 'helper')).toBe(false);
+
+    finishInstall();
+    await connecting;
+    await asked;
+
+    expect(sent.map((request) => request.op)).toEqual(['addHost', 'helper']);
+  });
+
+  it('refuses with the host\'s name and its connect\'s own words when the connect fails, and asks nothing', async () => {
+    const { service, sent, failInstall } = connectingService();
+    const connecting = service.connect('host-a').catch(() => undefined);
+
+    const asked = service.hostInfo('host-a');
+    failInstall(new Error('ssh: connect to host lab.example.test port 22: Connection timed out'));
+    await connecting;
+
+    const refusal = await asked.then(() => null, (error: unknown) => error);
+    expect(refusal).toBeInstanceOf(HostUnreachableError);
+    expect((refusal as Error).message).toBe('Lab box is not connected: ssh: connect to host lab.example.test port 22: Connection timed out');
+    expect((refusal as Error).message).not.toContain('host-a');
+    expect(sent.some((request) => request.op === 'helper')).toBe(false);
+  });
+
+  it('waits no longer than its bound for a connect that never ends', async () => {
+    vi.useFakeTimers();
+    const { service, sent } = connectingService();
+    void service.connect('host-a');
+
+    const asked = service.pathPresence('host-a', ['/home/dev/api']).then(() => null, (error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(HOST_READY_WAIT_MS);
+
+    const refusal = await asked;
+    expect(refusal).toBeInstanceOf(HostUnreachableError);
+    expect((refusal as Error).message).toBe('Lab box is still connecting.');
+    expect(sent.some((request) => request.op === 'helper')).toBe(false);
+  });
+
+  it('refuses a request whose connect a disconnect overtook', async () => {
+    const { service, sent, finishInstall } = connectingService();
+    const connecting = service.connect('host-a');
+    const asked = service.hostInfo('host-a').then(() => null, (error: unknown) => error);
+
+    await service.disconnect('host-a');
+    finishInstall();
+    await connecting;
+
+    const refusal = await asked;
+    expect(refusal).toBeInstanceOf(HostUnreachableError);
+    expect((refusal as Error).message).toBe('Lab box is not connected.');
+    expect(sent.some((request) => request.op === 'helper')).toBe(false);
+  });
+
+  it('says a host with no link is not connected, by name, where the router knows no name', async () => {
+    const routerRefusal = new Error(HOST_NOT_CONNECTED_SENTENCE);
+    routerRefusal.name = 'HostUnreachableError';
+    const { service } = makeService({ send: vi.fn(async () => { throw routerRefusal; }) });
+
+    const refusal = await service.runCommand('host-a', { file: 'git', args: [], timeoutMs: 5_000 }).then(() => null, (error: unknown) => error);
+
+    expect(refusal).toBeInstanceOf(HostUnreachableError);
+    expect((refusal as Error).message).toBe('Lab box is not connected.');
+    expect((refusal as Error).cause).toBe(routerRefusal);
+  });
+
+  it('names why the last connect failed when the router finds no link', async () => {
+    const routerRefusal = new Error(HOST_NOT_CONNECTED_SENTENCE);
+    routerRefusal.name = 'HostUnreachableError';
+    const { service } = makeService({
+      install: async () => { throw new Error('Permission denied (publickey).'); },
+      send: vi.fn(async () => { throw routerRefusal; }),
+    });
+    await service.connect('host-a').catch(() => undefined);
+
+    await expect(service.hostInfo('host-a')).rejects.toThrow('Lab box is not connected: Permission denied (publickey).');
+  });
+
+  // The router's refusal reaches main as a plain Error with this name, once its link is gone.
+  function routerRefusal(): Error {
+    const refusal = new Error(HOST_NOT_CONNECTED_SENTENCE);
+    refusal.name = 'HostUnreachableError';
+    return refusal;
+  }
+
+  /** A `send` that answers until `state.refuse` is set, then refuses as the router does for a host with no link. */
+  function refusingSend() {
+    const state = { refuse: false };
+    const send = vi.fn(async (_request: RemoteHostRequest): Promise<unknown> => {
+      if (state.refuse) throw routerRefusal();
+      return { ok: true };
+    });
+    return { state, send };
+  }
+
+  const messageOfRefusal = (asked: Promise<unknown>): Promise<string | null> =>
+    asked.then(() => null, (error: unknown) => (error as Error).message);
+
+  describe('the reason a connect failed', () => {
+    it('is not stored by a connect that failed after a disconnect overtook it', async () => {
+      const { state, send } = refusingSend();
+      const { service, failInstall } = connectingService({ send });
+      const connecting = service.connect('host-a').catch(() => undefined);
+      const asked = messageOfRefusal(service.hostInfo('host-a'));
+
+      await service.disconnect('host-a');
+      failInstall(new Error('ssh failed'));
+      await connecting;
+      await asked;
+
+      state.refuse = true;
+      expect(await messageOfRefusal(service.hostInfo('host-a'))).toBe('Lab box is not connected.');
+    });
+
+    it('is cleared by a later connect that succeeds', async () => {
+      const { state, send } = refusingSend();
+      const install = vi.fn()
+        .mockRejectedValueOnce(new Error('Permission denied (publickey).'))
+        .mockResolvedValue({ directory: '/home/dev/.kangentic/host/1.2.3', relayCommand: 'node relay.js', installed: true });
+      const { service } = makeService({ send, install });
+      await service.connect('host-a').catch(() => undefined);
+      state.refuse = true;
+      expect(await messageOfRefusal(service.hostInfo('host-a'))).toBe('Lab box is not connected: Permission denied (publickey).');
+
+      state.refuse = false;
+      await service.connect('host-a');
+      state.refuse = true;
+
+      expect(await messageOfRefusal(service.hostInfo('host-a'))).toBe('Lab box is not connected.');
+    });
+
+    it('is cleared by a disconnect', async () => {
+      const { state, send } = refusingSend();
+      const { service } = makeService({ send, install: async () => { throw new Error('Permission denied (publickey).'); } });
+      await service.connect('host-a').catch(() => undefined);
+
+      await service.disconnect('host-a');
+      state.refuse = true;
+
+      expect(await messageOfRefusal(service.hostInfo('host-a'))).toBe('Lab box is not connected.');
+    });
+
+    it.each([
+      ['LF', '\n'],
+      ['CRLF', '\r\n'],
+    ])('names every non-empty line of a failure with several (%s), so the cause after a warning and the passphrase prompt stay', async (_label, lineBreak) => {
+      const failure = [
+        'Could not read the host\'s details: Warning: Permanently added \'lab.example.test\' (ED25519) to the list of known hosts.',
+        '  user@lab.example.test: Permission denied (publickey).',
+        '',
+        'Enter passphrase for key \'/home/dev/.ssh/id_ed25519\':',
+      ].join(lineBreak);
+      const { state, send } = refusingSend();
+      const { service } = makeService({ send, install: async () => { throw new Error(failure); } });
+      await service.connect('host-a').catch(() => undefined);
+      state.refuse = true;
+
+      expect(await messageOfRefusal(service.hostInfo('host-a'))).toBe(
+        'Lab box is not connected: Could not read the host\'s details: Warning: Permanently added \'lab.example.test\' (ED25519) to the list of known hosts. '
+        + 'user@lab.example.test: Permission denied (publickey). Enter passphrase for key \'/home/dev/.ssh/id_ed25519\':',
+      );
+    });
+  });
+
+  describe('a refusal for a host with no name', () => {
+    const unnamedHosts: Array<[string, RemoteHostServiceDeps['hosts']]> = [
+      ['a row with an empty name', { getById: () => host({ name: '' }), list: () => [] }],
+      ['no row', { getById: () => undefined, list: () => [] }],
+    ];
+
+    it.each(unnamedHosts)('says only that the host is not connected for %s', async (_label, hosts) => {
+      const { service } = makeService({ hosts, send: vi.fn(async () => { throw routerRefusal(); }) });
+
+      expect(await messageOfRefusal(service.hostInfo('host-a'))).toBe('This host is not connected.');
+      expect(HOST_NOT_CONNECTED_SENTENCE).toBe('This host is not connected.');
+    });
+
+    it.each(unnamedHosts)('puts the connect\'s reason after it for %s', async (_label, hosts) => {
+      const { service } = makeService({
+        hosts,
+        send: vi.fn(async () => { throw routerRefusal(); }),
+        install: async () => { throw new Error('Permission denied (publickey).'); },
+      });
+      await service.connect('host-a').catch(() => undefined);
+
+      const message = await messageOfRefusal(service.hostInfo('host-a'));
+
+      // With no row at all the connect itself is refused first, and that sentence is the reason.
+      expect(message).toMatch(/^This host is not connected: (Permission denied \(publickey\)\.|That host is not set up in Kangentic\.)$/);
+    });
+  });
+
+  describe('a Reconnect queued behind a dropped connect', () => {
+    function perCallInstalls() {
+      const installs: Array<{ finish: () => void }> = [];
+      const install = vi.fn((): Promise<InstalledHost> => new Promise((resolve) => {
+        installs.push({ finish: () => resolve({ directory: '/home/dev/.kangentic/host/1.2.3', relayCommand: 'node relay.js', installed: true }) });
+      }));
+      return { install, installs };
+    }
+
+    it('delivers a request made before it, one made after it and one made as the dropped connect ends, each only once the link is added', async () => {
+      const { install, installs } = perCallInstalls();
+      const { service, sent } = makeService({ install });
+      const dropped = service.connect('host-a');
+      const askedBefore = service.hostInfo('host-a');
+
+      await service.disconnect('host-a');
+      const reconnect = service.connect('host-a');
+      const askedAfter = service.runCommand('host-a', { file: 'git', args: ['status'], timeoutMs: 5_000 });
+
+      installs[0].finish();
+      await dropped;
+      // The dropped connect has ended and the Reconnect has not started its install yet.
+      const askedBetween = service.pathPresence('host-a', ['/home/dev/api']);
+      await vi.waitFor(() => expect(installs).toHaveLength(2));
+      installs[1].finish();
+      await reconnect;
+
+      await expect(askedBefore).resolves.toMatchObject({ shellName: 'fish' });
+      await expect(askedAfter).resolves.toEqual({ ok: true });
+      await expect(askedBetween).resolves.toEqual({ ok: true });
+      const operations = sent.map((request) => (request.op === 'helper' ? request.method : request.op));
+      expect(operations.filter((operation) => operation !== 'removeHost' && operation !== 'addHost').sort()).toEqual(['hostInfo', 'pathPresence', 'runCommand']);
+      // Every helper request went after the link was added, none ahead of it.
+      expect(operations.indexOf('addHost')).toBe(1);
+      expect(service.isConnected('host-a')).toBe(true);
+    });
+
+    it('is one reconnect however many connects ask for it', async () => {
+      const { install, installs } = perCallInstalls();
+      const { service } = makeService({ install });
+      const dropped = service.connect('host-a');
+
+      await service.disconnect('host-a');
+      const firstAsk = service.connect('host-a');
+      const secondAsk = service.connect('host-a');
+      expect(secondAsk).toBe(firstAsk);
+
+      installs[0].finish();
+      await dropped;
+      await vi.waitFor(() => expect(installs).toHaveLength(2));
+      installs[1].finish();
+      await Promise.all([firstAsk, secondAsk]);
+
+      expect(install).toHaveBeenCalledTimes(2);
+    });
   });
 });

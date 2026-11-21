@@ -114,7 +114,7 @@ describe('routing by host', () => {
     await settle();
     const unknown = await rig.client.spawn(spawnParams('s9', 'task-9', 'host-z'));
     expect(unknown.ok).toBe(false);
-    expect(unknown.ok === false && unknown.error.message).toContain('no connection set up for host host-z');
+    expect(unknown.ok === false && unknown.error.message).toBe('This host is not connected.');
     const local = await rig.client.spawn(spawnParams('s8', 'task-8'));
     expect(local.ok).toBe(false);
 

@@ -776,7 +776,13 @@ in one Sentry org, one triage surface.
   a gone project folder (Sentry DESKTOP-2P could not). A command too long for its shell
   (`AgentCommandTooLongError`) is refused by design and its card says `prompt-too-long`, so
   `reportPreflightFailure` counts it as `spawn_failed` and sends nothing, on every path, and spends
-  no key (Sentry DESKTOP-3Z spent the run's one OpenCode resume key on one). In any shell, a launch
+  no key (Sentry DESKTOP-3Z spent the run's one OpenCode resume key on one). A remote start its
+  host's link refused (`isRemoteLinkRefusal`: a `HostUnreachableError` or `UnsupportedOnHostError`,
+  bare or as the `cause` of a wrapper) goes the same way at `preflight`, and at `pty_spawn`
+  `recordSpawnFailure` keeps its `app_error` count and files nothing. That is the host's state, and
+  the router's sentence named the host's id. Sentry DESKTOP-4N was one, sent renamed as
+  `AgentLaunchPreflightError (worktree_other)`. It is not every `isExpectedFailure` class:
+  `AgentCwdMissingError` is one, and a gone folder is reported here on purpose. In any shell, a launch
   past cmd's typed budget whose `.cmd` shim cannot be read past
   (`AgentBatchShimUnresolvedError`) is refused the same way, with the same card reason, and goes
   under the cause `batch_shim_unresolved` whichever path started it, with `batch_shim` naming why
@@ -1145,6 +1151,17 @@ in one Sentry org, one triage surface.
   Because the pattern hand-matches a third-party
   template, `tests/unit/updater-error-classifier.test.ts` reads the installed
   `electron-updater` and fails if that template is reworded or a fifth sudo front-end appears.
+- **A refused macOS authorization is counted, not reported, and a denial is told.**
+  `isAuthorizationRefusedError` (`src/main/updater.ts`) is the macOS twin of the gate above, at the
+  same position. Squirrel.Mac's ShipIt asks for admin rights when the app or its folder is not
+  writable by the user running it (an app an administrator put in /Applications, run by a standard
+  user), and macOS shows a password prompt. OSStatus -60005 (`errAuthorizationDenied`) is the
+  rights refused, and -60006 (`errAuthorizationCanceled`) is the user pressing Cancel. Neither is a
+  defect (DESKTOP-4M). The match is the `OSStatus error -60005` (or `-60006`) text alone: the sentence around it carries a curly
+  apostrophe and Squirrel raises it natively, with no stack. A Cancel stays quiet, since the user
+  just answered. A denial pushes `updater:blocked` through the same latch as the read-only volume
+  below, because it repeats on every "Restart to update" and the modal the user saw now does
+  nothing. See [macOS updates need an administrator](../releases/deployment.md#macos-updates-need-an-administrator).
 - **A read-only volume is counted, not reported, and the user hears about it.**
   `isReadOnlyVolumeError` (`src/main/updater.ts`) gates the same `reportHandledError` call from
   the same position as the two above. A macOS app launched straight from the mounted DMG, or

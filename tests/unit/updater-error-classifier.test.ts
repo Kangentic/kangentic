@@ -25,6 +25,8 @@ import {
   isTransientUpdaterError,
   hasTransientNetworkCause,
   isElevationDeniedError,
+  isAuthorizationRefusedError,
+  isAuthorizationCanceledError,
   isReadOnlyVolumeError,
   isPackageManagerMissingError,
   isSudoFallbackFailure,
@@ -578,6 +580,36 @@ describe('isElevationDeniedError', () => {
     it('does not claim a transient feed failure', () => {
       expect(isElevationDeniedError(makeError({ message: DESKTOP_F_MESSAGE }))).toBe(false);
     });
+  });
+});
+
+/**
+ * Foundation's NSError text for an OSStatusErrorDomain code, the form Squirrel.Mac
+ * forwards for a refused authorization (DESKTOP-4M). Its apostrophe is U+2019, as
+ * macOS prints it: the fixture carries the character, the pattern does not.
+ */
+const authorizationMessage = (status: string): string => `The operation couldn’t be completed. (OSStatus error ${status}.)`;
+
+describe('isAuthorizationRefusedError', () => {
+  it.each(['-60005', '-60006'])('matches OSStatus %s whatever sentence carries it', (status) => {
+    expect(isAuthorizationRefusedError(makeError({ message: authorizationMessage(status) }))).toBe(true);
+    expect(isAuthorizationRefusedError(makeError({ message: `Install failed: OSStatus error ${status}` }))).toBe(true);
+  });
+
+  it.each(['-600051', '-600061', '-6000', '-60004', '-60007'])('leaves OSStatus %s alone', (status) => {
+    expect(isAuthorizationRefusedError(makeError({ message: authorizationMessage(status) }))).toBe(false);
+    expect(isAuthorizationCanceledError(makeError({ message: authorizationMessage(status) }))).toBe(false);
+  });
+
+  it('tells a Cancel from a denial', () => {
+    expect(isAuthorizationCanceledError(makeError({ message: authorizationMessage('-60006') }))).toBe(true);
+    expect(isAuthorizationCanceledError(makeError({ message: authorizationMessage('-60005') }))).toBe(false);
+  });
+
+  it('claims no other updater failure', () => {
+    expect(isAuthorizationRefusedError(makeError({ message: 'Command pkexec exited with code 126' }))).toBe(false);
+    expect(isAuthorizationRefusedError(makeError({ message: 'Cannot update while running on a read-only volume.' }))).toBe(false);
+    expect(isAuthorizationRefusedError(makeError({}))).toBe(false);
   });
 });
 
