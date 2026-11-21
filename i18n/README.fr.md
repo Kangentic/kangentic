@@ -1,5 +1,5 @@
-<!-- readme-translation source-blob=ef6ed72a1d4b6736b32f5cd06be82d664e91fc50 -->
-> Ceci est une traduction automatique de [README.md](../README.md) à la révision `ef6ed72`. La version anglaise fait référence.
+<!-- readme-translation source-blob=addf4d308ea2879895590819a96e54c47a323ac9 -->
+> Ceci est une traduction automatique de [README.md](../README.md) à la révision `addf4d3`. La version anglaise fait foi.
 
 <p align="center">
   <a href="https://www.kangentic.com"><img src="https://raw.githubusercontent.com/Kangentic/branding/main/resources/web/logo.png" alt="Logo Kangentic" width="96" /></a>
@@ -9,7 +9,7 @@
 
 <p align="center">
   <strong>Glissez une carte. Un agent démarre.</strong><br />
-  Un environnement de développement agentique pour les agents de code IA.
+  Un environnement de développement agentique pour les agents de codage IA.
 </p>
 
 <p align="center">
@@ -23,7 +23,7 @@
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-dark.png" />
       <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-light.png" />
-      <img src="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-dark.png" alt="Le tableau Kangentic avec des tâches dans To Do, Planning, Executing et Code Review. Chaque carte en cours d'exécution affiche le dernier message de son agent, et le terminal de l'agent sélectionné est ouvert sous le tableau. Ouvre la démo en direct." width="900" />
+      <img src="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-dark.png" alt="Le tableau Kangentic avec des tâches dans À faire, Planification, Exécution et Revue de code. Chaque carte en cours affiche le dernier message de son agent, et le terminal de l'agent sélectionné est ouvert sous le tableau. Ouvre la démo en direct." width="900" />
     </picture>
   </a>
 </p>
@@ -56,29 +56,30 @@
 
 ## Ce que fait Kangentic
 
-Un agent de code peut mener une tâche seul, et les arborescences de travail Git permettent d'en exécuter plusieurs à la fois. La limite, c'est alors vous : quel agent attend une réponse, lequel a terminé, et où en est chaque branche. Kangentic place chaque session sur un seul tableau et signale celles qui ont besoin de vous.
+Un agent de codage peut mener une tâche seul, et les arborescences de travail Git permettent d'en exécuter plusieurs à la fois. La limite, c'est alors vous : quel agent attend votre réponse, lequel a terminé, et où en est chaque branche. Kangentic place chaque session sur un seul tableau et signale celles qui ont besoin de vous.
 
 ### Pilotez vos agents depuis un seul tableau
 
 - **Un tableau, tous les agents.** Chaque carte affiche son modèle, la part de la fenêtre de contexte utilisée et le dernier message de l'agent, avec une marque sur celles qui ont besoin de vous.
-- **Kangentic Mobile.** Associez votre téléphone une fois, puis suivez vos agents, répondez à la question sur laquelle l'un d'eux s'est arrêté et examinez son diff loin de votre bureau. La connexion est chiffrée de bout en bout, via le relais de Kangentic ou un relais que vous hébergez. Téléchargez l'application sur l'[App Store](https://apps.apple.com/app/kangentic/id6794952339) ou [Google Play](https://play.google.com/store/apps/details?id=com.kangentic.mobile).
+- **Kangentic Mobile.** Associez votre téléphone une fois, puis suivez vos agents, répondez à la question sur laquelle l'un d'eux s'est arrêté et examinez son diff loin de votre bureau. La connexion est chiffrée de bout en bout, via le relais de Kangentic ou un relais que vous hébergez. Disponible sur l'[App Store](https://apps.apple.com/app/kangentic/id6794952339) ou [Google Play](https://play.google.com/store/apps/details?id=com.kangentic.mobile).
 - **Quinze CLI d'agents.** Planifiez avec Claude Code et développez avec Codex, ou utilisez une seule CLI partout. Kangentic exécute les CLI que vous avez déjà, avec les identifiants que vous avez déjà configurés. Pas de clé API, pas de proxy, pas de compte Kangentic.
-- **Tous vos projets au même endroit.** Chaque dépôt a son propre tableau, et le moniteur d'agents affiche les agents en cours d'exécution dans tous les dépôts.
-- **Revue sur le tableau.** Le panneau des modifications affiche le diff et l'historique des commits de chaque tâche. Une pull request liée sur GitHub ou Azure DevOps affiche son état et indique si elle est prête à être fusionnée.
-- **Gratuit et open source.** AGPL-3.0, avec toutes les fonctionnalités incluses et aucune offre payante.
+- **Agents sur un hôte distant.** Placez un projet sur une machine Linux accessible en SSH : son dépôt, ses agents, ses builds et ses tests s'y exécutent. Le tableau reste sur votre ordinateur, et les agents continuent de travailler malgré une coupure de connexion ou après la fermeture de l'application. Consultez [Hôtes distants SSH](https://www.kangentic.com/features/ssh-remote-hosts/) pour la configuration et les limites.
+- **Tous vos projets au même endroit.** Chaque dépôt a son propre tableau, et le Moniteur d'agents affiche les agents en cours d'exécution dans tous ces dépôts.
+- **Revue sur le tableau.** Le panneau Modifications affiche le diff et l'historique des commits de chaque tâche. Une pull request liée sur GitHub ou Azure DevOps indique son état et si elle est prête à être fusionnée.
+- **Gratuit et open source.** AGPL-3.0, avec toutes les fonctionnalités incluses et sans offre payante.
 
-### Adaptez le workflow
+### Façonnez le workflow
 
-- **Colonnes.** Renommez, ajoutez et réorganisez les colonnes jusqu'à ce que le tableau corresponde à votre façon de livrer. Chaque colonne a son propre agent, modèle, niveau d'effort et mode d'autorisation. La configuration est commitée avec le dépôt dans `kangentic.json`, pour que vos coéquipiers obtiennent le même tableau, tandis que les tâches et les sessions d'agent restent sur la machine de chacun.
-- **Automatisations.** Quand une tâche entre dans une colonne, quand son agent termine un tour, ou quand la tâche en sort, une colonne peut envoyer à l'agent un message ou une commande slash, exécuter un script, appeler un webhook, vous notifier ou déplacer la tâche vers la colonne suivante. Une condition rédigée en langage courant, vérifiée par un agent, détermine si une étape s'exécute.
-- **Workflows.** Donnez des consignes à l'agent de workflow, examinez les tâches liées qu'il planifie, puis appuyez sur Démarrer. Chaque tâche démarre lorsque les tâches dont elle dépend atteignent Done, et un même workflow peut couvrir plusieurs projets.
-- **Des agents qui travaillent sur le tableau.** Le serveur MCP de Kangentic permet à un agent en cours d'exécution de créer des tâches, de déplacer sa propre carte, de rechercher dans les conversations passées et d'envoyer un message à l'agent d'une autre tâche, si bien qu'une règle écrite dans un prompt peut faire avancer le travail.
+- **Colonnes.** Renommez, ajoutez et reconnectez des colonnes jusqu'à ce que le tableau corresponde à votre façon de livrer. Chaque colonne a son propre agent, modèle, niveau d'effort et mode d'autorisation. La configuration est commitée avec le dépôt dans `kangentic.json`, ce qui donne le même tableau à vos coéquipiers, tandis que les tâches et les sessions d'agents restent sur la machine de chacun.
+- **Automatisations.** Quand une tâche entre dans une colonne, quand son agent termine un tour ou quand la tâche en sort, une colonne peut envoyer à l'agent un message ou une commande slash, exécuter un script, appeler un webhook, vous notifier ou déplacer la tâche vers la colonne suivante. Une condition rédigée en langage courant, vérifiée par un agent, détermine si une étape s'exécute.
+- **Workflows.** Donnez un brief à l'agent de workflow, examinez les tâches liées qu'il planifie, puis appuyez sur Démarrer. Chaque tâche démarre quand les tâches dont elle dépend atteignent Terminé, et un même workflow peut couvrir plusieurs projets.
+- **Des agents qui pilotent le tableau.** Le serveur MCP de Kangentic permet à un agent en cours d'exécution de créer des tâches, de déplacer sa propre carte, de rechercher dans les conversations passées et d'envoyer un message à l'agent d'une autre tâche : une règle écrite dans un prompt peut ainsi faire avancer le travail.
 
-## Kangentic est-il fait pour vous ?
+## Est-ce fait pour vous ?
 
 **C'est un bon choix si vous :**
 
-- exécutez plusieurs agents de code à la fois et perdez de vue celui qui vous attend.
+- exécutez plusieurs agents de codage à la fois et perdez de vue celui qui vous attend.
 - jonglez entre des tâches de plusieurs projets ou clients et voulez voir tous vos agents dans une seule vue.
 - voulez combiner Claude Code, Codex et d'autres CLI avec les abonnements que vous payez déjà.
 - avez un workflow en plusieurs étapes et voulez personnaliser ses agents et ses automatisations par projet.
@@ -87,10 +88,10 @@ Un agent de code peut mener une tâche seul, et les arborescences de travail Git
 **Ce n'est probablement pas pour vous si vous :**
 
 - préférez travailler sur une seule tâche à la fois, du début à la fin.
-- travaillez sur un seul projet et en changez rarement.
+- travaillez dans un seul projet et en changez rarement.
 - n'utilisez pas de CLI d'agents, ou préférez des applications comme Cursor ou Claude Desktop.
-- n'avez pas l'usage de workflows ou d'automatisations dans votre façon de développer.
-- voulez que vos agents s'exécutent dans le cloud plutôt que sur votre machine.
+- n'avez pas besoin de workflows ni d'automatisations dans votre façon de développer.
+- voulez un service hébergé pour exécuter vos agents, sans application à installer.
 
 Si cela vous semble utile, une ⭐ aide d'autres développeurs à découvrir Kangentic.
 
@@ -104,25 +105,25 @@ Cette commande télécharge la dernière version pour votre plateforme depuis [G
 
 **Configuration requise**
 
-- Windows x64, macOS 13 ou ultérieur sur Apple Silicon ou Intel, ou Linux x64 ou arm64 (`.deb` ou `.rpm`). Le Knowledge Graph n'est pas disponible sur les Mac Intel.
-- Node.js 20 ou ultérieur pour `npx`, et Git 2.26 ou ultérieur.
+- Windows x64, macOS 13 ou version ultérieure sur Apple Silicon ou Intel, ou Linux x64 ou arm64 (`.deb` ou `.rpm`).
+- Node.js 20 ou version ultérieure pour `npx`, et Git 2.26 ou version ultérieure.
 - Au moins une [CLI d'agent prise en charge](#supported-agents), installée et connectée.
 
-Les utilisateurs de WSL installent la version Windows et peuvent choisir une distribution WSL comme shell du terminal. Les agents exécutent l'installation Windows de chaque CLI, donc une CLI installée uniquement dans la distribution est introuvable. Le [guide d'installation](https://www.kangentic.com/guide/installation/) couvre chaque plateforme.
+Les utilisateurs de WSL installent la version Windows et peuvent choisir une distribution WSL comme shell du terminal. Une CLI d'agent installée dans une distribution s'y exécute si vous définissez son chemin vers la copie de la distribution. Conservez le projet lui-même sur un lecteur Windows. Le [guide d'installation](https://www.kangentic.com/guide/installation/) couvre chaque plateforme.
 
 ## Fonctionnement
 
-1. **Configurez votre tableau.** Conservez les colonnes par défaut ou réorganisez-les, et choisissez l'agent et le mode d'autorisation de chacune.
+1. **Configurez votre tableau.** Conservez les colonnes par défaut ou remaniez-les, et choisissez l'agent et le mode d'autorisation de chacune.
 2. **Créez une tâche.** Donnez-lui un titre et un prompt, ou importez-en une depuis GitHub Issues, GitHub Projects, Azure DevOps, Asana, Jira, Linear, Trello, GitLab ou un coffre Obsidian.
 3. **Glissez pour exécuter.** Kangentic crée l'arborescence de travail, applique le mode d'autorisation de la colonne et démarre l'agent.
-4. **Regardez-le coder.** Suivez l'agent dans son terminal en direct, répondez quand il pose une question, et faites avancer la carte quand il a terminé.
+4. **Regardez-le coder.** Suivez l'agent dans son terminal en direct, répondez quand il vous pose une question et faites glisser la carte plus loin quand il a terminé.
 
 <a name="supported-agents"></a>
 ## Agents pris en charge
 
-[Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex CLI](https://developers.openai.com/codex/cli), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Cursor CLI](https://cursor.com/docs/cli/overview), [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/cli-getting-started), [Grok Build](https://github.com/xai-org/grok-build), [Antigravity CLI](https://antigravity.google/docs/cli/getting-started), [Goose CLI](https://github.com/aaif-goose/goose), [OpenCode](https://opencode.ai/docs), [Aider](https://aider.chat/), [Qwen Code](https://github.com/QwenLM/qwen-code), [Kimi Code](https://github.com/MoonshotAI/kimi-code), [Factory Droid](https://docs.factory.ai/cli/getting-started/overview), [Warp (Oz CLI)](https://docs.warp.dev/reference/cli/cli) et [Ollama](https://ollama.com) pour les modèles locaux en chat à tour unique.
+[Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex CLI](https://developers.openai.com/codex/cli), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Cursor CLI](https://cursor.com/docs/cli/overview), [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/cli-getting-started), [Grok Build](https://github.com/xai-org/grok-build), [Antigravity CLI](https://antigravity.google/docs/cli/getting-started), [Goose CLI](https://github.com/aaif-goose/goose), [OpenCode](https://opencode.ai/docs), [Aider](https://aider.chat/), [Qwen Code](https://github.com/QwenLM/qwen-code), [Kimi Code](https://github.com/MoonshotAI/kimi-code), [Factory Droid](https://docs.factory.ai/cli/getting-started/overview), [Warp (Oz CLI)](https://docs.warp.dev/reference/cli/cli) et [Ollama](https://ollama.com) pour les modèles locaux en mode chat à un seul tour.
 
-La reprise après un redémarrage, les outils de tableau MCP et la transmission de l'historique à l'agent suivant dépendent de la CLI. Consultez [ce que chaque agent prend en charge](https://www.kangentic.com/features/agent-orchestration/#supported-agents).
+La reprise après un redémarrage, les outils MCP du tableau et la transmission de l'historique à l'agent suivant dépendent de la CLI. Consultez [ce que prend en charge chaque agent](https://www.kangentic.com/features/agent-orchestration/#supported-agents).
 
 ## Langues
 
@@ -132,7 +133,7 @@ L'interface de Kangentic est disponible dans chacune des langues listées en hau
 
 Vos tableaux, tâches et transcriptions restent dans une base de données SQLite locale. Les CLI d'agents contactent leurs propres fournisseurs avec vos propres comptes, comme elles le feraient dans votre terminal.
 
-Les versions publiées envoient par défaut des événements d'utilisation anonymes (Aptabase) et des rapports d'erreurs (Sentry). Les événements d'utilisation ne contiennent jamais le texte des tâches, les prompts ni le code. Définissez `KANGENTIC_TELEMETRY=0` pour désactiver les deux, ou `KANGENTIC_ERROR_REPORTING=0` pour désactiver uniquement les rapports d'erreurs. Il n'existe pas d'option dans l'application. L'application vérifie aussi sur GitHub les mises à jour et les annonces. Consultez la [politique de confidentialité](https://www.kangentic.com/privacy/) pour la liste complète.
+Les builds de version envoient par défaut des événements d'utilisation anonymes (Aptabase) et des rapports d'erreurs (Sentry). Les événements d'utilisation ne contiennent jamais le texte des tâches, les prompts ni le code. Définissez `KANGENTIC_TELEMETRY=0` pour désactiver les deux, ou `KANGENTIC_ERROR_REPORTING=0` pour désactiver uniquement les rapports d'erreurs. Il n'existe pas d'option dans l'application. L'application vérifie aussi sur GitHub les mises à jour et les annonces. Consultez la [politique de confidentialité](https://www.kangentic.com/privacy/) pour la liste complète.
 
 ## Documentation
 
@@ -140,7 +141,7 @@ Commencez par le [démarrage rapide](https://www.kangentic.com/getting-started/)
 
 ## Développement
 
-La compilation depuis les sources nécessite Node.js 22.14 ou ultérieur, ou 24 ou ultérieur.
+La compilation depuis les sources nécessite Node.js 22.14 ou version ultérieure, ou 24 ou version ultérieure.
 
 ```bash
 git clone https://github.com/Kangentic/kangentic.git
@@ -156,8 +157,8 @@ Consultez [CONTRIBUTING.md](../CONTRIBUTING.md) pour la structure du projet, les
 ## Support
 
 - [GitHub Discussions](https://github.com/Kangentic/kangentic/discussions) pour les questions et les demandes de fonctionnalités
-- [GitHub Issues](https://github.com/Kangentic/kangentic/issues) pour les rapports de bugs
-- [support@kangentic.com](mailto:support@kangentic.com) si vous préférez ne pas publier publiquement
+- [GitHub Issues](https://github.com/Kangentic/kangentic/issues) pour signaler des bugs
+- [support@kangentic.com](mailto:support@kangentic.com) si vous préférez ne pas écrire en public
 
 Pour signaler un problème de sécurité, consultez [SECURITY.md](../SECURITY.md).
 

@@ -1,5 +1,5 @@
-<!-- readme-translation source-blob=ef6ed72a1d4b6736b32f5cd06be82d664e91fc50 -->
-> 本文是 [README.md](../README.md) 在 `ef6ed72` 版本的机器翻译。以英文版本为准。
+<!-- readme-translation source-blob=addf4d308ea2879895590819a96e54c47a323ac9 -->
+> 本文是 [README.md](../README.md) 在 `addf4d3` 时的机器翻译版本，以英文版本为准。
 
 <p align="center">
   <a href="https://www.kangentic.com"><img src="https://raw.githubusercontent.com/Kangentic/branding/main/resources/web/logo.png" alt="Kangentic 徽标" width="96" /></a>
@@ -8,8 +8,8 @@
 <h1 align="center">Kangentic</h1>
 
 <p align="center">
-  <strong>拖动卡片，智能体即开始工作。</strong><br />
-  面向 AI 编程智能体的智能体开发环境。
+  <strong>拖动卡片，智能体随即启动。</strong><br />
+  面向 AI 编码智能体的智能体开发环境。
 </p>
 
 <p align="center">
@@ -23,7 +23,7 @@
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-dark.png" />
       <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-light.png" />
-      <img src="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-dark.png" alt="Kangentic 看板，任务分布在 To Do、Planning、Executing 和 Code Review 列中。每张运行中的卡片显示其智能体的最新消息，所选智能体的终端在看板下方打开。点击打开在线演示。" width="900" />
+      <img src="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-dark.png" alt="Kangentic 看板，任务分布在“待办”“规划”“执行”和“代码评审”列中。每张运行中的卡片显示其智能体的最新消息，看板下方打开了所选智能体的终端。点击打开在线演示。" width="900" />
     </picture>
   </a>
 </p>
@@ -56,43 +56,44 @@
 
 ## 功能简介
 
-编程智能体可以独立完成一项任务，而 Git 工作树可以让多个智能体同时运行。这时瓶颈就变成了你：哪个智能体在等你输入提示，哪个已经完成，每个分支又进展到了哪里。Kangentic 把所有会话放在同一个看板上，并标出需要你处理的那些。
+编码智能体可以独立完成一项任务，而 Git 工作树可以让多个智能体同时运行。这时瓶颈就变成了你自己：哪个智能体在等你输入提示，哪个已经完成，每个分支又去了哪里。Kangentic 将所有会话放在同一个看板上，并标记出需要你处理的会话。
 
 ### 在一个看板上运行所有智能体
 
-- **一个看板，所有智能体。** 每张卡片显示其模型、上下文窗口的使用量以及智能体最后说的话，需要你处理的卡片会带有标记。
-- **Kangentic Mobile。** 手机只需配对一次，之后即可在离开工位时查看智能体状态、回答智能体停下来等待的问题，并审查其差异。连接采用端到端加密，经由 Kangentic 的中继或你自己托管的中继。可从 [App Store](https://apps.apple.com/app/kangentic/id6794952339) 或 [Google Play](https://play.google.com/store/apps/details?id=com.kangentic.mobile) 获取。
-- **十五种智能体 CLI。** 用 Claude Code 做规划、用 Codex 做构建，或者全程使用同一个 CLI。Kangentic 运行你已有的 CLI，并使用你已配置好的凭据。无需 API 密钥，无需代理，也无需 Kangentic 账户。
-- **所有项目集中一处。** 每个仓库都有自己的看板，智能体监视器会显示所有仓库中正在运行的智能体。
-- **在看板上审查。** “更改”面板显示每个任务的差异和提交历史。关联的 GitHub 或 Azure DevOps 拉取请求会显示其状态以及是否可以合并。
-- **免费且开源。** 采用 AGPL-3.0 许可证，包含全部功能，没有付费版本。
+- **一个看板，容纳所有智能体。** 每张卡片显示其模型、上下文窗口的使用量以及智能体最后说的内容，需要你处理的卡片会带有标记。
+- **Kangentic Mobile。** 只需配对一次手机，即可在离开工位时查看智能体状态、回答智能体停下来提出的问题，并审阅其差异。连接采用端到端加密，可通过 Kangentic 的中继或你自己托管的中继进行。可从 [App Store](https://apps.apple.com/app/kangentic/id6794952339) 或 [Google Play](https://play.google.com/store/apps/details?id=com.kangentic.mobile) 获取。
+- **十五种智能体 CLI。** 用 Claude Code 做规划，用 Codex 做构建，或者全程只用一种 CLI。Kangentic 运行你已有的 CLI，并使用你已配置好的凭据。无需 API 密钥，无需代理，也无需 Kangentic 账户。
+- **在远程主机上运行智能体。** 将项目放在一台通过 SSH 访问的 Linux 机器上，其仓库、智能体、构建和测试都在那里运行。看板仍留在你的电脑上，即使连接中断或你退出应用，智能体也会继续工作。有关设置和限制，请参阅 [SSH 远程主机](https://www.kangentic.com/features/ssh-remote-hosts/)。
+- **所有项目集中一处。** 每个仓库都有自己的看板，Agent Monitor 会显示所有仓库中正在运行的智能体。
+- **在看板上评审。** “更改”面板显示每个任务的差异和提交历史。关联的 GitHub 或 Azure DevOps 拉取请求会显示其状态以及是否可以合并。
+- **免费且开源。** 采用 AGPL-3.0 许可，包含所有功能，没有付费版本。
 
 ### 定制工作流
 
-- **列。** 重命名、添加列并重新调整列之间的连接，直到看板与你的交付流程一致。每列都有自己的智能体、模型、推理强度和权限模式。这些设置以 `kangentic.json` 随仓库一起提交，因此队友会得到相同的看板，而任务和智能体会话则保留在每个人自己的机器上。
-- **自动化。** 当任务进入某列、其智能体完成一轮对话或任务离开该列时，该列可以向智能体发送消息或斜杠命令、运行脚本、调用 webhook、通知你，或将任务移到下一列。用自然语言写的条件由智能体检查，决定某个步骤是否运行。
-- **工作流。** 向工作流智能体提供一份简要说明，审查它规划出的相互关联的任务，然后点击“开始”。每个任务会在其所依赖的任务到达“完成”列时启动，一个工作流可以跨越多个项目。
-- **能操作看板的智能体。** Kangentic 的 MCP 服务器让正在运行的智能体可以创建任务、移动自己的卡片、搜索过往对话，以及给其他任务的智能体发消息，因此写在提示词中的规则就能推动工作向前进展。
+- **列。** 重命名、添加和重新连接列，直到看板符合你的交付方式。每一列都有自己的智能体、模型、推理强度和权限模式。这些设置保存在 `kangentic.json` 中并随仓库一起提交，因此团队成员会得到相同的看板，而任务和智能体会话则保留在各自的机器上。
+- **自动化。** 当任务进入某一列、其智能体完成一轮对话或任务离开该列时，该列可以向智能体发送消息或斜杠命令、运行脚本、调用 Webhook、通知你，或将任务移到下一列。由智能体检查的自然语言条件决定某个步骤是否运行。
+- **工作流。** 向工作流智能体提供一份简要说明，审阅它规划出的关联任务，然后点击“开始”。每个任务会在其所等待的任务到达“完成”后启动，并且一个工作流可以跨越多个项目。
+- **能操作看板的智能体。** 借助 Kangentic 的 MCP 服务器，正在运行的智能体可以创建任务、移动自己的卡片、搜索过往对话，以及向其他任务的智能体发送消息，因此写在提示中的规则就能推动工作向前进行。
 
 ## 它适合你吗？
 
-**如果你有以下情况，它会很适合你：**
+**如果你符合以下情况，它会很适合你：**
 
-- 同时运行多个编程智能体，却搞不清哪个在等你。
+- 同时运行多个编码智能体，却搞不清哪个在等你。
 - 在多个项目或客户之间处理任务，希望在一个视图中看到所有智能体。
-- 想在已付费的套餐上混用 Claude Code、Codex 和其他 CLI。
+- 想在已付费的订阅方案上混用 Claude Code、Codex 和其他 CLI。
 - 有多步骤的工作流，并希望按项目定制其中的智能体和自动化。
 - 希望离开电脑时也能用手机回复智能体。
 
-**如果你有以下情况，它可能不适合你：**
+**如果你符合以下情况，它可能不适合你：**
 
 - 更喜欢一次只做一个任务，从头做到尾。
 - 只在单个项目中工作，很少切换。
-- 不使用智能体 CLI，或者更喜欢 Cursor 或 Claude Desktop 这类应用。
-- 在开发过程中用不到工作流或自动化。
-- 希望智能体在云端运行，而不是在你的机器上。
+- 不使用智能体 CLI，或者更喜欢 Cursor 或 Claude Desktop 之类的应用。
+- 你的开发方式用不到工作流或自动化。
+- 想要一个托管服务来运行智能体，而无需安装应用。
 
-如果你觉得它有用，点个 ⭐ 可以帮助其他开发者发现 Kangentic。
+如果你觉得它有用，点一个 ⭐ 可以帮助其他开发者发现 Kangentic。
 
 ## 安装
 
@@ -100,43 +101,43 @@
 npx kangentic
 ```
 
-该命令会从 [GitHub Releases](https://github.com/Kangentic/kangentic/releases/latest) 下载适用于你平台的最新版本，安装并打开它。此后应用会自动更新。如果你想自己运行安装程序，也可以在发布页面上找到它们。
+此命令会从 [GitHub Releases](https://github.com/Kangentic/kangentic/releases/latest) 下载适用于你平台的最新版本，完成安装并打开应用。此后应用会自动更新。如果你更愿意自己运行安装程序，也可以在发布页面上找到它们。
 
 **系统要求**
 
-- Windows x64、Apple Silicon 或 Intel 上的 macOS 13 或更高版本，或 Linux x64 或 arm64（`.deb` 或 `.rpm`）。Intel Mac 上无法使用知识图谱。
-- `npx` 需要 Node.js 20 或更高版本，另需 Git 2.26 或更高版本。
-- 至少一个已安装并已登录的[受支持的智能体 CLI](#supported-agents)。
+- Windows x64、Apple Silicon 或 Intel 上的 macOS 13 或更高版本，或 Linux x64 或 arm64（`.deb` 或 `.rpm`）。
+- 用于运行 `npx` 的 Node.js 20 或更高版本，以及 Git 2.26 或更高版本。
+- 至少一个已安装并登录的[受支持的智能体 CLI](#supported-agents)。
 
-WSL 用户请安装 Windows 版本，并可以选择某个 WSL 发行版作为终端 shell。智能体运行的是各 CLI 的 Windows 安装版本，因此仅安装在发行版内部的 CLI 将无法找到。[安装指南](https://www.kangentic.com/guide/installation/)介绍了各个平台的安装方法。
+WSL 用户请安装 Windows 版本，并可以选择某个 WSL 发行版作为终端 shell。如果将智能体 CLI 的路径设置为发行版中的副本，安装在该发行版内的智能体 CLI 就会在其中运行。项目本身请保留在 Windows 驱动器上。[安装指南](https://www.kangentic.com/guide/installation/)介绍了各个平台的安装方法。
 
 ## 工作原理
 
-1. **配置看板。** 保留默认列或重新调整，并为每列选择要运行的智能体和权限模式。
-2. **创建任务。** 为任务填写标题和提示词，或者从 GitHub Issues、GitHub Projects、Azure DevOps、Asana、Jira、Linear、Trello、GitLab 或 Obsidian 库导入任务。
-3. **拖动即运行。** Kangentic 创建工作树，应用该列的权限模式，并启动智能体。
-4. **观看它编码。** 在实时终端中跟进智能体，在它提问时作答，完成后将卡片拖到下一列。
+1. **配置看板。** 保留默认列或重新调整，并为每一列选择要运行的智能体和权限模式。
+2. **创建任务。** 为任务填写标题和提示，或者从 GitHub Issues、GitHub Projects、Azure DevOps、Asana、Jira、Linear、Trello、GitLab 或 Obsidian 库中导入。
+3. **拖动即运行。** Kangentic 会创建工作树，应用该列的权限模式，并启动智能体。
+4. **观看它编写代码。** 在实时终端中跟进智能体，在它提问时作答，完成后将卡片拖到下一列。
 
 <a name="supported-agents"></a>
-## 支持的智能体
+## 受支持的智能体
 
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code)、[Codex CLI](https://developers.openai.com/codex/cli)、[Gemini CLI](https://github.com/google-gemini/gemini-cli)、[Cursor CLI](https://cursor.com/docs/cli/overview)、[GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/cli-getting-started)、[Grok Build](https://github.com/xai-org/grok-build)、[Antigravity CLI](https://antigravity.google/docs/cli/getting-started)、[Goose CLI](https://github.com/aaif-goose/goose)、[OpenCode](https://opencode.ai/docs)、[Aider](https://aider.chat/)、[Qwen Code](https://github.com/QwenLM/qwen-code)、[Kimi Code](https://github.com/MoonshotAI/kimi-code)、[Factory Droid](https://docs.factory.ai/cli/getting-started/overview)、[Warp (Oz CLI)](https://docs.warp.dev/reference/cli/cli)，以及以单轮对话方式运行本地模型的 [Ollama](https://ollama.com)。
 
-重启后恢复会话、MCP 看板工具以及将历史记录交接给下一个智能体，这些功能取决于具体的 CLI。请参阅[各智能体支持的功能](https://www.kangentic.com/features/agent-orchestration/#supported-agents)。
+重启后恢复会话、MCP 看板工具以及将历史记录移交给下一个智能体，这些功能取决于所用的 CLI。请参阅[各智能体支持的功能](https://www.kangentic.com/features/agent-orchestration/#supported-agents)。
 
 ## 语言
 
-Kangentic 的界面提供本页顶部列出的各种语言。在 Settings > Language 中更改语言后，Kangentic 会以该语言重新启动。这些翻译由机器生成，欢迎审阅，[翻译](../docs/contributing/translations.md)一文介绍了如何更正翻译。
+Kangentic 的界面提供本页顶部列出的各种语言。可在 Settings > Language 中更改，Kangentic 会以所选语言重新启动。这些翻译由机器生成，欢迎审阅，[翻译](../docs/contributing/translations.md)一文介绍了如何更正翻译。
 
 ## 数据与隐私
 
-你的看板、任务和对话记录保存在本地 SQLite 数据库中。智能体 CLI 使用你自己的账户连接各自的提供商，就像在你的终端中运行时一样。
+你的看板、任务和对话记录保存在本地 SQLite 数据库中。智能体 CLI 使用你自己的账户连接各自的提供商，与在终端中运行时一样。
 
-发布版本默认发送匿名使用事件（Aptabase）和错误报告（Sentry）。使用事件绝不包含任务文本、提示词或代码。设置 `KANGENTIC_TELEMETRY=0` 可同时关闭两者，设置 `KANGENTIC_ERROR_REPORTING=0` 则仅关闭错误报告。应用内没有对应的开关。应用还会从 GitHub 检查更新和公告。完整列表请参阅[隐私政策](https://www.kangentic.com/privacy/)。
+发布版本默认会发送匿名使用事件（Aptabase）和错误报告（Sentry）。使用事件从不包含任务文本、提示或代码。设置 `KANGENTIC_TELEMETRY=0` 可同时关闭两者，设置 `KANGENTIC_ERROR_REPORTING=0` 则仅关闭错误报告。应用内没有对应的开关。应用还会从 GitHub 检查更新和公告。完整列表请参阅[隐私政策](https://www.kangentic.com/privacy/)。
 
 ## 文档
 
-先阅读[快速入门](https://www.kangentic.com/getting-started/)，然后查阅[文档](https://www.kangentic.com/overview/)，了解列、自动化、工作流、MCP 服务器和配置。
+请先阅读[快速入门](https://www.kangentic.com/getting-started/)，然后查阅[文档](https://www.kangentic.com/overview/)，了解列、自动化、工作流、MCP 服务器和配置。
 
 ## 开发
 
@@ -151,12 +152,12 @@ npm start
 
 ## 贡献
 
-有关项目结构、测试和约定，请参阅 [CONTRIBUTING.md](../CONTRIBUTING.md)。贡献者需在其首个拉取请求合并前签署 [CLA](../CLA.md)。
+有关项目结构、测试和约定，请参阅 [CONTRIBUTING.md](../CONTRIBUTING.md)。贡献者需要在其第一个拉取请求合并之前签署 [CLA](../CLA.md)。
 
 ## 支持
 
-- [GitHub Discussions](https://github.com/Kangentic/kangentic/discussions)：用于提问和功能请求
-- [GitHub Issues](https://github.com/Kangentic/kangentic/issues)：用于报告错误
+- [GitHub Discussions](https://github.com/Kangentic/kangentic/discussions)：提问和功能请求
+- [GitHub Issues](https://github.com/Kangentic/kangentic/issues)：报告 bug
 - [support@kangentic.com](mailto:support@kangentic.com)：如果你不想公开发帖
 
 如需报告安全问题，请参阅 [SECURITY.md](../SECURITY.md)。

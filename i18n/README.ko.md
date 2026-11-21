@@ -1,5 +1,5 @@
-<!-- readme-translation source-blob=ef6ed72a1d4b6736b32f5cd06be82d664e91fc50 -->
-> 이 문서는 `ef6ed72` 시점의 [README.md](../README.md)을(를) 기계 번역한 것입니다. 영어 버전이 기준 문서입니다.
+<!-- readme-translation source-blob=addf4d308ea2879895590819a96e54c47a323ac9 -->
+> 이 문서는 `addf4d3` 시점의 [README.md](../README.md)를 기계 번역한 것입니다. 영어 버전이 정식 문서입니다.
 
 <p align="center">
   <a href="https://www.kangentic.com"><img src="https://raw.githubusercontent.com/Kangentic/branding/main/resources/web/logo.png" alt="Kangentic 로고" width="96" /></a>
@@ -8,7 +8,7 @@
 <h1 align="center">Kangentic</h1>
 
 <p align="center">
-  <strong>카드를 끌어다 놓으면 에이전트가 시작됩니다.</strong><br />
+  <strong>카드를 끌면 에이전트가 시작됩니다.</strong><br />
   AI 코딩 에이전트를 위한 에이전트형 개발 환경입니다.
 </p>
 
@@ -56,41 +56,42 @@
 
 ## 기능
 
-코딩 에이전트는 작업 하나를 스스로 진행할 수 있고, git 작업 트리를 사용하면 여러 에이전트를 동시에 실행할 수 있습니다. 그러면 병목은 사용자가 됩니다. 어떤 에이전트가 프롬프트를 기다리고 있는지, 어떤 에이전트가 끝났는지, 각 분기가 어디로 갔는지 파악해야 하기 때문입니다. Kangentic은 모든 세션을 하나의 보드에 모으고 사용자의 응답이 필요한 세션을 표시합니다.
+코딩 에이전트는 작업 하나를 혼자서 처리할 수 있고, git 작업 트리를 사용하면 여러 에이전트를 동시에 실행할 수 있습니다. 그러면 한계는 사용자 자신이 됩니다. 어떤 에이전트가 프롬프트를 기다리는지, 어떤 에이전트가 끝났는지, 각 분기가 어디로 갔는지 파악해야 하기 때문입니다. Kangentic은 모든 세션을 하나의 보드에 모으고 사용자의 응답이 필요한 세션을 표시합니다.
 
 ### 하나의 보드에서 에이전트 실행
 
-- **하나의 보드, 모든 에이전트.** 각 카드에는 모델, 컨텍스트 창 사용량, 에이전트의 마지막 메시지가 표시되며, 사용자의 응답이 필요한 카드에는 표시가 붙습니다.
-- **Kangentic Mobile.** 휴대폰을 한 번 페어링하면 자리를 비운 동안에도 에이전트를 확인하고, 에이전트가 멈춘 질문에 답하고, diff를 검토할 수 있습니다. 연결은 Kangentic의 릴레이 또는 직접 호스팅하는 릴레이를 통해 종단 간 암호화됩니다. [App Store](https://apps.apple.com/app/kangentic/id6794952339) 또는 [Google Play](https://play.google.com/store/apps/details?id=com.kangentic.mobile)에서 받으세요.
-- **15가지 에이전트 CLI.** Claude Code로 계획하고 Codex로 빌드하거나, 모든 곳에서 CLI 하나를 사용하세요. Kangentic은 이미 설치한 CLI를 이미 구성한 자격 증명으로 실행합니다. API 키, 프록시, Kangentic 계정이 필요 없습니다.
-- **모든 프로젝트를 한곳에서.** 각 리포지토리마다 자체 보드가 있고, Agent Monitor는 모든 리포지토리에서 실행 중인 에이전트를 보여 줍니다.
-- **보드에서 검토.** Changes 패널은 각 작업의 diff와 커밋 기록을 보여 줍니다. GitHub 또는 Azure DevOps에 연결된 끌어오기 요청은 상태와 병합 준비 여부를 보여 줍니다.
-- **무료 오픈 소스.** AGPL-3.0이며, 모든 기능이 포함되어 있고 유료 등급이 없습니다.
+- **하나의 보드, 모든 에이전트.** 각 카드에는 모델, 컨텍스트 창 사용량, 에이전트가 마지막으로 한 말이 표시되며, 사용자의 응답이 필요한 카드에는 표시가 붙습니다.
+- **Kangentic Mobile.** 휴대폰을 한 번 페어링하면 자리를 비운 동안에도 에이전트를 확인하고, 에이전트가 멈춰서 묻는 질문에 답하고, diff를 검토할 수 있습니다. 연결은 Kangentic의 릴레이 또는 직접 호스팅하는 릴레이를 통해 종단 간 암호화됩니다. [App Store](https://apps.apple.com/app/kangentic/id6794952339) 또는 [Google Play](https://play.google.com/store/apps/details?id=com.kangentic.mobile)에서 받으세요.
+- **15개의 에이전트 CLI.** Claude Code로 계획하고 Codex로 빌드하거나, 모든 곳에서 CLI 하나를 사용하세요. Kangentic은 이미 설치한 CLI를 이미 구성한 자격 증명으로 실행합니다. API 키도, 프록시도, Kangentic 계정도 필요 없습니다.
+- **원격 호스트의 에이전트.** SSH로 접속하는 Linux 머신에 프로젝트를 두면 해당 리포지토리, 에이전트, 빌드, 테스트가 그곳에서 실행됩니다. 보드는 사용자 컴퓨터에 남고, 연결이 끊기거나 앱을 종료한 후에도 에이전트는 계속 작업합니다. 설정 방법과 제한 사항은 [SSH 원격 호스트](https://www.kangentic.com/features/ssh-remote-hosts/)를 참조하세요.
+- **모든 프로젝트를 한곳에.** 각 리포지토리에는 자체 보드가 있으며, Agent Monitor는 모든 리포지토리에서 실행 중인 에이전트를 보여 줍니다.
+- **보드에서 검토.** Changes 패널에는 각 작업의 diff와 커밋 기록이 표시됩니다. GitHub 또는 Azure DevOps에 연결된 끌어오기 요청에는 상태와 병합 준비 여부가 표시됩니다.
+- **무료 오픈 소스.** AGPL-3.0 라이선스이며, 모든 기능이 포함되어 있고 유료 등급이 없습니다.
 
 ### 워크플로 구성
 
-- **열.** 보드가 작업 방식과 맞을 때까지 열의 이름을 바꾸고, 추가하고, 연결을 다시 구성하세요. 각 열에는 자체 에이전트, 모델, 노력 수준, 권한 모드가 있습니다. 설정은 `kangentic.json`에 담겨 리포지토리와 함께 커밋되므로 팀원도 같은 보드를 사용하며, 작업과 에이전트 세션은 각자의 컴퓨터에 남습니다.
-- **자동화.** 작업이 열에 들어올 때, 에이전트가 한 턴을 마칠 때, 작업이 열을 떠날 때, 열은 에이전트에 메시지나 슬래시 명령을 보내거나, 스크립트를 실행하거나, 웹후크를 호출하거나, 알림을 보내거나, 작업을 다음 열로 이동할 수 있습니다. 일반 문장으로 작성하고 에이전트가 확인하는 조건으로 단계 실행 여부를 결정합니다.
-- **워크플로.** 워크플로 에이전트에 개요를 전달하고, 에이전트가 계획한 연결된 작업을 검토한 다음 Start를 누르세요. 각 작업은 기다리는 작업이 Done에 도달하면 시작되며, 하나의 워크플로가 여러 프로젝트에 걸칠 수 있습니다.
-- **보드를 다루는 에이전트.** Kangentic의 MCP 서버를 사용하면 실행 중인 에이전트가 작업을 만들고, 자신의 카드를 이동하고, 이전 대화를 검색하고, 다른 작업의 에이전트에 메시지를 보낼 수 있으므로 프롬프트에 작성한 규칙으로 작업을 진행시킬 수 있습니다.
+- **열.** 보드가 실제 출시 방식과 맞을 때까지 열의 이름을 바꾸고, 추가하고, 다시 연결하세요. 각 열에는 자체 에이전트, 모델, 노력 수준, 권한 모드가 있습니다. 이 설정은 `kangentic.json`에 담겨 리포지토리와 함께 커밋되므로 팀원도 같은 보드를 사용하며, 작업과 에이전트 세션은 각자의 머신에 남습니다.
+- **자동화.** 작업이 열에 들어올 때, 에이전트가 턴을 마칠 때, 작업이 열을 떠날 때 열은 에이전트에 메시지나 슬래시 명령을 보내거나, 스크립트를 실행하거나, 웹후크를 호출하거나, 알림을 보내거나, 작업을 다음 열로 옮길 수 있습니다. 일반 문장으로 작성하고 에이전트가 확인하는 조건에 따라 단계의 실행 여부가 결정됩니다.
+- **워크플로.** 워크플로 에이전트에 개요를 전달하고, 에이전트가 계획한 연결된 작업을 검토한 후 Start를 누르세요. 각 작업은 선행 작업이 Done에 도달하면 시작되며, 하나의 워크플로가 여러 프로젝트에 걸칠 수 있습니다.
+- **보드를 다루는 에이전트.** Kangentic의 MCP 서버를 사용하면 실행 중인 에이전트가 작업을 만들고, 자신의 카드를 옮기고, 이전 대화를 검색하고, 다른 작업의 에이전트에 메시지를 보낼 수 있으므로 프롬프트에 작성한 규칙으로 작업을 진행시킬 수 있습니다.
 
-## 나에게 맞을까요?
+## 나에게 맞는 도구인가요?
 
-**다음과 같은 경우 잘 맞습니다.**
+**다음에 해당하면 잘 맞습니다.**
 
-- 여러 코딩 에이전트를 동시에 실행하다가 어떤 에이전트가 응답을 기다리는지 놓치는 경우
-- 여러 프로젝트나 고객의 작업을 오가며 모든 에이전트를 한 화면에서 보고 싶은 경우
-- 이미 비용을 내고 있는 요금제에서 Claude Code, Codex 및 기타 CLI를 섞어 쓰고 싶은 경우
+- 여러 코딩 에이전트를 동시에 실행하며 어떤 에이전트가 응답을 기다리는지 놓치곤 하는 경우
+- 여러 프로젝트나 클라이언트의 작업을 오가며 모든 에이전트를 한 화면에서 보고 싶은 경우
+- 이미 비용을 내고 있는 요금제로 Claude Code, Codex 및 기타 CLI를 함께 쓰고 싶은 경우
 - 여러 단계로 된 워크플로가 있고 프로젝트별로 에이전트와 자동화를 사용자 지정하고 싶은 경우
 - 자리를 비웠을 때 휴대폰으로 에이전트에 답하고 싶은 경우
 
-**다음과 같은 경우에는 맞지 않을 수 있습니다.**
+**다음에 해당하면 맞지 않을 수 있습니다.**
 
-- 한 번에 하나의 작업을 처음부터 끝까지 진행하는 방식을 선호하는 경우
+- 한 번에 한 작업을 처음부터 끝까지 하는 편을 선호하는 경우
 - 단일 프로젝트에서 작업하며 전환할 일이 거의 없는 경우
 - 에이전트 CLI를 사용하지 않거나 Cursor 또는 Claude Desktop 같은 앱을 선호하는 경우
-- 개발 과정에서 워크플로나 자동화가 필요 없는 경우
-- 에이전트를 내 컴퓨터가 아닌 클라우드에서 실행하고 싶은 경우
+- 개발 방식에 워크플로나 자동화가 필요 없는 경우
+- 앱을 설치하지 않고 호스팅된 서비스에서 에이전트를 실행하고 싶은 경우
 
 유용해 보인다면 ⭐를 눌러 주세요. 다른 개발자가 Kangentic을 찾는 데 도움이 됩니다.
 
@@ -100,43 +101,43 @@
 npx kangentic
 ```
 
-이 명령은 [GitHub Releases](https://github.com/Kangentic/kangentic/releases/latest)에서 사용 중인 플랫폼용 최신 릴리스를 다운로드하여 설치하고 엽니다. 이후에는 앱이 자체적으로 업데이트됩니다. 설치 프로그램을 직접 실행하려면 릴리스 페이지에서도 받을 수 있습니다.
+이 명령은 [GitHub Releases](https://github.com/Kangentic/kangentic/releases/latest)에서 사용 중인 플랫폼용 최신 릴리스를 다운로드하여 설치하고 엽니다. 이후에는 앱이 스스로 업데이트됩니다. 설치 프로그램을 직접 실행하려면 릴리스 페이지에서 받을 수도 있습니다.
 
 **요구 사항**
 
-- Windows x64, Apple Silicon 또는 Intel 기반 macOS 13 이상, 또는 Linux x64나 arm64(`.deb` 또는 `.rpm`). Intel Mac에서는 Knowledge Graph를 사용할 수 없습니다.
-- `npx`용 Node.js 20 이상, Git 2.26 이상.
-- 설치 및 로그인을 완료한 [지원되는 에이전트 CLI](#supported-agents) 하나 이상.
+- Windows x64, Apple Silicon 또는 Intel 기반 macOS 13 이상, 또는 Linux x64나 arm64(`.deb` 또는 `.rpm`).
+- `npx`용 Node.js 20 이상 및 Git 2.26 이상.
+- 설치 및 로그인을 마친 [지원되는 에이전트 CLI](#supported-agents) 하나 이상.
 
-WSL 사용자는 Windows 버전을 설치하고 WSL 배포판을 터미널 셸로 선택할 수 있습니다. 에이전트는 각 CLI의 Windows 설치본을 실행하므로, 배포판 안에만 설치된 CLI는 찾을 수 없습니다. 플랫폼별 내용은 [설치 가이드](https://www.kangentic.com/guide/installation/)를 참조하세요.
+WSL 사용자는 Windows 버전을 설치하고 터미널 셸로 WSL 배포판을 선택할 수 있습니다. 배포판 안에 설치된 에이전트 CLI는 경로를 해당 배포판의 사본으로 설정하면 그곳에서 실행됩니다. 프로젝트 자체는 Windows 드라이브에 두세요. 플랫폼별 안내는 [설치 가이드](https://www.kangentic.com/guide/installation/)를 참조하세요.
 
 ## 작동 방식
 
-1. **보드 구성.** 기본 열을 그대로 사용하거나 다시 구성하고, 각 열에서 실행할 에이전트와 권한 모드를 선택합니다.
-2. **작업 만들기.** 제목과 프롬프트를 입력하거나 GitHub Issues, GitHub Projects, Azure DevOps, Asana, Jira, Linear, Trello, GitLab 또는 Obsidian 보관소에서 가져옵니다.
+1. **보드 구성.** 기본 열을 그대로 쓰거나 다시 구성하고, 각 열에서 실행할 에이전트와 권한 모드를 선택합니다.
+2. **작업 만들기.** 제목과 프롬프트를 입력하거나, GitHub Issues, GitHub Projects, Azure DevOps, Asana, Jira, Linear, Trello, GitLab 또는 Obsidian 보관소에서 작업을 가져옵니다.
 3. **끌어서 실행.** Kangentic이 작업 트리를 만들고, 열의 권한 모드를 적용하고, 에이전트를 시작합니다.
-4. **코딩 지켜보기.** 라이브 터미널에서 에이전트를 지켜보고, 질문하면 답하고, 완료되면 카드를 다음 열로 끌어 놓습니다.
+4. **코딩 지켜보기.** 라이브 터미널에서 에이전트를 지켜보고, 에이전트가 물으면 답하고, 완료되면 카드를 다음 열로 끕니다.
 
 <a name="supported-agents"></a>
 ## 지원되는 에이전트
 
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex CLI](https://developers.openai.com/codex/cli), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Cursor CLI](https://cursor.com/docs/cli/overview), [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/cli-getting-started), [Grok Build](https://github.com/xai-org/grok-build), [Antigravity CLI](https://antigravity.google/docs/cli/getting-started), [Goose CLI](https://github.com/aaif-goose/goose), [OpenCode](https://opencode.ai/docs), [Aider](https://aider.chat/), [Qwen Code](https://github.com/QwenLM/qwen-code), [Kimi Code](https://github.com/MoonshotAI/kimi-code), [Factory Droid](https://docs.factory.ai/cli/getting-started/overview), [Warp (Oz CLI)](https://docs.warp.dev/reference/cli/cli), 그리고 로컬 모델을 단일 턴 채팅으로 사용하는 [Ollama](https://ollama.com).
 
-재시작 후 이어서 실행하기, MCP 보드 도구, 다음 에이전트에 기록 넘기기는 CLI에 따라 지원 여부가 다릅니다. [에이전트별 지원 기능](https://www.kangentic.com/features/agent-orchestration/#supported-agents)을 참조하세요.
+재시작 후 재개, MCP 보드 도구, 다음 에이전트로 기록 넘기기는 CLI에 따라 지원 여부가 다릅니다. [에이전트별 지원 기능](https://www.kangentic.com/features/agent-orchestration/#supported-agents)을 참조하세요.
 
 ## 언어
 
-Kangentic 인터페이스는 이 페이지 상단에 나열된 각 언어로 제공됩니다. Settings > Language에서 변경하면 Kangentic이 해당 언어로 다시 시작됩니다. 번역은 기계 번역이며 검토를 환영합니다. 번역을 수정하는 방법은 [Translations](../docs/contributing/translations.md)에 설명되어 있습니다.
+Kangentic 인터페이스는 이 페이지 상단에 나열된 각 언어로 제공됩니다. Settings > Language에서 변경하면 Kangentic이 해당 언어로 다시 시작됩니다. 번역은 기계 번역이며 누구나 검토할 수 있습니다. 번역을 수정하는 방법은 [번역](../docs/contributing/translations.md)에서 설명합니다.
 
-## 데이터 및 개인 정보
+## 데이터 및 개인정보
 
-보드, 작업, 대화 기록은 로컬 SQLite 데이터베이스에 저장됩니다. 에이전트 CLI는 터미널에서와 마찬가지로 사용자 계정으로 각 공급자에 연결합니다.
+보드, 작업, 대화 기록은 로컬 SQLite 데이터베이스에 저장됩니다. 에이전트 CLI는 터미널에서 실행할 때와 마찬가지로 사용자 계정으로 각 공급자에 연결합니다.
 
-릴리스 빌드는 기본적으로 익명 사용 이벤트(Aptabase)와 오류 보고서(Sentry)를 전송합니다. 사용 이벤트에는 작업 텍스트, 프롬프트, 코드가 포함되지 않습니다. 둘 다 끄려면 `KANGENTIC_TELEMETRY=0`을, 오류 보고서만 끄려면 `KANGENTIC_ERROR_REPORTING=0`을 설정하세요. 앱 내 스위치는 없습니다. 앱은 업데이트와 공지 사항도 GitHub에서 확인합니다. 전체 목록은 [개인 정보 처리 방침](https://www.kangentic.com/privacy/)을 참조하세요.
+릴리스 빌드는 기본적으로 익명 사용 이벤트(Aptabase)와 오류 보고서(Sentry)를 보냅니다. 사용 이벤트에는 작업 텍스트, 프롬프트, 코드가 절대 포함되지 않습니다. 둘 다 끄려면 `KANGENTIC_TELEMETRY=0`을, 오류 보고서만 끄려면 `KANGENTIC_ERROR_REPORTING=0`을 설정하세요. 앱 내 스위치는 없습니다. 앱은 업데이트와 공지 사항을 확인하기 위해 GitHub에도 접속합니다. 전체 목록은 [개인정보 처리방침](https://www.kangentic.com/privacy/)을 참조하세요.
 
 ## 문서
 
-[빠른 시작](https://www.kangentic.com/getting-started/)으로 시작한 다음, 열, 자동화, 워크플로, MCP 서버, 구성에 대해서는 [문서](https://www.kangentic.com/overview/)를 참조하세요.
+[빠른 시작](https://www.kangentic.com/getting-started/)부터 읽은 다음, 열, 자동화, 워크플로, MCP 서버, 구성에 대해서는 [문서](https://www.kangentic.com/overview/)를 참조하세요.
 
 ## 개발
 
@@ -151,7 +152,7 @@ npm start
 
 ## 기여
 
-프로젝트 구조, 테스트, 규칙은 [CONTRIBUTING.md](../CONTRIBUTING.md)를 참조하세요. 기여자는 첫 번째 끌어오기 요청이 병합되기 전에 [CLA](../CLA.md)에 서명해야 합니다.
+프로젝트 구조, 테스트, 규칙은 [CONTRIBUTING.md](../CONTRIBUTING.md)를 참조하세요. 기여자는 첫 끌어오기 요청이 병합되기 전에 [CLA](../CLA.md)에 서명해야 합니다.
 
 ## 지원
 
@@ -163,4 +164,4 @@ npm start
 
 ## 라이선스
 
-[AGPL-3.0](../LICENSE). 상용 라이선스는 licensing@kangentic.com으로 이메일을 보내 주세요.
+[AGPL-3.0](../LICENSE). 상용 라이선스가 필요하면 licensing@kangentic.com으로 이메일을 보내세요.

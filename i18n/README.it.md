@@ -1,5 +1,5 @@
-<!-- readme-translation source-blob=ef6ed72a1d4b6736b32f5cd06be82d664e91fc50 -->
-> Questa è una traduzione automatica di [README.md](../README.md) alla revisione `ef6ed72`. La versione inglese è quella di riferimento.
+<!-- readme-translation source-blob=addf4d308ea2879895590819a96e54c47a323ac9 -->
+> Questa è una traduzione automatica di [README.md](../README.md) alla revisione `addf4d3`. La versione inglese è quella di riferimento.
 
 <p align="center">
   <a href="https://www.kangentic.com"><img src="https://raw.githubusercontent.com/Kangentic/branding/main/resources/web/logo.png" alt="Logo di Kangentic" width="96" /></a>
@@ -56,23 +56,24 @@
 
 ## Cosa fa
 
-Un agente di programmazione può portare avanti un'attività da solo e gli alberi di lavoro git permettono di eseguirne diversi contemporaneamente. A quel punto il limite diventi tu: quale agente è in attesa di un prompt, quale ha finito e dove è finito ciascun ramo. Kangentic mette ogni sessione su un'unica bacheca e segnala quelle che hanno bisogno di te.
+Un agente di programmazione può portare avanti un'attività da solo, e gli alberi di lavoro git permettono di eseguirne diversi contemporaneamente. A quel punto il limite diventi tu: quale agente è in attesa di un prompt, quale ha finito e dove è finito ciascun ramo. Kangentic mette ogni sessione su un'unica bacheca e segnala quelle che richiedono il tuo intervento.
 
-### Gestisci i tuoi agenti da un'unica bacheca
+### Esegui i tuoi agenti da un'unica bacheca
 
-- **Una bacheca, tutti gli agenti.** Ogni scheda mostra il modello, quanta parte della finestra di contesto è in uso e l'ultimo messaggio dell'agente, con un segno su quelle che hanno bisogno di te.
-- **Kangentic Mobile.** Associa il telefono una volta, poi controlla gli agenti, rispondi alla domanda su cui uno si è fermato e rivedi il suo diff lontano dalla scrivania. La connessione è crittografata end-to-end, tramite il relay di Kangentic o uno ospitato da te. Scaricala da [App Store](https://apps.apple.com/app/kangentic/id6794952339) o [Google Play](https://play.google.com/store/apps/details?id=com.kangentic.mobile).
-- **Quindici CLI di agenti.** Pianifica con Claude Code e sviluppa con Codex, oppure usa una sola CLI ovunque. Kangentic esegue le CLI che hai già con le credenziali che hai già configurato. Nessuna chiave API, nessun proxy, nessun account Kangentic.
-- **Tutti i progetti in un unico posto.** Ogni repository ha la propria bacheca e l'Agent Monitor mostra gli agenti in esecuzione in tutte.
+- **Una bacheca, tutti gli agenti.** Ogni scheda mostra il modello, quanta parte della finestra di contesto è in uso e l'ultimo messaggio dell'agente, con un segno su quelle che richiedono il tuo intervento.
+- **Kangentic Mobile.** Associa il telefono una sola volta, poi controlla gli agenti, rispondi alla domanda su cui uno si è fermato e rivedi il suo diff lontano dalla scrivania. La connessione è crittografata end-to-end, tramite il relay di Kangentic o uno ospitato da te. Scaricala da [App Store](https://apps.apple.com/app/kangentic/id6794952339) o [Google Play](https://play.google.com/store/apps/details?id=com.kangentic.mobile).
+- **Quindici CLI di agenti.** Pianifica con Claude Code e sviluppa con Codex, oppure usa una sola CLI ovunque. Kangentic esegue le CLI che hai già, con le credenziali che hai già configurato. Nessuna chiave API, nessun proxy, nessun account Kangentic.
+- **Agenti su un host remoto.** Metti un progetto su una macchina Linux raggiungibile via SSH: il suo repository, gli agenti, le build e i test vengono eseguiti lì. La bacheca resta sul tuo computer e gli agenti continuano a lavorare anche se la connessione cade o dopo che chiudi l'app. Vedi [Host remoti SSH](https://www.kangentic.com/features/ssh-remote-hosts/) per la configurazione e i limiti.
+- **Tutti i progetti in un unico posto.** Ogni repository ha la propria bacheca e l'Agent Monitor mostra gli agenti in esecuzione in tutti i repository.
 - **Revisione sulla bacheca.** Il pannello Changes mostra il diff e la cronologia dei commit di ogni attività. Una pull request collegata su GitHub o Azure DevOps mostra il suo stato e se è pronta per il merge.
 - **Gratuito e open source.** AGPL-3.0, con tutte le funzionalità incluse e nessun piano a pagamento.
 
 ### Adatta il flusso di lavoro
 
-- **Colonne.** Rinomina, aggiungi e ricollega le colonne finché la bacheca non rispecchia il tuo modo di rilasciare. Ogni colonna ha il proprio agente, modello, livello di effort e modalità di autorizzazione. La configurazione viene salvata con un commit nel repository in `kangentic.json`, così i colleghi ottengono la stessa bacheca, mentre attività e sessioni degli agenti restano sul computer di ciascuno.
+- **Colonne.** Rinomina, aggiungi e ricollega le colonne finché la bacheca non rispecchia il tuo modo di rilasciare. Ogni colonna ha il proprio agente, modello, livello di impegno e modalità di autorizzazione. La configurazione viene inclusa nei commit del repository in `kangentic.json`, così i colleghi ottengono la stessa bacheca, mentre le attività e le sessioni degli agenti restano sulla macchina di ciascuno.
 - **Automazioni.** Quando un'attività entra in una colonna, quando il suo agente termina un turno o quando l'attività esce, una colonna può inviare all'agente un messaggio o un comando slash, eseguire uno script, chiamare un webhook, inviarti una notifica o spostare l'attività nella colonna successiva. Una condizione scritta in linguaggio naturale, verificata da un agente, decide se un passaggio viene eseguito.
-- **Flussi di lavoro.** Dai all'agente del flusso di lavoro una descrizione, rivedi le attività collegate che pianifica e premi Start. Ogni attività parte quando le attività da cui dipende raggiungono Done e un flusso di lavoro può estendersi su più progetti.
-- **Agenti che lavorano sulla bacheca.** Il server MCP di Kangentic consente a un agente in esecuzione di creare attività, spostare la propria scheda, cercare nelle conversazioni passate e inviare messaggi all'agente di un'altra attività, così una regola scritta in un prompt può far avanzare il lavoro.
+- **Flussi di lavoro.** Dai all'agente del flusso di lavoro una descrizione, rivedi le attività collegate che pianifica e premi Avvia. Ogni attività parte quando le attività da cui dipende arrivano in Done, e un unico flusso di lavoro può coprire più progetti.
+- **Agenti che lavorano sulla bacheca.** Il server MCP di Kangentic permette a un agente in esecuzione di creare attività, spostare la propria scheda, cercare nelle conversazioni passate e inviare messaggi all'agente di un'altra attività, così una regola scritta in un prompt può far avanzare il lavoro.
 
 ## Fa al caso tuo?
 
@@ -80,19 +81,19 @@ Un agente di programmazione può portare avanti un'attività da solo e gli alber
 
 - esegui più agenti di programmazione contemporaneamente e perdi di vista quale ti sta aspettando.
 - gestisci attività su più progetti o clienti e vuoi tutti gli agenti in un'unica vista.
-- vuoi combinare Claude Code, Codex e altre CLI con gli abbonamenti che paghi già.
+- vuoi combinare Claude Code, Codex e altre CLI con gli abbonamenti che già paghi.
 - hai un flusso di lavoro in più passaggi e vuoi personalizzarne agenti e automazioni per progetto.
 - vuoi rispondere ai tuoi agenti dal telefono quando ti allontani.
 
 **Probabilmente non fa per te se:**
 
-- preferisci lavorare su un'attività alla volta, dall'inizio alla fine.
-- lavori su un solo progetto e lo cambi raramente.
+- preferisci lavorare a un'attività alla volta, dall'inizio alla fine.
+- lavori su un singolo progetto e cambi raramente.
 - non usi CLI di agenti o preferisci app come Cursor o Claude Desktop.
-- non hai bisogno di flussi di lavoro o automazioni nel tuo modo di sviluppare.
-- vuoi che i tuoi agenti vengano eseguiti nel cloud anziché sul tuo computer.
+- non ti servono flussi di lavoro o automazioni nel tuo modo di sviluppare.
+- vuoi un servizio ospitato che esegua i tuoi agenti, senza app da installare.
 
-Se ti sembra utile, una ⭐ aiuta altri sviluppatori a trovare Kangentic.
+Se ti sembra utile, una ⭐ aiuta altri sviluppatori a scoprire Kangentic.
 
 ## Installazione
 
@@ -100,22 +101,22 @@ Se ti sembra utile, una ⭐ aiuta altri sviluppatori a trovare Kangentic.
 npx kangentic
 ```
 
-Questo comando scarica l'ultima versione per la tua piattaforma da [GitHub Releases](https://github.com/Kangentic/kangentic/releases/latest), la installa e la apre. Dopodiché l'app si aggiorna da sola. Gli installer sono disponibili anche nella pagina delle release, se preferisci eseguirne uno manualmente.
+Questo comando scarica l'ultima versione per la tua piattaforma da [GitHub Releases](https://github.com/Kangentic/kangentic/releases/latest), la installa e la apre. In seguito l'app si aggiorna da sola. I programmi di installazione sono disponibili anche nella pagina delle release, se preferisci eseguirne uno tu.
 
 **Requisiti**
 
-- Windows x64, macOS 13 o successivo su Apple Silicon o Intel, oppure Linux x64 o arm64 (`.deb` o `.rpm`). Il Knowledge Graph non è disponibile sui Mac Intel.
+- Windows x64, macOS 13 o successivo su Apple Silicon o Intel, oppure Linux x64 o arm64 (`.deb` o `.rpm`).
 - Node.js 20 o successivo per `npx` e Git 2.26 o successivo.
-- Almeno una [CLI di agenti supportata](#supported-agents), installata e con accesso effettuato.
+- Almeno una [CLI di agente supportata](#supported-agents), installata e con accesso effettuato.
 
-Gli utenti WSL installano la versione Windows e possono scegliere una distribuzione WSL come shell del terminale. Gli agenti eseguono l'installazione Windows di ciascuna CLI, quindi una CLI installata solo all'interno della distribuzione non viene trovata. La [guida all'installazione](https://www.kangentic.com/guide/installation/) descrive ogni piattaforma.
+Gli utenti WSL installano la versione Windows e possono scegliere una distribuzione WSL come shell del terminale. Una CLI di agente installata all'interno di una distribuzione viene eseguita lì se ne imposti il percorso sulla copia presente nella distribuzione. Tieni il progetto stesso su un'unità Windows. La [guida all'installazione](https://www.kangentic.com/guide/installation/) tratta ogni piattaforma.
 
 ## Come funziona
 
-1. **Configura la bacheca.** Mantieni le colonne predefinite o modificale e scegli l'agente e la modalità di autorizzazione di ciascuna.
-2. **Crea un'attività.** Assegnale un titolo e un prompt, oppure importane una da GitHub Issues, GitHub Projects, Azure DevOps, Asana, Jira, Linear, Trello, GitLab o da un vault Obsidian.
-3. **Trascina per avviare.** Kangentic crea l'albero di lavoro, applica la modalità di autorizzazione della colonna e avvia l'agente.
-4. **Guardalo programmare.** Segui l'agente nel suo terminale in tempo reale, rispondi quando fa domande e sposta la scheda avanti quando ha finito.
+1. **Configura la bacheca.** Mantieni le colonne predefinite o modificale, e scegli l'agente e la modalità di autorizzazione per ciascuna.
+2. **Crea un'attività.** Assegnale un titolo e un prompt, oppure importala da GitHub Issues, GitHub Projects, Azure DevOps, Asana, Jira, Linear, Trello, GitLab o un vault Obsidian.
+3. **Trascina per eseguire.** Kangentic crea l'albero di lavoro, applica la modalità di autorizzazione della colonna e avvia l'agente.
+4. **Guardalo programmare.** Segui l'agente nel suo terminale dal vivo, rispondi quando chiede qualcosa e trascina avanti la scheda quando ha finito.
 
 <a name="supported-agents"></a>
 ## Agenti supportati
@@ -126,21 +127,21 @@ La ripresa dopo un riavvio, gli strumenti MCP della bacheca e il passaggio della
 
 ## Lingue
 
-L'interfaccia di Kangentic è disponibile in ciascuna delle lingue elencate in cima a questa pagina. Puoi cambiarla in Settings > Language e Kangentic si riavvia nella lingua scelta. Le traduzioni sono automatiche e aperte alla revisione; [Traduzioni](../docs/contributing/translations.md) spiega come correggerne una.
+L'interfaccia di Kangentic è disponibile in tutte le lingue elencate in cima a questa pagina. Cambiala in Settings > Language e Kangentic si riavvia in quella lingua. Le traduzioni sono generate automaticamente e aperte alla revisione; [Traduzioni](../docs/contributing/translations.md) spiega come correggerne una.
 
 ## Dati e privacy
 
-Bacheche, attività e trascrizioni restano in un database SQLite locale. Le CLI degli agenti contattano i rispettivi provider con i tuoi account, come farebbero nel tuo terminale.
+Bacheche, attività e trascrizioni restano in un database SQLite locale. Le CLI degli agenti contattano i propri provider con i tuoi account, come farebbero nel tuo terminale.
 
-Le build di release inviano per impostazione predefinita eventi di utilizzo anonimi (Aptabase) e segnalazioni di errore (Sentry). Gli eventi di utilizzo non contengono mai il testo delle attività, prompt o codice. Imposta `KANGENTIC_TELEMETRY=0` per disattivarli entrambi, oppure `KANGENTIC_ERROR_REPORTING=0` per disattivare solo le segnalazioni di errore. Non esiste un'opzione nell'app. L'app controlla inoltre GitHub per aggiornamenti e annunci. Consulta l'[informativa sulla privacy](https://www.kangentic.com/privacy/) per l'elenco completo.
+Le build di release inviano per impostazione predefinita eventi di utilizzo anonimi (Aptabase) e segnalazioni di errore (Sentry). Gli eventi di utilizzo non contengono mai il testo delle attività, i prompt o il codice. Imposta `KANGENTIC_TELEMETRY=0` per disattivarli entrambi, oppure `KANGENTIC_ERROR_REPORTING=0` per disattivare solo le segnalazioni di errore. Non esiste un'opzione nell'app. L'app controlla anche GitHub per aggiornamenti e annunci. Vedi l'[informativa sulla privacy](https://www.kangentic.com/privacy/) per l'elenco completo.
 
 ## Documentazione
 
-Inizia con la [guida rapida](https://www.kangentic.com/getting-started/), poi passa alla [documentazione](https://www.kangentic.com/overview/) per colonne, automazioni, flussi di lavoro, server MCP e configurazione.
+Inizia dalla [guida rapida](https://www.kangentic.com/getting-started/), poi passa alla [documentazione](https://www.kangentic.com/overview/) per colonne, automazioni, flussi di lavoro, server MCP e configurazione.
 
 ## Sviluppo
 
-La compilazione dai sorgenti richiede Node.js 22.14 o successivo, oppure 24 o successivo.
+Per compilare dal codice sorgente serve Node.js 22.14 o successivo, oppure 24 o successivo.
 
 ```bash
 git clone https://github.com/Kangentic/kangentic.git
@@ -151,15 +152,15 @@ npm start
 
 ## Contribuire
 
-Consulta [CONTRIBUTING.md](../CONTRIBUTING.md) per la struttura del progetto, i test e le convenzioni. I collaboratori firmano un [CLA](../CLA.md) prima che venga eseguito il merge della loro prima pull request.
+Vedi [CONTRIBUTING.md](../CONTRIBUTING.md) per la struttura del progetto, i test e le convenzioni. I collaboratori firmano un [CLA](../CLA.md) prima che la loro prima pull request venga unita.
 
 ## Supporto
 
 - [GitHub Discussions](https://github.com/Kangentic/kangentic/discussions) per domande e richieste di funzionalità
-- [GitHub Issues](https://github.com/Kangentic/kangentic/issues) per segnalazioni di bug
+- [GitHub Issues](https://github.com/Kangentic/kangentic/issues) per segnalare bug
 - [support@kangentic.com](mailto:support@kangentic.com) se preferisci non scrivere pubblicamente
 
-Per segnalare un problema di sicurezza, consulta [SECURITY.md](../SECURITY.md).
+Per segnalare un problema di sicurezza, vedi [SECURITY.md](../SECURITY.md).
 
 ## Licenza
 
