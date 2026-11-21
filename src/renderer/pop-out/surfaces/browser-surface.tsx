@@ -15,8 +15,9 @@ export const browserSurface: SurfaceDescriptor<'browser'> = {
     // params and syncs the session list itself (PopOutBrowserRoot), so neither
     // waits on a board that may not hold the task.
     loadAmbientBoard(context.signal);
-    // No push subscription needed: BrowserPane manages its own guest
-    // registration/zoom/navigation wiring internally on mount.
+    // BrowserPane manages its own guest registration and zoom wiring on mount.
+    // The one push this window adds, a link relayed from the main window, is
+    // subscribed in PopOutBrowserRoot, which knows the pane's owner key.
   },
 
   hmrResync: () => {

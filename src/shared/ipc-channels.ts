@@ -576,6 +576,18 @@ export const IPC = {
   // `src/main/browser/browser-pane-opener.ts`.
   BROWSER_PANE_OPEN_REQUEST: 'browser:paneOpenRequest',
   BROWSER_PANE_CLOSE_REQUEST: 'browser:paneCloseRequest',
+  // Renderer -> main: the user's click on a link asks for the Kangentic
+  // browser, and the owner's pane is in a Browser window of its own. That
+  // window's renderer keeps its own session store, so main relays the URL to it
+  // (BROWSER_NAVIGATE_REQUEST, sent to that one window) and raises the window.
+  // Resolves false when no such window is open, and the caller opens the
+  // default browser instead.
+  BROWSER_POP_OUT_NAVIGATE: 'browser:popOutNavigate',
+  // Main -> one Browser pop-out window: load this URL in the owner's pane. The
+  // pop-out puts it in its own `browserNavigateRequests`, the entry the docked
+  // pane takes a link click through. Never through the CDP driver, which would
+  // veil the pane as agent-driven.
+  BROWSER_NAVIGATE_REQUEST: 'browser:navigateRequest',
   // Main -> renderer: an agent is dispatching CDP input into this guest right
   // now (active=true), or has finished (active=false). Carries the guest's own
   // webContents id, because one window can host several panes.

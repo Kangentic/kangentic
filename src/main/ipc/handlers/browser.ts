@@ -27,6 +27,7 @@ import { installLaneHandoff } from '../../browser/browser-lane-handoff';
 import { destroyLane, laneTaskIds, setLaneChangeListener } from '../../browser/browser-lane-manager';
 import { broadcast } from '../../pop-out/window-broadcast';
 import { popOutWindowManager } from '../../pop-out/pop-out-window-manager';
+import { relayLinkToPopOut } from '../../browser/pop-out-link-relay';
 import { detailOwnerRegistry } from './task-detail-ownership';
 import { enumerateProjectPartitions } from '../../browser/browser-partition-cleanup';
 import { syncJarFromIdentity } from '../../browser/jar-seeder';
@@ -592,6 +593,11 @@ export function registerBrowserHandlers(context: IpcContext): void {
     if (closed) clearBrowserPaneReason(taskId);
     return closed;
   });
+
+  // A user's link click for a pane in a Browser window of its own: relayed to
+  // that window's renderer, which keeps its own store (pop-out-link-relay.ts).
+  ipcMain.handle(IPC.BROWSER_POP_OUT_NAVIGATE, (_event, projectId: unknown, ownerKey: unknown, url: unknown) =>
+    relayLinkToPopOut(popOutWindowManager, projectId, ownerKey, url));
 }
 
 function isGuestId(value: unknown): value is number {

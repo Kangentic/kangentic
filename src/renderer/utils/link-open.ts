@@ -8,9 +8,10 @@
  * setting only swaps which is which, so there is no hotkey to rebind.
  *
  * A place with no Kangentic browser beside it (the bottom panel, a task with
- * no running session, a browser popped out to its own window) has one place to
- * open a link, so both clicks open the default browser there and the tip shows
- * one row.
+ * no running session) has one place to open a link, so both clicks open the
+ * default browser there and the tip shows one row. A Browser pane popped out
+ * to its own window still counts: the link opens in that window
+ * (`pop-out-link-browser.ts`).
  *
  * Pure: the caller hands in the setting and the browser's availability, read
  * at hover and at click.

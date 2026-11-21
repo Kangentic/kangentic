@@ -79,6 +79,7 @@ import {
   useCommandTerminalBrowserAlive,
 } from './command-terminal-browser';
 import type { TerminalLinkBrowser } from '../../utils/terminal-links/link-targets';
+import { popOutLinkBrowser } from '../../utils/pop-out-link-browser';
 
 const ChangesPanel = lazy(() => import('../dialogs/task-detail/changes/ChangesPanel').then((module) => ({ default: module.ChangesPanel })));
 
@@ -248,13 +249,15 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
   const handleCloseBrowser = useCallback(() => {
     if (browserOwnerKey) void closeBrowserForTask(browserOwnerKey, browserProjectId);
   }, [browserOwnerKey, browserProjectId]);
-  // The Kangentic browser this terminal opens a link in, on its link hotkey:
-  // this slot's pane, shown as the Globe pill shows it, then loaded. Null with the
-  // project's Browser pane off, or with the pane in a window of its own, whose
-  // renderer keeps its own store: that click opens the default browser instead.
+  // The Kangentic browser this terminal opens a link in: this slot's pane,
+  // shown as the Globe pill shows it, then loaded. Null with the project's
+  // Browser pane off. A pane in a window of its own is that window, whose
+  // renderer keeps its own store: main relays the link to it and raises it
+  // (`utils/pop-out-link-browser.ts`), and the slot here stays as it is.
   const browserEnabled = config.browser?.enabled !== false;
   const linkBrowser = useMemo<TerminalLinkBrowser | null>(() => {
-    if (!browserEnabled || browserProjectId === null || browserOwnerKey === null || browserPopOut.isOpen) return null;
+    if (!browserEnabled || browserProjectId === null || browserOwnerKey === null) return null;
+    if (browserPopOut.isOpen) return popOutLinkBrowser(browserProjectId, browserOwnerKey);
     return {
       open: (url) => {
         changeLayout(() => showCommandTerminalBrowser(browserProjectId, slot));

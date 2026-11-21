@@ -56,6 +56,8 @@ declare global {
       emitPaneOpenRequest: (projectId: string, taskId: string, purpose?: 'for-user' | 'own-work') => void;
       /** Fire main's close push, as kangentic_browser_close_pane does. */
       emitPaneCloseRequest: (projectId: string, taskIds: string[]) => void;
+      /** Main's relay of a link clicked in the main window, as a Browser pop-out receives it. */
+      emitNavigateRequest: (ownerKey: string, url: string) => void;
       /** Fire main's agent-input push for one guest (an agent is / is no longer driving it).
        *  `reason` rides the active edge, for the drive label. */
       emitAgentInput: (webContentsId: number, active: boolean, reason?: string | null) => void;

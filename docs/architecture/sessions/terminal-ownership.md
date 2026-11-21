@@ -16,6 +16,9 @@ sources:
   - resource: src/renderer/utils/terminal-links/link-providers.ts
   - resource: src/renderer/utils/terminal-links/link-tip.ts
   - resource: src/renderer/utils/link-open.ts
+  - resource: src/renderer/utils/pop-out-link-browser.ts
+  - resource: src/main/browser/pop-out-link-relay.ts
+  - resource: src/preload/buffered-push.ts
   - resource: src/renderer/utils/terminal-links/link-targets.ts
   - resource: src/renderer/utils/terminal-links/parse-links.ts
   - resource: src/renderer/utils/terminal-links/register-terminal-links.ts
@@ -144,13 +147,26 @@ so there is no hotkey to rebind. The same rule opens a PR pill and a task's arti
 (`src/renderer/utils/link-open.ts`, `planLinkActions`); `terminal-links/link-targets.ts` reads the
 setting at hover and at click and routes the open. The host decides whether a Kangentic browser is
 beside the terminal (`useTerminal`'s `linkBrowser` option): a task window offers its pane while the
-pane can show, a Command Terminal its slot's pane, and neither does with the project's switch off or
-the pane popped out into a window of its own. The bottom panel and the Workflows pane offer none.
-With none, both clicks open the default browser. Opening shows the pane the way its Browser pill does and puts a
+pane can show, a Command Terminal its slot's pane, and neither does with the project's switch off.
+The bottom panel and the Workflows pane offer none. With none, both clicks open the default
+browser. Opening shows the pane the way its Browser pill does and puts a
 `browserNavigateRequests` entry in the session store: `BrowserPane` takes it as its first page when
 it mounts, or loads it through the webview's own `loadURL` when it already shows one. It is a user's
 navigation, so it never goes through main's driver, which would veil the pane as agent-driven
 (`agent-driven-focus.md`). An agent driving the pane changes nothing.
+
+A pane popped out into a Browser window of its own is still the Kangentic browser. That window runs
+its own renderer and keeps its own session store, so the main window's entry never reaches it.
+The click goes to main instead (`browser:popOutNavigate`, `utils/pop-out-link-browser.ts`), which
+sends the URL to that one window (`browser:navigateRequest`, `src/main/browser/pop-out-link-relay.ts`)
+and raises it. The pop-out puts the URL in its own `browserNavigateRequests`, and its pane takes it
+exactly as a docked pane does. Raising the window is allowed because the click is the user's; a link
+that loaded in a window behind the app would look like nothing happened. If the window closed
+before the click reached main, main answers false and the link opens in the default browser.
+The main window counts a pop-out as open from the moment main creates it, so a click can land
+while its page is still loading. Main holds the URL until the page has loaded, and the pop-out's
+preload registers its listener at preload time (`src/preload/buffered-push.ts`), so the link
+waits there until the pane subscribes.
 
 **A plain click has three guards**, because a terminal is also where text is selected and where a
 TUI reads the mouse (`terminal-links/link-gesture.ts`):
