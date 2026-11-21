@@ -61,6 +61,11 @@ declare global {
       /** Fire main's agent-input push for one guest (an agent is / is no longer driving it).
        *  `reason` rides the active edge, for the drive label. */
       emitAgentInput: (webContentsId: number, active: boolean, reason?: string | null) => void;
+      /** Fire main's push for a Browser pane tool shortcut typed into one guest. */
+      emitPaneShortcut: (
+        webContentsId: number,
+        actionId: import('../../src/shared/browser-pane-guest-shortcuts').GuestBrowserShortcut,
+      ) => void;
       /** Fire main's "these tasks hold their browser surface offscreen" push.
        *  Takes the WHOLE set, as main does. */
       emitOffscreenSurfaces: (taskIds: string[]) => void;

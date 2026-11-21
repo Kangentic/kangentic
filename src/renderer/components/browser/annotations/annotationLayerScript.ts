@@ -92,8 +92,12 @@ const LAYER_SOURCE = String.raw`
     root.appendChild(stage);
     // On the shadow root, not the document: a closed root hides its nodes from
     // composedPath() for any listener outside it. Stopping here also keeps the
-    // click from reaching the page.
+    // click from reaching the page. The press before it stops here too, so a
+    // menu the page has open (which closes on an outside pointerdown) stays
+    // open, and the page's focus stays where it was.
     root.addEventListener('click', onBadgeClick);
+    root.addEventListener('pointerdown', onBadgePress);
+    root.addEventListener('mousedown', onBadgePress);
     document.documentElement.appendChild(host);
   }
 
@@ -257,20 +261,32 @@ const LAYER_SOURCE = String.raw`
     });
   }
 
-  function onBadgeClick(event) {
+  // The badge an event came through, or null.
+  function badgeOf(event) {
     var path = event.composedPath ? event.composedPath() : [];
     for (var i = 0; i < path.length; i++) {
       var node = path[i];
-      if (node && node.getAttribute && node.getAttribute('data-number')) {
-        event.preventDefault();
-        event.stopPropagation();
-        var number = Number(node.getAttribute('data-number'));
-        var waiters = badgeWaiters;
-        badgeWaiters = [];
-        for (var w = 0; w < waiters.length; w++) waiters[w]({ activate: number });
-        return;
-      }
+      if (node && node.getAttribute && node.getAttribute('data-number')) return node;
     }
+    return null;
+  }
+
+  function onBadgePress(event) {
+    if (!badgeOf(event)) return;
+    // A mousedown's default moves the page's focus.
+    if (event.type === 'mousedown') event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function onBadgeClick(event) {
+    var badge = badgeOf(event);
+    if (!badge) return;
+    event.preventDefault();
+    event.stopPropagation();
+    var number = Number(badge.getAttribute('data-number'));
+    var waiters = badgeWaiters;
+    badgeWaiters = [];
+    for (var w = 0; w < waiters.length; w++) waiters[w]({ activate: number });
   }
 
   window.addEventListener('scroll', scheduleRedraw, true);

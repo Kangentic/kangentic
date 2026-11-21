@@ -20,6 +20,7 @@ import {
   type AnnotationLayerState,
   type AnnotationLayerStatus,
 } from '../../src/renderer/components/browser/annotations/annotationLayerScript';
+import { INSPECT_CANCEL_SCRIPT, INSPECT_SCRIPT } from '../../src/renderer/components/browser/inspectScript';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -462,11 +463,29 @@ test.describe('the page layer, run in a real page', () => {
     }
   });
 
+  /**
+   * Counts what reaches the page's own listeners on `document`, in the bubble
+   * phase, where a menu library acts on an outside press or an Escape. Added
+   * before any Kangentic script, as a page's own listeners are.
+   */
+  const countPageEvents = (guest: Page): Promise<void> => guest.evaluate(() => {
+    const counts: Record<string, number> = {};
+    (window as unknown as { __pageEvents: Record<string, number> }).__pageEvents = counts;
+    for (const type of ['keydown', 'pointerdown', 'mousedown', 'click', 'focusin']) {
+      counts[type] = 0;
+      document.addEventListener(type, () => { counts[type] += 1; });
+    }
+  });
+  const pageEvents = (guest: Page): Promise<Record<string, number>> =>
+    guest.evaluate(() => ({ ...(window as unknown as { __pageEvents: Record<string, number> }).__pageEvents }));
+  const NOTHING_REACHED_THE_PAGE = { keydown: 0, pointerdown: 0, mousedown: 0, click: 0, focusin: 0 };
+
   test('a click on a badge answers the armed call with its number, and the page never sees it', async () => {
     const guest = await page.context().newPage();
     try {
       await guest.setViewportSize({ width: 1000, height: 700 });
       await guest.setContent(GUEST_HTML);
+      await countPageEvents(guest);
       await guest.evaluate(() => {
         (window as unknown as { __pageClicks: number }).__pageClicks = 0;
         document.querySelector('button')?.addEventListener('click', () => {
@@ -487,6 +506,122 @@ test.describe('the page layer, run in a real page', () => {
       await expect.poll(() => guest.evaluate(() => (window as unknown as { __badgeAnswer?: unknown }).__badgeAnswer))
         .toEqual({ activate: 1 });
       expect(await guest.evaluate(() => (window as unknown as { __pageClicks: number }).__pageClicks)).toBe(0);
+      // Nor the press before the click: a page menu closes on an outside pointerdown.
+      expect(await pageEvents(guest)).toEqual(NOTHING_REACHED_THE_PAGE);
+    } finally {
+      await guest.close();
+    }
+  });
+
+  test('Select element keeps every press and key from the page, and the pane ends it without a trace', async () => {
+    const guest = await page.context().newPage();
+    try {
+      await guest.setViewportSize({ width: 1000, height: 700 });
+      await guest.setContent(GUEST_HTML);
+      await countPageEvents(guest);
+      // A page listener on document capture, added before the picker, as a
+      // menu library's outside-press listener is.
+      await guest.evaluate(() => {
+        const holder = window as unknown as { __pageCaptureClicks: number };
+        holder.__pageCaptureClicks = 0;
+        document.addEventListener('click', () => { holder.__pageCaptureClicks += 1; }, true);
+      });
+      const armPicker = () => guest.evaluate((source) => {
+        const holder = window as unknown as { __pick?: unknown };
+        holder.__pick = 'pending';
+        void ((0, eval)(source) as Promise<unknown>).then((value) => { holder.__pick = value; });
+      }, INSPECT_SCRIPT);
+      const pick = () => guest.evaluate(() => (window as unknown as { __pick?: unknown }).__pick);
+
+      // A pick: the element is answered, and no page listener saw the press.
+      await armPicker();
+      await guest.mouse.click(260, 316);
+      await expect.poll(async () => ((await pick()) as { testId?: string } | null)?.testId).toBe('save');
+      expect(await guest.evaluate(() => (window as unknown as { __pageCaptureClicks: number }).__pageCaptureClicks)).toBe(0);
+
+      // The user's Escape ends the mode and goes no further.
+      await armPicker();
+      await guest.keyboard.press('Escape');
+      await expect.poll(pick).toBeNull();
+
+      // The pane ends the next one, as turning Select off or Draw on does.
+      await armPicker();
+      await run(guest, INSPECT_CANCEL_SCRIPT);
+      await expect.poll(pick).toBeNull();
+      expect(await pageEvents(guest)).toEqual(NOTHING_REACHED_THE_PAGE);
+
+      // Nothing is left behind: the page's next click is its own again.
+      await guest.mouse.click(260, 316);
+      await expect.poll(async () => (await pageEvents(guest)).click).toBe(1);
+      expect(await guest.evaluate(() => (window as unknown as { __pageCaptureClicks: number }).__pageCaptureClicks)).toBe(1);
+    } finally {
+      await guest.close();
+    }
+  });
+
+  /** Arms the picker and keeps its answer in the page ('pending' until it resolves). */
+  const armInspectPicker = (guest: Page): Promise<void> => guest.evaluate((source) => {
+    const holder = window as unknown as { __pick?: unknown };
+    holder.__pick = 'pending';
+    void ((0, eval)(source) as Promise<unknown>).then((value) => { holder.__pick = value; });
+  }, INSPECT_SCRIPT);
+  const readInspectPick = (guest: Page): Promise<unknown> =>
+    guest.evaluate(() => (window as unknown as { __pick?: unknown }).__pick);
+
+  test('with a picker armed, a click on a badge picks the page element beneath it, never the layer', async () => {
+    const guest = await page.context().newPage();
+    try {
+      await guest.setViewportSize({ width: 1000, height: 700 });
+      await guest.setContent(GUEST_HTML);
+      await countPageEvents(guest);
+      await run(guest, renderAnnotationLayerScript(state));
+
+      await armInspectPicker(guest);
+      // Annotation 1's badge is centred on the button's top-left corner, so the
+      // press lands on the layer's host with the button beneath it.
+      await guest.mouse.click(202, 302);
+      await expect.poll(async () => ((await readInspectPick(guest)) as { testId?: string } | null)?.testId).toBe('save');
+      // The layer took no part in it and the page saw nothing.
+      expect(await pageEvents(guest)).toEqual(NOTHING_REACHED_THE_PAGE);
+    } finally {
+      await guest.close();
+    }
+  });
+
+  test('between two picks the page still gets no press, and an Escape there ends the mode without reaching the page', async () => {
+    const guest = await page.context().newPage();
+    try {
+      await guest.setViewportSize({ width: 1000, height: 700 });
+      await guest.setContent(GUEST_HTML);
+      await countPageEvents(guest);
+
+      // One pick resolves. The pane re-injects the script after each answer, and
+      // this test holds that moment open: the mode is on, no picker is armed.
+      await armInspectPicker(guest);
+      await guest.mouse.click(260, 316);
+      await expect.poll(async () => ((await readInspectPick(guest)) as { testId?: string } | null)?.testId).toBe('save');
+      expect(await pageEvents(guest)).toEqual(NOTHING_REACHED_THE_PAGE);
+
+      // A click in the gap is still kept from the page, though it picks nothing.
+      await guest.mouse.click(260, 316);
+      // A round trip through the page orders the assertion after the click's events.
+      await guest.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve(null))));
+      expect(await pageEvents(guest)).toEqual(NOTHING_REACHED_THE_PAGE);
+
+      // The user's Escape in the gap goes no further than the guard.
+      await guest.keyboard.press('Escape');
+      await guest.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve(null))));
+      expect(await pageEvents(guest)).toEqual(NOTHING_REACHED_THE_PAGE);
+
+      // The next picker finds the mode ended: it answers null at once and arms nothing.
+      await armInspectPicker(guest);
+      await expect.poll(() => readInspectPick(guest)).toBeNull();
+      expect(await guest.evaluate(() => (window as unknown as { __kangenticInspectActive?: boolean }).__kangenticInspectActive))
+        .toBe(false);
+
+      // The mode is off: the page's next click is its own again.
+      await guest.mouse.click(260, 316);
+      await expect.poll(async () => (await pageEvents(guest)).click).toBe(1);
     } finally {
       await guest.close();
     }

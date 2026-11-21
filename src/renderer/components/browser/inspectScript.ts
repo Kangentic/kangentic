@@ -4,11 +4,16 @@
 // clicked element. Esc cancels and resolves null.
 //
 // Select element mode stays on across picks, and the pane injects this again
-// after each answer. Between one pick and the next script there is no picker,
-// so a guard installed once per document (`__kangenticInspectMode`) swallows
-// the page's presses for as long as the mode is on: a quick second click never
-// activates the link or button under it. The pane clears the mode when it
-// ends.
+// after each answer. A guard installed once per document swallows the page's
+// presses for as long as the mode is on (`__kangenticInspectMode`), on `window`
+// in the capture phase, so no page listener ever sees one: a menu the page had
+// open stays open, and a quick second click never activates the link under it.
+// The armed picker takes its pick from inside that guard
+// (`__kangenticInspectPick`), not from a listener of its own the page could
+// run ahead of. The pane ends a picker through `__kangenticInspectCancel`,
+// never by sending the page a key: a page menu closes on Escape. An Escape
+// typed between one picker and the next is the guard's: it ends the mode and
+// marks it (`__kangenticInspectEnded`), so the next picker resolves null.
 //
 // The fingerprint is what an AI coding agent actually needs to grep the
 // codebase: selector, ARIA role + accessible name (Playwright-style),
@@ -41,6 +46,23 @@ export interface PickedElement {
   }>;
 }
 
+/**
+ * Ends Select element in the page: the armed picker through its own hook (its
+ * script resolves null), the guard's mode, and any leftover hover outline.
+ * Nothing is dispatched into the page. A synthetic Escape used to end the
+ * picker, and it closed whatever menu the page had open.
+ */
+export const INSPECT_CANCEL_SCRIPT = `
+(function () {
+  if (typeof window.__kangenticInspectCancel === 'function') window.__kangenticInspectCancel();
+  window.__kangenticInspectActive = false;
+  window.__kangenticInspectMode = false;
+  window.__kangenticInspectEnded = false;
+  var overlay = document.querySelector('[data-kangentic-inspector]');
+  if (overlay) overlay.remove();
+})();
+`;
+
 export const INSPECT_SCRIPT = `
 (function () {
   return new Promise((resolve) => {
@@ -48,24 +70,45 @@ export const INSPECT_SCRIPT = `
       resolve(null);
       return;
     }
+    // The user's Escape landed between the last picker and this one.
+    if (window.__kangenticInspectEnded) {
+      window.__kangenticInspectEnded = false;
+      resolve(null);
+      return;
+    }
     window.__kangenticInspectActive = true;
     window.__kangenticInspectMode = true;
 
-    // Installed once per document. A click the armed picker takes is its own;
-    // every other press, and a click between two pickers, never reaches the
-    // page. A press on the annotation layer is left to the layer's badges.
+    // Installed once per document. No press reaches the page while the mode
+    // is on; the armed picker reads its click here. A press on the annotation
+    // layer (a badge, which reads as the layer's host out here) is left to the
+    // layer, which keeps it from the page itself, except the click an armed
+    // picker takes: that picks the page element under the badge.
     if (!window.__kangenticInspectGuard) {
       const guard = (event) => {
         if (!window.__kangenticInspectMode) return;
-        if (event.type === 'click' && window.__kangenticInspectActive) return;
+        if (event.type === 'keydown') {
+          // An armed picker takes its own Escape. Between two pickers there is
+          // none, so the user's Escape ends the mode here, short of the page.
+          if (event.key !== 'Escape' || window.__kangenticInspectPick) return;
+          event.preventDefault();
+          event.stopPropagation();
+          if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+          window.__kangenticInspectMode = false;
+          window.__kangenticInspectEnded = true;
+          return;
+        }
         const target = event.target;
-        if (target && target.hasAttribute && target.hasAttribute('${ANNOTATION_LAYER_HOST_ATTRIBUTE}')) return;
+        if (target && target.hasAttribute && target.hasAttribute('${ANNOTATION_LAYER_HOST_ATTRIBUTE}')) {
+          if (event.type !== 'click' || !window.__kangenticInspectPick) return;
+        }
         event.preventDefault();
         event.stopPropagation();
         if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+        if (event.type === 'click' && window.__kangenticInspectPick) window.__kangenticInspectPick(event);
       };
       window.__kangenticInspectGuard = guard;
-      for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'auxclick', 'dblclick']) {
+      for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'auxclick', 'dblclick', 'keydown']) {
         window.addEventListener(type, guard, true);
       }
     }
@@ -229,10 +272,17 @@ export const INSPECT_SCRIPT = `
 
     function cleanup() {
       window.__kangenticInspectActive = false;
+      if (window.__kangenticInspectPick === onClick) window.__kangenticInspectPick = null;
+      if (window.__kangenticInspectCancel === cancel) window.__kangenticInspectCancel = null;
       document.removeEventListener('mousemove', onMove, true);
-      document.removeEventListener('click', onClick, true);
-      document.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('keydown', onKey, true);
       try { overlay.remove(); } catch (e) { /* ignore */ }
+    }
+
+    // How the pane ends this picker: nothing is sent to the page.
+    function cancel() {
+      cleanup();
+      resolve(null);
     }
 
     // The element under the pointer. An annotation badge sits over the page in
@@ -260,29 +310,31 @@ export const INSPECT_SCRIPT = `
       overlay.style.height = rect.height + 'px';
     }
 
+    // Called by the guard, which has already kept the click from the page.
     function onClick(event) {
       const target = pageTarget(event);
       if (!target || isOurOverlay(target)) return;
-      event.preventDefault();
-      event.stopPropagation();
-      if (event.stopImmediatePropagation) event.stopImmediatePropagation();
       const fingerprint = captureFingerprint(target);
       cleanup();
       resolve(fingerprint);
     }
 
+    // The user's Escape ends Select element and goes no further: a menu the
+    // page had open stays open.
     function onKey(event) {
       if (event.key === 'Escape') {
         event.preventDefault();
+        event.stopPropagation();
+        if (event.stopImmediatePropagation) event.stopImmediatePropagation();
         window.__kangenticInspectMode = false;
-        cleanup();
-        resolve(null);
+        cancel();
       }
     }
 
+    window.__kangenticInspectPick = onClick;
+    window.__kangenticInspectCancel = cancel;
     document.addEventListener('mousemove', onMove, true);
-    document.addEventListener('click', onClick, true);
-    document.addEventListener('keydown', onKey, true);
+    window.addEventListener('keydown', onKey, true);
   });
 })();
 `;

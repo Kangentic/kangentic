@@ -16,7 +16,7 @@ import {
   hoverAnnotationLayerScript,
   renderAnnotationLayerScript,
 } from '../../src/renderer/components/browser/annotations/annotationLayerScript';
-import { INSPECT_SCRIPT } from '../../src/renderer/components/browser/inspectScript';
+import { INSPECT_CANCEL_SCRIPT, INSPECT_SCRIPT } from '../../src/renderer/components/browser/inspectScript';
 
 const parses = (source: string): void => {
   // Constructing a Function parses its body and throws a SyntaxError on a slip.
@@ -55,6 +55,7 @@ describe('Browser pane guest scripts', () => {
 
   it('the Select element script parses, and skips the layer host when it hit-tests', () => {
     parses(INSPECT_SCRIPT);
+    parses(INSPECT_CANCEL_SCRIPT);
     expect(INSPECT_SCRIPT).toContain(ANNOTATION_LAYER_HOST_ATTRIBUTE);
   });
 });

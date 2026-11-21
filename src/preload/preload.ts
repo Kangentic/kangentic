@@ -13,6 +13,7 @@ import { PtyPortClient } from './pty-port-client';
 import type { ScrollbackInvokeResult } from '../shared/pty-port-protocol';
 import { installDevtoolsPreloadHooks } from '../devtools/preload/install-globals';
 import type { AgentAccountLoginEnded, AgentAccountSwitched, AgentAccountsAllFull } from '../shared/agent-accounts';
+import type { GuestBrowserShortcut } from '../shared/browser-pane-guest-shortcuts';
 
 // Decodes the standard base64 main writes with `Buffer.from(text, 'utf-8').toString('base64')`.
 // Web APIs only, never `Buffer`: this preload is sandboxed, and Electron 45 removes `Buffer`,
@@ -1066,6 +1067,12 @@ const api: ElectronAPI = {
         callback(webContentsId, data);
       ipcRenderer.on(IPC.BROWSER_USER_KEY_DURING_DRIVE, handler);
       return () => ipcRenderer.removeListener(IPC.BROWSER_USER_KEY_DURING_DRIVE, handler);
+    },
+    onPaneShortcut: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, webContentsId: number, actionId: GuestBrowserShortcut) =>
+        callback(webContentsId, actionId);
+      ipcRenderer.on(IPC.BROWSER_PANE_SHORTCUT, handler);
+      return () => ipcRenderer.removeListener(IPC.BROWSER_PANE_SHORTCUT, handler);
     },
     onGuestMouseButton: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: GuestMouseButtonEvent) =>
