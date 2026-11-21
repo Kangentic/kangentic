@@ -4351,6 +4351,8 @@ export function buildDemoPreConfig(options: {
       var originalDictationStart = window.electronAPI.dictation.start;
       window.electronAPI.dictation.start = function () {
         return originalDictationStart.apply(this, arguments).then(function (result) {
+          // Refused while another window dictates: no session, so nothing to play.
+          if (result && result.refused) return result;
           endDictationPlayback();
           var playback = { dictationSessionId: result.dictationSessionId, timers: [], heard: -1 };
           dictationPlayback = playback;

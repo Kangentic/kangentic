@@ -13,7 +13,7 @@
  * unnoticed.
  *
  * Both release paths matter for the same concrete reason: `useDictation` is
- * mounted once app-wide, and a missing release UP leaves `activeRef` true and
+ * mounted once per window, and a missing release UP leaves `activeRef` true and
  * the microphone conceptually "held", so the per-session paste guard and the
  * push-to-talk re-entrancy guard both wedge for that session until dictation
  * is toggled off and on again by hand.
