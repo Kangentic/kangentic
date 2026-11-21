@@ -2,6 +2,7 @@ import type React from 'react';
 import { Info } from 'lucide-react';
 import { SettingText } from './SettingText';
 import { Tooltip } from './Tooltip';
+import { CONTROL_HOVER_LIFT_CLASS } from './Field';
 
 interface ToggleCardProps {
   label: string;
@@ -36,9 +37,12 @@ interface ToggleCardProps {
  * AAA). At `fg-faint` the same line is 2.37:1 and effectively unreadable, which
  * is what made an earlier attempt at this fail - the fill was never the
  * problem, the faint text on it was.
+ *
+ * Hover lifts the fill and leaves the border (`CONTROL_HOVER_LIFT_CLASS`), as
+ * the Column Manager's automation rows beside these cards do (#1151).
  */
 export const TOGGLE_CARD_SURFACE = {
-  enabled: 'bg-surface-control border-edge-input hover:border-fg-faint',
+  enabled: `bg-surface-control border-edge-input ${CONTROL_HOVER_LIFT_CLASS}`,
   disabled: 'bg-surface-control border-edge-input',
 } as const;
 

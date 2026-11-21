@@ -16,6 +16,7 @@ import { useHmrGeneration } from '../../../utils/hmr-generation';
 import { IntentKeyboardSensor } from '../../../utils/intent-keyboard-sensor';
 import { KEYBOARD_SENSOR_OPTIONS } from '../../../utils/dnd-sensor-options';
 import { SETTING_LABEL_CLASS } from '../../SettingText';
+import { CONTROL_HOVER_LIFT_CLASS } from '../../Field';
 import { ToggleSwitch } from '../../settings/shared';
 import { AutomationIcon, AutomationMarks } from './automation-icons';
 import { SectionCard, GroupHeading, DisabledSectionNotice } from './form-layout';
@@ -403,8 +404,9 @@ function AutomationRow({
       // behaves like the thing it represents rather than a label beside a
       // pencil. `cursor-pointer` is not decoration here: it is what tells the
       // light-dismiss denylist this is an action rather than dead space, and
-      // what lets the hover border promise something true (`ui-conventions.md`,
-      // `light-dismiss-denylist.md`).
+      // what lets the hover promise something true (`ui-conventions.md`,
+      // `light-dismiss-denylist.md`). The hover lifts the row's fill and leaves
+      // its border, as the Edit automation dialog's sections tint (#1151).
       //
       // NOT a <button> and no `role="button"`. The row carries a drag handle, a
       // pencil, a trash and a switch, and interactive content inside a button
@@ -427,7 +429,7 @@ function AutomationRow({
       // is no dead space itself, as ColumnRail's handle does.
       data-no-dismiss={reorderable ? true : undefined}
       className={`group flex select-none items-center gap-3 rounded border border-edge-input bg-surface-control px-3 py-[7px] ${
-        readOnly ? '' : reorderable ? 'cursor-grab hover:border-fg-faint active:cursor-grabbing' : 'cursor-pointer hover:border-fg-faint'
+        readOnly ? '' : `${CONTROL_HOVER_LIFT_CLASS} ${reorderable ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'}`
       } ${isDragging ? 'z-10 shadow-lg' : ''}`}
     >
       {/* The row's position in its group, so each group reads 1 to N: a
@@ -453,8 +455,8 @@ function AutomationRow({
       <span data-testid="column-automation-row-label" className="min-w-0 flex-1">
         <span data-testid="column-automation-row-title" className="flex items-center gap-1.5">
           <span className={`truncate ${SETTING_LABEL_CLASS}`}>{draft.name}</span>
-          {/* Every option that is on is a mark beside the name, in the editor's
-              card order: the Condition, the Frequency, then the action's own.
+          {/* Every option that is on is a mark beside the name: the guards
+              first (the Condition, the Frequency), then the action's own.
               One tone for all of them, and each tooltip names its card and
               value. The words used to print as a third line, which was too much
               to scan, and the editor holds the detail. The marks never shrink,

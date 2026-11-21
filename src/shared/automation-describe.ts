@@ -207,8 +207,8 @@ export interface AutomationRowMark {
 }
 
 /**
- * The marks a row shows after its name, in the editor's card order: the
- * Condition, the Frequency, then the action's own. Each says an option is on,
+ * The marks a row shows after its name, the guards first: the Condition, the
+ * Frequency, then the action's own options. Each says an option is on,
  * and its label says which card and what value: "Condition: only if the review
  * is clean."
  *
@@ -285,7 +285,7 @@ export function describeAutomationMarks(row: {
  * message; only if the review is clean; at most 3 times until you move the task". The
  * MCP list prints this, since an agent reads text and cannot hover a mark.
  *
- * The action's own options lead, unlike the marks' card order, because they
+ * The action's own options lead, unlike the marks, which put the guards first, because they
  * finish the sentence's verb ("Moves the task to Executing, with a message")
  * and the guards then say when it runs.
  */

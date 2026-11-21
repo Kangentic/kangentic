@@ -52,6 +52,23 @@ export const FIELD_CONTROL_CLASS = `${FIELD_CONTROL_BASE} px-3`;
  */
 export const FIELD_SELECT_CLASS = `${FIELD_CONTROL_BASE} appearance-none pl-3 pr-10 disabled:cursor-not-allowed`;
 
+/**
+ * The hover for a click target drawn on the control fill (a Column Manager
+ * automation row, a `ToggleCard`): the fill itself lifts 5% toward the text
+ * color and the border stays put (#1151).
+ *
+ * It is the Edit automation dialog's section hover measured from a filled
+ * surface. That hover tints a clear card with `surface-hover/70`, which lands
+ * about one step above the dialog's ground. The same token on the control fill
+ * is DARKER than the fill, so a row would sink as if pressed; mixing toward
+ * `fg` takes the same step up from wherever the fill sits, in every theme, and
+ * in the light theme it darkens a little, the usual light hover.
+ *
+ * Text fields and selects keep their border hover, which every field in the
+ * app shares. A complete literal, so Tailwind generates it.
+ */
+export const CONTROL_HOVER_LIFT_CLASS = 'hover:bg-[color-mix(in_oklab,var(--color-surface-control),var(--color-fg)_5%)]';
+
 interface FieldProps {
   /** Usually a string; a fragment is allowed for a label that needs an icon. */
   label: ReactNode;

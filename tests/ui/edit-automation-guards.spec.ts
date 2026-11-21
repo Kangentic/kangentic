@@ -49,14 +49,18 @@ type ConditionKindName = 'priority' | 'labels' | 'reply' | 'prompt' | 'evaluatio
 type AutomationTriggerName = 'enter' | 'turn_end' | 'exit';
 
 /**
- * Open one accordion section. Only one section's body is rendered at a time,
- * so a spec that reaches into a field opens its section first.
+ * Open one accordion section. Only one section's body is visible at a time
+ * (the rest stay mounted but hidden), so a spec that reaches into a field opens
+ * its section first.
  */
 async function openCard(name: CardName): Promise<void> {
   if ((await card(name).getAttribute('data-open')) !== 'true') {
     await card(name).locator(`[data-testid="edit-automation-card-${name}-header"]`).click();
   }
   await expect(card(name)).toHaveAttribute('data-open', 'true');
+  // The body slides open and turns visible on the tween's first frame, so wait
+  // for it before reaching a control inside (#1151).
+  await expect(card(name).locator(`[data-testid="edit-automation-card-${name}-body"]`)).toBeVisible();
 }
 
 /** Pick a Trigger option, which lives in the Trigger section. */
@@ -347,10 +351,11 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     const conditionSwitch = card('condition').locator('[data-testid="edit-automation-card-condition-switch"]');
     const conditionLines = card('condition').locator('[data-testid="edit-automation-condition-lines"]');
 
-    // Action is open on arrival, and a closed section's body is not rendered.
+    // Action is open on arrival, and a closed section's body stays mounted but hidden,
+    // so it can slide shut and open again (#1151).
     await expect(card('action')).toHaveAttribute('data-open', 'true');
     await expect(card('condition')).toHaveAttribute('data-open', 'false');
-    await expect(card('condition').locator('[data-testid="edit-automation-card-condition-body"]')).toHaveCount(0);
+    await expect(card('condition').locator('[data-testid="edit-automation-card-condition-body"]')).toBeHidden();
 
     // A header click opens the section and leaves the switch where it was.
     await openCard('condition');
@@ -402,6 +407,134 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await expect(stepperValue).toBeDisabled();
     await expect(stepperMore).toBeDisabled();
     await expect(maxRunsLabel).toHaveAttribute('data-dimmed', 'true');
+  });
+
+  // 1a - Order, hover and the open/close tween (#1151) ───────────────────────
+
+  test('sections read Trigger, Condition, Action, Frequency; a closed card tints whole, the open one does not; the Column Manager lifts its fill', async () => {
+    const TRANSPARENT = 'rgba(0, 0, 0, 0)';
+    const styleOf = (locator: Locator, cssProperty: string): Promise<string> =>
+      locator.evaluate((node, name) => getComputedStyle(node).getPropertyValue(name), cssProperty);
+    const parkPointer = (): Promise<void> => page.mouse.move(2, 2);
+    const hoverOver = async (locator: Locator): Promise<void> => {
+      const box = await locator.boundingBox();
+      if (!box) throw new Error('nothing to hover');
+      await page.mouse.move(box.x + box.width / 2, box.y + Math.min(box.height / 2, 24));
+    };
+    // Reading a computed style starts any transition the hover set off, so a
+    // count of 0 means no tween is running and the color has settled.
+    const runningTransitions = (locator: Locator): Promise<number> =>
+      locator.evaluate((node) => {
+        void getComputedStyle(node).backgroundColor;
+        return node.getAnimations().length;
+      });
+    const expectHoverLiftsFill = async (target: Locator, hoverTarget: Locator): Promise<void> => {
+      await parkPointer();
+      const restFill = await styleOf(target, 'background-color');
+      const restBorder = await styleOf(target, 'border-top-color');
+      await hoverOver(hoverTarget);
+      await expect.poll(() => styleOf(target, 'background-color')).not.toBe(restFill);
+      expect(await styleOf(target, 'border-top-color')).toBe(restBorder);
+    };
+
+    await seedColumn('Executing', [
+      { name: 'Ship it', type: 'move_to_column', trigger: 'turn_end', finalLine: 'Done', maxRuns: 1 },
+    ]);
+    await openColumn('Executing');
+    await row('Ship it').click();
+    await expect(editDialog()).toBeVisible();
+
+    await test.step('the sections stack in the order the rule is said', async () => {
+      const order = await editDialog().locator('section[data-testid^="edit-automation-card-"]')
+        .evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-testid')));
+      expect(order).toEqual([
+        'edit-automation-card-trigger',
+        'edit-automation-card-condition',
+        'edit-automation-card-action',
+        'edit-automation-card-frequency',
+      ]);
+      await expect(card('action')).toHaveAttribute('data-open', 'true');
+    });
+
+    await test.step('a closed card tints border to border, with no inset box', async () => {
+      await parkPointer();
+      await expect.poll(() => styleOf(card('frequency'), 'background-color')).toBe(TRANSPARENT);
+      await hoverOver(card('frequency'));
+      await expect.poll(() => styleOf(card('frequency'), 'background-color')).not.toBe(TRANSPARENT);
+      const headerRow = card('frequency').locator(':scope > div:first-child > div');
+      expect(await styleOf(headerRow, 'background-color')).toBe(TRANSPARENT);
+    });
+
+    await test.step('the open header neither tints nor shows a hand', async () => {
+      const header = card('action').locator('[data-testid="edit-automation-card-action-header"]');
+      await hoverOver(header);
+      await expect.poll(() => runningTransitions(card('action'))).toBe(0);
+      expect(await styleOf(card('action'), 'background-color')).toBe(TRANSPARENT);
+      expect(await styleOf(header, 'cursor')).toBe('default');
+    });
+
+    await test.step('opening a section shuts the other; both bodies stay mounted', async () => {
+      await openCard('frequency');
+      const actionBody = card('action').locator('[data-testid="edit-automation-card-action-body"]');
+      const frequencyBody = card('frequency').locator('[data-testid="edit-automation-card-frequency-body"]');
+      await expect.poll(() => styleOf(actionBody, 'visibility')).toBe('hidden');
+      await expect(frequencyBody).toBeVisible();
+      await expect(actionBody).toBeAttached();
+    });
+
+    await test.step('a click on a closed section\'s switch flips it and does not open the section', async () => {
+      const conditionSwitch = card('condition').locator('[data-testid="edit-automation-card-condition-switch"]');
+      await expect(card('condition')).toHaveAttribute('data-open', 'false');
+      // The seeded row has a Text match, so the Condition switch starts on.
+      const conditionWasOn = await conditionSwitch.getAttribute('aria-checked');
+      await conditionSwitch.click();
+      await expect(conditionSwitch).toHaveAttribute('aria-checked', conditionWasOn === 'true' ? 'false' : 'true');
+      await expect(card('condition')).toHaveAttribute('data-open', 'false');
+
+      // Opening Action shuts Frequency, so its switch is now on a closed section.
+      await openCard('action');
+      await expect(card('frequency')).toHaveAttribute('data-open', 'false');
+      const frequencyWasOn = await frequencySwitch().getAttribute('aria-checked');
+      await frequencySwitch().click();
+      await expect(frequencySwitch()).toHaveAttribute('aria-checked', frequencyWasOn === 'true' ? 'false' : 'true');
+      await expect(card('frequency')).toHaveAttribute('data-open', 'false');
+    });
+
+    await test.step('a click anywhere on a closed card outside its header button opens it', async () => {
+      await expect(card('condition')).toHaveAttribute('data-open', 'false');
+      const section = await card('condition').boundingBox();
+      const header = await card('condition').locator('[data-testid="edit-automation-card-condition-header"]').boundingBox();
+      if (!section || !header) throw new Error('card geometry missing');
+      // The section's left padding: inside the section, left of the header button.
+      const clickX = section.x + 4;
+      expect(clickX).toBeLessThan(header.x);
+      await page.mouse.click(clickX, header.y + header.height / 2);
+      await expect(card('condition')).toHaveAttribute('data-open', 'true');
+    });
+
+    await test.step('a click that lands in a closed body leaves the section shut', async () => {
+      // A body stays visible for the 200 ms it slides shut, so a click can land
+      // in it after its section closed. Dispatched straight to the hidden body,
+      // it takes the same path without racing the tween.
+      await expect(card('frequency')).toHaveAttribute('data-open', 'false');
+      await card('frequency').locator('[data-testid="edit-automation-card-frequency-body"] > div')
+        .evaluate((node) => (node as HTMLElement).click());
+      await expect(card('condition')).toHaveAttribute('data-open', 'true');
+      await expect(card('frequency')).toHaveAttribute('data-open', 'false');
+    });
+
+    await editDialog().locator('[data-testid="edit-automation-cancel"]').click();
+    await expect(editDialog()).toBeHidden();
+
+    await test.step('a Column Manager row lifts its fill on hover and keeps its border', async () => {
+      const target = row('Ship it');
+      await expectHoverLiftsFill(target, target.locator('[data-testid="column-automation-row-sentence"]'));
+    });
+
+    await test.step('so does a toggle card', async () => {
+      const toggleCard = dialog().getByRole('switch', { name: 'Start an agent here' });
+      await expectHoverLiftsFill(toggleCard, toggleCard);
+    });
   });
 
   // 1b - Maximum runs: the arrow keys step from what is typed ───────────────
@@ -754,7 +887,7 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     ]);
     await openColumn('Executing');
 
-    // The editor's card order: Condition, Frequency, then the action's own.
+    // The marks put the guards first: Condition, Frequency, then the action's own.
     expect(await titleLine('Back for revisions').evaluate((node) =>
       Array.from(node.children).map((child) => child.getAttribute('data-testid')).filter((id) => id !== null)))
       .toEqual(['column-automation-condition-mark', 'column-automation-frequency-mark', 'column-automation-message-mark']);
