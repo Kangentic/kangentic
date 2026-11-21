@@ -168,10 +168,12 @@ function webviewLoads(page: Page): Promise<string[]> {
   return page.evaluate(() => (window as unknown as { __webviewLoads?: string[] }).__webviewLoads ?? []);
 }
 
-test('with the task\'s Browser popped out, the tip has one row and Ctrl+click opens the default browser, with no request for the pane', async () => {
+test('with the task\'s Browser popped out, the tip lists both clicks and Ctrl+click sends the link to that window, with no request for an in-app pane', async () => {
   const page = await openBoard();
   try {
-    // The pop-out's renderer keeps its own store, so this window must not drive a pane it cannot reach.
+    // The pop-out's renderer keeps its own store, so the link goes through main to
+    // that window (its side: browser-pop-out-pane.spec.ts). This window opens no
+    // pane of its own and leaves no request behind for one.
     await page.evaluate((key) => (window as unknown as { __mockFirePopOutChanged: (keys: string[]) => void }).__mockFirePopOutChanged([key]), BROWSER_POP_OUT_KEY);
     const dialog = await openTaskDialog(page);
 
@@ -180,12 +182,15 @@ test('with the task\'s Browser popped out, the tip has one row and Ctrl+click op
     await hoverFirstRow(page, screen);
     const tip = page.getByTestId('terminal-link-tip');
     await expect(tip).toBeVisible({ timeout: 5000 });
-    await expect(tip.locator('[data-link-target]')).toHaveText(['Open in default browser']);
+    await expect(tip.locator('[data-link-target]')).toHaveText(['Open in default browser', 'Open in Kangentic browser']);
 
     await ctrlClick(page);
 
-    await expect.poll(() => openedExternally(page)).toEqual([URL_TEXT]);
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __popOutNavigations?: unknown[] }).__popOutNavigations ?? []))
+      .toEqual([{ projectId: PROJECT_ID, ownerKey: TASK_ID, url: URL_TEXT }]);
+    expect(await openedExternally(page)).toEqual([]);
     expect(await pendingNavigateRequest(page)).toBeNull();
+    expect(await paneFlags(page)).toEqual({ open: false, held: false });
     await expect(page.getByTestId('browser-webview')).toHaveCount(0);
   } finally {
     await page.context().close();

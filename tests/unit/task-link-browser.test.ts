@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const stores = vi.hoisted(() => ({
   config: { browser: { enabled: true as boolean | undefined } },
-  sessionByTaskId: new Map<string, { status: string }>(),
+  sessionByTaskId: new Map<string, { status: string; projectId: string }>(),
   currentProject: { id: 'project-1' } as { id: string } | null,
   openInstanceKeys: {} as Record<string, boolean>,
   setDetailTaskId: vi.fn(),
@@ -26,6 +26,9 @@ vi.mock('../../src/renderer/stores/pop-out-store', () => ({
 vi.mock('../../src/renderer/stores/project-store', () => ({
   useProjectStore: { getState: () => ({ currentProject: stores.currentProject }) },
 }));
+vi.mock('../../src/renderer/utils/renderer-failure', () => ({ reportRendererFailure: vi.fn() }));
+// The hook reads its snapshot through React; outside a render, read it directly.
+vi.mock('react', () => ({ useSyncExternalStore: (_subscribe: unknown, getSnapshot: () => unknown) => getSnapshot() }));
 vi.mock('../../src/renderer/stores/session-store', () => ({
   useSessionStore: {
     getState: () => ({ _sessionByTaskId: stores.sessionByTaskId, setDetailTaskId: stores.setDetailTaskId }),
@@ -34,16 +37,19 @@ vi.mock('../../src/renderer/stores/session-store', () => ({
 }));
 
 import { popOutInstanceKey } from '../../src/shared/pop-out';
+import { reportRendererFailure } from '../../src/renderer/utils/renderer-failure';
 import {
   PENDING_TASK_LINK_MS,
   openInTaskBrowser,
   registerTaskLinkBrowser,
   taskLinkBrowser,
+  useTaskLinkBrowserAvailable,
 } from '../../src/renderer/utils/task-link-browser';
 
 const TASK = 'task-1';
 const FIRST_LINK = 'https://www.figma.com/design/AbC123xyz/First';
 const SECOND_LINK = 'https://miro.com/app/board/uXjVabc123=/';
+const RUNNING = { status: 'running', projectId: 'project-1' };
 
 function fakeBrowser() {
   return { open: vi.fn() };
@@ -57,6 +63,7 @@ beforeEach(() => {
   stores.currentProject = { id: 'project-1' };
   stores.openInstanceKeys = {};
   stores.setDetailTaskId.mockClear();
+  vi.mocked(reportRendererFailure).mockClear();
 });
 
 afterEach(() => {
@@ -85,19 +92,69 @@ describe('openInTaskBrowser', () => {
   });
 
   it('returns false when the Browser pane is off for the project', () => {
-    stores.sessionByTaskId.set(TASK, { status: 'running' });
+    stores.sessionByTaskId.set(TASK, RUNNING);
     stores.config.browser = { enabled: false };
     expect(openInTaskBrowser(TASK, FIRST_LINK, vi.fn())).toBe(false);
   });
 
-  it('returns false when the task browser is popped out into its own window', () => {
-    stores.sessionByTaskId.set(TASK, { status: 'running' });
+  it('sends the link to the Browser window the task\'s pane was popped out to, with no task window', async () => {
+    stores.sessionByTaskId.set(TASK, RUNNING);
     stores.openInstanceKeys = { [popOutInstanceKey('browser', { projectId: 'project-1', taskId: TASK })]: true };
-    expect(openInTaskBrowser(TASK, FIRST_LINK, vi.fn())).toBe(false);
+    const navigatePopOut = vi.fn(() => Promise.resolve(true));
+    vi.stubGlobal('window', { electronAPI: { browser: { navigatePopOut } } });
+    const openExternal = vi.fn();
+
+    expect(openInTaskBrowser(TASK, FIRST_LINK, openExternal)).toBe(true);
+    await vi.runAllTimersAsync();
+
+    expect(navigatePopOut).toHaveBeenCalledExactlyOnceWith('project-1', TASK, FIRST_LINK);
+    expect(stores.setDetailTaskId).not.toHaveBeenCalled();
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  it('finds the Browser window of a task in another project under that project', async () => {
+    stores.sessionByTaskId.set(TASK, { status: 'running', projectId: 'project-2' });
+    stores.openInstanceKeys = { [popOutInstanceKey('browser', { projectId: 'project-2', taskId: TASK })]: true };
+    const navigatePopOut = vi.fn(() => Promise.resolve(true));
+    vi.stubGlobal('window', { electronAPI: { browser: { navigatePopOut } } });
+
+    expect(openInTaskBrowser(TASK, FIRST_LINK, vi.fn())).toBe(true);
+    await vi.runAllTimersAsync();
+
+    expect(navigatePopOut).toHaveBeenCalledExactlyOnceWith('project-2', TASK, FIRST_LINK);
+    expect(stores.setDetailTaskId).not.toHaveBeenCalled();
+  });
+
+  it('opens the default browser when the popped-out window is gone by the time main looks', async () => {
+    stores.sessionByTaskId.set(TASK, RUNNING);
+    stores.openInstanceKeys = { [popOutInstanceKey('browser', { projectId: 'project-1', taskId: TASK })]: true };
+    vi.stubGlobal('window', { electronAPI: { browser: { navigatePopOut: () => Promise.resolve(false) } } });
+    const openExternal = vi.fn();
+
+    expect(openInTaskBrowser(TASK, FIRST_LINK, openExternal)).toBe(true);
+    await vi.runAllTimersAsync();
+
+    expect(openExternal).toHaveBeenCalledExactlyOnceWith(FIRST_LINK);
+    expect(stores.setDetailTaskId).not.toHaveBeenCalled();
+    expect(reportRendererFailure).not.toHaveBeenCalled();
+  });
+
+  it('opens the default browser and reports when the relay itself fails', async () => {
+    stores.sessionByTaskId.set(TASK, RUNNING);
+    stores.openInstanceKeys = { [popOutInstanceKey('browser', { projectId: 'project-1', taskId: TASK })]: true };
+    const failure = new Error('No handler registered');
+    vi.stubGlobal('window', { electronAPI: { browser: { navigatePopOut: () => Promise.reject(failure) } } });
+    const openExternal = vi.fn();
+
+    expect(openInTaskBrowser(TASK, FIRST_LINK, openExternal)).toBe(true);
+    await vi.runAllTimersAsync();
+
+    expect(openExternal).toHaveBeenCalledExactlyOnceWith(FIRST_LINK);
+    expect(reportRendererFailure).toHaveBeenCalledExactlyOnceWith('browser', 'pop_out_link', failure);
   });
 
   it('opens the task window for a running session and hands the link to the next registered browser', () => {
-    stores.sessionByTaskId.set(TASK, { status: 'running' });
+    stores.sessionByTaskId.set(TASK, RUNNING);
     const openExternal = vi.fn();
     expect(openInTaskBrowser(TASK, FIRST_LINK, openExternal)).toBe(true);
     expect(stores.setDetailTaskId).toHaveBeenCalledExactlyOnceWith(TASK);
@@ -113,7 +170,7 @@ describe('openInTaskBrowser', () => {
   });
 
   it('falls back to the default browser once, and only after the wait, when no window registers', () => {
-    stores.sessionByTaskId.set(TASK, { status: 'running' });
+    stores.sessionByTaskId.set(TASK, RUNNING);
     const openExternal = vi.fn();
     expect(openInTaskBrowser(TASK, FIRST_LINK, openExternal)).toBe(true);
 
@@ -127,7 +184,7 @@ describe('openInTaskBrowser', () => {
   });
 
   it('lets a second click replace the first pending link', () => {
-    stores.sessionByTaskId.set(TASK, { status: 'running' });
+    stores.sessionByTaskId.set(TASK, RUNNING);
     const openExternal = vi.fn();
     openInTaskBrowser(TASK, FIRST_LINK, openExternal);
     openInTaskBrowser(TASK, SECOND_LINK, openExternal);
@@ -138,7 +195,7 @@ describe('openInTaskBrowser', () => {
   });
 
   it('does not open the link a second time in a browser that registers after the fallback fired', () => {
-    stores.sessionByTaskId.set(TASK, { status: 'running' });
+    stores.sessionByTaskId.set(TASK, RUNNING);
     const openExternal = vi.fn();
     openInTaskBrowser(TASK, FIRST_LINK, openExternal);
     vi.advanceTimersByTime(PENDING_TASK_LINK_MS);
@@ -163,12 +220,26 @@ describe('openInTaskBrowser', () => {
   });
 
   it('hands a replaced link to the browser as the second one, never the first', () => {
-    stores.sessionByTaskId.set(TASK, { status: 'running' });
+    stores.sessionByTaskId.set(TASK, RUNNING);
     openInTaskBrowser(TASK, FIRST_LINK, vi.fn());
     openInTaskBrowser(TASK, SECOND_LINK, vi.fn());
     const browser = fakeBrowser();
     const unregister = registerTaskLinkBrowser(TASK, browser);
     expect(browser.open).toHaveBeenCalledExactlyOnceWith(SECOND_LINK);
     unregister();
+  });
+});
+
+// What a PR pill or artifact tip reads to decide whether it lists the Kangentic browser.
+describe('useTaskLinkBrowserAvailable', () => {
+  it('offers the Kangentic browser for a task whose pane is popped out and whose window is closed', () => {
+    stores.sessionByTaskId.set(TASK, RUNNING);
+    stores.openInstanceKeys = { [popOutInstanceKey('browser', { projectId: 'project-1', taskId: TASK })]: true };
+    expect(useTaskLinkBrowserAvailable(TASK)).toBe(true);
+  });
+
+  it('offers none for a task with no running agent, popped out or not', () => {
+    stores.openInstanceKeys = { [popOutInstanceKey('browser', { projectId: 'project-1', taskId: TASK })]: true };
+    expect(useTaskLinkBrowserAvailable(TASK)).toBe(false);
   });
 });

@@ -10701,6 +10701,21 @@ export interface ElectronAPI {
      */
     onPaneCloseRequest: (callback: (projectId: string, taskIds: string[]) => void) => () => void;
     /**
+     * Load `url` in the owner's Browser pane while that pane is in a window of
+     * its own, for a user's click on a link. Main relays it to that window
+     * (`onNavigateRequest` there) and raises the window. Resolves false when no
+     * such window is open or the URL is not http(s), and the caller opens the
+     * default browser instead. `ownerKey` is a task id or a Command Terminal's
+     * owner key.
+     */
+    navigatePopOut: (projectId: string, ownerKey: string, url: string) => Promise<boolean>;
+    /**
+     * In a Browser pop-out window: main relaying a link the user clicked in
+     * the main window (`navigatePopOut`). The pane takes it the way it takes a
+     * docked link click, through `requestBrowserNavigate`.
+     */
+    onNavigateRequest: (callback: (ownerKey: string, url: string) => void) => () => void;
+    /**
      * An agent is dispatching CDP input into a Browser pane's guest right now
      * (`active: true`), or has just finished (`active: false`).
      *

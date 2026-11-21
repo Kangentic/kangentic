@@ -8,6 +8,7 @@ import { readLocaleArgument, type AppLocale } from '../shared/i18n/locales';
 import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from '../shared/pop-out';
 import { installConsoleCapture, reportPushCallbackFailure } from './diagnostics/console-capture';
 import { guardPushCallbacks } from './push-callback-guard';
+import { createBufferedPush } from './buffered-push';
 import { PtyPortClient } from './pty-port-client';
 import type { ScrollbackInvokeResult } from '../shared/pty-port-protocol';
 import { installDevtoolsPreloadHooks } from '../devtools/preload/install-globals';
@@ -57,6 +58,17 @@ ipcRenderer.on(IPC.PTY_PORT, (event) => {
   if (port) ptyPortClient.attachPort(port);
 });
 ipcRenderer.send(IPC.PTY_PORT_REQUEST);
+
+// A Browser pop-out takes links the user clicked in the main window, which
+// main relays here (`src/main/browser/pop-out-link-relay.ts`). Main sends one
+// as soon as the page has loaded, which can be before React mounts the pane's
+// subscriber, so the listener is registered now and the link waits for it.
+const navigateRequests = createBufferedPush<[ownerKey: string, url: string]>();
+if (popOutDescriptor?.kind === 'browser') {
+  ipcRenderer.on(IPC.BROWSER_NAVIGATE_REQUEST, (_event, ownerKey: string, url: string) => {
+    navigateRequests.deliver(ownerKey, url);
+  });
+}
 
 // Forward renderer console.* + window error events to the main-process
 // diagnostics subsystem. The main side decides whether to persist based on
@@ -1004,6 +1016,8 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.BROWSER_PANE_CLOSE_REQUEST, handler);
       return () => ipcRenderer.removeListener(IPC.BROWSER_PANE_CLOSE_REQUEST, handler);
     },
+    navigatePopOut: (projectId, ownerKey, url) => ipcRenderer.invoke(IPC.BROWSER_POP_OUT_NAVIGATE, projectId, ownerKey, url),
+    onNavigateRequest: (callback) => navigateRequests.subscribe(callback),
     onAgentInput: (callback) => {
       const handler = (
         _event: Electron.IpcRendererEvent,

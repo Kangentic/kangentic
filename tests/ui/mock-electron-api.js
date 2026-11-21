@@ -223,6 +223,9 @@
   let browserZoomSubscribers = [];
   let browserPaneOpenSubscribers = [];
   let browserPaneCloseSubscribers = [];
+  // A Browser pop-out window's subscribers to main's relayed link click
+  // (onNavigateRequest), fired by window.__mockBrowser.emitNavigateRequest.
+  let browserNavigateRequestSubscribers = [];
   let browserAgentInputSubscribers = [];
   // Viewport overrides an agent imposed, keyed by guest webContentsId, plus the
   // pane subscribers that render them as the toolbar chip.
@@ -8613,6 +8616,29 @@
           if (index >= 0) browserPaneCloseSubscribers.splice(index, 1);
         };
       },
+      // A user's link click for a pane in a Browser window of its own. Main
+      // relays it to that window; the UI tier has one page, so the call is
+      // recorded on window.__popOutNavigations, and it resolves as main does:
+      // true only while that owner's Browser pop-out is open
+      // (window.__mockFirePopOutChanged).
+      navigatePopOut: function (projectId, ownerKey, url) {
+        if (typeof window !== 'undefined') {
+          window.__popOutNavigations = window.__popOutNavigations || [];
+          window.__popOutNavigations.push({ projectId: projectId, ownerKey: ownerKey, url: url });
+        }
+        const open = popOutOpenKeys.indexOf(popOutKeyOf('browser', { projectId: projectId, taskId: ownerKey })) !== -1;
+        return Promise.resolve(open && /^https?:\/\//u.test(String(url)));
+      },
+      // The pop-out window's side of that relay. A page booted as a Browser
+      // pop-out subscribes; a test fires it with
+      // window.__mockBrowser.emitNavigateRequest(ownerKey, url).
+      onNavigateRequest: function (callback) {
+        browserNavigateRequestSubscribers.push(callback);
+        return function () {
+          const index = browserNavigateRequestSubscribers.indexOf(callback);
+          if (index >= 0) browserNavigateRequestSubscribers.splice(index, 1);
+        };
+      },
       // Main -> renderer push for a mouse back/forward press inside the guest.
       // A real guest consumes the mouse outright, so this channel is the ONLY
       // way those presses reach the renderer; there is no DOM event to simulate
@@ -8755,6 +8781,13 @@
     emitPaneCloseRequest: function (projectId, taskIds) {
       browserPaneCloseSubscribers.slice().forEach(function (callback) {
         callback(projectId, taskIds);
+      });
+    },
+    /** Fire main's relay of a link the user clicked in the main window, as a
+     *  Browser pop-out window receives it (navigatePopOut on the other side). */
+    emitNavigateRequest: function (ownerKey, url) {
+      browserNavigateRequestSubscribers.slice().forEach(function (callback) {
+        callback(ownerKey, url);
       });
     },
     /** Fire main's "an agent is driving this guest" interval edge. Pass true to

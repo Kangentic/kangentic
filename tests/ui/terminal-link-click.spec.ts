@@ -359,7 +359,18 @@ test('with the Kangentic browser off, an OSC 8 link whose text is not its URL st
   }
 });
 
-test('with the terminal\'s Kangentic browser popped out, the tip has one row and Ctrl+click opens the default browser', async () => {
+/** The calls the main window made to relay a link to a Browser pop-out window (`navigatePopOut`). */
+function popOutNavigations(page: Page): Promise<{ projectId: string; ownerKey: string; url: string }[]> {
+  return page.evaluate(() => (window as unknown as { __popOutNavigations?: { projectId: string; ownerKey: string; url: string }[] }).__popOutNavigations ?? []);
+}
+
+/**
+ * A pane popped out into a window of its own is still the Kangentic browser. That
+ * window keeps its own store, so the click goes to main, which relays it there
+ * (the pop-out's side is pinned in browser-pop-out-pane.spec.ts). Nothing mounts
+ * here and nothing opens in the default browser.
+ */
+test('with the terminal\'s Kangentic browser popped out, the tip has both rows and Ctrl+click sends the link to that window', async () => {
   const { browser, page } = await launch();
   try {
     await page.evaluate((key) => (window as unknown as { __mockFirePopOutChanged: (keys: string[]) => void }).__mockFirePopOutChanged([key]),
@@ -370,12 +381,33 @@ test('with the terminal\'s Kangentic browser popped out, the tip has one row and
 
     const tip = page.getByTestId('terminal-link-tip');
     await expect(tip).toBeVisible({ timeout: 5000 });
-    await expect(tip.locator('[data-link-target]')).toHaveText(['Open in default browser']);
+    await expect(tip.locator('[data-link-target]')).toHaveText(['Open in default browser', 'Open in Kangentic browser']);
 
     await ctrlClick(page);
 
-    await expect.poll(() => openedExternally(page)).toEqual([URL_TEXT]);
+    await expect.poll(() => popOutNavigations(page)).toEqual([
+      { projectId: 'proj-link-click', ownerKey: 'command-terminal::proj-link-click::slot-1', url: URL_TEXT },
+    ]);
+    expect(await openedExternally(page)).toEqual([]);
     await expect(page.getByTestId('browser-webview')).toHaveCount(0);
+    expect(await writtenToSession(page, SESSION_ID)).not.toMatch(SGR_PRESS);
+
+    await test.step('a window that closed before the click reached main leaves the link to the default browser', async () => {
+      // Main answers false when it finds no such window, as for one that closed
+      // before this window heard. The click must not be lost.
+      await page.evaluate(() => {
+        window.electronAPI.browser.navigatePopOut = () => Promise.resolve(false);
+      });
+      // Off the link and back: xterm looks for a link only when the pointer enters a new cell.
+      const screen = (await terminalScreen(page).boundingBox())!;
+      await page.mouse.move(screen.x + 20, screen.y + screen.height - 10);
+      await pointAtFirstRow(page);
+      await waitForLinkUnderPointer(page);
+      await ctrlClick(page);
+
+      await expect.poll(() => openedExternally(page)).toEqual([URL_TEXT]);
+      await expect(page.getByTestId('browser-webview')).toHaveCount(0);
+    });
   } finally {
     await browser.close();
   }

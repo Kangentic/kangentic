@@ -239,9 +239,10 @@ browser unless changed), and Ctrl click (Cmd on a Mac) opens the other. In the m
 Ctrl+Enter do the same.
 
 The Kangentic browser is the Browser pane of the task's own window. It is offered while the task's
-agent is running, the project's Browser pane is on, and the pane is not in a window of its own.
-With the window closed, the link opens the task first and the pane loads it once the window is
-showing (`task-link-browser.ts`). If the window comes up without a pane, the link opens in the
+agent is running and the project's Browser pane is on. A pane popped out into a window of its own
+takes the link there, and that window comes to the front. Otherwise, with the task's window
+closed, the link opens the task first and the pane loads it once the window is showing
+(`task-link-browser.ts`). If the window comes up without a pane, the link opens in the
 default browser after four seconds, so the click is never lost. Everywhere else both clicks open
 the default browser, and the tip shows one row.
 

@@ -16,9 +16,13 @@
  * not lost. One link waits per task: a second click while the window is still
  * coming up replaces the first, which then opens nowhere.
  *
- * A task with no running session, a popped-out browser, or a project with the
- * Browser pane off has no Kangentic browser, and its links open in the default
- * browser (`link-open.ts`).
+ * A task whose Browser pane is in a window of its own opens a link there
+ * directly, with no task window: main relays it to that window and raises it
+ * (`pop-out-link-browser.ts`).
+ *
+ * A task with no running session, or a project with the Browser pane off, has
+ * no Kangentic browser, and its links open in the default browser
+ * (`link-open.ts`).
  *
  * Subscribable, so a tip that lists both browsers drops to one row the moment
  * the window closes.
@@ -31,6 +35,7 @@ import { usePopOutStore } from '../stores/pop-out-store';
 import { useProjectStore } from '../stores/project-store';
 import { useSessionStore } from '../stores/session-store';
 import type { TerminalLinkBrowser } from './terminal-links/link-targets';
+import { popOutLinkBrowser } from './pop-out-link-browser';
 
 /** How long a link waits for its task window to offer a browser before it opens in the default one. */
 export const PENDING_TASK_LINK_MS = 4000;
@@ -98,25 +103,31 @@ export function taskLinkBrowser(taskId: string | null | undefined): TerminalLink
 }
 
 /**
- * Whether the task's window, closed now, would offer a Kangentic browser once
- * opened: the Browser pane is on for the project, the task's agent is running
- * (a window shows its terminal and the pane beside it), and the pane is not in
- * a window of its own. Never in a pop-out window, which has no task windows.
+ * The project of a task whose closed window would still give its links a
+ * Kangentic browser, or null when it has none: the Browser pane is on for the
+ * project and the task's agent is running, so a window shows its terminal and
+ * the pane beside it, or the pane already lives in a window of its own. Never
+ * in a pop-out window, which has no task windows. The project is the session's
+ * own, so a Browser window is found by the key it was opened under.
  */
-function couldOpenTaskBrowser(taskId: string): boolean {
-  if (window.electronAPI?.popOut?.descriptor) return false;
-  if (useConfigStore.getState().config.browser?.enabled === false) return false;
+function reachableTaskBrowserProject(taskId: string): string | null {
+  if (window.electronAPI?.popOut?.descriptor) return null;
+  if (useConfigStore.getState().config.browser?.enabled === false) return null;
+  if (!useProjectStore.getState().currentProject) return null;
   const session = useSessionStore.getState()._sessionByTaskId.get(taskId);
-  if (!session || session.status !== 'running') return false;
-  const projectId = useProjectStore.getState().currentProject?.id;
-  if (!projectId) return false;
-  return usePopOutStore.getState().openInstanceKeys[popOutInstanceKey('browser', { projectId, taskId })] !== true;
+  if (!session || session.status !== 'running') return null;
+  return session.projectId;
+}
+
+function isBrowserPoppedOut(projectId: string, taskId: string): boolean {
+  return usePopOutStore.getState().openInstanceKeys[popOutInstanceKey('browser', { projectId, taskId })] === true;
 }
 
 /**
- * Open `url` in the task's Kangentic browser: in its open window's pane, or by
- * opening the window first. Returns false when the task has no Kangentic
- * browser to open it in, and the caller opens the default browser.
+ * Open `url` in the task's Kangentic browser: in its open window's pane, in
+ * the Browser window it was popped out to, or by opening the task window first.
+ * Returns false when the task has no Kangentic browser to open it in, and the
+ * caller opens the default browser.
  */
 export function openInTaskBrowser(taskId: string, url: string, openExternal: (url: string) => void): boolean {
   const browser = taskLinkBrowser(taskId);
@@ -124,7 +135,13 @@ export function openInTaskBrowser(taskId: string, url: string, openExternal: (ur
     browser.open(url);
     return true;
   }
-  if (!couldOpenTaskBrowser(taskId)) return false;
+  const projectId = reachableTaskBrowserProject(taskId);
+  if (projectId === null) return false;
+  // The pane is already on screen in a window of its own: no task window needed.
+  if (isBrowserPoppedOut(projectId, taskId)) {
+    popOutLinkBrowser(projectId, taskId, openExternal).open(url);
+    return true;
+  }
   takePending(taskId);
   const timer = setTimeout(() => {
     // The window came up without a browser, or never came up: do not lose the click.
@@ -139,7 +156,7 @@ export function openInTaskBrowser(taskId: string, url: string, openExternal: (ur
 function subscribe(listener: () => void): () => void {
   state.listeners.add(listener);
   const unsubscribers = [
-    // Every store `couldOpenTaskBrowser` reads, the open project included.
+    // Every store `reachableTaskBrowserProject` reads, the open project included.
     useSessionStore.subscribe(listener),
     useConfigStore.subscribe(listener),
     usePopOutStore.subscribe(listener),
@@ -151,7 +168,7 @@ function subscribe(listener: () => void): () => void {
   };
 }
 
-/** Whether the task has a Kangentic browser a link can open in right now: its open window's, or one its window would offer. */
+/** Whether the task has a Kangentic browser a link can open in right now: its open window's, its pop-out's, or one its window would offer. */
 export function useTaskLinkBrowserAvailable(taskId: string | null | undefined): boolean {
-  return useSyncExternalStore(subscribe, () => (taskId ? taskLinkBrowser(taskId) !== null || couldOpenTaskBrowser(taskId) : false));
+  return useSyncExternalStore(subscribe, () => (taskId ? taskLinkBrowser(taskId) !== null || reachableTaskBrowserProject(taskId) !== null : false));
 }

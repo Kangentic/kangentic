@@ -191,6 +191,8 @@ interface LaunchOptions {
   withSession?: boolean;
   /** Page-side scripts that run after the mock and the seed, before the app boots. */
   initScripts?: string[];
+  /** Whether the task has a saved Browser URL, so its pane opens on a page. Defaults to true. */
+  seedTaskUrl?: boolean;
 }
 
 async function launchPopOut(
@@ -204,7 +206,7 @@ async function launchPopOut(
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.addInitScript(preConfig(currentProjectId, options.withSession ?? true));
   await page.addInitScript(`
-    window.__mockBrowser.seedTaskUrl('${TASK_ID}', '${TASK_URL}');
+    ${options.seedTaskUrl === false ? '' : `window.__mockBrowser.seedTaskUrl('${TASK_ID}', '${TASK_URL}');`}
     window.electronAPI.popOut.descriptor = ${JSON.stringify(descriptor)};
   `);
   await page.addInitScript(EMPTY_TEXT_WATCH);
@@ -453,6 +455,151 @@ test.describe('Detached Browser window', () => {
       expect(registered).toEqual({ sessionId: SESSION_ID, taskId: TASK_ID, projectId: TASK_PROJECT_ID });
       expect(await sawEmptyText(page)).toEqual([]);
       expect(await browserStateTrace(page)).toEqual(['loading', 'pane']);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // A link the user clicked in the main window, relayed by main to this window
+  // (`browser:navigateRequest`). This window keeps its own store, so the relay is
+  // the only way the link reaches its pane; the main window's side is pinned in
+  // terminal-link-click.spec.ts.
+  test('loads a relayed link through a pane already showing a page, and ignores another owner\'s', async () => {
+    const { browser, page } = await launchPopOut(
+      { kind: 'browser', params: { taskId: TASK_ID, projectId: TASK_PROJECT_ID } },
+      TASK_PROJECT_ID,
+    );
+    try {
+      await registerGuest(page);
+      await page.evaluate(() => {
+        const element = document.querySelector('[data-testid="browser-webview"]') as HTMLElement & Record<string, unknown>;
+        const loaded: string[] = [];
+        (window as unknown as { __webviewLoads: string[] }).__webviewLoads = loaded;
+        element.loadURL = (url: string) => { loaded.push(url); return Promise.resolve(); };
+      });
+      const webviewLoads = (): Promise<string[]> =>
+        page.evaluate(() => (window as unknown as { __webviewLoads: string[] }).__webviewLoads.slice());
+
+      const linked = 'http://localhost:5173/linked';
+      await page.evaluate(([otherOwner, url]) => window.__mockBrowser?.emitNavigateRequest(otherOwner, url), ['task-someone-else', linked]);
+      await page.evaluate(([ownerKey, url]) => window.__mockBrowser?.emitNavigateRequest(ownerKey, url), [TASK_ID, linked]);
+
+      // The second relay loads, the first never did: had it landed, it would be first in the list.
+      await expect.poll(webviewLoads, { timeout: 5000 }).toEqual([linked]);
+      await expect(page.locator('[data-testid="browser-webview"]')).toHaveCount(1);
+      await expect(page.locator('[data-testid="browser-webview"]')).toHaveAttribute('src', TASK_URL);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('opens a relayed link as the first page of a pane with none', async () => {
+    const { browser, page } = await launchPopOut(
+      { kind: 'browser', params: { taskId: TASK_ID, projectId: TASK_PROJECT_ID } },
+      TASK_PROJECT_ID,
+      { seedTaskUrl: false },
+    );
+    try {
+      await expect(page.locator('[data-testid="popout-browser-loading"]')).toHaveCount(0, { timeout: 10000 });
+      await expect(page.locator('[data-testid="browser-webview"]')).toHaveCount(0);
+
+      const linked = 'http://localhost:5173/linked';
+      await page.evaluate(([ownerKey, url]) => window.__mockBrowser?.emitNavigateRequest(ownerKey, url), [TASK_ID, linked]);
+
+      await expect(page.locator('[data-testid="browser-webview"]')).toHaveAttribute('src', linked, { timeout: 10000 });
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+// A Command Terminal's pane, popped out: its owner key names a slot, not a task
+// row, so the root finds the pane's session through the slot's live terminal
+// (`findLiveCommandTerminalSession`) and listens for relayed links under that key.
+const COMMAND_TERMINAL_SLOT = 'slot-1';
+const COMMAND_TERMINAL_OWNER = `command-terminal::${TASK_PROJECT_ID}::${COMMAND_TERMINAL_SLOT}`;
+const OTHER_COMMAND_TERMINAL_OWNER = `command-terminal::${TASK_PROJECT_ID}::slot-2`;
+const COMMAND_TERMINAL_SESSION_ID = 'sess-popout-command-terminal';
+
+/** A live transient session in the slot, as main's registry lists a Command Terminal. */
+const SEED_COMMAND_TERMINAL_SESSION = `
+  window.__mockPreConfigure(function (state) {
+    state.sessions.push({
+      id: '${COMMAND_TERMINAL_SESSION_ID}', taskId: '${COMMAND_TERMINAL_SESSION_ID}', projectId: '${TASK_PROJECT_ID}',
+      pid: 9997, status: 'running', shell: 'bash', cwd: '${TASK_PROJECT_PATH}', startedAt: new Date().toISOString(),
+      exitCode: null, transient: true, commandTerminalSlot: '${COMMAND_TERMINAL_SLOT}',
+      commandTerminalBranch: 'main', commandTerminalLabel: null,
+    });
+  });
+`;
+
+test.describe('Detached Browser window for a Command Terminal', () => {
+  test('loads a relayed link through the slot\'s pane, and ignores another slot\'s', async () => {
+    const { browser, page } = await launchPopOut(
+      { kind: 'browser', params: { taskId: COMMAND_TERMINAL_OWNER, projectId: TASK_PROJECT_ID } },
+      TASK_PROJECT_ID,
+      {
+        withSession: false,
+        initScripts: [
+          SEED_COMMAND_TERMINAL_SESSION,
+          `window.__mockBrowser.seedTaskUrl('${COMMAND_TERMINAL_OWNER}', '${TASK_URL}');`,
+        ],
+      },
+    );
+    try {
+      // The pane mounted from the slot's live terminal, not from a task row.
+      const registered = await registerGuest(page);
+      expect(registered).toEqual({
+        sessionId: COMMAND_TERMINAL_SESSION_ID,
+        taskId: COMMAND_TERMINAL_OWNER,
+        projectId: TASK_PROJECT_ID,
+      });
+      await page.evaluate(() => {
+        const element = document.querySelector('[data-testid="browser-webview"]') as HTMLElement & Record<string, unknown>;
+        const loaded: string[] = [];
+        (window as unknown as { __webviewLoads: string[] }).__webviewLoads = loaded;
+        element.loadURL = (url: string) => { loaded.push(url); return Promise.resolve(); };
+      });
+      const webviewLoads = (): Promise<string[]> =>
+        page.evaluate(() => (window as unknown as { __webviewLoads: string[] }).__webviewLoads.slice());
+
+      const linked = 'http://localhost:5173/linked-from-command-terminal';
+      await page.evaluate(([ownerKey, url]) => window.__mockBrowser?.emitNavigateRequest(ownerKey, url), [OTHER_COMMAND_TERMINAL_OWNER, linked]);
+      await page.evaluate(([ownerKey, url]) => window.__mockBrowser?.emitNavigateRequest(ownerKey, url), [COMMAND_TERMINAL_OWNER, linked]);
+
+      // Had the other slot's relay landed, the list would hold the link twice.
+      await expect.poll(webviewLoads, { timeout: 5000 }).toEqual([linked]);
+      await afterNextFrames(page);
+      expect(await webviewLoads()).toEqual([linked]);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('opens a relayed link as the first page of a slot\'s pane with none, and keeps another slot\'s out of the store', async () => {
+    const { browser, page } = await launchPopOut(
+      { kind: 'browser', params: { taskId: COMMAND_TERMINAL_OWNER, projectId: TASK_PROJECT_ID } },
+      TASK_PROJECT_ID,
+      { withSession: false, seedTaskUrl: false, initScripts: [SEED_COMMAND_TERMINAL_SESSION] },
+    );
+    try {
+      await expect(page.locator('[data-testid="popout-browser-loading"]')).toHaveCount(0, { timeout: 10000 });
+      await expect(page.getByText('No active session for this task')).toHaveCount(0);
+
+      const linked = 'http://localhost:5173/linked-first-page';
+      await page.evaluate(([ownerKey, url]) => window.__mockBrowser?.emitNavigateRequest(ownerKey, url), [OTHER_COMMAND_TERMINAL_OWNER, linked]);
+      await afterNextFrames(page);
+      // The root filters on its own owner key: nothing was stored for the other slot.
+      const pendingOwners = await page.evaluate(() => Object.keys(
+        (window as unknown as { __zustandStores: { session: { getState: () => { browserNavigateRequests?: Record<string, unknown> } } } })
+          .__zustandStores.session.getState().browserNavigateRequests ?? {},
+      ));
+      expect(pendingOwners).not.toContain(OTHER_COMMAND_TERMINAL_OWNER);
+      await expect(page.locator('[data-testid="browser-webview"]')).toHaveCount(0);
+
+      await page.evaluate(([ownerKey, url]) => window.__mockBrowser?.emitNavigateRequest(ownerKey, url), [COMMAND_TERMINAL_OWNER, linked]);
+
+      await expect(page.locator('[data-testid="browser-webview"]')).toHaveAttribute('src', linked, { timeout: 10000 });
     } finally {
       await browser.close();
     }

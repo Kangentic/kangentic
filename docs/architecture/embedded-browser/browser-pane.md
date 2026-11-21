@@ -35,6 +35,7 @@ sources:
   - resource: src/main/browser/browser-lane-manager.ts
   - resource: src/main/browser/browser-lane-handoff.ts
   - resource: src/main/browser/browser-pane-detach.ts
+  - resource: src/main/browser/pop-out-link-relay.ts
   - resource: src/main/browser/guest-drive-queue.ts
   - resource: src/main/browser/jar-seeder.ts
   - resource: src/main/browser/cookie-seed.ts

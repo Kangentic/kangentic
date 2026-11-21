@@ -33,6 +33,7 @@ import { usePopOutStore } from '../../stores/pop-out-store';
 import { popOutInstanceKey } from '../../../shared/pop-out';
 import type { TerminalLinkBrowser } from '../../utils/terminal-links/link-targets';
 import { registerTaskLinkBrowser } from '../../utils/task-link-browser';
+import { popOutLinkBrowser } from '../../utils/pop-out-link-browser';
 import { useIsAgentDrivingSession } from '../../stores/agent-drive-store';
 import { closeBrowserForTask } from '../../components/browser/close-browser';
 import { useConfigStore } from '../../stores/config-store';
@@ -656,16 +657,20 @@ export function TaskDetailWindow({
   // The Kangentic browser this window's terminal opens a link in, on the click
   // the "Click opens links in" setting gives it (`utils/link-open.ts`): shown the way the Browser pill
   // shows it, with the other right-side views put away, then loaded. Null while
-  // the pane cannot show, or lives in a window of its own, whose renderer keeps
-  // its own store: that click opens the default browser instead.
+  // the pane cannot show. A pane in a window of its own is that window, whose
+  // renderer keeps its own store: main relays the link to it and raises it
+  // (`utils/pop-out-link-browser.ts`), and nothing here changes.
   const browserPoppedOut = usePopOutStore((state) =>
     browserProjectId != null && state.openInstanceKeys[popOutInstanceKey('browser', { projectId: browserProjectId, taskId: task.id })] === true);
   const linkBrowser = useMemo<TerminalLinkBrowser | null>(() => {
+    if (!canShowBrowser) return null;
+    // On screen whatever this window is doing, parked and retained included.
+    if (browserPoppedOut && browserProjectId != null) return popOutLinkBrowser(browserProjectId, task.id);
     // A parked or retained window is out of sight: a link loaded into its pane
     // would open nowhere the user can see. With no browser offered, the link
     // opens the task first (`task-link-browser.ts`), which brings this window
     // back, and takes the link once it is showing.
-    if (!canShowBrowser || browserPoppedOut || dormant) return null;
+    if (dormant) return null;
     return {
       open: (url) => {
         const session = useSessionStore.getState();
@@ -676,7 +681,7 @@ export function TaskDetailWindow({
         session.requestBrowserNavigate?.(task.id, url);
       },
     };
-  }, [canShowBrowser, browserPoppedOut, dormant, handleToggleBrowser, task.id]);
+  }, [canShowBrowser, browserPoppedOut, browserProjectId, dormant, handleToggleBrowser, task.id]);
   // The task's other links (its PR pill, its artifacts) open in the same browser:
   // they ask for it by task id, since nothing hands it to them (task-link-browser.ts).
   useEffect(

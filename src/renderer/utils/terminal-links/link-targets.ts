@@ -11,7 +11,11 @@ import { planLinkActions, type LinkActionPlan, type LinkTarget } from '../link-o
 
 /** The Kangentic browser beside a terminal, as its host offers it. */
 export interface TerminalLinkBrowser {
-  /** Show the browser if it is hidden and load the URL in it. Keyboard focus stays in the terminal. */
+  /**
+   * Show the browser if it is hidden and load the URL in it. Keyboard focus
+   * stays in the terminal, except for a browser in a window of its own, which
+   * comes to the front (`pop-out-link-browser.ts`).
+   */
   open(url: string): void;
 }
 

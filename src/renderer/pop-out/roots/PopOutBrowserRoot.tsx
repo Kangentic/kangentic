@@ -59,6 +59,19 @@ export function PopOutBrowserRoot({ params }: { params: PopOutTaskParams }) {
     return () => { cancelled = true; };
   }, []);
 
+  // A link the user clicked in the main window for this pane, relayed by main
+  // (`utils/pop-out-link-browser.ts`). It goes into this window's own store,
+  // the entry a docked pane takes a link click through, so the pane loads it
+  // as its first page or through its webview, and one that lands before the
+  // pane mounts waits there for it.
+  const ownerKey = params.taskId;
+  useEffect(() => window.electronAPI.browser.onNavigateRequest((requestOwnerKey, url) => {
+    if (requestOwnerKey !== ownerKey) return;
+    // Optional call: a dev store pinned across a Fast Refresh from before this
+    // action existed lacks it until a reload, and the click must not throw there.
+    useSessionStore.getState().requestBrowserNavigate?.(ownerKey, url);
+  }), [ownerKey]);
+
   if (commandTerminal && terminalSession) {
     return (
       <BrowserPane
