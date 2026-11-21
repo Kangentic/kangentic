@@ -1678,19 +1678,12 @@ describe('handleTaskMove: a task whose agent is paused (Priority 4)', () => {
     expectStarted(task);
   });
 
-  it('starts the agent of an idle-paused task an agent moved in a turn the owner started', async () => {
+  // A Command Terminal's move reaches the move with this same answer, already
+  // true (#1150); `mcp-project-context.test.ts` pins that hand-off.
+  it('starts the agent of an idle-paused task an agent moved at the owner\'s request', async () => {
     const { task } = await movePausedTask(IDLE_PAUSE_RECORD, {
       origin: 'agent',
       moveOptions: { ownerRequested: Promise.resolve(true) },
-    });
-
-    expectStarted(task);
-  });
-
-  it('starts the agent of an idle-paused task a Command Terminal moved', async () => {
-    const { task } = await movePausedTask(IDLE_PAUSE_RECORD, {
-      origin: 'agent',
-      moveOptions: { ownerRequested: Promise.resolve(false), moverIsCommandTerminal: true },
     });
 
     expectStarted(task);

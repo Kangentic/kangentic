@@ -84,18 +84,18 @@ The record, launch, workflow and recovery checks are `isLiftableIdlePause`
 open's own, because a move IS the entry.
 
 **The owner's move resumes it too.** A move into a column that starts an agent ends an idle pause
-when the owner made it: a drag or a phone move (`isMoveByAPerson`), an agent's
-`kangentic_move_task` in a turn the owner started (`ownerRequested`), or any Command Terminal's move
-(`moverIsCommandTerminal`, counted for this check only and never written to `owner_requested`).
-Priority 4 of `handleTaskMove` keeps its spawn plan, and Phase 3 calls `spawnAgent` with
-`liftsIdlePause`, which asks `isLiftableIdlePause` again under the lock. The start is the move's:
-the column's session strategy, its message and its whole enter group, with held messages in the
-opening message. It costs the turn a running agent would get from the same move. When the re-check
-declines (a workflow paused or a recovery armed during the move's worktree phase), `spawnAgent`
-runs the enter group with `agentPaused`, as the move's held branch would have. A move the board
-made (a Move to column row, a plan approval's auto-move, a workflow step, an agent's move in a turn
-the board started) keeps the pause, and so does a restart, since `HELD_PAUSE_SOURCES` still lists
-`'auto'`.
+when the owner made it: a drag or a phone move (`isMoveByAPerson`), or an agent's
+`kangentic_move_task` the owner asked for (`ownerRequested`): any Command Terminal's move, one from a
+client outside Kangentic, or one in a turn the owner started. The same flag is written to the move
+row's `owner_requested`. Priority 4 of `handleTaskMove` keeps its spawn plan, and Phase 3 calls
+`spawnAgent` with `liftsIdlePause`, which asks `isLiftableIdlePause` again under the lock. The
+start is the move's: the column's session strategy, its message and its whole enter group, with
+held messages in the opening message. It costs the turn a running agent would get from the same
+move. When the re-check declines (a workflow paused or a recovery armed during the move's worktree
+phase), `spawnAgent` runs the enter group with `agentPaused`, as the move's held branch would have.
+A move the board made (a Move to column row, a plan approval's auto-move, a workflow step, an
+agent's move in a turn the board started) keeps the pause, and so does a restart, since
+`HELD_PAUSE_SOURCES` still lists `'auto'`.
 
 A resume already in flight wins (`isResumeInFlight`), since `resumeTaskSession` cancels whatever is
 in flight and that could be a Resume carrying a prompt, a workflow's Resume, or the launch retry.

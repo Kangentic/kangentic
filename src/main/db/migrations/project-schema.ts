@@ -2231,8 +2231,10 @@ export function runProjectMigrations(db: Database.Database): void {
   // Migration: an agent's move made in a turn the owner started (#1100). The
   // owner typed into the session and the agent moved the task, so the move
   // starts a row's Frequency over as a drag would (`countRuns`). Main sets it
-  // from the turn's transcript, never from anything the agent passes. 0 for
-  // every existing row, which is what each of them already counted as.
+  // from the turn's transcript, and since #1150 for any Command Terminal's move
+  // or one from a client outside Kangentic, never from anything the agent
+  // passes. 0 for every existing row, which is what each of them already
+  // counted as.
   const taskMoveColumns = new Set(
     (db.pragma('table_info(task_moves)') as Array<{ name: string }>).map((column) => column.name),
   );

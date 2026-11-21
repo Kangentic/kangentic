@@ -1484,10 +1484,12 @@ export interface ColumnAutomation {
   text_match_source: TextMatchSource;
   /**
    * The most times this row may run on one task, counted across every visit
-   * to the column since a person last moved the task to another column, or it
-   * last left Done (`AutomationRunRepository.countRuns`). The board's own moves
-   * (an agent's, an automation's, a workflow's) keep the count, which is what
-   * holds a review loop to its round-trip limit. Null means no limit.
+   * to the column since the owner last moved the task to another column (by
+   * hand, or by asking an agent), or it last left Done
+   * (`AutomationRunRepository.countRuns`). The board's own moves (an
+   * automation's, a workflow's, an agent's in a turn the board started) keep the
+   * count in either direction, which is what holds a review loop to its
+   * round-trip limit. Null means no limit.
    */
   max_runs: number | null;
   created_at: string;
@@ -6828,10 +6830,12 @@ export interface TaskMoveProvenance {
   /** A short why, when the mover knows one ("Back for revisions", "Step done"). */
   reason?: string | null;
   /**
-   * An agent's move made in a turn the owner started: the turn holds a
-   * message the owner typed, not one Kangentic typed (`turnStartedByOwner`).
-   * Main sets it from the transcript, never from anything the agent passes,
-   * and it starts a row's Frequency over as a person's move does (`countRuns`).
+   * An agent's move the owner asked for: any Command Terminal's or any from a
+   * client outside Kangentic, which names no session (#1150), or one made in a
+   * turn the owner started, whose turn holds a message the owner
+   * typed, not one Kangentic typed (`turnStartedByOwner`). Main sets it from the
+   * calling session, never from anything the agent passes, and it starts a
+   * row's Frequency over as a person's move does (`countRuns`).
    */
   ownerRequested?: boolean;
 }

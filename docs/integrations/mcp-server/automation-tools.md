@@ -63,11 +63,13 @@ Every row also takes guards, a Condition (its Task lines in `filter`, its text l
 - **`maxRuns`**: Frequency, the most times the row may run on one task across every visit (a review
   loop's round-trip limit). The count starts over when a person moves the task to another column (a
   drag on the board, a move from the phone) and when the task leaves Done. A `kangentic_move_task`
-  call counts as the person's when the turn that made it holds a message the owner typed into the
-  calling session: Kangentic reads the turn's user messages from the transcript, leaving out every
-  text it typed itself. A call in a turn the board started keeps the count, so an agent cannot reset
-  its own limit after a column message. The call takes no parameter for this. Moves by an automation
-  or a workflow keep it too. Omit or `null` for no limit.
+  call from a Command Terminal, or from a client outside Kangentic whose MCP URL names no session,
+  counts as the person's. From a task's session, a call counts as the person's when the turn that
+  made it holds a message the owner typed into the calling session: Kangentic reads the turn's user
+  messages from the transcript, leaving out every text it typed itself. A call in a turn the board
+  started keeps the count, so an agent cannot reset its own limit after a column message. The call
+  takes no parameter for this. Moves by an automation or a workflow keep it too, in either
+  direction. Omit or `null` for no limit.
 
 A `turn_end` row runs when the column's agent finishes a turn on its own (not an interrupt or a
 failed turn), at most once per visit, top to bottom. `{{agentReply}}` resolves to that agent's final
