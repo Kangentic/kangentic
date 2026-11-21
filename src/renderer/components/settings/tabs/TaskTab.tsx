@@ -29,7 +29,7 @@ export function TaskTab({ globalConfig }: { globalConfig: AppConfig }) {
         icon={<SquareStack size={16} />}
         label={t`Cards`}
         description={t`How much each task card shows on the board.`}
-        searchIds={['cardDensity', 'cardPreview', 'showTaskNumbers']}
+        searchIds={['cardDensity', 'cardPreview', 'showTaskNumbers', 'showTaskPriority', 'showTaskLabels']}
       >
         <CardChoiceRow
           {...settingProps('cardDensity')}
@@ -59,6 +59,18 @@ export function TaskTab({ globalConfig }: { globalConfig: AppConfig }) {
           {...settingProps('showTaskNumbers')}
           checked={globalConfig.showTaskNumbers}
           onChange={(value) => updateGlobal({ showTaskNumbers: value })}
+        />
+        {/* The card's order: the meter sits in the title row beside #N, the
+            labels on the row below. */}
+        <CardToggleRow
+          {...settingProps('showTaskPriority')}
+          checked={globalConfig.showTaskPriority !== false}
+          onChange={(value) => updateGlobal({ showTaskPriority: value })}
+        />
+        <CardToggleRow
+          {...settingProps('showTaskLabels')}
+          checked={globalConfig.showTaskLabels !== false}
+          onChange={(value) => updateGlobal({ showTaskLabels: value })}
         />
       </SettingsCard>
 

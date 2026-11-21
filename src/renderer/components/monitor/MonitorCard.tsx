@@ -5,7 +5,8 @@ import { msg } from '@lingui/core/macro';
 import { ActivityMark } from '../ActivityMark';
 import { IconSlot } from '../IconSlot';
 import type { AppConfig, MonitorSessionRow } from '../../../shared/types';
-import { TaskPills, taskHasPills } from '../backlog/TaskPills';
+import { TaskPills } from '../backlog/TaskPills';
+import { PriorityBadge } from '../backlog/PriorityBadge';
 import { Tooltip } from '../Tooltip';
 import { PrLink } from '../PrLink';
 import { ElapsedTime } from '../terminal/ElapsedTime';
@@ -452,6 +453,9 @@ function MonitorFullCard({
   const cardPreview = useConfigStore((state) => state.config.cardPreview);
   const cardDensity = useConfigStore((state) => state.config.cardDensity);
   const showTaskNumbers = useConfigStore((state) => state.config.showTaskNumbers);
+  // The board card's Priority and Labels settings (#1146), read the same way.
+  const showTaskPriority = useConfigStore((state) => state.config.showTaskPriority !== false);
+  const showTaskLabels = useConfigStore((state) => state.config.showTaskLabels !== false);
   const messageTrail = useSessionStore(
     useCallback(
       (state: ReturnType<typeof useSessionStore.getState>) => state.sessionMessageTrails[row.sessionId],
@@ -466,13 +470,14 @@ function MonitorFullCard({
   const hasTrail = Boolean(messageTrail && messageTrail.length > 0);
   const slotKind = monitorSlotKind(row, trailMode, hasTrail);
   // The board card's rule: the agent's well closes its own edge, so the footer's
-  // rule goes when the trail sits right above it with no pill row (priority or
-  // labels) between.
-  // `?? 0`: a row built before `priority` joined the snapshot (a hand-built
-  // fixture, a mock) reads as no priority, never as a pill named "Pundefined".
-  const rowPriority = row.priority ?? 0;
-  const hasPills = taskHasPills(rowPriority, row.labels);
-  const footerDivider = !(slotKind === 'trail' && !hasPills);
+  // rule goes when the trail sits right above it with no label row between. The
+  // priority meter is in the title row (#1146), so it does not count here.
+  // The Priority setting off draws no meter. `?? 0`: a row built before
+  // `priority` joined the snapshot (a hand-built fixture, a mock) reads as no
+  // priority, never as a meter named "Pundefined".
+  const shownPriority = showTaskPriority ? row.priority ?? 0 : 0;
+  const hasLabelRow = showTaskLabels && row.labels.length > 0;
+  const footerDivider = !(slotKind === 'trail' && !hasLabelRow);
 
   return (
     <div
@@ -501,6 +506,8 @@ function MonitorFullCard({
             {row.taskTitle}
           </div>
         </Tooltip>
+        {/* After the title and before #N, as on the board card (#1146). */}
+        {shownPriority !== 0 && <PriorityBadge priority={shownPriority} variant="inline" />}
         {showTaskNumbers && row.displayId !== null && (
           <TicketNumber displayId={row.displayId} testId="monitor-card-display-id" className="select-text" />
         )}
@@ -549,9 +556,9 @@ function MonitorFullCard({
         <OutputPeek lines={row.outputPeek} rows={slotRows} />
       )}
 
-      {hasPills && (
+      {hasLabelRow && (
         <div className="mt-1.5">
-          <TaskPills priority={rowPriority} labels={row.labels} labelColors={labelColors} />
+          <TaskPills labels={row.labels} labelColors={labelColors} />
         </div>
       )}
 

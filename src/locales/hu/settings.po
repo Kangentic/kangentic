@@ -545,9 +545,8 @@ msgid "Auto"
 msgstr "Automatikus"
 
 #: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Auto-apply board config changes"
-msgstr "Táblakonfiguráció-változások automatikus alkalmazása"
+msgid "Auto-apply changes"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -940,12 +939,6 @@ msgstr "Indexelt commitok"
 msgctxt "card density"
 msgid "Compact"
 msgstr "Tömör"
-
-#: src/renderer/components/settings/settings-registry.ts
-#: src/renderer/components/settings/tabs/BoardTab.tsx
-#, fuzzy
-msgid "Config sync"
-msgstr "Konfiguráció szinkronizálása"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
 #, fuzzy
@@ -1651,11 +1644,6 @@ msgstr "Az alkalmazásban bárhol működő gyorsbillentyűk."
 msgid "Hover a tile to try it on the whole app, click to keep it."
 msgstr "Vigye az egeret egy csempe fölé a kipróbáláshoz, kattintson a megtartáshoz."
 
-#: src/renderer/components/settings/tabs/BoardTab.tsx
-#, fuzzy
-msgid "How changes to the shared board config are applied."
-msgstr "A megosztott táblakonfiguráció változásainak alkalmazási módja."
-
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
 #, fuzzy
 msgid "How it works"
@@ -1872,6 +1860,11 @@ msgstr "A Kangentic az Ön SSH-konfigurációját, ügynökét és kulcsait hasz
 msgid "Kangentic-operated relay"
 msgstr "A Kangentic által üzemeltetett továbbító"
 
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/BoardTab.tsx
+msgid "kangentic.json"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Keep"
 msgstr ""
@@ -1922,6 +1915,11 @@ msgstr "Tudásgráf"
 msgctxt "noun"
 msgid "Label"
 msgstr "Felirat"
+
+#: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
+msgid "Labels"
+msgstr "Címkék"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
@@ -2551,6 +2549,11 @@ msgid "Preview while you speak: streaming is instant, chunked is accurate."
 msgstr "Előnézet beszéd közben: a streamelés azonnali, a darabolt pontos."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
+msgid "Priority"
+msgstr "Prioritás"
+
+#: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #, fuzzy
 msgid "Privacy"
@@ -3093,6 +3096,14 @@ msgid "Show each task's #N number on its card"
 msgstr "A feladatok #N számának megjelenítése a kártyán"
 
 #: src/renderer/components/settings/settings-registry.ts
+msgid "Show each task's labels on its card"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Show each task's priority meter on its card"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Show the status bar at the bottom of the window"
 msgstr "Állapotsor megjelenítése az ablak alján"
@@ -3418,6 +3429,10 @@ msgstr "Az ágens legújabb üzenete"
 #, fuzzy
 msgid "The agent's recent messages, one line each"
 msgstr "Az ágens legutóbbi üzenetei, soronként egy"
+
+#: src/renderer/components/settings/tabs/BoardTab.tsx
+msgid "The board your team shares: columns, automations and shortcuts."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy

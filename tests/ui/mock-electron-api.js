@@ -333,6 +333,8 @@
     shrinkEmptyColumns: false,
     linkClickTarget: 'default',
     showTaskNumbers: false,
+    showTaskPriority: true,
+    showTaskLabels: true,
     terminalPanelVisible: true,
     animationsEnabled: true,
     statusBarVisible: true,

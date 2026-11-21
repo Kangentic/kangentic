@@ -1,16 +1,18 @@
 /**
- * UI tests for priority on the task card (#1053).
+ * UI tests for priority and labels on the task card (#1053, #1143, #1146).
  *
- * Intent: a task's priority leads the row that holds its labels, drawn as the
- * bare level meter with no pill around it (#1143), so it reads apart from the
- * label pills by shape and does not take a label's room. The
- * bottom entry of the scale (index 0, "None" by default) draws nothing, so a
- * board where nobody sets priority looks as it did. A card whose row holds only
- * its priority keeps the rule above its footer, as a labelled card does. The
- * task detail header carries no priority badge any more.
+ * Intent: a task's priority is the bare level meter in the card's title row,
+ * after the title and before #N (#1146), so a card with no labels spends no row
+ * on it. The label row holds labels only. The bottom entry of the scale (index
+ * 0, "None" by default) draws nothing, so a board where nobody sets priority
+ * looks as it did. The rule above a footer closes the label row: a card under an
+ * agent trail with no labels has none, a labelled one keeps it. The Task tab's
+ * Priority and Labels settings hide each on cards, one without the other.
+ * Hovering a card's title shows the whole title.
  *
- * Only a browser proves these: the order inside one wrap row, a computed
- * border, and what a live update of the board store repaints.
+ * Only a browser proves these: the order inside the title row, a computed
+ * border, a rendered line height, a tooltip, and what a live update of the board
+ * or config store repaints.
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
@@ -25,11 +27,15 @@ const LABELLED_TASK_ID = 'task-priority-labelled';
 const NONE_TASK_ID = 'task-priority-none';
 const TRAIL_TASK_ID = 'task-priority-trail';
 const TRAIL_SESSION_ID = 'session-priority-trail';
+const LABELLED_TRAIL_TASK_ID = 'task-labelled-trail';
+const LABELLED_TRAIL_SESSION_ID = 'session-labelled-trail';
 const DONE_TASK_ID = 'task-priority-done';
+const LABELLED_TITLE = 'Show failing checks on the card so a reviewer sees them before opening the pull request';
 
 const preConfig = `
   window.__mockPreConfigure(function (state) {
     var timestamp = new Date().toISOString();
+    state.config.showTaskNumbers = true;
     state.projects.push({
       id: '${PROJECT_ID}', name: 'Card Priority Test', path: '/mock/card-priority-test',
       github_url: null, default_agent: 'claude', last_opened: timestamp, created_at: timestamp,
@@ -47,26 +53,35 @@ const preConfig = `
         created_at: timestamp, updated_at: timestamp,
       }, fields);
     }
+    function runningSession(sessionId, taskId, pid) {
+      state.sessions.push({
+        id: sessionId, taskId: taskId, projectId: '${PROJECT_ID}', pid: pid,
+        status: 'running', shell: 'bash', cwd: '/mock/card-priority-test', startedAt: timestamp,
+        exitCode: null, resuming: false, agentSessionId: 'agent-' + sessionId,
+      });
+      state.activityCache[sessionId] = 'thinking';
+      state.messageTrailCache[sessionId] = [{ uuid: 't-' + sessionId, ts: 1, text: 'The tap works.' }];
+    }
     state.tasks.push(task({
-      id: '${LABELLED_TASK_ID}', display_id: 1048, title: 'Show failing checks on the card',
+      id: '${LABELLED_TASK_ID}', display_id: 1048, title: '${LABELLED_TITLE}',
       swimlane_id: laneIds['To Do'], position: 0, priority: 3, labels: ['ui', 'git'],
     }));
     state.tasks.push(task({
       id: '${NONE_TASK_ID}', display_id: 1050, title: 'Rename the base picker local',
       swimlane_id: laneIds['To Do'], position: 1, priority: 0, labels: ['refactor'],
     }));
-    // Running, with an agent trail and a priority but no labels: the card the
-    // footer rule's trail-only exception used to strip.
-    state.sessions.push({
-      id: '${TRAIL_SESSION_ID}', taskId: '${TRAIL_TASK_ID}', projectId: '${PROJECT_ID}', pid: 9001,
-      status: 'running', shell: 'bash', cwd: '/mock/card-priority-test', startedAt: timestamp,
-      exitCode: null, resuming: false, agentSessionId: 'agent-priority-trail',
-    });
-    state.activityCache['${TRAIL_SESSION_ID}'] = 'thinking';
-    state.messageTrailCache['${TRAIL_SESSION_ID}'] = [{ uuid: 't1', ts: 1, text: 'The tap works.' }];
+    // Running, with an agent trail and a priority but no labels: nothing sits
+    // between the trail and the footer, so the footer draws no rule.
+    runningSession('${TRAIL_SESSION_ID}', '${TRAIL_TASK_ID}', 9001);
     state.tasks.push(task({
       id: '${TRAIL_TASK_ID}', display_id: 1040, title: 'Install channels', agent: 'claude',
       session_id: '${TRAIL_SESSION_ID}', swimlane_id: laneIds['Executing'], position: 0, priority: 2,
+    }));
+    // Running, with an agent trail and a label: the label row closes with a rule.
+    runningSession('${LABELLED_TRAIL_SESSION_ID}', '${LABELLED_TRAIL_TASK_ID}', 9002);
+    state.tasks.push(task({
+      id: '${LABELLED_TRAIL_TASK_ID}', display_id: 1041, title: 'Retry a timed-out check', agent: 'claude',
+      session_id: '${LABELLED_TRAIL_SESSION_ID}', swimlane_id: laneIds['Executing'], position: 1, labels: ['ci'],
     }));
     state.archivedTasks.push(task({
       id: '${DONE_TASK_ID}', display_id: 1035, title: 'Base a task on a tag',
@@ -76,85 +91,126 @@ const preConfig = `
   });
 `;
 
-let browser: Browser;
-let page: Page;
-
-test.beforeAll(async () => {
+async function openBoard(): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady(VITE_URL);
-  browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
-  page = await context.newPage();
-  await page.addInitScript({ path: MOCK_SCRIPT });
-  await page.addInitScript(preConfig);
-  await gotoVite(page, VITE_URL);
-  await page.waitForSelector('text=Kangentic', { timeout: 15000 });
-  await page.locator(`[data-task-id="${LABELLED_TASK_ID}"]`).waitFor({ state: 'visible', timeout: 15000 });
-});
+  const launched = await chromium.launch({ headless: true });
+  const context = await launched.newContext({ viewport: { width: 1920, height: 1080 } });
+  const opened = await context.newPage();
+  await opened.addInitScript({ path: MOCK_SCRIPT });
+  await opened.addInitScript(preConfig);
+  await gotoVite(opened, VITE_URL);
+  await opened.waitForSelector('text=Kangentic', { timeout: 15000 });
+  await opened.locator(`[data-task-id="${LABELLED_TASK_ID}"]`).waitFor({ state: 'visible', timeout: 15000 });
+  return { browser: launched, page: opened };
+}
 
-test.afterAll(async () => {
-  await browser?.close();
-});
+/** Write a global config field through the real path the Task tab's switches use. */
+async function setConfig(target: Page, partial: Record<string, boolean>): Promise<void> {
+  await target.evaluate((value) => {
+    const stores = (window as unknown as {
+      __zustandStores?: { config: { getState: () => { updateConfig: (partial: Record<string, boolean>) => Promise<void> } } };
+    }).__zustandStores;
+    return stores?.config.getState().updateConfig(value);
+  }, partial);
+}
 
-test.describe('Task card priority meter', () => {
-  test('leads the label row with a level meter named for the level', async () => {
-    const pills = page.locator(`[data-task-id="${LABELLED_TASK_ID}"] [data-testid="task-pills"]`);
-    await expect(pills).toBeVisible();
-    const first = pills.locator('> *').first();
-    await expect(first).toHaveAttribute('data-testid', 'priority-pill');
-    await expect(first).toHaveAccessibleName('Priority: High');
-    // High is the third of four levels above None: three filled bars of four.
-    await expect(first.locator('[data-testid="priority-meter"] > span')).toHaveCount(4);
-    await expect(first.locator('[data-testid="priority-meter"] [data-filled]')).toHaveCount(3);
-    await expect(pills.locator('> *')).toHaveText(['', 'ui', 'git']);
+const card = (target: Page, taskId: string) => target.locator(`[data-task-id="${taskId}"]`);
+
+/**
+ * Whether the board card's footer draws its rule, read off its computed border
+ * WIDTH: Tailwind's preflight gives every element `border-style: solid` at 0px,
+ * so the style alone reads solid with no rule drawn. Scoped to the column,
+ * because the bottom panel's session for the same task carries the task id too.
+ */
+async function footerRule(target: Page, taskId: string): Promise<'rule' | 'none'> {
+  const footer = target
+    .locator(`[data-swimlane-name] [data-task-id="${taskId}"]`)
+    .locator('[data-testid="usage-bar"], [data-testid="status-bar"]')
+    .first();
+  await expect(footer).toBeVisible();
+  const width = await footer.evaluate((element) => parseFloat(getComputedStyle(element).borderTopWidth));
+  return width > 0 ? 'rule' : 'none';
+}
+
+test.describe('Task card priority and labels', () => {
+  // One boot for the read-only checks. The one write (an agent's priority
+  // update) runs last, and the switch cases boot their own page below.
+  let browser: Browser;
+  let page: Page;
+
+  test.beforeAll(async () => {
+    ({ browser, page } = await openBoard());
   });
 
-  test('the priority is the bare meter, not a pill', async () => {
-    const mark = page.locator(`[data-task-id="${LABELLED_TASK_ID}"] [data-testid="priority-pill"]`);
-    await expect(mark).toHaveAttribute('data-variant', 'bare');
+  test.afterAll(async () => {
+    await browser?.close();
+  });
+
+  test('the meter sits in the title row, before #N, named for its level', async () => {
+    const mark = card(page, LABELLED_TASK_ID).locator('[data-card-title-row] > [data-testid="priority-pill"]');
+    await expect(mark).toHaveAccessibleName('Priority: High');
+    await expect(mark).toHaveAttribute('data-variant', 'inline');
+    // High is the third of four levels above None: three filled bars of four.
+    await expect(mark.locator('[data-testid="priority-meter"] > span')).toHaveCount(4);
+    await expect(mark.locator('[data-testid="priority-meter"] [data-filled]')).toHaveCount(3);
+    // The ticket number follows the meter directly.
+    await expect(card(page, LABELLED_TASK_ID).locator('[data-testid="priority-pill"] + [data-testid="task-card-display-id"]')).toHaveText('#1048');
+  });
+
+  test('the label row holds labels only', async () => {
+    const pills = card(page, LABELLED_TASK_ID).locator('[data-testid="task-pills"]');
+    await expect(pills.locator('> *')).toHaveText(['ui', 'git']);
+    await expect(pills.locator('[data-testid="priority-pill"]')).toHaveCount(0);
+  });
+
+  test('the meter is bare and adds no height to the title row', async () => {
+    const mark = card(page, LABELLED_TASK_ID).locator('[data-testid="priority-pill"]');
     const look = await mark.evaluate((element) => {
       const style = getComputedStyle(element);
       return { background: style.backgroundColor, border: style.borderTopWidth, width: element.getBoundingClientRect().width };
     });
     expect(look.background).toBe('rgba(0, 0, 0, 0)');
     expect(look.border).toBe('0px');
-    // 18px meter plus 2px padding; the pill was 36px.
-    expect(look.width).toBeGreaterThan(19);
-    expect(look.width).toBeLessThan(21);
+    // The 18px meter with no padding of its own; the title row's gap spaces it.
+    expect(look.width).toBeGreaterThan(17);
+    expect(look.width).toBeLessThan(19);
+    const withMeter = await card(page, LABELLED_TASK_ID).locator('[data-card-title-row]').boundingBox();
+    const withoutMeter = await card(page, NONE_TASK_ID).locator('[data-card-title-row]').boundingBox();
+    expect(Math.abs((withMeter?.height ?? 0) - (withoutMeter?.height ?? 0))).toBeLessThanOrEqual(0.5);
   });
 
-  test('the bottom entry of the scale draws no pill', async () => {
-    const card = page.locator(`[data-task-id="${NONE_TASK_ID}"]`);
-    await expect(card.locator('[data-testid="task-pills"]')).toHaveText('refactor');
-    await expect(card.locator('[data-testid="priority-pill"]')).toHaveCount(0);
+  test('the bottom entry of the scale draws no meter', async () => {
+    const noneCard = card(page, NONE_TASK_ID);
+    await expect(noneCard.locator('[data-testid="task-pills"]')).toHaveText('refactor');
+    await expect(noneCard.locator('[data-testid="priority-pill"]')).toHaveCount(0);
   });
 
-  test('a priority-only card under an agent trail keeps the rule above its footer', async () => {
-    const card = page.locator(`[data-task-id="${TRAIL_TASK_ID}"]`);
-    // The trail must be showing, or the rule is there for the old reason and
-    // this passes without the fix.
-    await expect(card.locator('[data-testid="task-card-trail"]')).toBeVisible();
-    await expect(card.locator('[data-testid="priority-pill"]')).toHaveAccessibleName('Priority: Medium');
-    const footer = card.locator('[data-testid="usage-bar"], [data-testid="status-bar"]').first();
-    await expect(footer).toBeVisible();
-    await expect.poll(() => footer.evaluate((element) => getComputedStyle(element).borderTopStyle)).toBe('solid');
+  test('under an agent trail, the footer rule closes a label row and nothing else', async () => {
+    // The trails must be showing, or a rule is there for another reason.
+    await expect(card(page, TRAIL_TASK_ID).locator('[data-testid="task-card-trail"]')).toBeVisible();
+    await expect(card(page, LABELLED_TRAIL_TASK_ID).locator('[data-testid="task-card-trail"]')).toBeVisible();
+    // Priority only: the meter is in the title row, so no row stands under the trail.
+    await expect(card(page, TRAIL_TASK_ID).locator('[data-card-title-row] > [data-testid="priority-pill"]')).toHaveAccessibleName('Priority: Medium');
+    await expect(card(page, TRAIL_TASK_ID).locator('[data-testid="task-pills"]')).toHaveCount(0);
+    await expect.poll(() => footerRule(page, TRAIL_TASK_ID)).toBe('none');
+    await expect.poll(() => footerRule(page, LABELLED_TRAIL_TASK_ID)).toBe('rule');
   });
 
-  test('a priority-only pill row holds the same line height as a labelled row', async () => {
-    const labelledRow = page.locator(`[data-task-id="${LABELLED_TASK_ID}"] [data-testid="task-pills"]`);
-    const priorityOnlyRow = page.locator(`[data-task-id="${TRAIL_TASK_ID}"] [data-testid="task-pills"]`);
-    await expect(labelledRow).toBeVisible();
-    await expect(priorityOnlyRow).toBeVisible();
-    // The bare meter is 14px tall; min-h-6 is what lifts the row to the 24px
-    // line the label pills set. Without it this row would be about 14px.
-    await expect.poll(async () => {
-      const labelledHeight = (await labelledRow.boundingBox())?.height ?? 0;
-      const priorityOnlyHeight = (await priorityOnlyRow.boundingBox())?.height ?? 0;
-      return priorityOnlyHeight >= 23 && Math.abs(priorityOnlyHeight - labelledHeight) <= 1;
-    }).toBe(true);
+  test('hovering the title shows the whole title', async () => {
+    const title = card(page, LABELLED_TASK_ID).locator('[data-testid="task-card-title"]');
+    // The title is cut short on the card, so the tip is the only place it reads whole.
+    expect(await title.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+    await title.hover();
+    // A tip that repeats its trigger's text is not exposed as a description, so
+    // it is read off the tooltip itself.
+    const tip = page.locator('[data-tooltip]');
+    await expect(tip).toHaveText(LABELLED_TITLE);
+    await page.mouse.move(2, 2);
+    await expect(tip).toHaveCount(0);
   });
 
   test('the bare mark shows its level in the hover tip', async () => {
-    const mark = page.locator(`[data-task-id="${LABELLED_TASK_ID}"] [data-testid="priority-pill"]`);
+    const mark = card(page, LABELLED_TASK_ID).locator('[data-testid="priority-pill"]');
     await mark.hover();
     const tip = page.locator('[data-tooltip]');
     await expect(tip).toBeVisible();
@@ -165,9 +221,20 @@ test.describe('Task card priority meter', () => {
     await expect(tip).toHaveCount(0);
   });
 
-  test('the Done list row shows the priority meter', async () => {
-    const row = page.locator(`[data-task-id="${DONE_TASK_ID}"]`);
-    await expect(row.locator('[data-testid="priority-pill"]')).toHaveAccessibleName('Priority: Urgent');
+  test('the Done list row shows the meter in its title line', async () => {
+    const row = card(page, DONE_TASK_ID);
+    await expect(row.locator('[data-testid="compact-title"] ~ [data-testid="priority-pill"]')).toHaveAccessibleName('Priority: Urgent');
+    await expect(row.locator('[data-testid="task-pills"] [data-testid="priority-pill"]')).toHaveCount(0);
+  });
+
+  test('the task detail header carries no priority badge', async () => {
+    await card(page, TRAIL_TASK_ID).click();
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+    await expect(dialog.locator('[data-testid="task-display-id"]')).toBeVisible();
+    await expect(dialog.locator('[data-testid="priority-pill"]')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
   });
 
   test('an agent update to priority repaints the card without a reload', async () => {
@@ -176,14 +243,30 @@ test.describe('Task card priority meter', () => {
       const fire = (window as unknown as { __mockFireTaskUpdatedByAgent?: (id: string, title: string, project: string) => void }).__mockFireTaskUpdatedByAgent;
       fire?.(taskId, 'Rename the base picker local', projectId);
     }, { taskId: NONE_TASK_ID, projectId: PROJECT_ID });
-    await expect(page.locator(`[data-task-id="${NONE_TASK_ID}"] [data-testid="priority-pill"]`)).toHaveAccessibleName('Priority: Urgent');
+    await expect(card(page, NONE_TASK_ID).locator('[data-card-title-row] > [data-testid="priority-pill"]')).toHaveAccessibleName('Priority: Urgent');
   });
+});
 
-  test('the task detail header carries no priority badge', async () => {
-    await page.locator(`[data-task-id="${TRAIL_TASK_ID}"]`).click();
-    const dialog = page.locator('[data-testid="task-detail-dialog"]');
-    await dialog.waitFor({ state: 'visible', timeout: 5000 });
-    await expect(dialog.locator('[data-testid="task-display-id"]')).toBeVisible();
-    await expect(dialog.locator('[data-testid="priority-pill"]')).toHaveCount(0);
-  });
+test('the Priority and Labels settings hide each on cards independently', async () => {
+  test.setTimeout(60_000);
+  const { browser, page } = await openBoard();
+  try {
+    await test.step('Priority off: no meter on a board or Done card, labels stay', async () => {
+      await setConfig(page, { showTaskPriority: false });
+      await expect(card(page, LABELLED_TASK_ID).locator('[data-testid="priority-pill"]')).toHaveCount(0);
+      await expect(card(page, DONE_TASK_ID).locator('[data-testid="priority-pill"]')).toHaveCount(0);
+      await expect(card(page, LABELLED_TASK_ID).locator('[data-testid="task-pills"] > *')).toHaveText(['ui', 'git']);
+      await setConfig(page, { showTaskPriority: true });
+      await expect(card(page, LABELLED_TASK_ID).locator('[data-testid="priority-pill"]')).toHaveCount(1);
+    });
+
+    await test.step('Labels off: no label row, the meter stays, and the trail card loses its rule', async () => {
+      await setConfig(page, { showTaskLabels: false });
+      await expect(card(page, LABELLED_TASK_ID).locator('[data-testid="task-pills"]')).toHaveCount(0);
+      await expect(card(page, LABELLED_TASK_ID).locator('[data-card-title-row] > [data-testid="priority-pill"]')).toHaveCount(1);
+      await expect.poll(() => footerRule(page, LABELLED_TRAIL_TASK_ID)).toBe('none');
+    });
+  } finally {
+    await browser.close();
+  }
 });

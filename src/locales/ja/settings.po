@@ -545,9 +545,8 @@ msgid "Auto"
 msgstr "自動"
 
 #: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Auto-apply board config changes"
-msgstr "ボード構成の変更を自動適用"
+msgid "Auto-apply changes"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -940,12 +939,6 @@ msgstr "インデックス済みのコミット"
 msgctxt "card density"
 msgid "Compact"
 msgstr "コンパクト"
-
-#: src/renderer/components/settings/settings-registry.ts
-#: src/renderer/components/settings/tabs/BoardTab.tsx
-#, fuzzy
-msgid "Config sync"
-msgstr "構成の同期"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
 #, fuzzy
@@ -1651,11 +1644,6 @@ msgstr "アプリ内のどこでも使えるホットキー。"
 msgid "Hover a tile to try it on the whole app, click to keep it."
 msgstr "タイルにホバーするとアプリ全体で試せます。クリックで確定します。"
 
-#: src/renderer/components/settings/tabs/BoardTab.tsx
-#, fuzzy
-msgid "How changes to the shared board config are applied."
-msgstr "共有ボード設定への変更を適用する方法。"
-
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
 #, fuzzy
 msgid "How it works"
@@ -1872,6 +1860,11 @@ msgstr "Kangentic は、ターミナルと同様に SSH 構成、エージェン
 msgid "Kangentic-operated relay"
 msgstr "Kangentic が運用するリレー"
 
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/BoardTab.tsx
+msgid "kangentic.json"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Keep"
 msgstr ""
@@ -1921,6 +1914,11 @@ msgstr "ナレッジグラフ"
 #, fuzzy
 msgctxt "noun"
 msgid "Label"
+msgstr "ラベル"
+
+#: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
+msgid "Labels"
 msgstr "ラベル"
 
 #: src/renderer/components/settings/settings-registry.ts
@@ -2551,6 +2549,11 @@ msgid "Preview while you speak: streaming is instant, chunked is accurate."
 msgstr "話している間のプレビュー: ストリーミングは即時、チャンクは高精度です。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
+msgid "Priority"
+msgstr "優先度"
+
+#: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #, fuzzy
 msgid "Privacy"
@@ -3093,6 +3096,14 @@ msgid "Show each task's #N number on its card"
 msgstr "各タスクの #N 番号をカードに表示する"
 
 #: src/renderer/components/settings/settings-registry.ts
+msgid "Show each task's labels on its card"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Show each task's priority meter on its card"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Show the status bar at the bottom of the window"
 msgstr "ウィンドウ下部にステータス バーを表示する"
@@ -3418,6 +3429,10 @@ msgstr "エージェントの最新メッセージ"
 #, fuzzy
 msgid "The agent's recent messages, one line each"
 msgstr "エージェントの最近のメッセージ (各 1 行)"
+
+#: src/renderer/components/settings/tabs/BoardTab.tsx
+msgid "The board your team shares: columns, automations and shortcuts."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy

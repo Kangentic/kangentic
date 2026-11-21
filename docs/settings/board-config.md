@@ -190,7 +190,7 @@ Kangentic watches both `kangentic.json` and `kangentic.local.json` for changes w
 open, and treats them differently.
 
 - **`kangentic.json`.** A change from outside the app (a teammate's commit you pulled) applies at
-  once, because `skipBoardConfigConfirm` (Auto-apply board config changes) is on by default. With it
+  once, because `skipBoardConfigConfirm` (Auto-apply changes, on Settings > Board's kangentic.json card) is on by default. With it
   off, the change raises a reconciliation banner, and you can apply the change or dismiss the banner.
   The switch is per machine, so a teammate who wants to review each change turns it off for
   themselves.

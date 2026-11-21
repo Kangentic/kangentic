@@ -14,7 +14,8 @@ import { isContextOccupancyKnown, contextWindowDisplayPercent } from '../../util
 import { ActivityMark } from '../ActivityMark';
 import { ContextUsageFooter } from './ContextUsageFooter';
 import { CardMessageTrail, EXCERPT_CLAMP_CLASS, excerptLinesFor, trailModeFor } from './CardMessageTrail';
-import { TaskPills, taskHasPills } from '../backlog/TaskPills';
+import { TaskPills } from '../backlog/TaskPills';
+import { PriorityBadge } from '../backlog/PriorityBadge';
 import { PrLink } from '../PrLink';
 import { ArtifactsChip } from '../artifacts/ArtifactsChip';
 import { openArtifactsEditor } from '../artifacts/artifacts-focus';
@@ -170,6 +171,9 @@ export function WorkflowWaitingBar({ label, paused }: { label: string; paused: b
   );
 }
 
+/** One empty list for every card that draws no labels, so `TaskPills`' memo holds. */
+const NO_LABELS: string[] = [];
+
 export interface TaskCardViewModel {
   sessionId: string | undefined;
   isHighlighted: boolean;
@@ -192,7 +196,10 @@ export interface TaskCardViewModel {
   shownTrail: AssistantMessageTrailEntry[] | null;
   trailMode: ReturnType<typeof trailModeFor>;
   labelColors: Record<string, string>;
-  taskLabels: string[];
+  /** The labels the card's label row draws: the task's, or none while the Labels setting is off. */
+  shownLabels: string[];
+  /** The priority the title row draws: the task's, or 0 (nothing) while the Priority setting is off. */
+  shownPriority: number;
   archivedRelativeTime: string | null;
   cardDensity: AppConfig['cardDensity'];
   showTaskNumbers: boolean;
@@ -252,7 +259,16 @@ export function useTaskCardViewModel(task: Task): TaskCardViewModel {
   // render defeats TaskPills' React.memo for label-less / archived cards.
   const labelColorsRaw = useConfigStore((state) => state.config.backlog?.labelColors);
   const labelColors = useMemo(() => labelColorsRaw ?? {}, [labelColorsRaw]);
-  const taskLabels = useMemo(() => task.labels ?? [], [task.labels]);
+  // The Task tab's Priority and Labels settings hide each on a card (#1146). The
+  // task window and the Backlog list draw both regardless. `!== false` reads a
+  // config saved before the keys existed as on, their default.
+  const showTaskPriority = useConfigStore((state) => state.config.showTaskPriority !== false);
+  const showTaskLabels = useConfigStore((state) => state.config.showTaskLabels !== false);
+  const shownLabels = useMemo(
+    () => (showTaskLabels && task.labels ? task.labels : NO_LABELS),
+    [showTaskLabels, task.labels],
+  );
+  const shownPriority = showTaskPriority ? task.priority ?? 0 : 0;
   // Memoized so it recomputes only when archived_at changes, not on every
   // unrelated re-render of the card.
   const archivedRelativeTime = useMemo(
@@ -311,7 +327,8 @@ export function useTaskCardViewModel(task: Task): TaskCardViewModel {
       shownTrail,
       trailMode,
       labelColors,
-      taskLabels,
+      shownLabels,
+      shownPriority,
       archivedRelativeTime,
       cardDensity,
       showTaskNumbers,
@@ -319,7 +336,7 @@ export function useTaskCardViewModel(task: Task): TaskCardViewModel {
     }),
     [
       sessionId, isHighlighted, isResuming, activityReason, displayState, browserAlive, isIdle, isThinking,
-      activityMark, activityMarkTone, shownTrail, trailMode, labelColors, taskLabels, archivedRelativeTime, cardDensity,
+      activityMark, activityMarkTone, shownTrail, trailMode, labelColors, shownLabels, shownPriority, archivedRelativeTime, cardDensity,
       showTaskNumbers, liveTelemetryUnsupported,
     ],
   );
@@ -492,9 +509,10 @@ export function TaskCardBody({ task, view, density, hideDisplayId, idleFooter }:
   // The rule above the footer closes what sits over it, and the agent's output
   // well already closes itself with its own edge. Labels and a plain
   // description (a paused card, or the card preview turned off) keep it, or
-  // the description's grey runs straight into the footer's. A priority meter is
-  // in the labels' row, so it keeps the rule as a label does.
-  const footerDivider = !(view.shownTrail && view.trailMode && !taskHasPills(task.priority ?? 0, view.taskLabels));
+  // the description's grey runs straight into the footer's. The priority meter
+  // is in the title row (#1146), so only the label row stands between the
+  // well and the footer.
+  const footerDivider = !(view.shownTrail && view.trailMode && view.shownLabels.length === 0);
   return (
     <>
       {!canTaskRunAutomations(task).ok && <AutomationsDisabledStrip density={density} />}
@@ -575,7 +593,16 @@ function TaskCardBodyContent({ task, view, density, hideDisplayId, idleFooter }:
             isThinking={isThinking}
           />
         )}
-        <div className="text-sm text-fg font-medium truncate flex-1 min-w-0">{task.title}</div>
+        {/* The title truncates, so its tip is the whole title, as on the
+            Monitor card. */}
+        <Tooltip label={task.title}>
+          <div className="text-sm text-fg font-medium truncate flex-1 min-w-0" data-testid="task-card-title">{task.title}</div>
+        </Tooltip>
+        {/* The priority sits in the title row on every card, after the title
+            and before #N (#1146), so a card with no labels has no row for it.
+            A card with none mounts no meter, as hundreds of cards would each
+            subscribe to the priority scale only to draw nothing. */}
+        {view.shownPriority !== 0 && <PriorityBadge priority={view.shownPriority} variant="inline" />}
         <DisplayIdBadge task={task} view={view} hidden={hideDisplayId} />
         {/* Placement and treatment are documented on `BrowserAliveGlobe`. */}
         {view.browserAlive && <BrowserAliveGlobe testId="task-card-browser-alive" />}
@@ -639,7 +666,7 @@ function TaskCardBodyContent({ task, view, density, hideDisplayId, idleFooter }:
       ) : null}
 
       <div className={isCompactDensity ? 'mt-1' : 'mt-1.5'}>
-        <TaskPills priority={task.priority ?? 0} labels={view.taskLabels} labelColors={view.labelColors} />
+        <TaskPills labels={view.shownLabels} labelColors={view.labelColors} />
       </div>
 
       {!isCompactDensity && task.attachment_count > 0 && displayState.kind === 'none' && !idleFooter && (
@@ -739,7 +766,10 @@ export function TaskCardCompactBody({ task, view, trailing }: { task: Task; view
   return (
     <>
       <div className="flex items-center gap-2">
-        <span className="text-sm text-fg-tertiary truncate flex-1" data-testid="compact-title">{task.title}</span>
+        <Tooltip label={task.title}>
+          <span className="text-sm text-fg-tertiary truncate flex-1" data-testid="compact-title">{task.title}</span>
+        </Tooltip>
+        {view.shownPriority !== 0 && <PriorityBadge priority={view.shownPriority} variant="inline" />}
         <DisplayIdBadge task={task} view={view} />
         {trailing}
       </div>
@@ -764,7 +794,7 @@ export function TaskCardCompactBody({ task, view, trailing }: { task: Task; view
         </div>
       ) : null}
       <div className="mt-1">
-        <TaskPills priority={task.priority ?? 0} labels={view.taskLabels} labelColors={view.labelColors} />
+        <TaskPills labels={view.shownLabels} labelColors={view.labelColors} />
       </div>
       {task.archived_at && (
         <div className="mt-0.5">

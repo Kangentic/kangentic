@@ -545,9 +545,8 @@ msgid "Auto"
 msgstr "Automática"
 
 #: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Auto-apply board config changes"
-msgstr "Aplicar automaticamente alterações de configuração do quadro"
+msgid "Auto-apply changes"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -940,12 +939,6 @@ msgstr "Commits indexados"
 msgctxt "card density"
 msgid "Compact"
 msgstr "Compacto"
-
-#: src/renderer/components/settings/settings-registry.ts
-#: src/renderer/components/settings/tabs/BoardTab.tsx
-#, fuzzy
-msgid "Config sync"
-msgstr "Sincronização da configuração"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
 #, fuzzy
@@ -1651,11 +1644,6 @@ msgstr "Atalhos que funcionam em qualquer lugar do app."
 msgid "Hover a tile to try it on the whole app, click to keep it."
 msgstr "Passe o mouse sobre um bloco para testá-lo no app todo; clique para mantê-lo."
 
-#: src/renderer/components/settings/tabs/BoardTab.tsx
-#, fuzzy
-msgid "How changes to the shared board config are applied."
-msgstr "Como as mudanças na config compartilhada do quadro são aplicadas."
-
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
 #, fuzzy
 msgid "How it works"
@@ -1872,6 +1860,11 @@ msgstr "O Kangentic usa sua configuração, agente e chaves SSH, como um termina
 msgid "Kangentic-operated relay"
 msgstr "Relay operado pela Kangentic"
 
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/BoardTab.tsx
+msgid "kangentic.json"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Keep"
 msgstr ""
@@ -1922,6 +1915,11 @@ msgstr "Grafo de conhecimento"
 msgctxt "noun"
 msgid "Label"
 msgstr "Rótulo"
+
+#: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
+msgid "Labels"
+msgstr "Rótulos"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
@@ -2551,6 +2549,11 @@ msgid "Preview while you speak: streaming is instant, chunked is accurate."
 msgstr "Visualização enquanto você fala: streaming é instantâneo, em blocos é preciso."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
+msgid "Priority"
+msgstr "Prioridade"
+
+#: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #, fuzzy
 msgid "Privacy"
@@ -3093,6 +3096,14 @@ msgid "Show each task's #N number on its card"
 msgstr "Mostrar o número #N de cada tarefa no cartão"
 
 #: src/renderer/components/settings/settings-registry.ts
+msgid "Show each task's labels on its card"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Show each task's priority meter on its card"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Show the status bar at the bottom of the window"
 msgstr "Mostrar a barra de status na parte inferior da janela"
@@ -3418,6 +3429,10 @@ msgstr "A mensagem mais recente do agente"
 #, fuzzy
 msgid "The agent's recent messages, one line each"
 msgstr "As mensagens recentes do agente, uma linha cada"
+
+#: src/renderer/components/settings/tabs/BoardTab.tsx
+msgid "The board your team shares: columns, automations and shortcuts."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy

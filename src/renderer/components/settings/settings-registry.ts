@@ -76,8 +76,8 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'columnWidth', tabId: 'board', label: msg`Column width`, description: msg`How wide a column with tasks is, or Fill to share the window's width between the columns.`, scope: 'global', keywords: ['narrow', 'wide', 'size', 'fill', 'stretch', 'full width'] },
   { id: 'shrinkEmptyColumns', tabId: 'board', label: msg`Shrink empty columns`, description: msg`A column with no tasks shrinks to the width of its name and opens again when a task arrives.`, scope: 'global', section: msg`Board layout`, keywords: ['empty', 'narrow', 'collapse', 'columns', 'fit', 'width', 'scroll'] },
 
-  // ── Board > Config sync ──
-  { id: 'skipBoardConfigConfirm', tabId: 'board', label: msg`Auto-apply board config changes`, description: msg`Apply a detected kangentic.json change immediately instead of asking to confirm.`, scope: 'global', section: msg`Config sync`, keywords: ['board config', 'kangentic.json', 'reconcile', 'reconciliation', 'apply', 'confirm', 'dialog', 'pull', 'auto'] },
+  // ── Board > kangentic.json ──
+  { id: 'skipBoardConfigConfirm', tabId: 'board', label: msg`Auto-apply changes`, description: msg`Apply a detected kangentic.json change immediately instead of asking to confirm.`, scope: 'global', section: msg`kangentic.json`, keywords: ['board config', 'kangentic.json', 'auto-apply board config changes', 'config sync', 'shared board', 'reconcile', 'reconciliation', 'apply', 'confirm', 'dialog', 'pull', 'auto'] },
 
   // ── Board > Board layout ──
   { id: 'terminalPanelVisible', tabId: 'board', label: msg`Terminal panel`, description: msg`Show the terminal panel below the board`, scope: 'global', section: msg`Board layout`, keywords: ['bottom', 'panel', 'hide', 'terminal', 'visible'] },
@@ -87,6 +87,8 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'cardDensity', tabId: 'task', label: msg`Card density`, description: msg`Amount of detail shown on task cards`, scope: 'global', keywords: ['compact', 'comfortable', 'minimal', 'detailed'] },
   { id: 'cardPreview', tabId: 'task', label: msg`Card preview`, description: msg`What each card shows under its title: the agent's latest message, its recent messages, or the task description.`, scope: 'global', keywords: ['preview', 'messages', 'description', 'trail', 'excerpt', 'agent', 'latest'] },
   { id: 'showTaskNumbers', tabId: 'task', label: msg`Ticket numbers`, description: msg`Show each task's #N number on its card`, scope: 'global', keywords: ['ticket', 'number', 'id', 'display', 'card', 'display_id', 'hash'] },
+  { id: 'showTaskPriority', tabId: 'task', label: msg`Priority`, description: msg`Show each task's priority meter on its card`, scope: 'global', keywords: ['priority', 'meter', 'level', 'urgent', 'card', 'hide'] },
+  { id: 'showTaskLabels', tabId: 'task', label: msg`Labels`, description: msg`Show each task's labels on its card`, scope: 'global', keywords: ['labels', 'tags', 'pills', 'jira', 'github', 'card', 'hide'] },
 
   // ── Task > Context Bar ──
   { id: 'contextBar.showShell', tabId: 'task', label: msg`Shell name`, description: msg`Detected shell name`, scope: 'global', section: msg`Context bar`, keywords: ['context bar', 'status'] },

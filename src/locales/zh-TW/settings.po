@@ -470,8 +470,8 @@ msgid "Auto"
 msgstr "自動"
 
 #: src/renderer/components/settings/settings-registry.ts
-msgid "Auto-apply board config changes"
-msgstr "自動套用看板設定變更"
+msgid "Auto-apply changes"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Auto-cleanup"
@@ -799,11 +799,6 @@ msgstr "已索引的提交"
 msgctxt "card density"
 msgid "Compact"
 msgstr "緊湊"
-
-#: src/renderer/components/settings/settings-registry.ts
-#: src/renderer/components/settings/tabs/BoardTab.tsx
-msgid "Config sync"
-msgstr "設定同步"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
 msgctxt "hotkey state"
@@ -1397,10 +1392,6 @@ msgstr "在應用程式各處都適用的快速鍵。"
 msgid "Hover a tile to try it on the whole app, click to keep it."
 msgstr "游標移到圖磚即可在整個應用程式試用，按一下即可保留。"
 
-#: src/renderer/components/settings/tabs/BoardTab.tsx
-msgid "How changes to the shared board config are applied."
-msgstr "共用看板設定的變更套用方式。"
-
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
 msgid "How it works"
 msgstr "運作方式"
@@ -1585,6 +1576,11 @@ msgstr "Kangentic 會使用您的 SSH 設定、代理程式和金鑰，與終端
 msgid "Kangentic-operated relay"
 msgstr "Kangentic 營運的中繼"
 
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/BoardTab.tsx
+msgid "kangentic.json"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Keep"
 msgstr ""
@@ -1628,6 +1624,11 @@ msgstr "知識圖譜"
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
 msgctxt "noun"
 msgid "Label"
+msgstr "標籤"
+
+#: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
+msgid "Labels"
 msgstr "標籤"
 
 #: src/renderer/components/settings/settings-registry.ts
@@ -2167,6 +2168,11 @@ msgid "Preview while you speak: streaming is instant, chunked is accurate."
 msgstr "說話時預覽：串流即時呈現，分段則較準確。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
+msgid "Priority"
+msgstr "優先順序"
+
+#: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 msgid "Privacy"
 msgstr "隱私權"
@@ -2621,6 +2627,14 @@ msgid "Show each task's #N number on its card"
 msgstr "在卡片上顯示每個任務的 #N 編號"
 
 #: src/renderer/components/settings/settings-registry.ts
+msgid "Show each task's labels on its card"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Show each task's priority meter on its card"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
 msgid "Show the status bar at the bottom of the window"
 msgstr "在視窗底部顯示狀態列"
 
@@ -2908,6 +2922,10 @@ msgstr "代理的最新訊息"
 #: src/renderer/components/settings/tabs/TaskTab.tsx
 msgid "The agent's recent messages, one line each"
 msgstr "代理的近期訊息，每則一行"
+
+#: src/renderer/components/settings/tabs/BoardTab.tsx
+msgid "The board your team shares: columns, automations and shortcuts."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "The branch new worktrees start from."

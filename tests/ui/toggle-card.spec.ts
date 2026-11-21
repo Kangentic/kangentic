@@ -532,15 +532,15 @@ test.describe('Behavior/Board tab CardToggleRow persistence', () => {
     await closeSettings();
   });
 
-  test('clicking Auto-apply board config changes persists skipBoardConfigConfirm to global config', async () => {
+  test('clicking Auto-apply changes persists skipBoardConfigConfirm to global config', async () => {
     // skipBoardConfigConfirm is seeded off here (the default is on). Lives in the Board
-    // tab's Config Sync section, not Behavior - it is board data reconciliation,
+    // tab's kangentic.json card, not Behavior - it is board data reconciliation,
     // not session/window behavior.
     await setGlobalConfigAndSync({ skipBoardConfigConfirm: false });
 
     await openTab('Board');
 
-    const card = page.getByRole('switch', { name: 'Auto-apply board config changes', exact: true });
+    const card = page.getByRole('switch', { name: 'Auto-apply changes', exact: true });
     await expect(card).toHaveAttribute('aria-checked', 'false');
 
     // Toggle on - must persist true.

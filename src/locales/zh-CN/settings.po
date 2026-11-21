@@ -470,8 +470,8 @@ msgid "Auto"
 msgstr "自动"
 
 #: src/renderer/components/settings/settings-registry.ts
-msgid "Auto-apply board config changes"
-msgstr "自动应用看板配置更改"
+msgid "Auto-apply changes"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Auto-cleanup"
@@ -799,11 +799,6 @@ msgstr "已索引的提交"
 msgctxt "card density"
 msgid "Compact"
 msgstr "紧凑"
-
-#: src/renderer/components/settings/settings-registry.ts
-#: src/renderer/components/settings/tabs/BoardTab.tsx
-msgid "Config sync"
-msgstr "配置同步"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
 msgctxt "hotkey state"
@@ -1397,10 +1392,6 @@ msgstr "整个应用中随处可用的快捷键。"
 msgid "Hover a tile to try it on the whole app, click to keep it."
 msgstr "悬停在色块上可预览整个应用，单击即可保留。"
 
-#: src/renderer/components/settings/tabs/BoardTab.tsx
-msgid "How changes to the shared board config are applied."
-msgstr "共享看板配置的更改如何应用。"
-
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
 msgid "How it works"
 msgstr "工作原理"
@@ -1585,6 +1576,11 @@ msgstr "Kangentic 使用你的 SSH 配置、代理和密钥，方式与终端相
 msgid "Kangentic-operated relay"
 msgstr "Kangentic 运营的中继"
 
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/BoardTab.tsx
+msgid "kangentic.json"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Keep"
 msgstr ""
@@ -1628,6 +1624,11 @@ msgstr "知识图谱"
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
 msgctxt "noun"
 msgid "Label"
+msgstr "标签"
+
+#: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
+msgid "Labels"
 msgstr "标签"
 
 #: src/renderer/components/settings/settings-registry.ts
@@ -2167,6 +2168,11 @@ msgid "Preview while you speak: streaming is instant, chunked is accurate."
 msgstr "说话时预览：流式即时，分块准确。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
+msgid "Priority"
+msgstr "优先级"
+
+#: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 msgid "Privacy"
 msgstr "隐私"
@@ -2621,6 +2627,14 @@ msgid "Show each task's #N number on its card"
 msgstr "在卡片上显示每个任务的 #N 编号"
 
 #: src/renderer/components/settings/settings-registry.ts
+msgid "Show each task's labels on its card"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Show each task's priority meter on its card"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
 msgid "Show the status bar at the bottom of the window"
 msgstr "在窗口底部显示状态栏"
 
@@ -2908,6 +2922,10 @@ msgstr "智能体的最新消息"
 #: src/renderer/components/settings/tabs/TaskTab.tsx
 msgid "The agent's recent messages, one line each"
 msgstr "智能体的近期消息，每条一行"
+
+#: src/renderer/components/settings/tabs/BoardTab.tsx
+msgid "The board your team shares: columns, automations and shortcuts."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "The branch new worktrees start from."

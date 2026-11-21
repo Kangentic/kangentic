@@ -50,7 +50,7 @@ Paste or drag-and-drop any file type onto a task as an attachment - not limited 
 
 ### Shareable Board Configuration
 
-Teams commit a `kangentic.json` file to share column layout, colors, icons, actions, and transitions across all collaborators. Personal overrides live in `kangentic.local.json` (auto-gitignored). Live file watching detects when a teammate pushes changes to `kangentic.json` and applies them to your board at once, or offers to reconcile them when Auto-apply board config changes is off. Edits to your own `kangentic.local.json` apply at once.
+Teams commit a `kangentic.json` file to share column layout, colors, icons, actions, and transitions across all collaborators. Personal overrides live in `kangentic.local.json` (auto-gitignored). Live file watching detects when a teammate pushes changes to `kangentic.json` and applies them to your board at once, or offers to reconcile them when Auto-apply changes (Settings > Board > kangentic.json) is off. Edits to your own `kangentic.local.json` apply at once.
 
 ### Session Persistence
 

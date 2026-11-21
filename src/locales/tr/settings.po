@@ -545,9 +545,8 @@ msgid "Auto"
 msgstr "Otomatik"
 
 #: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Auto-apply board config changes"
-msgstr "Pano yapılandırma değişikliklerini otomatik uygula"
+msgid "Auto-apply changes"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -940,12 +939,6 @@ msgstr "Dizine eklenen commit'ler"
 msgctxt "card density"
 msgid "Compact"
 msgstr "Sıkı"
-
-#: src/renderer/components/settings/settings-registry.ts
-#: src/renderer/components/settings/tabs/BoardTab.tsx
-#, fuzzy
-msgid "Config sync"
-msgstr "Yapılandırma eşitleme"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
 #, fuzzy
@@ -1651,11 +1644,6 @@ msgstr "Uygulamanın her yerinde çalışan kısayollar."
 msgid "Hover a tile to try it on the whole app, click to keep it."
 msgstr "Tüm uygulamada denemek için bir kutucuğun üzerine gelin, korumak için tıklayın."
 
-#: src/renderer/components/settings/tabs/BoardTab.tsx
-#, fuzzy
-msgid "How changes to the shared board config are applied."
-msgstr "Paylaşılan pano yapılandırması değişikliklerinin uygulanma şekli."
-
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
 #, fuzzy
 msgid "How it works"
@@ -1872,6 +1860,11 @@ msgstr "Kangentic, bir terminal gibi SSH yapılandırmanızı, aracınızı ve a
 msgid "Kangentic-operated relay"
 msgstr "Kangentic tarafından işletilen röle"
 
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/BoardTab.tsx
+msgid "kangentic.json"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Keep"
 msgstr ""
@@ -1922,6 +1915,11 @@ msgstr "Bilgi grafiği"
 msgctxt "noun"
 msgid "Label"
 msgstr "Etiket"
+
+#: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
+msgid "Labels"
+msgstr "Etiketler"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
@@ -2551,6 +2549,11 @@ msgid "Preview while you speak: streaming is instant, chunked is accurate."
 msgstr "Konuşurken önizleme: akış anlıktır, parçalı daha doğrudur."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
+msgid "Priority"
+msgstr "Öncelik"
+
+#: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #, fuzzy
 msgid "Privacy"
@@ -3093,6 +3096,14 @@ msgid "Show each task's #N number on its card"
 msgstr "Her görevin #N numarasını kartında göster"
 
 #: src/renderer/components/settings/settings-registry.ts
+msgid "Show each task's labels on its card"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Show each task's priority meter on its card"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Show the status bar at the bottom of the window"
 msgstr "Durum çubuğunu pencerenin altında göster"
@@ -3418,6 +3429,10 @@ msgstr "Ajanın en yeni mesajı"
 #, fuzzy
 msgid "The agent's recent messages, one line each"
 msgstr "Ajanın son mesajları, her biri bir satır"
+
+#: src/renderer/components/settings/tabs/BoardTab.tsx
+msgid "The board your team shares: columns, automations and shortcuts."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
