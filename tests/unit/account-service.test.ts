@@ -211,10 +211,13 @@ describe('a full window holds until its reset', () => {
   const sevenDay = { id: 'seven-day', label: '7d weekly', iconKind: 'period' as const, resetsAt: NOW + 2 * 86_400, windowDurationSeconds: 604_800 };
 
   function serviceReading(idleReads: number[]): AccountService {
-    const adapter = adapterWith({
+    return serviceWith(adapterWith({
       ...folderSupport(),
       readIdleUsage: async () => [{ ...sevenDay, usedPercentage: idleReads.shift() ?? 0 }],
-    });
+    }));
+  }
+
+  function serviceWith(adapter: ReturnType<typeof adapterWith>): AccountService {
     return new AccountService({
       repository,
       getAdapter: (agent) => (agent === 'test-agent' ? adapter : undefined),
@@ -250,23 +253,14 @@ describe('a full window holds until its reset', () => {
 
   it('respects a live report that lands while the CLI read runs', async () => {
     const own = repository.insert({ agent: 'test-agent', kind: 'default' });
-    let accountService: AccountService | undefined;
-    const adapter = adapterWith({
+    const accountService: AccountService = serviceWith(adapterWith({
       ...folderSupport(),
       readIdleUsage: async () => {
         // The full report arrives mid-read, then the read itself comes back lower.
-        accountService?.recordUsage([{ ...sevenDay, usedPercentage: 100, accountId: own.id }]);
+        accountService.recordUsage([{ ...sevenDay, usedPercentage: 100, accountId: own.id }]);
         return [{ ...sevenDay, usedPercentage: 99 }];
       },
-    });
-    accountService = new AccountService({
-      repository,
-      getAdapter: (agent) => (agent === 'test-agent' ? adapter : undefined),
-      configDir: path.join(root, 'config'),
-      readConfig: () => config,
-      resolveCliPath: async () => 'test-agent-cli',
-      now: () => NOW_MS,
-    });
+    }));
     repository.updateUsage(own.id, [{ ...sevenDay, usedPercentage: 40 }]);
     expect(await accountService.refreshUsage(own.id)).toBe(true);
     expect(repository.getById(own.id)?.lastUsage?.[0].usedPercentage).toBe(100);

@@ -3,7 +3,7 @@ import { getProjectDb } from '../../db/database';
 import { agentRegistry } from '../../agent/agent-registry';
 import { prepareInjectionPlan, resolveReportedEffort, restartPhaseFor } from '../../transition-engine/injection-plan';
 import { applyProfileToLane, findTaskProfile } from '../../transition-engine/column-strategy';
-import { restartSessionForSettingsChange } from './session-reconcile';
+import { restartIdleKeepingRecap } from '../helpers/idle-restart-keeps-recap';
 import { applyTaskSettingsToQueuedStart } from './task-runtime-override';
 import { reconcileAutoSpawnChange } from './auto-spawn-reconcile';
 import { getProjectRepos } from '../helpers';
@@ -163,8 +163,8 @@ export function propagateStrategyToLiveSessions(
         );
         return;
       }
-      const restart = await restartSessionForSettingsChange(
-        context, projectId, projectPath, taskId, { phase: restartPhaseFor(restartReason) },
+      const restart = await restartIdleKeepingRecap(
+        context, projectId, projectPath, taskId, plannedSessionId, restartPhaseFor(restartReason),
       );
       // The restart cleared task.session_id before its suspend, so the board
       // store holds a stale id whether or not the respawn succeeded. Push a
