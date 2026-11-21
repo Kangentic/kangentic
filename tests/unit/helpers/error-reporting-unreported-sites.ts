@@ -294,7 +294,7 @@ export const UNREPORTED_CATCH_SITES: Readonly<Record<string, number>> = {
   'src/main/db/repositories/dev-port-repository.ts': 1,
   'src/main/db/repositories/remote-item-cache-repository.ts': 1,
   'src/main/db/repositories/session-repository.ts': 2,
-  'src/main/db/repositories/task-repository.ts': 4,
+  'src/main/db/repositories/task-repository.ts': 3,
   'src/main/db/repositories/workflow-repository.ts': 2,
   'src/main/db/soft-db.ts': 1,
   'src/main/db/transaction.ts': 2,
