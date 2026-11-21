@@ -77,6 +77,42 @@ async function waitForGuestReady(page: Page): Promise<void> {
   ).toBe(true);
 }
 
+/**
+ * Wait until a capture of the guest comes back with pixels.
+ *
+ * `waitForGuestReady` proves the guest answers a script, not that it has painted.
+ * The pane's own capture of an annotation can come back empty, or never settle,
+ * while a young guest has not produced its first frame, and it gives up after a
+ * fixed number of tries (`CAPTURE_ATTEMPTS` in `useBrowserAnnotations.ts`). On a
+ * runner busy with other Electron instances that budget can run out before the
+ * first frame, and the annotation then has no picture to save. This is the same
+ * read the pane makes, so passing it means the pane's first try can succeed.
+ */
+async function waitForGuestPainted(page: Page): Promise<void> {
+  await expect.poll(
+    () => page.evaluate(async () => {
+      const webview = document.querySelector('[data-testid="browser-pane"] webview') as
+        (HTMLElement & { capturePage?: () => Promise<{ toDataURL: () => string }> }) | null;
+      if (!webview || typeof webview.capturePage !== 'function') return false;
+      try {
+        const image = await Promise.race([
+          webview.capturePage(),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000)),
+        ]);
+        if (!image) return false;
+        return image.toDataURL().replace(/^data:image\/png;base64,/, '').length > 0;
+      } catch {
+        return false;
+      }
+    }),
+    {
+      message: 'the guest never produced a frame that a capture could read',
+      timeout: 20000,
+      intervals: [200, 500, 1000],
+    },
+  ).toBe(true);
+}
+
 /** How many capture PNGs Send has written under any session of the project. */
 function countCapturePngs(tmpDir: string): number {
   const sessionsDir = path.join(tmpDir, '.kangentic', 'sessions');
@@ -252,6 +288,9 @@ test.describe('Claude Agent -- Browser Send round-trip', () => {
     await page.locator('[data-testid="browser-toggle"]').click();
     await page.locator('[data-testid="browser-pane"]').waitFor({ state: 'visible', timeout: 5000 });
     await waitForGuestReady(page);
+    // The annotation's own capture needs a painted guest. Without this, a guest
+    // that is slow to paint spends the pane's whole retry budget on empty frames.
+    await waitForGuestPainted(page);
 
     await page.locator('[data-testid="browser-draw-toggle"]').click();
     const box = await page.locator('[data-testid="browser-overlay"]').boundingBox();
@@ -274,11 +313,16 @@ test.describe('Claude Agent -- Browser Send round-trip', () => {
     // on its own timeline, so a Send clicked straight after `fill` would run
     // its own capturePage and guest scripts on top of it. Wait for it to land,
     // so the click starts a Send with nothing else in flight on the guest.
+    //
+    // The pane tries a capture up to four times, 3s each with 500ms between, so
+    // a capture that is going to land can take about 13.5s. The bound is that
+    // budget plus room for the save round trip, not a hope that it is fast. It
+    // stays under the project's 45s test timeout, so a miss fails by name.
     await expect.poll(
       () => countDraftCaptures(tmpDir, taskId),
       {
         message: "the drawn annotation's own page capture never reached the draft folder",
-        timeout: 15000,
+        timeout: 20000,
         intervals: [200, 500, 1000],
       },
     ).toBeGreaterThanOrEqual(1);
