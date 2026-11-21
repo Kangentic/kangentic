@@ -113,6 +113,7 @@ const { AgentAccountRepository } = await import('../../src/main/db/repositories/
 const { runGlobalMigrations } = await import('../../src/main/db/migrations/global-schema');
 const { IPC } = await import('../../src/shared/ipc-channels');
 const { EventType } = await import('../../src/shared/types');
+const { forgetRecapSession, markRecapSession, recapKindOf, resetRecapSessionsForTests, whenRecapTurnEnds } = await import('../../src/main/automations/turn-end/recap-turns');
 
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { AgentAccount } from '../../src/shared/agent-accounts';
@@ -526,6 +527,126 @@ describe('the continuation at a usage limit', () => {
 
     expect(hoisted.restart.mock.calls[0][4]).toMatchObject({ phase: 'switching-account', accountId: second.id, resumePrompt: 'Read the handoff.' });
     expect(hoisted.defectReport).not.toHaveBeenCalled();
+  });
+
+  // Task #1147, the #1145 stall: a return from Code Review resumed the main conversation on the
+  // full account, with the recap as its opening prompt and the column's /pull-request waiting on
+  // the recap's turn. The move at its start must hand that wait to the session replacing it.
+  describe('a session moved during its return recap', () => {
+    /** The real restart's effect on the registry: the task's live session is a new one. */
+    function restartReplacesSession(newSessionId: string): void {
+      hoisted.restart.mockImplementation(async (_context: unknown, _projectId: string, _path: string, taskId: string, options: { accountId: string }) => {
+        const old = hoisted.sessions.find((session) => session.taskId === taskId && session.status === 'running');
+        if (old) {
+          old.status = 'exited';
+          // The turn-end runner hears the old session's removal; it is not registered here.
+          forgetRecapSession(old.id, false);
+        }
+        addSession({ id: newSessionId, taskId, agentName: 'move-agent', accountId: options.accountId, resuming: true });
+        return { ok: true };
+      });
+    }
+
+    /** Records how a wait settled, so one that never settles reads as `pending`. */
+    function trackWait(wait: Promise<boolean>): () => boolean | 'pending' {
+      let outcome: boolean | 'pending' = 'pending';
+      void wait.then((proceed) => { outcome = proceed; });
+      return () => outcome;
+    }
+
+    afterEach(() => {
+      resetRecapSessionsForTests();
+    });
+
+    it('hands the recap\'s wait to the session that replaces it, which ends it at its own recap turn', async () => {
+      seedFullResumedSession();
+      hoisted.projectDb = { prepare: () => ({ get: () => ({ prompt: 'While this conversation was away...' }) }) };
+      markRecapSession('s-full', 'return');
+      const outcome = trackWait(whenRecapTurnEnds('s-full', TEN_MINUTES_MS));
+      restartReplacesSession('s-replacement');
+
+      sessionManager.emit('event', 's-full', { type: EventType.SessionStart });
+      await expect.poll(() => recapKindOf('s-replacement')).toBe('return');
+
+      expect(hoisted.restart.mock.calls[0][4]).toMatchObject({ resumePrompt: 'While this conversation was away...' });
+      expect(recapKindOf('s-full')).toBeNull();
+      // Waiting still: the old session's removal did not drop what waited on the recap.
+      await Promise.resolve();
+      expect(outcome()).toBe('pending');
+
+      forgetRecapSession('s-replacement', true);
+      await Promise.resolve();
+      expect(outcome()).toBe(true);
+    });
+
+    it('lets the wait go at once when the session resumes idle, with no recap turn to wait for', async () => {
+      seedFullResumedSession();
+      markRecapSession('s-full', 'return');
+      const outcome = trackWait(whenRecapTurnEnds('s-full', TEN_MINUTES_MS));
+      restartReplacesSession('s-replacement');
+
+      // No project database: the opening prompt reads as none, so the move resumes idle.
+      sessionManager.emit('event', 's-full', { type: EventType.SessionStart });
+      await expect.poll(() => outcome()).toBe(true);
+      expect(recapKindOf('s-replacement')).toBeNull();
+    });
+
+    it('lets the wait go at once when the opening prompt is an empty string, which resumes idle too', async () => {
+      seedFullResumedSession();
+      hoisted.projectDb = { prepare: () => ({ get: () => ({ prompt: '' }) }) };
+      markRecapSession('s-full', 'return');
+      const outcome = trackWait(whenRecapTurnEnds('s-full', TEN_MINUTES_MS));
+      restartReplacesSession('s-replacement');
+
+      sessionManager.emit('event', 's-full', { type: EventType.SessionStart });
+      await expect.poll(() => outcome()).toBe(true);
+      expect(hoisted.restart.mock.calls[0][4]).toMatchObject({ resumePrompt: '' });
+      expect(recapKindOf('s-replacement')).toBeNull();
+    });
+
+    it('keeps the mark on the old session, and the wait pending, when the restart fails with it still live', async () => {
+      seedFullResumedSession();
+      hoisted.projectDb = { prepare: () => ({ get: () => ({ prompt: 'While this conversation was away...' }) }) };
+      markRecapSession('s-full', 'return');
+      const outcome = trackWait(whenRecapTurnEnds('s-full', TEN_MINUTES_MS));
+      // Touches neither the sessions nor the task row: the row still names s-full.
+      hoisted.restart.mockImplementation(async () => ({ ok: false, reason: 'x' }));
+
+      sessionManager.emit('event', 's-full', { type: EventType.SessionStart });
+      await expect.poll(() => hoisted.restart.mock.calls.length).toBeGreaterThan(0);
+      // The move's remaining work runs after the restart settles: let it.
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(recapKindOf('s-full')).toBe('return');
+      expect(outcome()).toBe('pending');
+    });
+
+    it('pauses the recap\'s bound while the session waits with every account full', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        hoisted.adapters = { 'move-agent': adapterFor('move-agent') };
+        const { own, second } = seedAccounts('move-agent');
+        const resetsAt = Math.floor(Date.now() / 1000) + 86_400;
+        for (const full of [own, second]) {
+          repository.updateUsage(full.id, [{ id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 100, resetsAt }]);
+        }
+        addSession({ id: 's-full', taskId: 't-full', agentName: 'move-agent', accountId: own.id, resuming: true });
+        register();
+        markRecapSession('s-full', 'return');
+        const outcome = trackWait(whenRecapTurnEnds('s-full', TEN_MINUTES_MS));
+
+        sessionManager.emit('event', 's-full', { type: EventType.SessionStart });
+        await vi.waitFor(() => expect(sendToRenderer).toHaveBeenCalledWith(expect.anything(), IPC.ACCOUNTS_ALL_FULL, expect.anything()));
+
+        vi.advanceTimersByTime(TEN_MINUTES_MS + 1);
+        await Promise.resolve();
+        expect(outcome()).toBe('pending');
+        expect(recapKindOf('s-full')).toBe('return');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   it('still moves, with no prompt, and reports the failure when the session record cannot be read', async () => {

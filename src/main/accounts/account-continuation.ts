@@ -5,6 +5,9 @@ import { accountsReporter } from './account-report';
 /** What a continued session is told, so the turn the limit cut short is picked up. */
 export const CONTINUE_PROMPT = 'Continue.';
 
+/** How one decision ended: the session moved, it waits for an account to free, or nothing applied. */
+export type ContinuationOutcome = 'continued' | 'waiting' | 'ignored';
+
 /** The session a limit stopped, as the continuation needs it. */
 export interface LimitedSession {
   sessionId: string;
@@ -40,6 +43,8 @@ export interface AccountContinuationDependencies {
   continueOn: (session: LimitedSession, accountId: string, prompt: string | undefined) => Promise<boolean>;
   notifySwitched: (session: LimitedSession, account: AgentAccount) => void;
   notifyAllFull: (agent: string, firstFree: { account: AgentAccount; resetsAt: number } | null) => void;
+  /** The session waits where it is, with every account full, until one frees. */
+  onWaiting?: (session: LimitedSession) => void;
   now?: () => number;
 }
 
@@ -82,7 +87,7 @@ export class AccountContinuation {
   }
 
   /** A turn failed. Resolves once the session was continued, left waiting, or left alone. */
-  async onTurnFailure(sessionId: string, detail: string): Promise<'continued' | 'waiting' | 'ignored'> {
+  async onTurnFailure(sessionId: string, detail: string): Promise<ContinuationOutcome> {
     return this.reportingFailures(() => {
       if (!this.dependencies.readConfig().autoSwitchAtLimit) return 'ignored';
       const session = this.dependencies.findTaskSession(sessionId);
@@ -103,7 +108,7 @@ export class AccountContinuation {
    * fresh session is left to its failed turn, which fires, and which a move here could cut short
    * before its conversation was written. An account well short of full costs nothing: no read runs.
    */
-  async onSessionStarted(sessionId: string): Promise<'continued' | 'waiting' | 'ignored'> {
+  async onSessionStarted(sessionId: string): Promise<ContinuationOutcome> {
     return this.reportingFailures(() => {
       if (this.startChecked.has(sessionId)) return 'ignored';
       // Marked only for a live task session: a start that arrives after the session was removed
@@ -150,8 +155,8 @@ export class AccountContinuation {
    * throw there is reported instead of rejecting a promise its listener never awaits.
    */
   private async reportingFailures(
-    entry: () => Promise<'continued' | 'waiting' | 'ignored'> | 'ignored',
-  ): Promise<'continued' | 'waiting' | 'ignored'> {
+    entry: () => Promise<ContinuationOutcome> | 'ignored',
+  ): Promise<ContinuationOutcome> {
     try {
       return await entry();
     } catch (error) {
@@ -166,7 +171,7 @@ export class AccountContinuation {
    * room, restarting it with `prompt`: `Continue.` for a turn a limit cut short, the opening
    * prompt for a session moved at its start, or none to resume it idle.
    */
-  private async decide(session: LimitedSession, prompt: string | undefined): Promise<'continued' | 'waiting' | 'ignored'> {
+  private async decide(session: LimitedSession, prompt: string | undefined): Promise<ContinuationOutcome> {
     if (this.inFlight.has(session.sessionId)) return 'ignored';
     this.inFlight.add(session.sessionId);
     try {
@@ -207,6 +212,7 @@ export class AccountContinuation {
       }
 
       this.waiting.set(session.sessionId, { session, prompt });
+      this.dependencies.onWaiting?.(session);
       if (!this.allFullNotified.has(session.agent)) {
         this.allFullNotified.add(session.agent);
         this.dependencies.notifyAllFull(session.agent, firstReset(this.dependencies.ordered(session.agent), this.nowSeconds()));

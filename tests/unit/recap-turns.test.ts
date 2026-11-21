@@ -16,7 +16,7 @@
  * after that idle does.
  *
  * The module is main-process memory with no dependencies, so these tests drive
- * its six exports directly. The wiring into the turn-end runner and the
+ * its exports directly. The wiring into the turn-end runner and the
  * transition engine is pinned in turn-end-runner-recap-turn.test.ts and
  * transition-engine-expired-recap.test.ts.
  */
@@ -30,6 +30,8 @@ import {
   recapKindOf,
   whenRecapTurnEnds,
   forgetRecapSession,
+  carryRecapAcross,
+  pauseRecapTurnWait,
   resetRecapSessionsForTests,
 } from '../../src/main/automations/turn-end/recap-turns';
 
@@ -415,6 +417,179 @@ describe('recap turns', () => {
       await vi.advanceTimersByTimeAsync(60_000);
 
       expect(newerWait.outcome()).toBe(true);
+      expect(recapKindOf(SESSION_ID)).toBeNull();
+    });
+  });
+
+  // Task #1147: an account continuation restarts a session during its recap turn. The mark
+  // follows the session that replaces it; the hand-over itself is driven end to end in
+  // spawn-agent-return-recap.test.ts.
+  describe('a restart that carries the mark to the session replacing it', () => {
+    const REPLACEMENT_ID = 'replacement-session-3';
+
+    async function settledOutcome(wait: Promise<boolean>): Promise<boolean | 'pending'> {
+      let outcome: boolean | 'pending' = 'pending';
+      void wait.then((proceed) => { outcome = proceed; });
+      await Promise.resolve();
+      await Promise.resolve();
+      return outcome;
+    }
+
+    it('tells the waiters the session is gone when the restart leaves no session', async () => {
+      markRecapSession(SESSION_ID, 'return');
+      const wait = whenRecapTurnEnds(SESSION_ID, 60_000);
+      await carryRecapAcross(SESSION_ID, async () => true, () => null);
+      expect(await settledOutcome(wait)).toBe(false);
+      expect(recapKindOf(SESSION_ID)).toBeNull();
+    });
+
+    it('tells the waiters the session is gone and rethrows when the restart throws', async () => {
+      markRecapSession(SESSION_ID, 'return');
+      const wait = whenRecapTurnEnds(SESSION_ID, 60_000);
+      await expect(carryRecapAcross(SESSION_ID, async () => { throw new Error('restart failed'); }, () => REPLACEMENT_ID)).rejects.toThrow('restart failed');
+      expect(await settledOutcome(wait)).toBe(false);
+      expect(recapKindOf(REPLACEMENT_ID)).toBeNull();
+    });
+
+    it('joins the waiters to a mark the replacement already has', async () => {
+      markRecapSession(SESSION_ID, 'return');
+      const carried = whenRecapTurnEnds(SESSION_ID, 60_000);
+      await carryRecapAcross(SESSION_ID, async () => {
+        markRecapSession(REPLACEMENT_ID, 'return');
+        return true;
+      }, () => REPLACEMENT_ID);
+      expect(await settledOutcome(carried)).toBe('pending');
+      forgetRecapSession(REPLACEMENT_ID, true);
+      expect(await settledOutcome(carried)).toBe(true);
+    });
+
+    it('runs the restart alone for a session with no mark', async () => {
+      const replace = vi.fn(async () => 'restarted');
+      expect(await carryRecapAcross(SESSION_ID, replace, () => REPLACEMENT_ID)).toBe('restarted');
+      expect(replace).toHaveBeenCalledTimes(1);
+      expect(recapKindOf(REPLACEMENT_ID)).toBeNull();
+    });
+
+    it('resets the mark progress when the replacement is a new session', async () => {
+      markRecapSession(SESSION_ID, 'expired');
+      noteRecapSessionIdle(SESSION_ID, FIRST_IDLE_AT);
+      noteRecapSessionPrompt(SESSION_ID);
+      const laterTurnStart = FIRST_IDLE_AT + 5_000;
+      // Before the restart the user's prompt ended the recap's turn, so a later turn is not the recap's.
+      expect(isRecapTurn(SESSION_ID, laterTurnStart)).toBe(false);
+
+      await carryRecapAcross(SESSION_ID, async () => true, () => REPLACEMENT_ID);
+
+      // The replacement opens on the recap again: as for a fresh mark, its first turn is the recap's.
+      expect(isRecapTurn(REPLACEMENT_ID, laterTurnStart)).toBe(true);
+      expect(recapKindOf(SESSION_ID)).toBeNull();
+    });
+
+    it('keeps the mark progress when the restart left the same session live', async () => {
+      markRecapSession(SESSION_ID, 'expired');
+      noteRecapSessionIdle(SESSION_ID, FIRST_IDLE_AT);
+      noteRecapSessionPrompt(SESSION_ID);
+
+      await carryRecapAcross(SESSION_ID, async () => true, () => SESSION_ID);
+
+      expect(recapKindOf(SESSION_ID)).toBe('expired');
+      expect(isRecapTurn(SESSION_ID, FIRST_IDLE_AT + 5_000)).toBe(false);
+    });
+
+    describe('the wait bound across a pause and a carry', () => {
+      beforeEach(() => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      });
+      afterEach(() => {
+        vi.useRealTimers();
+      });
+
+      it('stays stopped while paused, then runs again on the carried mark and fires', async () => {
+        markRecapSession(SESSION_ID, 'return');
+        const wait = whenRecapTurnEnds(SESSION_ID, 60_000);
+        pauseRecapTurnWait(SESSION_ID);
+
+        await vi.advanceTimersByTimeAsync(61_000);
+        expect(await settledOutcome(wait)).toBe('pending');
+        expect(recapKindOf(SESSION_ID)).toBe('return');
+
+        await carryRecapAcross(SESSION_ID, async () => true, () => REPLACEMENT_ID);
+        expect(await settledOutcome(wait)).toBe('pending');
+
+        await vi.advanceTimersByTimeAsync(61_000);
+        expect(await settledOutcome(wait)).toBe(true);
+        expect(recapKindOf(REPLACEMENT_ID)).toBeNull();
+      });
+
+      it('runs the carried bound on a replacement that has its own mark and no wait', async () => {
+        markRecapSession(SESSION_ID, 'return');
+        const carried = whenRecapTurnEnds(SESSION_ID, 60_000);
+
+        await carryRecapAcross(SESSION_ID, async () => {
+          markRecapSession(REPLACEMENT_ID, 'return');
+          return true;
+        }, () => REPLACEMENT_ID);
+        expect(await settledOutcome(carried)).toBe('pending');
+
+        await vi.advanceTimersByTimeAsync(61_000);
+        expect(await settledOutcome(carried)).toBe(true);
+        expect(recapKindOf(REPLACEMENT_ID)).toBeNull();
+      });
+    });
+  });
+
+  describe('pausing the recap wait', () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    async function settledOutcome(wait: Promise<boolean>): Promise<boolean | 'pending'> {
+      let outcome: boolean | 'pending' = 'pending';
+      void wait.then((proceed) => { outcome = proceed; });
+      await Promise.resolve();
+      await Promise.resolve();
+      return outcome;
+    }
+
+    it('does nothing for a session that was never marked', () => {
+      expect(() => pauseRecapTurnWait(OTHER_SESSION_ID)).not.toThrow();
+      expect(recapKindOf(OTHER_SESSION_ID)).toBeNull();
+    });
+
+    it('stops a running bound so the waiter stays pending and the mark stays', async () => {
+      markRecapSession(SESSION_ID, 'return');
+      const wait = whenRecapTurnEnds(SESSION_ID, 60_000);
+
+      pauseRecapTurnWait(SESSION_ID);
+      await vi.advanceTimersByTimeAsync(120_000);
+
+      expect(await settledOutcome(wait)).toBe('pending');
+      expect(recapKindOf(SESSION_ID)).toBe('return');
+    });
+  });
+
+  describe('the bound of a recap wait', () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('keeps the first timeout and runs one timer for every waiter', async () => {
+      markRecapSession(SESSION_ID, 'return');
+      const outcomes: boolean[] = [];
+      const firstWait = whenRecapTurnEnds(SESSION_ID, 60_000).then((proceed) => { outcomes.push(proceed); });
+      const secondWait = whenRecapTurnEnds(SESSION_ID, 600_000).then((proceed) => { outcomes.push(proceed); });
+      expect(vi.getTimerCount()).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      await Promise.all([firstWait, secondWait]);
+
+      expect(outcomes).toEqual([true, true]);
       expect(recapKindOf(SESSION_ID)).toBeNull();
     });
   });

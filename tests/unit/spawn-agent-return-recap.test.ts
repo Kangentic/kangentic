@@ -25,6 +25,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Task, Swimlane, SessionRecord } from '../../src/shared/types';
+import type { AgentAccount } from '../../src/shared/agent-accounts';
 import type { PendingPrompt } from '../../src/main/automations/shared/automation-adapter';
 import type { SpawnOutcome } from '../../src/main/transition-engine/transition-engine';
 import type { InjectionReport } from '../../src/main/transition-engine/terminal-submit-scheduler';
@@ -69,7 +70,9 @@ vi.mock('../../src/main/ipc/helpers/project-repos', () => ({
 }));
 
 const { spawnAgent } = await import('../../src/main/ipc/helpers/agent-spawn');
-const { forgetRecapSession, isRecapTurn, recapKindOf, resetRecapSessionsForTests } = await import('../../src/main/automations/turn-end/recap-turns');
+const { carryRecapAcross, forgetRecapSession, isRecapTurn, pauseRecapTurnWait, recapKindOf, resetRecapSessionsForTests } = await import('../../src/main/automations/turn-end/recap-turns');
+const { AccountContinuation } = await import('../../src/main/accounts/account-continuation');
+const { RETURN_RECAP_TURN_WAIT_MS } = await import('../../src/main/transition-engine/return-recap');
 const { supersedeMessageDeliveries } = await import('../../src/main/automations/turn-end/turn-end-passes');
 const { resolveTargetAgent } = await import('../../src/main/transition-engine/agent-resolver');
 
@@ -494,6 +497,199 @@ describe('spawnAgent: the main conversation\'s return recap (task #952)', () => 
       expect(hoisted.pasteAgentMessageInBackground).not.toHaveBeenCalled();
       expect(hoisted.reportAutoCommandOutcome).toHaveBeenCalledTimes(1);
       expect(release).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('a task with no session when the recap turn ends', () => {
+    it('sends the column message to no session, and reports it cancelled', async () => {
+      const deps = makeDeps([REVIEW_RUN]);
+      await runSpawn(makeSwimlane(TESTING_LANE_ID, '/pull-request'), deps);
+      expect(recapKindOf(RESUMED_SESSION_ID)).toBe('return');
+
+      // The session left the task (a restart that has not replaced it yet) before the turn ended.
+      deps.tasks.getById.mockImplementation(() => makeTask({ session_id: null }));
+      forgetRecapSession(RESUMED_SESSION_ID, true);
+      await flushMicrotasks();
+
+      expect(hoisted.deliverAgentMessageInBackground).not.toHaveBeenCalled();
+      expect(hoisted.reportAutoCommandOutcome).toHaveBeenCalledTimes(1);
+      expect(hoisted.reportAutoCommandOutcome).toHaveBeenCalledWith(
+        deps.context, deps.tasks, expect.anything(),
+        expect.objectContaining({ outcome: 'cancelled', commands: ['/pull-request'], textReachedAgent: false }),
+        PROJECT_ID,
+      );
+    });
+  });
+
+  // Task #1147: a return into Testing resumed the main conversation on a spent account. The
+  // account continuation moved it at its SessionStart, carrying its opening prompt, which is the
+  // recap. The column's /pull-request waited on the OLD session's recap turn, so the restart that
+  // removed that session dropped it, and the new session answered the recap and stopped.
+  describe('an account continuation that replaces the session during its recap turn', () => {
+    const REPLACEMENT_SESSION_ID = 'pty-replacement-1';
+    const NOW_MS = 1_800_000_000_000;
+
+    function account(id: string, position: number, usedPercentage: number): AgentAccount {
+      return {
+        id, agent: 'claude', kind: position === 1 ? 'default' : 'folder', folderPath: null, keyFilePath: null, keyNames: [],
+        email: `${id}@example.com`, plan: 'Max', status: 'ok', position, historyPrivate: false,
+        lastUsage: [{ id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage, resetsAt: NOW_MS / 1000 + 86_400, windowDurationSeconds: 604_800 }],
+        lastUsageAt: null, createdAt: '2026-01-01T00:00:00.000Z',
+      };
+    }
+
+    /**
+     * A return-recap resume of the main conversation on the spent account, with the real
+     * continuation wired to a restart that replaces the task's session the way the accounts
+     * handler's does: through `carryRecapAcross`, the old session's removal included.
+     */
+    async function recapResumeOnSpentAccount(
+      accounts: AgentAccount[],
+      start: { columnMessage?: string | null; continuationPrompt?: string } = {},
+    ) {
+      const deps = makeDeps([REVIEW_RUN]);
+      const columnMessage = start.columnMessage === undefined ? '/pull-request' : start.columnMessage;
+      await runSpawn(
+        makeSwimlane(TESTING_LANE_ID, columnMessage),
+        deps,
+        start.continuationPrompt === undefined ? {} : { continuationPrompt: start.continuationPrompt },
+      );
+      const recapPrompt = resumePromptArg(deps) ?? '';
+      expect(recapKindOf(RESUMED_SESSION_ID)).toBe('return');
+
+      let currentSessionId = RESUMED_SESSION_ID;
+      deps.tasks.getById.mockImplementation(() => makeTask({ session_id: currentSessionId }));
+      const restartPrompts: Array<string | undefined> = [];
+      const continuation = new AccountContinuation({
+        readConfig: () => ({ orderMode: 'manual', autoSwitchAtLimit: true }),
+        findTaskSession: (sessionId) => (sessionId === currentSessionId
+          ? { sessionId, taskId: TASK_ID, projectId: PROJECT_ID, agent: 'claude', accountId: 'spent', resuming: true }
+          : null),
+        canContinue: () => true,
+        isUsageLimitFailure: () => true,
+        ordered: () => accounts,
+        readUsageNow: async () => undefined,
+        openingPrompt: () => recapPrompt,
+        continueOn: (session, _accountId, prompt) => carryRecapAcross(
+          session.sessionId,
+          async () => {
+            restartPrompts.push(prompt);
+            currentSessionId = REPLACEMENT_SESSION_ID;
+            // The restart removes the old session, which the turn-end runner hears.
+            forgetRecapSession(session.sessionId, false);
+            return true;
+          },
+          () => currentSessionId,
+        ),
+        notifySwitched: vi.fn(),
+        notifyAllFull: vi.fn(),
+        onWaiting: (session) => pauseRecapTurnWait(session.sessionId),
+        now: () => NOW_MS,
+      });
+      return { deps, recapPrompt, restartPrompts, continuation };
+    }
+
+    it('delivers the column message to the replacement once its recap turn ends, and never reports it dropped', async () => {
+      const { deps, recapPrompt, restartPrompts, continuation } = await recapResumeOnSpentAccount([account('spent', 1, 100), account('free', 2, 40)]);
+
+      expect(await continuation.onSessionStarted(RESUMED_SESSION_ID)).toBe('continued');
+      await flushMicrotasks();
+
+      // The replacement opens on the recap, and the command still waits on the recap's turn.
+      expect(restartPrompts).toEqual([recapPrompt]);
+      expect(recapKindOf(RESUMED_SESSION_ID)).toBeNull();
+      expect(recapKindOf(REPLACEMENT_SESSION_ID)).toBe('return');
+      expect(hoisted.deliverAgentMessageInBackground).not.toHaveBeenCalled();
+      expect(hoisted.reportAutoCommandOutcome).not.toHaveBeenCalled();
+
+      // The turn-end runner forgets the replacement's mark at its recap turn's end.
+      forgetRecapSession(REPLACEMENT_SESSION_ID, true);
+      await flushMicrotasks();
+
+      expect(deliveries()).toHaveLength(1);
+      expect(deliveries()[0]).toMatchObject({ sessionId: REPLACEMENT_SESSION_ID, message: '/pull-request', freshlySpawned: false });
+      expect(hoisted.reportAutoCommandOutcome).not.toHaveBeenCalledWith(
+        deps.context, deps.tasks, expect.anything(), expect.objectContaining({ outcome: 'cancelled' }), PROJECT_ID,
+      );
+    });
+
+    it('sends the held messages behind the slash command to the replacement once its recap turn ends', async () => {
+      const heldMessages = await import('../../src/main/held-messages/held-messages');
+      vi.mocked(heldMessages.claimHeldMessages).mockReturnValueOnce({
+        projectId: PROJECT_ID,
+        taskId: TASK_ID,
+        ids: ['held-1'],
+        text: 'Also check the export on Windows.',
+        commit: vi.fn(),
+        fail: vi.fn(),
+        release: vi.fn(),
+        isSettled: () => false,
+      });
+      const { continuation } = await recapResumeOnSpentAccount([account('spent', 1, 100), account('free', 2, 40)]);
+
+      expect(await continuation.onSessionStarted(RESUMED_SESSION_ID)).toBe('continued');
+      await flushMicrotasks();
+      expect(hoisted.pasteAgentMessageInBackground).not.toHaveBeenCalled();
+
+      forgetRecapSession(REPLACEMENT_SESSION_ID, true);
+      await flushMicrotasks();
+
+      expect(hoisted.pasteAgentMessageInBackground).toHaveBeenCalledTimes(1);
+      expect(hoisted.pasteAgentMessageInBackground).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+        taskId: TASK_ID,
+        sessionId: REPLACEMENT_SESSION_ID,
+        message: 'Also check the export on Windows.',
+      }));
+    });
+
+    it('sends a plan continuation the recap deferred to the replacement once its recap turn ends', async () => {
+      const { continuation } = await recapResumeOnSpentAccount(
+        [account('spent', 1, 100), account('free', 2, 40)],
+        { columnMessage: null, continuationPrompt: '/continue-plan' },
+      );
+
+      expect(await continuation.onSessionStarted(RESUMED_SESSION_ID)).toBe('continued');
+      await flushMicrotasks();
+      expect(recapKindOf(REPLACEMENT_SESSION_ID)).toBe('return');
+      expect(hoisted.deliverAgentMessageInBackground).not.toHaveBeenCalled();
+
+      forgetRecapSession(REPLACEMENT_SESSION_ID, true);
+      await flushMicrotasks();
+
+      expect(deliveries()).toHaveLength(1);
+      expect(deliveries()[0]).toMatchObject({ sessionId: REPLACEMENT_SESSION_ID, message: '/continue-plan', freshlySpawned: false });
+    });
+
+    it('holds the column message while every account is full, past the recap\'s bound, and delivers it once a later move lands', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        const accounts = [account('spent', 1, 100), account('free', 2, 100)];
+        const { recapPrompt, restartPrompts, continuation } = await recapResumeOnSpentAccount(accounts);
+
+        expect(await continuation.onSessionStarted(RESUMED_SESSION_ID)).toBe('waiting');
+        // A session waiting at its limit cannot take the recap's turn, so the bound does not
+        // send the command to it.
+        vi.advanceTimersByTime(RETURN_RECAP_TURN_WAIT_MS + 1);
+        await flushMicrotasks();
+        expect(hoisted.deliverAgentMessageInBackground).not.toHaveBeenCalled();
+        expect(hoisted.reportAutoCommandOutcome).not.toHaveBeenCalled();
+
+        // The second account frees: the waiting session moves, with its opening prompt.
+        accounts[1].lastUsage = [{ ...accounts[1].lastUsage![0], usedPercentage: 10 }];
+        await continuation.recheck();
+        await flushMicrotasks();
+        expect(restartPrompts).toEqual([recapPrompt]);
+        expect(recapKindOf(REPLACEMENT_SESSION_ID)).toBe('return');
+        expect(hoisted.deliverAgentMessageInBackground).not.toHaveBeenCalled();
+
+        forgetRecapSession(REPLACEMENT_SESSION_ID, true);
+        await flushMicrotasks();
+        expect(deliveries()).toHaveLength(1);
+        expect(deliveries()[0]).toMatchObject({ sessionId: REPLACEMENT_SESSION_ID, message: '/pull-request' });
+        expect(hoisted.reportAutoCommandOutcome).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 

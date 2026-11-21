@@ -7,6 +7,7 @@ sources:
   - resource: src/shared/agent-accounts.ts
   - resource: src/main/accounts/
   - resource: src/main/accounts/account-report.ts
+  - resource: src/main/accounts/account-continuation.ts
   - resource: src/main/accounts/account-identity.ts
   - resource: src/main/accounts/account-login-watch.ts
   - resource: src/main/agent/adapters/claude/accounts.ts
@@ -531,10 +532,16 @@ moves it, or leaves it waiting with every account full. The percentage decides w
 never whether to move. The move restarts the session with its own opening prompt, read from its
 session record, never `Continue.`, since that prompt was never answered. A session that started
 with none resumes idle. A failed turn on a session already waiting this way keeps its opening
-prompt. An account under 95% costs nothing, and no read runs. With the rules above,
-this catches a spawn named to a full account, one that found every account full, and an account a
-live report holds at 99 before any read stored its 100. The call runs off the event's stack and is
+prompt. An account under 95% costs nothing, and no read runs. The check catches three starts: a
+spawn named to a full account, a spawn made while every account was full, and a spawn on an account
+whose stored 99 came from a live report before any read stored its 100. The call runs off the event's stack and is
 never awaited, since the spawn may still hold the task's lock that a restart takes.
+
+A session moved during its return recap keeps the column's message waiting on that recap: the
+restart carries the recap mark to the session that replaces it (`carryRecapAcross`), so the
+message goes there once the replacement's recap turn ends, never dropped with the old session. A
+restart that resumes idle, with no prompt, takes no recap turn, so the message goes at once. While
+the session waits with every account full, the recap's 20-minute bound is paused.
 
 ## The tab
 
