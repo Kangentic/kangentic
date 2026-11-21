@@ -144,7 +144,7 @@ describe('forcePreviewCheapModels (preview cheap-model local override)', () => {
     expect(byId.get('col-planning')?.automations?.onEnter?.length).toBe(1);
     expect(byId.get('col-planning')?.automations?.onExit?.length).toBe(1);
 
-    // To Do is exit-only (an enter row can never fire on a role column) and
+    // The To Do fixture holds one exit row and no enter row, and that row
     // carries the CANNOT-RUN state on purpose: a `send_message` where no agent
     // starts renders with its switch disabled and the reason in the tooltip.
     expect(byId.get('col-todo')?.automations?.onEnter).toBeUndefined();
