@@ -187,7 +187,7 @@ describe('deleteTaskWorktree', () => {
     const result = await deleteTaskWorktree(context as never, task, tasks as never, context.currentProjectPath);
 
     expect(result).toBe(true);
-    expect(mockRemoveWorktree).toHaveBeenCalledWith(task.worktree_path, { removalProfile: 'moderate' });
+    expect(mockRemoveWorktree).toHaveBeenCalledWith(task.worktree_path, { removalProfile: 'moderate', caller: 'done_fallback', reapLeftRunning: false });
     // The orphan reap + node_modules clear runs BEFORE the git lock is taken,
     // so the slow fs work does not hold the per-project queue.
     expect(mockPrepareWorktreeForRemoval).toHaveBeenCalledWith(task.worktree_path, 'moderate');
@@ -411,7 +411,7 @@ describe('cleanupTaskResources', () => {
     // BACKGROUND priority so a batch of cleanups never parks a fresh spawn
     // waiting at USER on the project's git queue.
     expect(withLockOptions[0]).toEqual({ label: 'cleanup-worktree:task-10', priority: 10 });
-    expect(mockRemoveWorktree).toHaveBeenCalledWith(task.worktree_path, { removalProfile: 'moderate' });
+    expect(mockRemoveWorktree).toHaveBeenCalledWith(task.worktree_path, { removalProfile: 'moderate', caller: 'cleanup', reapLeftRunning: false });
     // `pushed_branch` is absent from the patch on purpose: a remote fact and a
     // PR anchor, it outlives the checkout (see pushed-branch-cleanup-parity).
     expect(tasks.update).toHaveBeenCalledWith({ id: 'task-10', worktree_path: null, branch_name: null, resolved_base_branch: null });

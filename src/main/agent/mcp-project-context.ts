@@ -245,7 +245,7 @@ export function buildCommandContextForProject(
         // task's dev server outlives it just the same. Before the removal: a
         // live process holding the worktree as its cwd is what makes the
         // delete fail on Windows.
-        await reapTaskLeftovers(ipcContext, projectPath, [{ id: task.id, worktree_path: worktreePath, title: task.title }]);
+        const reapVerdict = await reapTaskLeftovers(ipcContext, projectPath, [{ id: task.id, worktree_path: worktreePath, title: task.title }]);
         // Best-effort worktree + branch cleanup
         if (!worktreePath) return;
         // Outside the queue, as the UI delete does (`deleteTaskWorktree`): it
@@ -254,7 +254,10 @@ export function buildCommandContextForProject(
         await prepareWorktreeForRemoval(worktreePath, 'thorough');
         const worktreeManager = new WorktreeManager(projectPath);
         await worktreeManager.withLock(async () => {
-          const removed = await worktreeManager.removeWorktree(worktreePath);
+          const removed = await worktreeManager.removeWorktree(worktreePath, {
+            caller: 'mcp_delete',
+            reapLeftRunning: reapVerdict.tasksLeftRunningInWorktree.has(task.id),
+          });
           if (removed && task.branch_name) {
             const config = ipcContext.configManager.getEffectiveConfig(projectPath);
             if (config.git.autoCleanup) {

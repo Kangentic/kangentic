@@ -208,8 +208,9 @@ vi.mock('../../src/main/agent/shared', () => ({
 
 // Section 2's seam: task-move.ts imports reapTaskLeftovers / deleteTaskWorktree
 // from this barrel, so mocking it here observes the CALL and its position.
-const mockReapTaskLeftovers = vi.fn(async (): Promise<void> => {
+const mockReapTaskLeftovers = vi.fn(async (..._reapArguments: unknown[]): Promise<{ tasksLeftRunningInWorktree: ReadonlySet<string> }> => {
   callOrder.push('reap');
+  return { tasksLeftRunningInWorktree: new Set<string>() };
 });
 const mockDeleteTaskWorktree = vi.fn(async (): Promise<boolean> => {
   callOrder.push('deleteWorktree');
@@ -491,7 +492,9 @@ describe('cleanupTaskSession / cleanupTaskResources ordering (real task-cleanup.
     const tasks = { getById: vi.fn(() => task), update: vi.fn() } as unknown as TaskRepository;
     vi.spyOn(console, 'warn').mockImplementationOnce(() => {});
 
-    await expect(cleanupTaskSession(context, task, tasks, null, null)).resolves.toBeUndefined();
+    // A reap that failed knows nothing, so it names no task as left running.
+    const verdict = await cleanupTaskSession(context, task, tasks, null, null);
+    expect(verdict.tasksLeftRunningInWorktree.size).toBe(0);
   });
 
   it('reaps leftover processes before removing the worktree', async () => {
@@ -517,6 +520,49 @@ describe('cleanupTaskSession / cleanupTaskResources ordering (real task-cleanup.
     await cleanupTaskResources(context, task, tasks, null, '/mock/project');
 
     expect(callOrder).toEqual(['kill', 'removeByTaskId', 'closeWindows', 'reap', 'prepare', 'withLock', 'removeWorktree']);
+  });
+
+  // Sentry DESKTOP-3P: a process the reap kept working in the worktree holds it on
+  // Windows, so the removal after it fails as an expected outcome. The reap's own
+  // entries decide, through the real reapTaskLeftovers, what the removal is told.
+  it.each([
+    ['kept on purpose', 'kept', 'worktree', true],
+    ['the reap could not stop', 'failed', 'worktree', true],
+    ['stopped', 'stopped', 'worktree', false],
+    ['kept in the project folder, outside the worktree', 'kept', 'project', false],
+  ] as const)('tells the removal whether a process the reap %s still works in the worktree', async (_label, outcome, place, leftRunning) => {
+    const sessionManager = makeSessionManager();
+    sessionManager.reapTaskProcesses.mockImplementationOnce(async () => {
+      callOrder.push('reap');
+      return [{ taskId: 'task-kept', pid: 4242, startKey: 'k', label: 'node (vite)', outcome, reason: null, because: null, place }];
+    });
+    const context = {
+      sessionManager,
+      currentProjectId: null,
+      currentProjectPath: '/mock/project',
+      ...reapSettings(),
+    } as unknown as IpcContext;
+    const worktreePath = '/mock/project/.kangentic/worktrees/task-kept';
+    const task = { id: 'task-kept', session_id: null, worktree_path: worktreePath, branch_name: null };
+    const tasks = { getById: vi.fn(() => task), update: vi.fn(), setWorktreeSkipReason: vi.fn() } as unknown as TaskRepository;
+
+    await cleanupTaskResources(context, task, tasks, null, '/mock/project');
+
+    expect(mockRemoveWorktree).toHaveBeenCalledWith(worktreePath, { removalProfile: 'moderate', caller: 'cleanup', reapLeftRunning: leftRunning });
+  });
+
+  it('tells the removal nothing was left when the reap failed, so a failure still reports', async () => {
+    const sessionManager = makeSessionManager();
+    sessionManager.reapTaskProcesses.mockRejectedValueOnce(new Error('host gone'));
+    vi.spyOn(console, 'warn').mockImplementationOnce(() => {});
+    const context = { sessionManager, currentProjectId: null, currentProjectPath: '/mock/project', ...reapSettings() } as unknown as IpcContext;
+    const worktreePath = '/mock/project/.kangentic/worktrees/task-unknown';
+    const task = { id: 'task-unknown', session_id: null, worktree_path: worktreePath, branch_name: null };
+    const tasks = { getById: vi.fn(() => task), update: vi.fn(), setWorktreeSkipReason: vi.fn() } as unknown as TaskRepository;
+
+    await cleanupTaskResources(context, task, tasks, null, '/mock/project');
+
+    expect(mockRemoveWorktree).toHaveBeenCalledWith(worktreePath, { removalProfile: 'moderate', caller: 'cleanup', reapLeftRunning: false });
   });
 });
 
@@ -685,7 +731,7 @@ describe('the project Stop script before the reap (real reapTaskLeftovers)', () 
     sessionManager.probeTaskProcesses.mockRejectedValue(new Error('host gone'));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    await expect(reapTaskLeftovers(context, PROJECT_PATH, [{ id: 'task-s12', worktree_path: folder }])).resolves.toBeUndefined();
+    await expect(reapTaskLeftovers(context, PROJECT_PATH, [{ id: 'task-s12', worktree_path: folder }])).resolves.toMatchObject({ tasksLeftRunningInWorktree: new Set() });
 
     expect(callOrder).toEqual(['reap']);
     warn.mockRestore();
@@ -1513,7 +1559,50 @@ describe('handleTaskMove Done branch: suspend -> close windows -> reap -> delete
 
     expect(callOrder).toEqual(['closeWindows', 'reap', 'deleteWorktree', 'scheduleRetry']);
     expect(mockScheduleDoneWorktreeRemovalRetry).toHaveBeenCalledTimes(1);
-    expect(mockScheduleDoneWorktreeRemovalRetry).toHaveBeenCalledWith(context, '/mock/project', 'task-done-3');
+    expect(mockScheduleDoneWorktreeRemovalRetry).toHaveBeenCalledWith(context, '/mock/project', 'task-done-3', undefined, { reapLeftRunning: false });
+  });
+
+  // Sentry DESKTOP-3P: a process the reap kept in the worktree holds it, and the
+  // removal's failure was reported as a defect. The Done move hands the reap's
+  // verdict to the removal and to its delayed retry.
+  it.each([
+    ['kept a process in the worktree', true],
+    ['left nothing in the worktree', false],
+  ])('tells the worktree removal and its retry whether the reap %s', async (_label, leftRunning) => {
+    const sourceLane = makeSwimlane(SOURCE_LANE_ID, { role: null });
+    const doneLane = makeSwimlane(DONE_LANE_ID, { role: 'done', auto_spawn: false });
+    const task = makeTask({
+      id: 'task-done-kept',
+      swimlane_id: SOURCE_LANE_ID,
+      session_id: null,
+      worktree_path: '/mock/project/.kangentic/worktrees/task-done-kept',
+    });
+    const taskRepo = makeTaskRepo(task);
+    const swimlaneRepo = makeSwimlaneRepo([sourceLane, doneLane]);
+    const context = makeTaskMoveContext(taskRepo, swimlaneRepo);
+    mockReapTaskLeftovers.mockImplementationOnce(async () => {
+      callOrder.push('reap');
+      return { tasksLeftRunningInWorktree: new Set(leftRunning ? ['task-done-kept'] : []) };
+    });
+    mockDeleteTaskWorktree.mockImplementationOnce(async () => {
+      callOrder.push('deleteWorktree');
+      return false;
+    });
+
+    await handleTaskMove(
+      context as never,
+      { taskId: task.id, targetSwimlaneId: DONE_LANE_ID, targetPosition: 0 },
+      'renderer',
+    );
+
+    expect(mockDeleteTaskWorktree).toHaveBeenCalledWith(
+      context,
+      expect.objectContaining({ id: 'task-done-kept' }),
+      taskRepo,
+      '/mock/project',
+      { caller: 'done_fallback', reapLeftRunning: leftRunning },
+    );
+    expect(mockScheduleDoneWorktreeRemovalRetry).toHaveBeenCalledWith(context, '/mock/project', 'task-done-kept', undefined, { reapLeftRunning: leftRunning });
   });
 
   it('schedules no removal retry when the worktree was removed', async () => {

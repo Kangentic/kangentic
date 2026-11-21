@@ -533,7 +533,7 @@ export async function retryFailedDoneCleanups(
           async () => {
             const movedAside = await worktreeManager.moveWorktreeAside(current.worktree_path!, { timeoutMs: 3000 });
             if (movedAside) return true;
-            return worktreeManager.removeWorktree(current.worktree_path!, { timeoutMs: 3000, removalProfile: 'fast' });
+            return worktreeManager.removeWorktree(current.worktree_path!, { timeoutMs: 3000, removalProfile: 'fast', caller: 'startup_retry' });
           },
           { priority: GitQueuePriority.BACKGROUND, label: `retry-remove-worktree:${task.id.slice(0, 8)}` },
         );

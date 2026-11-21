@@ -89,7 +89,7 @@ vi.mock('../../src/main/ipc/task-lifecycle-lock', () => ({
 import { retryFailedDoneCleanups } from '../../src/main/transition-engine/resource-cleanup';
 import { GitQueuePriority } from '../../src/main/git/worktree-manager';
 
-const FAST_OPTS = { timeoutMs: 3000, removalProfile: 'fast' };
+const FAST_OPTS = { timeoutMs: 3000, removalProfile: 'fast', caller: 'startup_retry' };
 
 interface MockTask {
   id: string;

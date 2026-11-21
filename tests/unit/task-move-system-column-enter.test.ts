@@ -123,7 +123,7 @@ vi.mock('../../src/main/ipc/helpers/index', () => ({
     }
     return true;
   }),
-  reapTaskLeftovers: vi.fn(async () => {}),
+  reapTaskLeftovers: vi.fn(async () => ({ tasksLeftRunningInWorktree: new Set<string>() })),
   reportAutomationFailures: vi.fn(),
   autoSpawnForTask: vi.fn(async () => {}),
 }));

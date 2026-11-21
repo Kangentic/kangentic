@@ -188,7 +188,7 @@ vi.mock('../../src/main/config/apply-runtime-config', () => ({
 
 vi.mock('../../src/main/ipc/helpers', () => ({
   ensureGitignore: vi.fn(async () => {}),
-  reapTaskLeftovers: vi.fn(async () => {}),
+  reapTaskLeftovers: vi.fn(async () => ({ tasksLeftRunningInWorktree: new Set<string>() })),
   leftoverSweepOptions: vi.fn(() => ({ stoppingEnabled: () => true, onReport: () => {} })),
   // The board path a recovery pass hands a task that never had an agent.
   autoSpawnForTask: vi.fn(async () => {}),

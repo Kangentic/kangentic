@@ -128,7 +128,7 @@ vi.mock('../../src/main/ipc/helpers/index', () => ({
   cleanupTaskResources: vi.fn(async () => {}),
   deleteTaskWorktree: vi.fn(async () => true),
   autoSpawnForTask: vi.fn(async () => {}),
-  reapTaskLeftovers: vi.fn(async () => {}),
+  reapTaskLeftovers: vi.fn(async () => ({ tasksLeftRunningInWorktree: new Set<string>() })),
 }));
 
 // The real queue, with `takeConversationExpired` wrapped so a test can see

@@ -37,6 +37,7 @@ import {
 import { getInstalledGitVersion, isVersionAtLeast } from './git-version';
 import { WORKTREE_SPARSE_PATTERNS } from './sparse-exclusion';
 import { createChokepointReporter } from '../analytics/handled-report';
+import { trackEvent } from '../analytics/analytics';
 
 /**
  * First git whose `sparse-checkout set` accepts `--no-cone`. Older git does
@@ -188,6 +189,53 @@ const GIT_QUEUE_SLOW_WARN_MS = 60_000;
  */
 export type WorktreeRemovalProfile = 'thorough' | 'moderate' | 'fast';
 
+/**
+ * Which path asked for a removal, sent as the `caller` tag of a failure. The
+ * stack cannot say: Sentry DESKTOP-3P's frames were cut at an `await` inside
+ * the removal, above every caller.
+ */
+export type WorktreeRemovalCaller =
+  /** A Done move's in-place delete after its move aside failed (`deleteTaskWorktree`). */
+  | 'done_fallback'
+  /** A later retry of that Done removal: the delayed one, a Stop or a late reap. */
+  | 'done_retry'
+  /** A reset to To Do, a Backlog demote or a delete (`cleanupTaskResources`). */
+  | 'cleanup'
+  /** The leftovers of a worktree creation that failed (the task move's stale cleanup). */
+  | 'stale_cleanup'
+  /** The next project open's retry of a removal that failed (`retryFailedDoneCleanups`). */
+  | 'startup_retry'
+  | 'mcp_delete'
+  | 'project_delete'
+  | 'spare'
+  /** A creation clearing a stale folder at its own path. */
+  | 'create_clear'
+  | 'other';
+
+/** What every removal takes. */
+export interface WorktreeRemovalOptions {
+  timeoutMs?: number;
+  removalProfile?: WorktreeRemovalProfile;
+  /**
+   * The caller holds this path in the creation registry and is removing what it
+   * made (a spare worktree's build or claim discarding it). Every other removal
+   * refuses a held path.
+   */
+  ownCreation?: boolean;
+  /** Who asked, for the failure report. `other` when left out. */
+  caller?: WorktreeRemovalCaller;
+  /**
+   * The task's leftover reap, run just before this removal, left a process
+   * working inside this worktree: kept, not stopped, or stopping is turned off.
+   * Such a process holds the folder on Windows, and the user was told about it,
+   * so a failure is counted and not reported (Sentry DESKTOP-3P).
+   */
+  reapLeftRunning?: boolean;
+}
+
+/** Which part of the worktree the manual removal last failed on. Never the path itself. */
+export type RemovalPathClass = 'root' | '.git' | 'node_modules' | 'other' | 'none';
+
 /** One removal attempt's outcome (`tryGitRemoval`). */
 interface GitRemovalAttempt {
   removed: boolean;
@@ -196,6 +244,35 @@ interface GitRemovalAttempt {
   errno?: string;
   /** A link inside the folder would not come out, so nothing was removed. */
   refused?: boolean;
+  /** The syscall of that last failure (`removalSyscallOf`). */
+  syscall?: string;
+  /** Where in the worktree that last failure was (`removalPathClassOf`). */
+  pathClass?: RemovalPathClass;
+}
+
+/** The syscalls a removal makes. Any other reads as `other`, so a tag never carries free text. */
+const REMOVAL_SYSCALLS: ReadonlySet<string> = new Set(['rmdir', 'unlink', 'rename', 'scandir', 'opendir', 'lstat', 'stat', 'open', 'chmod', 'readlink', 'rm']);
+
+/** A failed removal's syscall as a fixed word: one of `REMOVAL_SYSCALLS`, `other`, or `none` when the error named none. */
+export function removalSyscallOf(syscall: unknown): string {
+  if (typeof syscall !== 'string' || syscall === '') return 'none';
+  return REMOVAL_SYSCALLS.has(syscall) ? syscall : 'other';
+}
+
+/**
+ * Where a failed removal's path sits in the worktree: the folder itself, its
+ * `.git`, anything under a `node_modules`, or somewhere else. `none` when the
+ * error named no path. The path never leaves: it holds the task's folder name.
+ */
+export function removalPathClassOf(worktreePath: string, failedPath: unknown): RemovalPathClass {
+  if (typeof failedPath !== 'string' || failedPath === '') return 'none';
+  const relative = path.relative(path.resolve(worktreePath), path.resolve(failedPath));
+  if (relative === '') return 'root';
+  if (relative.startsWith('..') || path.isAbsolute(relative)) return 'other';
+  const segments = relative.split(/[\\/]+/);
+  if (segments[0] === '.git') return '.git';
+  if (segments.includes('node_modules')) return 'node_modules';
+  return 'other';
 }
 
 /** One report per removal failure shape per run: a held folder repeats at every retry. */
@@ -204,15 +281,39 @@ const worktreeRemovalReporter = createChokepointReporter('worktree_removal');
 /**
  * A worktree that could not be removed: the folder stays on disk, retried at the
  * next startup, which can repeat indefinitely. Fixed facts only: the profile,
- * whether it timed out, whether anything was seen holding it, the errno, and
- * whether a link refused it. Never a holder's command line or the folder's path.
+ * whether it timed out, whether anything was seen holding it, the errno, whether
+ * a link refused it, the caller, and where and in which syscall the manual
+ * removal last failed. Never a holder's command line or the folder's path.
+ *
+ * A folder the task's own reap left a process working in is counted and not
+ * reported: the process holds it, the leftover-processes toast told the user,
+ * and the removal is retried once the process ends (Sentry DESKTOP-3P, 15
+ * events, every one `EBUSY` on Windows). `holders: none` is no evidence against
+ * that: the holder scan reads command lines, and a process holding the folder
+ * only as its working directory cannot be seen on Windows.
  */
 function reportWorktreeRemovalFailure(input: {
   profile: WorktreeRemovalProfile;
   timedOut: boolean;
   holders: boolean;
   attempt: GitRemovalAttempt;
+  caller: WorktreeRemovalCaller;
+  reapLeftRunning: boolean;
 }): void {
+  const errno = input.attempt.errno ?? 'none';
+  if (input.reapLeftRunning) {
+    console.log(`[WORKTREE] Counting but not reporting a removal the task's reap left a process in: caller=${input.caller} errno=${errno}`);
+    trackEvent('app_error', {
+      source: 'worktree_removal',
+      message: 'A worktree the reap left a process in could not be removed',
+      reason: 'reap_left_running',
+      caller: input.caller,
+      profile: input.profile,
+      errno,
+      platform: process.platform,
+    });
+    return;
+  }
   const failure = new Error('A worktree could not be removed') as NodeJS.ErrnoException;
   failure.name = 'WorktreeRemovalFailedError';
   if (input.attempt.errno) failure.code = input.attempt.errno;
@@ -222,6 +323,9 @@ function reportWorktreeRemovalFailure(input: {
       timed_out: String(input.timedOut),
       holders: input.holders ? 'some' : 'none',
       refused: String(input.attempt.refused === true),
+      caller: input.caller,
+      path_class: input.attempt.pathClass ?? 'none',
+      syscall: input.attempt.syscall ?? 'none',
       platform: process.platform,
     },
   });
@@ -1057,7 +1161,7 @@ export class WorktreeManager {
       // trust table immediately before the new worktree starts using it).
       // `ownCreation`: this creation holds the path in the creation registry,
       // and a removal refuses any path whose creation is in flight but this one.
-      const outcome = await this.removeWorktreeInternal(worktreePath, { ownCreation: true });
+      const outcome = await this.removeWorktreeInternal(worktreePath, { ownCreation: true, caller: 'create_clear' });
       if (!outcome.removed) {
         // The directory could not be deleted. On Windows a process holding it
         // as its current directory (an agent terminal, an open editor, the
@@ -1594,12 +1698,7 @@ export class WorktreeManager {
    */
   async removeWorktree(
     worktreePath: string,
-    /**
-     * `ownCreation`: the caller holds this path in the creation registry and is
-     * removing what it made (a spare worktree's build or claim discarding it).
-     * Every other removal refuses a held path.
-     */
-    options?: { timeoutMs?: number; removalProfile?: WorktreeRemovalProfile; ownCreation?: boolean },
+    options?: WorktreeRemovalOptions,
   ): Promise<boolean> {
     if (this.remote) return this.removeRemoteWorktree(worktreePath, options);
     const { removed } = await this.removeWorktreeInternal(worktreePath, options);
@@ -1621,7 +1720,7 @@ export class WorktreeManager {
    */
   private async removeRemoteWorktree(
     worktreePath: string,
-    options?: { timeoutMs?: number; removalProfile?: WorktreeRemovalProfile; ownCreation?: boolean },
+    options?: WorktreeRemovalOptions,
   ): Promise<boolean> {
     assertRemovableWorktreePath(this.projectPath, worktreePath);
     if (!options?.ownCreation && isWorktreeCreationInFlight(worktreePath)) {
@@ -1699,7 +1798,7 @@ export class WorktreeManager {
 
   private async removeWorktreeInternal(
     worktreePath: string,
-    options?: { timeoutMs?: number; removalProfile?: WorktreeRemovalProfile; ownCreation?: boolean },
+    options?: WorktreeRemovalOptions,
   ): Promise<WorktreeRemovalOutcome> {
     assertRemovableWorktreePath(this.projectPath, worktreePath);
 
@@ -1792,7 +1891,14 @@ export class WorktreeManager {
       `[WORKTREE] remove finished: ${worktreePath} removed=false timedOut=${timedOut} `
       + `total=${Date.now() - removeStartedAt}ms${formatHolderLog(holders)}`,
     );
-    reportWorktreeRemovalFailure({ profile, timedOut, holders: holders.length > 0, attempt: lastAttempt });
+    reportWorktreeRemovalFailure({
+      profile,
+      timedOut,
+      holders: holders.length > 0,
+      attempt: lastAttempt,
+      caller: options?.caller ?? 'other',
+      reapLeftRunning: options?.reapLeftRunning === true,
+    });
     return { removed: false, timedOut, holders };
   }
 
@@ -1855,7 +1961,13 @@ export class WorktreeManager {
         + `(code=${diagnosticError.code ?? 'unknown'} errno=${diagnosticError.errno ?? '?'} `
         + `syscall=${diagnosticError.syscall ?? '?'} path=${diagnosticError.path ?? '?'}): ${diagnosticError.message}`
       );
-      return { removed: false, timedOut, errno: typeof diagnosticError.code === 'string' ? diagnosticError.code : undefined };
+      return {
+        removed: false,
+        timedOut,
+        errno: typeof diagnosticError.code === 'string' ? diagnosticError.code : undefined,
+        syscall: removalSyscallOf(diagnosticError.syscall),
+        pathClass: removalPathClassOf(worktreePath, diagnosticError.path),
+      };
     }
   }
 

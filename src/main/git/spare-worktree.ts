@@ -423,7 +423,7 @@ export class SpareWorktreePool {
     }
     if (!removed) {
       try {
-        removed = await manager.removeWorktree(sparePath, { removalProfile: 'fast', ownCreation: true });
+        removed = await manager.removeWorktree(sparePath, { removalProfile: 'fast', ownCreation: true, caller: 'spare' });
       } catch (error) {
         console.warn(`[SPARE] Could not remove ${folder}: ${firstLineOf(error)}`);
       }

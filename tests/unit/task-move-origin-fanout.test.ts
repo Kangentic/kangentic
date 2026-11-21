@@ -136,7 +136,7 @@ vi.mock('../../src/main/ipc/helpers/index', () => ({
   autoSpawnForTask: vi.fn(async () => {}),
   // Inert here: the Done path calls it on its way to deleteTaskWorktree, and
   // that ordering has its own wiring test (session-leftover-reap-wiring).
-  reapTaskLeftovers: vi.fn(async () => {}),
+  reapTaskLeftovers: vi.fn(async () => ({ tasksLeftRunningInWorktree: new Set<string>() })),
 }));
 
 const mockAutoLinkPRForTask = vi.fn();

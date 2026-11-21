@@ -16,7 +16,7 @@ vi.mock('../../src/main/db/database', () => ({
 }));
 vi.mock('../../src/main/ipc/helpers', () => ({
   autoSpawnForTask: vi.fn(() => Promise.resolve()),
-  reapTaskLeftovers: vi.fn(() => Promise.resolve()),
+  reapTaskLeftovers: vi.fn(() => Promise.resolve(({ tasksLeftRunningInWorktree: new Set<string>() }))),
 }));
 vi.mock('../../src/main/ipc/helpers/task-windows', () => ({
   closeTaskWindows: vi.fn(),
