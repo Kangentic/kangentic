@@ -25,6 +25,11 @@ msgstr "La dettatura è disattivata nei campi password"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
 #, fuzzy
+msgid "Finishing in another window"
+msgstr "Completamento in corso in un'altra finestra"
+
+#: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Inserting..."
 msgstr "Inserimento..."
 

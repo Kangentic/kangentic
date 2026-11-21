@@ -4238,6 +4238,16 @@ export interface DictationStartResult {
   sentenceCaseFinal: boolean;
 }
 
+/** `dictation.start` declined because another window's dictation is still
+ *  recording or sending. Each window runs its own push-to-talk, and one engine
+ *  serves them all, so a press in one window waits for the other's hold to end. */
+export interface DictationStartRefusal {
+  refused: 'other-window';
+}
+
+/** What `dictation.start` answers: a started session, or a refusal. */
+export type DictationStartOutcome = DictationStartResult | DictationStartRefusal;
+
 /** The native engine shape a dictation model drives. The one definition: the
  *  model registry, the engines and the settings options all read it. */
 export type DictationModelEngineKind =
@@ -9861,8 +9871,9 @@ export interface ElectronAPI {
   // Channels are by session id, not task-scoped, so they carry no projectId
   // (same category as session write). See .claude/rules/ipc-7-layer-parity.md.
   dictation: {
-    /** Begin a dictation session; resolves the engine from config + hardware. */
-    start: (options: DictationStartOptions) => Promise<DictationStartResult>;
+    /** Begin a dictation session; resolves the engine from config + hardware.
+     *  Refused while another window's dictation is still recording or sending. */
+    start: (options: DictationStartOptions) => Promise<DictationStartOutcome>;
     /** Finalize and return the committed text (also pushed via onFinal).
      *  `expectedFrames` is the total number of PCM frames the renderer sent for
      *  this utterance; finalize waits (briefly, bounded) until they have all been

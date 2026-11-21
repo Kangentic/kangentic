@@ -682,12 +682,14 @@ app.on('web-contents-created', (_event, contents) => {
   //
   // A DESTROYED guest is the other way an UP goes missing - closing the pane
   // mid-hold takes the only thing that could report the release with it. That
-  // matters more than it looks: `useDictation` is mounted once app-wide, so a
-  // missing UP leaves `activeRef` true and the microphone open, and every later
-  // press is then swallowed by its own re-entrancy guard until dictation is
-  // toggled off and on again. `releaseHost` exists because `hostWebContents` is
-  // unreachable once `destroyed` has fired, so the last host that took a send is
-  // remembered while it still can be.
+  // matters more than it looks: `useDictation` is mounted once per window (the
+  // main window and each pop-out), so a missing UP leaves that window's
+  // `activeRef` true and the microphone open, and every later press there is
+  // then swallowed by its own re-entrancy guard until dictation is toggled off
+  // and on again. The host may be a pop-out: a popped-out pane's guest reports
+  // to the pop-out's renderer, which runs its own hook. `releaseHost` exists
+  // because `hostWebContents` is unreachable once `destroyed` has fired, so the
+  // last host that took a send is remembered while it still can be.
   const heldGuestButtons = new Set<'back' | 'forward'>();
   let releaseHost: Electron.WebContents | null = null;
   const sendGuestMouseButton = (button: 'back' | 'forward', phase: 'down' | 'up'): void => {

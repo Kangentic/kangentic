@@ -425,6 +425,27 @@ describe('resolveDictationTarget - Command Terminal priority (real stores)', () 
 
     expect(resolveDictationTarget()).toEqual({ kind: 'terminal', sessionId: commandSessionId });
   });
+
+  it('falls back to the bottom panel session in the main window, but never in a pop-out, which has none', () => {
+    // A pop-out runs its own push-to-talk. With nothing focused there, the
+    // bottom panel's session would be a terminal nobody in that window can see.
+    const projectId = 'proj-panel-1';
+    const panelSessionId = 'sess-panel-1';
+    useProjectStore.setState({ currentProject: makeProject(projectId) });
+    useSessionStore.setState({
+      commandBarVisible: false,
+      activeSessionId: panelSessionId,
+      sessions: [makeSession({ id: panelSessionId, projectId, taskId: 'task-panel', status: 'running' })],
+    });
+
+    expect(resolveDictationTarget()).toEqual({ kind: 'terminal', sessionId: panelSessionId });
+
+    vi.stubGlobal('window', {
+      electronAPI: { popOut: { descriptor: { kind: 'browser', params: { taskId: 'task-panel', projectId } } } },
+      location: { hash: '' },
+    });
+    expect(resolveDictationTarget()).toBeNull();
+  });
 });
 
 /**

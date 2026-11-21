@@ -96,6 +96,30 @@ describe('pop-out surface registry', () => {
   });
 
   /**
+   * Every pop-out mounts its own push-to-talk (`WindowDictation` in the shared
+   * root), and its chip shows first-use model download progress. A surface
+   * that forgot the channel would sit on "Listening" with no progress while a
+   * model downloads. The partial and final text are not fanned: main sends
+   * those to the one window that started the session.
+   */
+  it('every pop-out surface receives dictation model progress', () => {
+    const missing = Object.entries(POP_OUT_SURFACES)
+      .filter(([, meta]) => !meta.channels.includes(IPC.TRANSCRIBE_MODEL_PROGRESS))
+      .map(([kind]) => kind);
+    expect(missing, 'spread DICTATION_CHANNELS into these surfaces').toEqual([]);
+    // Its push-to-talk reads `enabled` and the hotkey from config, so a surface
+    // without the config push keeps the binding it opened with.
+    const missingConfig = Object.entries(POP_OUT_SURFACES)
+      .filter(([, meta]) => !meta.channels.includes(IPC.CONFIG_CHANGED))
+      .map(([kind]) => kind);
+    expect(missingConfig, 'declare IPC.CONFIG_CHANGED in these surfaces').toEqual([]);
+    for (const meta of Object.values(POP_OUT_SURFACES)) {
+      expect(meta.channels).not.toContain(IPC.TRANSCRIBE_PARTIAL);
+      expect(meta.channels).not.toContain(IPC.TRANSCRIBE_FINAL);
+    }
+  });
+
+  /**
    * A pop-out renderer gets a main push ONLY if its surface declares the
    * channel (`broadcast` -> `windowsForChannel`), and it never mounts App.tsx,
    * so it has none of App's subscriptions either. Both halves have to be

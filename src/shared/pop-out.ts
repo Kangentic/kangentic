@@ -236,6 +236,14 @@ const FILE_DIFF_TITLE = msg`File Diff`;
 const COMMAND_TERMINAL_TITLE = msg({ message: 'Command Terminal - {projectName}' });
 
 /**
+ * The pushes every pop-out declares, because every pop-out runs its own
+ * push-to-talk (`WindowDictation`). A session's partial and final text are not
+ * here: main sends those to the one window that started the session. Model
+ * download progress is for every window that shows the chip.
+ */
+export const DICTATION_CHANNELS: readonly string[] = [IPC.TRANSCRIBE_MODEL_PROGRESS];
+
+/**
  * Declarative metadata for every detachable surface, referenced by both processes.
  * Adding a surface here (plus a renderer registry entry + root component) is the whole
  * cost of making a new UI surface detachable.
@@ -256,6 +264,7 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
       IPC.SESSION_EXIT,
       IPC.SESSION_IDLE_TIMEOUT,
       IPC.CONFIG_CHANGED,
+      ...DICTATION_CHANNELS,
     ],
   },
   changes: {
@@ -265,7 +274,7 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
     defaultBounds: { width: 1000, height: 750 },
     minSize: { width: 560, height: 400 },
     needsWebview: false,
-    channels: [IPC.GIT_DIFF_CHANGED, IPC.CONFIG_CHANGED],
+    channels: [IPC.GIT_DIFF_CHANGED, IPC.CONFIG_CHANGED, ...DICTATION_CHANNELS],
   },
   // A single changed file's diff, detached read-only from a Changes file row
   // (double-click, or the row's "Open in new window"). Unlike every other kind
@@ -295,7 +304,7 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
       if (fileName === undefined) return FILE_DIFF_TITLE;
       return `${fileName} - ${formatTaskAnchor(fileParams.taskDisplayId, fileParams.taskTitle)}`;
     },
-    channels: [IPC.GIT_DIFF_CHANGED, IPC.CONFIG_CHANGED],
+    channels: [IPC.GIT_DIFF_CHANGED, IPC.CONFIG_CHANGED, ...DICTATION_CHANNELS],
   },
   browser: {
     kind: 'browser',
@@ -304,7 +313,7 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
     defaultBounds: { width: 1200, height: 800 },
     minSize: { width: 480, height: 360 },
     needsWebview: true,
-    channels: [IPC.CONFIG_CHANGED],
+    channels: [IPC.CONFIG_CHANGED, ...DICTATION_CHANNELS],
   },
   monitor: {
     kind: 'monitor',
@@ -336,6 +345,7 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
       // A queued card's place in line, and a hosted task detail's line of tasks.
       IPC.SESSION_QUEUE_CHANGED,
       IPC.CONFIG_CHANGED,
+      ...DICTATION_CHANNELS,
       // This window can host a task detail (and therefore a live terminal) for a
       // project the board is not on, so it needs the per-session pushes a terminal
       // consumes. A terminal's output is not a push at all: the pty host sends
@@ -386,6 +396,7 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
       // sits on a spinner while the main window watches the answer arrive.
       IPC.KNOWLEDGE_GRAPH_ANSWER_STREAM,
       IPC.CONFIG_CHANGED,
+      ...DICTATION_CHANNELS,
     ],
   },
   // The Command Terminal panel for ONE project, in a window of its own. Its
@@ -424,6 +435,7 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
       // The rail's Earlier list.
       IPC.COMMAND_TERMINAL_HISTORY_CHANGED,
       IPC.CONFIG_CHANGED,
+      ...DICTATION_CHANNELS,
       // Each terminal's own Browser pane mounts in this window while the panel
       // lives here: an agent's open_pane and close_pane reach it through these,
       // and the Running row's globe lights for a page running offscreen.

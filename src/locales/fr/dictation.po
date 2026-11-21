@@ -25,6 +25,11 @@ msgstr "La dictée est désactivée dans les champs de mot de passe"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
 #, fuzzy
+msgid "Finishing in another window"
+msgstr "Finalisation dans une autre fenêtre"
+
+#: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Inserting..."
 msgstr "Insertion..."
 

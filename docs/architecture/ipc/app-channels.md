@@ -300,7 +300,7 @@ Machine-global (like Config), never project-scoped. Backs Settings > Accounts an
 By-session-id, not task-scoped (no `projectId`), in the same category as `session:resize`.
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `transcribe:start` | invoke | Begin a dictation session; resolves the engine + model from config + hardware. Returns `{ dictationSessionId, engineId, modelId, needsDownload, sentenceCaseFinal }`; `sentenceCaseFinal` is true when the live model writes all caps (the Zipformer), since the committed text can be its own (no refinement, or a refinement that fell back to the live text); the renderer then sentence-cases a final in that all-caps shape, and with any other live model types the final as written |
+| `transcribe:start` | invoke | Begin a dictation session; resolves the engine + model from config + hardware. Returns `{ dictationSessionId, engineId, modelId, needsDownload, sentenceCaseFinal }`; `sentenceCaseFinal` is true when the live model writes all caps (the Zipformer), since the committed text can be its own (no refinement, or a refinement that fell back to the live text); the renderer then sentence-cases a final in that all-caps shape, and with any other live model types the final as written. Returns `{ refused: 'other-window' }` instead, starting nothing, while another window's session is still recording or finalizing: every window runs its own push-to-talk on one engine. `transcribe:partial` and `transcribe:final` go to the window that started the session |
 | `transcribe:stop` | invoke | Finalize and return the committed text. Passes the renderer's sent-frame count so the decode drains all in-flight audio first (the tail is never clipped) |
 | `transcribe:cancel` | invoke | Abort a session without committing |
 | `transcribe:commit` | invoke | Inject finalized text into the focused terminal WITHOUT submitting (no Enter) |
@@ -314,5 +314,5 @@ By-session-id, not task-scoped (no `projectId`), in the same category as `sessio
 | `transcribe:downloadModel` | invoke | Pre-download the selected model from settings |
 | `transcribe:liveWrite` | on | Live experience: write raw bytes (text + backspaces) straight into the focused terminal as the user speaks, behind the agent's `promptEndKeys` (fire-and-forget) |
 | `transcribe:holdTrace` | on | Log a push-to-talk press, a refused press, or how a hold ended, as a `[dictation-hold]` line with no spoken text (fire-and-forget) |
-| `transcribe:windowBlur` | push | The main window lost OS focus, so `useDictation` ends a hold no release can reach. Main window only |
+| `transcribe:windowBlur` | push | A window lost OS focus, so its `useDictation` ends a hold no release can reach. Sent only to the window that lost focus: the main window from `index.ts`, a pop-out from `pop-out-window-manager.ts` |
 | `transcribe:prewarm` | on | Pre-load the selected engine's live (streaming) model so the next press streams partials at once; the refinement model loads on the first press itself, overlapped with the utterance. `null` (dictation disabled) releases the worker outright (fire-and-forget) |

@@ -9,6 +9,7 @@ import { trackFeatureUsed } from '../analytics/usage';
 import { isErrorReportingActive } from '../analytics/error-reporting';
 import { createChokepointReporter } from '../analytics/handled-report';
 import { localeArgument } from '../i18n/main-i18n';
+import { IPC } from '../../shared/ipc-channels';
 
 /** A pop-out whose own page failed to load (`did-fail-load`), by kind and Chromium's code. */
 const popOutLoadReporter = createChokepointReporter('pop_out_load');
@@ -266,6 +267,14 @@ export class PopOutWindowManager {
     };
     win.on('move', scheduleBoundsSave);
     win.on('resize', scheduleBoundsSave);
+
+    // This window runs its own push-to-talk, and a release after it lost OS
+    // focus lands anywhere and tells nobody, so it ends its hold here. To this
+    // window only, as the main window's own blur goes to it alone. DOM `window`
+    // blur cannot stand in: a click into a Browser pane guest fires it too.
+    win.on('blur', () => {
+      if (!win.isDestroyed()) win.webContents.send(IPC.TRANSCRIBE_WINDOW_BLUR);
+    });
 
     win.on('closed', () => {
       if (tracked.boundsTimer) clearTimeout(tracked.boundsTimer);

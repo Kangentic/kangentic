@@ -25,6 +25,11 @@ msgstr "パスワード欄では音声入力は無効です"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
 #, fuzzy
+msgid "Finishing in another window"
+msgstr "別のウィンドウで完了処理中です"
+
+#: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Inserting..."
 msgstr "挿入中..."
 

@@ -3800,6 +3800,12 @@
       },
       start: async function (options) {
         window.electronAPI.dictation.__startCalls.push(options);
+        // Test hook: window.__mockDictationStartRefused, a boolean, answers the
+        // refusal main gives while another window's dictation is still recording
+        // or sending. Unset, every start is accepted.
+        if (typeof window !== 'undefined' && window.__mockDictationStartRefused === true) {
+          return { refused: 'other-window' };
+        }
         if (window.electronAPI.dictation.__holdStartsOn) {
           var heldId = await new Promise(function (resolve) {
             window.electronAPI.dictation.__heldStarts.push({ resolve: resolve });

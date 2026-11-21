@@ -21,6 +21,10 @@ msgid "Dictation is off in password fields"
 msgstr "Dictation is off in password fields"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+msgid "Finishing in another window"
+msgstr "Finishing in another window"
+
+#: src/renderer/components/dictation/LiveDictationChip.tsx
 msgid "Inserting..."
 msgstr "Inserting..."
 

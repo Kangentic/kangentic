@@ -2,7 +2,6 @@ import { ErrorBoundary } from '../components/ErrorBoundary';
 import { useBoardStore } from '../stores/board-store';
 import { getSurface } from './surface-registry';
 import { usePopOutBootstrap } from './usePopOutBootstrap';
-import { useBrowserMouseNavigation } from '../hooks/useBrowserMouseNavigation';
 import { PopOutWindowFrame } from './PopOutWindowFrame';
 import { POP_OUT_SURFACES, formatTaskAnchor, isGlobalPopOutKind, isProjectPopOutKind, resolveSurfaceTitle } from '../../shared/pop-out';
 import type { PopOutChangesFileParams, PopOutDescriptor, PopOutTaskParams } from '../../shared/pop-out';
@@ -13,6 +12,7 @@ import { commandTerminalDisplayName } from '../../shared/command-terminal-name';
 import { findLiveCommandTerminalSession } from '../../shared/session-owner';
 import './surfaces';
 import { ToastContainer } from '../components/layout/ToastContainer';
+import { WindowDictation } from '../components/dictation/WindowDictation';
 
 /** A pop-out has no status bar, so its toasts sit this far above the bottom edge. */
 const POP_OUT_TOAST_BOTTOM_OFFSET_PX = 12;
@@ -23,10 +23,6 @@ const POP_OUT_TOAST_BOTTOM_OFFSET_PX = 12;
 export function PopOutSurfaceRoot({ descriptor }: { descriptor: PopOutDescriptor }) {
   const surface = getSurface(descriptor.kind);
   usePopOutBootstrap(descriptor);
-  // Mouse back/forward over a Browser pane in this window. Main sends a guest's
-  // buttons to the window hosting it, and dictation never runs in a pop-out, so
-  // every press here is plain navigation.
-  useBrowserMouseNavigation({ canDictate: false });
   // Task-scoped surfaces (changes / browser) title their window with the task's
   // title so the detached window is associable to its task; a global surface
   // (stats, Agent Monitor) has no task, so the frame falls back to its own name.
@@ -79,6 +75,9 @@ export function PopOutSurfaceRoot({ descriptor }: { descriptor: PopOutDescriptor
           monitor, the detached Knowledge Graph), and before this nothing here
           rendered them. No status bar, so the stack sits nearer the edge. */}
       <ToastContainer bottomOffsetPx={POP_OUT_TOAST_BOTTOM_OFFSET_PX} />
+      {/* Push-to-talk, its chip and mouse back and forward navigation, for this
+          window's own terminals, fields and Browser pane. */}
+      <WindowDictation />
     </ErrorBoundary>
   );
 }

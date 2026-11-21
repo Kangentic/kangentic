@@ -21,6 +21,11 @@ msgid "Dictation is off in password fields"
 msgstr "密碼欄位中無法使用聽寫"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
+msgid "Finishing in another window"
+msgstr "正在另一個視窗中完成"
+
+#: src/renderer/components/dictation/LiveDictationChip.tsx
 msgid "Inserting..."
 msgstr "正在插入..."
 

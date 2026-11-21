@@ -15,31 +15,31 @@ vi.mock('../../src/renderer/stores/config-store', () => ({ useConfigStore: vi.fn
 
 import { pushToTalkMouseButtons } from '../../src/renderer/utils/push-to-talk-buttons';
 
-function buttons(options: { canDictate: boolean; enabled: boolean; combo: string }): string[] {
+function buttons(options: { enabled: boolean; combo: string }): string[] {
   return [...pushToTalkMouseButtons(options)].sort();
 }
 
 describe('pushToTalkMouseButtons', () => {
-  it('holds the bound mouse button while dictation is on in a window that dictates', () => {
-    expect(buttons({ canDictate: true, enabled: true, combo: 'Mouse:Back' })).toEqual(['back']);
-    expect(buttons({ canDictate: true, enabled: true, combo: 'Mouse:Forward' })).toEqual(['forward']);
-    expect(buttons({ canDictate: true, enabled: true, combo: 'Mouse:Back+Mouse:Forward' })).toEqual(['back', 'forward']);
+  // Every window answers the same way, a pop-out included: each window runs its
+  // own push-to-talk, so a bound button is held there too. A pop-out that held
+  // nothing would navigate on the press and never dictate with the default
+  // Mouse:Back binding.
+  it('holds the bound mouse button while dictation is on', () => {
+    expect(buttons({ enabled: true, combo: 'Mouse:Back' })).toEqual(['back']);
+    expect(buttons({ enabled: true, combo: 'Mouse:Forward' })).toEqual(['forward']);
+    expect(buttons({ enabled: true, combo: 'Mouse:Back+Mouse:Forward' })).toEqual(['back', 'forward']);
   });
 
   it('holds nothing while dictation is off, so both buttons navigate', () => {
-    expect(buttons({ canDictate: true, enabled: false, combo: 'Mouse:Back' })).toEqual([]);
-  });
-
-  it('holds nothing in a window that cannot dictate, such as a pop-out', () => {
-    expect(buttons({ canDictate: false, enabled: true, combo: 'Mouse:Back' })).toEqual([]);
+    expect(buttons({ enabled: false, combo: 'Mouse:Back' })).toEqual([]);
   });
 
   it('holds nothing when push-to-talk is on a key or unbound', () => {
-    expect(buttons({ canDictate: true, enabled: true, combo: 'Mod+Shift+Space' })).toEqual([]);
-    expect(buttons({ canDictate: true, enabled: true, combo: '' })).toEqual([]);
+    expect(buttons({ enabled: true, combo: 'Mod+Shift+Space' })).toEqual([]);
+    expect(buttons({ enabled: true, combo: '' })).toEqual([]);
   });
 
   it('holds only the navigation buttons a mouse combo names', () => {
-    expect(buttons({ canDictate: true, enabled: true, combo: 'Mouse:Middle' })).toEqual([]);
+    expect(buttons({ enabled: true, combo: 'Mouse:Middle' })).toEqual([]);
   });
 });

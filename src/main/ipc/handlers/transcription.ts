@@ -7,8 +7,11 @@ import type {
   DictationMicPermission,
   DictationModelProgress,
   DictationStartOptions,
+  DictationStartOutcome,
 } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
+import { DictationSessionOwners } from '../../transcription/dictation-session-owners';
+import { broadcast } from '../../pop-out/window-broadcast';
 
 /**
  * Ensure microphone access. On macOS we drive the TCC prompt via
@@ -67,17 +70,26 @@ export function formatHoldTraceLine(trace: unknown): string | null {
  */
 export function registerTranscriptionHandlers(context: IpcContext): void {
   const { transcriptionService } = context;
+  // The main window and every pop-out run their own push-to-talk, so each
+  // session's text goes back to the window that started it.
+  const sessionOwners = new DictationSessionOwners(transcriptionService);
 
-  ipcMain.handle(IPC.TRANSCRIBE_START, (_event, options: DictationStartOptions) =>
-    transcriptionService.start(options),
+  ipcMain.handle(IPC.TRANSCRIBE_START, (event, options: DictationStartOptions): Promise<DictationStartOutcome> =>
+    sessionOwners.start(event.sender, () => transcriptionService.start(options)),
   );
 
-  ipcMain.handle(IPC.TRANSCRIBE_STOP, (_event, dictationSessionId: string, expectedFrames?: number) =>
-    transcriptionService.finalize(dictationSessionId, expectedFrames),
-  );
+  ipcMain.handle(IPC.TRANSCRIBE_STOP, async (_event, dictationSessionId: string, expectedFrames?: number) => {
+    try {
+      return await transcriptionService.finalize(dictationSessionId, expectedFrames);
+    } finally {
+      // After `final` went out: finalize emits it before it resolves.
+      sessionOwners.release(dictationSessionId);
+    }
+  });
 
   ipcMain.handle(IPC.TRANSCRIBE_CANCEL, (_event, dictationSessionId: string) => {
     transcriptionService.cancel(dictationSessionId);
+    sessionOwners.release(dictationSessionId);
   });
 
   ipcMain.handle(IPC.TRANSCRIBE_GET_INFO, (_event, config: DictationConfig) =>
@@ -172,24 +184,20 @@ export function registerTranscriptionHandlers(context: IpcContext): void {
     },
   );
 
-  // Forward partial/final transcription results to the renderer popup, guarded
-  // against a destroyed window during shutdown.
+  // Partial and final text go to the window that started the session, and to
+  // no other: a second window would type the same words into its own target.
   transcriptionService.on('partial', (dictationSessionId: string, text: string) => {
-    if (!context.mainWindow.isDestroyed()) {
-      context.mainWindow.webContents.send(IPC.TRANSCRIBE_PARTIAL, dictationSessionId, text);
-    }
+    sessionOwners.sendToOwner(dictationSessionId, IPC.TRANSCRIBE_PARTIAL, dictationSessionId, text);
   });
 
   transcriptionService.on('final', (dictationSessionId: string, text: string) => {
-    if (!context.mainWindow.isDestroyed()) {
-      context.mainWindow.webContents.send(IPC.TRANSCRIBE_FINAL, dictationSessionId, text);
-    }
+    sessionOwners.sendToOwner(dictationSessionId, IPC.TRANSCRIBE_FINAL, dictationSessionId, text);
   });
 
-  // Model download progress (first-use auto-download) -> popup.
+  // Model download progress (first-use auto-download) goes to every window,
+  // since a download starts from a warm or from whichever window pressed.
+  // Pop-outs receive it through their surface's fan-out list.
   transcriptionService.on('model-progress', (progress: DictationModelProgress) => {
-    if (!context.mainWindow.isDestroyed()) {
-      context.mainWindow.webContents.send(IPC.TRANSCRIBE_MODEL_PROGRESS, progress);
-    }
+    broadcast(context.mainWindow, IPC.TRANSCRIBE_MODEL_PROGRESS, progress);
   });
 }

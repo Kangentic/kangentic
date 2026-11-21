@@ -25,6 +25,11 @@ msgstr "Parola alanlarında dikte kapalıdır"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
 #, fuzzy
+msgid "Finishing in another window"
+msgstr "Başka bir pencerede tamamlanıyor"
+
+#: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Inserting..."
 msgstr "Ekleniyor..."
 
