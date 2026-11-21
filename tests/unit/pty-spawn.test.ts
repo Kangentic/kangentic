@@ -19,11 +19,11 @@ import {
   recordSpawnFailure,
   FULL_REPAINT_ENV_KEY,
   SCROLL_SPEED_ENV_KEY,
+  REMOTE_LINK_REFUSAL_MESSAGE,
 } from '../../src/main/pty/spawn/pty-spawn';
-import { isRemoteLinkRefusal } from '../../src/main/pty/agent-launch-report';
 import { reportHandledError } from '../../src/main/analytics/error-reporting';
 import { trackEvent } from '../../src/main/analytics/analytics';
-import { preflightTagsOf, resetLaunchReports } from '../../src/main/pty/agent-launch-report';
+import { isRemoteLinkRefusal, preflightTagsOf, resetLaunchReports } from '../../src/main/pty/agent-launch-report';
 import { processNotStartedError } from '../../src/main/pty/host/root-pid-gate';
 import { fromPtyHostError, toPtyHostError } from '../../src/main/pty/host/protocol';
 import { buildSpawnClearPrelude } from '../../src/shared/paths';
@@ -852,10 +852,27 @@ describe('recordSpawnFailure', () => {
 
     expect(trackEvent).toHaveBeenCalledTimes(1);
     expect(reportHandledError).not.toHaveBeenCalled();
+    expect(vi.mocked(trackEvent).mock.calls[0][1]).toMatchObject({ source: 'pty_spawn', message: REMOTE_LINK_REFUSAL_MESSAGE });
 
     const realDiagnostic = diagnoseSpawnFailure({ err: new Error('spawn failed'), shellExe: 'bash', effectiveCwd: '/tmp', originalCwd: '/tmp' });
     recordSpawnFailure({ diagnostic: realDiagnostic, shellExe: 'bash', launchTags });
     expect(reportHandledError).toHaveBeenCalledTimes(1);
+  });
+
+  // The host service rewrites a refusal to name the host and its last connect's words, and a session
+  // whose relay registration was refused fails its spawn with that text.
+  it('counts a refused spawn under a fixed sentence, never the host\'s name or ssh\'s words', () => {
+    const named = fromPtyHostError(toPtyHostError(new HostUnreachableError(
+      'host-a',
+      'Lab box is not connected: dev@lab.example.test: Permission denied (publickey).',
+    )));
+    const diagnostic = diagnoseSpawnFailure({ err: named, shellExe: 'bash', effectiveCwd: '/tmp', originalCwd: '/tmp' });
+    recordSpawnFailure({ diagnostic, shellExe: 'bash', launchTags, remoteLinkRefusal: isRemoteLinkRefusal(named) });
+
+    const sent = JSON.stringify(vi.mocked(trackEvent).mock.calls[0][1]);
+    expect(sent).toContain(REMOTE_LINK_REFUSAL_MESSAGE);
+    expect(sent).not.toContain('Lab box');
+    expect(sent).not.toContain('lab.example.test');
   });
 
   it('still files a pty host that timed out on a spawn, which is ours to look at', () => {

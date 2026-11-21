@@ -532,7 +532,7 @@ test.describe('the Directory field', () => {
 test('shows a host that cannot be reached as its own reason, never as a missing folder', async () => {
   await addHost('Build server');
   await page.evaluate(() => {
-    (window as unknown as Record<string, unknown>).__mockSshFolderError = 'Kangentic has no connection set up for that host';
+    (window as unknown as Record<string, unknown>).__mockSshFolderError = 'Build server is not connected.';
   });
   await page.locator('[data-testid="sidebar-new-project-button"]').click();
   await page.locator('[data-testid="add-project-host"]').click();
@@ -540,6 +540,6 @@ test('shows a host that cannot be reached as its own reason, never as a missing 
   await form.locator('[data-testid="add-remote-project-folder"]').fill('/srv/api');
   await form.locator('[data-testid="add-remote-project-submit"]').click();
 
-  await expect(form.locator('[data-testid="add-remote-project-error"]')).toContainText('no connection set up');
+  await expect(form.locator('[data-testid="add-remote-project-error"]')).toContainText('Build server is not connected.');
   await expect(form.locator('[data-testid="add-remote-project-error"]')).not.toContainText('does not exist');
 });

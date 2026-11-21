@@ -187,7 +187,8 @@ itself the signal that the defaults are right.
 `source` discriminates the failure path: `uncaughtException`, `unhandledRejection`,
 `render-process-gone` (extras: `reason`, `exitCode`), `error_boundary` (extras: `boundary`,
 `panel`), `updater`, `pty_spawn` (extras: `shell`, a name from a fixed list and never a path,
-`cwdExists`, `shellExists`, `errno`, `platform`, `arch`), `pty_spawn_cwd_missing` (extra: `platform`),
+`cwdExists`, `shellExists`, `errno`, `platform`, `arch`; a spawn an SSH host's link refused sends
+the fixed message `A remote host link refused the spawn`, because its text names the host), `pty_spawn_cwd_missing` (extra: `platform`),
 `worktree_removal` (a worktree the task's leftover reap had left a process in could not be removed,
 which is counted here and never sent to Sentry; extras: `reason` (`reap_left_running`), `caller`,
 `profile`, `errno`, `platform`, each a fixed word, never a path),

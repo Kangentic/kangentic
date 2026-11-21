@@ -463,6 +463,8 @@ describe('spare worktrees', () => {
     const freshPath = path.join(worktreesRoot(), String(task.display_id));
     const row = repository.getById(task.id);
     expect(moveAside).toHaveBeenCalledWith(sparePath, expect.objectContaining({ ownCreation: true }));
+    // The in-place removal names itself, so a failure there is filed under the spare.
+    expect(remove).toHaveBeenCalledWith(sparePath, { removalProfile: 'fast', ownCreation: true, caller: 'spare' });
     expect(row?.worktree_path).toBe(freshPath);
     expect(git(freshPath, ['rev-parse', '--abbrev-ref', 'HEAD'])).toBe(row?.branch_name);
     // The spare is still on disk and registered, but holds no branch.

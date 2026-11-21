@@ -1708,6 +1708,29 @@ describe('WorktreeManager -- stale branch recovery', () => {
     expect(worktreeFolderFromPath(String(removeCall!.args[2]))).toBe('7');
   });
 
+  it('names the stale-directory clear create_clear, so a failure there is filed under the creation', async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.mkdirSync).mockReturnValue(undefined);
+    mockProjectGit.raw.mockImplementation((args: string[]) => (
+      args[0] === 'rev-parse' && args[1] === '--verify'
+        ? Promise.reject(new Error('not found'))
+        : Promise.resolve('')
+    ));
+    const mgr = new WorktreeManager('/project');
+    const internalRemoval = vi.spyOn(
+      mgr as unknown as { removeWorktreeInternal: () => Promise<WorktreeRemovalOutcome> },
+      'removeWorktreeInternal',
+    ).mockResolvedValue({ removed: true, timedOut: false, holders: [] });
+
+    await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'));
+
+    expect(internalRemoval).toHaveBeenCalledTimes(1);
+    expect(internalRemoval).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ ownCreation: true, caller: 'create_clear' }),
+    );
+  });
+
   it('clears its own stale directory while its creation holds the path in the registry', async () => {
     // ensureTaskWorktree holds the path for the whole creation, and an in-lock
     // removal refuses a held path. The creation's own stale-directory clear is

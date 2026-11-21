@@ -43,6 +43,8 @@ const { callOrder, state } = vi.hoisted(() => ({
     tasks: [] as Array<{ id: string; worktree_path: string | null; session_id: string | null }>,
     /** Folders under `.kangentic/worktrees` that no board task names. */
     unlistedWorktrees: [] as string[],
+    /** The options each worktree removal was called with, by worktree path. */
+    removalOptions: new Map<string, unknown>(),
   },
 }));
 
@@ -124,8 +126,9 @@ vi.mock('../../src/main/git/worktree-manager', () => ({
   WorktreeManager: class {
     static clearQueue = vi.fn();
     withLock = async (job: () => Promise<unknown>) => job();
-    removeWorktree = async (worktreePath: string) => {
+    removeWorktree = async (worktreePath: string, options?: unknown) => {
       callOrder.push(`removeWorktree:${worktreePath}`);
+      state.removalOptions.set(worktreePath, options);
       return true;
     };
   },
@@ -235,6 +238,7 @@ import { cleanupProject } from '../../src/main/ipc/handlers/projects';
 import { clearWorktreeLinks } from '../../src/main/git/worktree-links';
 import { isGitRepo, isInsideWorktree } from '../../src/main/git/git-checks';
 import { prepareWorktreeForRemoval } from '../../src/main/git/worktree-manager';
+import { reapTaskLeftovers } from '../../src/main/ipc/helpers';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 
 const PROJECT_ID = 'project-1';
@@ -274,6 +278,7 @@ beforeEach(() => {
   state.existingPaths.clear();
   state.tasks = [];
   state.unlistedWorktrees = [];
+  state.removalOptions.clear();
   // The project folder and its `.kangentic/` both exist, so step 7 reaches the removal.
   state.existingPaths.add(PROJECT_PATH);
   state.existingPaths.add(KANGENTIC_DIR);
@@ -429,6 +434,24 @@ describe('cleanupProject discards the project spare worktrees', () => {
 
     expect(discardProjectSparesMock).toHaveBeenCalledTimes(1);
     expect(discardProjectSparesMock).toHaveBeenCalledWith(expect.anything(), PROJECT_PATH, null);
+  });
+
+  it('removes each task worktree as project_delete, flagging reapLeftRunning only for the task the reap left a process in', async () => {
+    const firstWorktree = path.join(KANGENTIC_DIR, 'worktrees', 'task-one');
+    const secondWorktree = path.join(KANGENTIC_DIR, 'worktrees', 'task-two');
+    vi.mocked(isGitRepo).mockReturnValue(true);
+    state.existingPaths.add(firstWorktree);
+    state.existingPaths.add(secondWorktree);
+    state.tasks = [
+      { id: 'task-1', worktree_path: firstWorktree, session_id: null },
+      { id: 'task-2', worktree_path: secondWorktree, session_id: null },
+    ];
+    vi.mocked(reapTaskLeftovers).mockResolvedValueOnce({ tasksLeftRunningInWorktree: new Set(['task-1']) });
+
+    await cleanupProject(makeContext(), PROJECT_ID, PROJECT_PATH);
+
+    expect(state.removalOptions.get(firstWorktree)).toEqual({ caller: 'project_delete', reapLeftRunning: true });
+    expect(state.removalOptions.get(secondWorktree)).toEqual({ caller: 'project_delete', reapLeftRunning: false });
   });
 
   it('discards nothing for a folder that is not a git repository, which has no worktrees to hold spares', async () => {

@@ -353,9 +353,7 @@ export class RemoteHostService {
       return await this.deps.send(request);
     } catch (error) {
       // By name: the router's refusal crosses the pty host's transport as a plain Error.
-      if (error instanceof Error && error.name === HOST_UNREACHABLE_ERROR_NAME) {
-        throw new HostUnreachableError(request.hostId, this.notConnectedSentence(request.hostId), { cause: error });
-      }
+      if (error instanceof Error && error.name === HOST_UNREACHABLE_ERROR_NAME) throw this.notConnectedError(request.hostId, error);
       throw error;
     }
   }
@@ -364,10 +362,12 @@ export class RemoteHostService {
    * Resolves once a connect under way for the host has added its link, so a start in the first seconds
    * after launch reaches the host rather than a link that does not exist yet. Bounded by
    * `HOST_READY_WAIT_MS`. A connect that fails, one that a disconnect overtook, and one still running at
-   * the bound each reject with a `HostUnreachableError` that says so. A Reconnect queued behind a dropped
-   * connect is waited for in its place, within the same bound. With no connect under way it waits for
-   * nothing. A connect never asks the helper itself (the install runs `ssh` directly), so no request here
-   * waits on a connect that waits on it.
+   * the bound each reject with a `HostUnreachableError` that says so, unless the host was already added
+   * before it: a Reconnect, or the retry after a pty host restart, runs while the host still counts as
+   * connected, and the router then holds whatever link there is, so the request goes on and the router
+   * answers. A Reconnect queued behind a dropped connect is waited for in its place, within the same
+   * bound. With no connect under way it waits for nothing. A connect never asks the helper itself (the
+   * install runs `ssh` directly), so no request here waits on a connect that waits on it.
    */
   private async whenReady(hostId: string): Promise<void> {
     let pending = this.pendingConnect(hostId);
@@ -386,16 +386,22 @@ export class RemoteHostService {
         } catch (error) {
           pending = this.newerConnect(hostId, current);
           if (pending) continue;
-          throw new HostUnreachableError(hostId, this.notConnectedSentence(hostId), { cause: error });
+          if (this.connected.has(hostId)) return;
+          throw this.notConnectedError(hostId, error);
         }
-        if (outcome === 'timeout') throw new HostUnreachableError(hostId, `${this.hostName(hostId)} is still connecting.`);
         if (this.connected.has(hostId)) return;
+        if (outcome === 'timeout') throw new HostUnreachableError(hostId, `${this.hostName(hostId)} is still connecting.`);
         pending = this.newerConnect(hostId, current);
       }
     } finally {
       clearTimeout(timer);
     }
-    throw new HostUnreachableError(hostId, this.notConnectedSentence(hostId));
+    // The connect it waited on ended without adding the host: a disconnect overtook it.
+    throw this.notConnectedError(hostId);
+  }
+
+  private notConnectedError(hostId: string, cause?: unknown): HostUnreachableError {
+    return new HostUnreachableError(hostId, this.notConnectedSentence(hostId), cause === undefined ? undefined : { cause });
   }
 
   /** A queued Reconnect first: the connect it waits behind was dropped and will not add the link. */

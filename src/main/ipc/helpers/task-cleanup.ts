@@ -3,7 +3,7 @@ import path from 'node:path';
 import PQueue from 'p-queue';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
-import { WorktreeManager, prepareWorktreeForRemoval, GitQueuePriority, type WorktreeRemovalCaller } from '../../git/worktree-manager';
+import { WorktreeManager, prepareWorktreeForRemoval, GitQueuePriority, type WorktreeRemovalCaller, type WorktreeRemovalOptions } from '../../git/worktree-manager';
 import type { LeftoverProcessEntry } from '../../pty/process-tag/tagged-reap';
 import { waitForWorktreeCreation } from '../../git/worktree-creation-registry';
 import { scheduleRemovedWorktreeDeletion } from '../../git/removed-worktrees';
@@ -328,7 +328,7 @@ export async function retryDoneWorktreeRemoval(
   projectPath: string | null,
   taskId: string,
   /** The Done move's reap left a process in the worktree, and this retry comes before anything says it ended. */
-  options: { reapLeftRunning?: boolean } = {},
+  options: Pick<WorktreeRemovalOptions, 'reapLeftRunning'> = {},
 ): Promise<boolean> {
   if (!projectPath) return false;
   try {
@@ -382,7 +382,7 @@ export function scheduleDoneWorktreeRemovalRetry(
   projectPath: string | null,
   taskId: string,
   delayMs: number = DONE_REMOVAL_RETRY_DELAY_MS,
-  options: { reapLeftRunning?: boolean } = {},
+  options: Pick<WorktreeRemovalOptions, 'reapLeftRunning'> = {},
 ): void {
   if (!projectPath) return;
   const timer = setTimeout(() => {
@@ -709,7 +709,7 @@ export async function deleteTaskWorktree(
    * reap before it left a process in the worktree. Both reach the in-place
    * removal's failure report, never the move aside, which reports nothing.
    */
-  options: { caller?: Extract<WorktreeRemovalCaller, 'done_fallback' | 'done_retry'>; reapLeftRunning?: boolean } = {},
+  options: Pick<WorktreeRemovalOptions, 'reapLeftRunning'> & { caller?: Extract<WorktreeRemovalCaller, 'done_fallback' | 'done_retry'> } = {},
 ): Promise<boolean> {
   const resolvedProjectPath = projectPath ?? context.currentProjectPath;
   if (!task.worktree_path || !resolvedProjectPath) return false;

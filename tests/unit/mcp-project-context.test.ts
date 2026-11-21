@@ -23,7 +23,7 @@ vi.mock('../../src/main/ipc/helpers', () => ({
   autoSpawnForTask: vi.fn(() => Promise.resolve()),
   // The MCP delete path reaps what the session left running before it removes
   // the worktree. Inert here: the ordering is pinned in the reap wiring tests.
-  reapTaskLeftovers: vi.fn(() => Promise.resolve(({ tasksLeftRunningInWorktree: new Set<string>() }))),
+  reapTaskLeftovers: vi.fn(() => Promise.resolve({ tasksLeftRunningInWorktree: new Set<string>() })),
 }));
 
 // The MCP delete closes the task's pop-outs and offscreen lane once its
@@ -1560,6 +1560,60 @@ describe('buildCommandContextForProject - onTaskDeleted worktree teardown orderi
       'removeWorktree',
       'withLock:exit',
     ]);
+  });
+
+  // The removal's failure report is routed on `reapLeftRunning`: a process the reap
+  // left in the worktree is a tracked event, not a Sentry defect. The MCP delete
+  // names itself `mcp_delete` and passes the reap's verdict for this task.
+  it.each([
+    { reapHeldTask: true, expectedReapLeftRunning: true, name: 'the reap left a process running in the worktree' },
+    { reapHeldTask: false, expectedReapLeftRunning: false, name: 'the reap left nothing running in the worktree' },
+  ])('removes the worktree as mcp_delete with reapLeftRunning $expectedReapLeftRunning when $name', async ({ reapHeldTask, expectedReapLeftRunning }) => {
+    const removeWorktreeMock = vi.fn(async () => false);
+    vi.mocked(WorktreeManager).mockImplementationOnce(function mockWorktreeManager() {
+      return {
+        withLock: vi.fn(async (fn: () => Promise<void>) => { await fn(); }),
+        removeWorktree: removeWorktreeMock,
+        pruneWorktrees: vi.fn(async () => {}),
+        removeBranch: vi.fn(async () => {}),
+      };
+    } as unknown as typeof WorktreeManager);
+    vi.mocked(reapTaskLeftovers).mockImplementationOnce(async () => ({
+      tasksLeftRunningInWorktree: new Set<string>(reapHeldTask ? ['task-9'] : []),
+    }));
+
+    const project = makeProject({ id: DEFAULT_ID, path: PROJECT_PATH });
+    const ipcContext = {
+      projectRepo: { getById: vi.fn(() => project), list: vi.fn(() => [project]) },
+      mainWindow: { isDestroyed: () => false, webContents: { send: vi.fn() } },
+      boardConfigManager: { writeBackForProject: vi.fn() },
+      boardEvents: { emitBoardChanged: vi.fn() },
+      configManager: { getEffectiveConfig: vi.fn(() => ({ git: { autoCleanup: false } })) },
+      sessionManager: {
+        kill: vi.fn(),
+        awaitExit: vi.fn(() => Promise.resolve()),
+        remove: vi.fn(),
+        removeByTaskId: vi.fn(),
+      },
+    } as unknown as IpcContext;
+
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID)!;
+    const worktreePath = '/projects/example/.kangentic/worktrees/task-9';
+    context.onTaskDeleted({
+      id: 'task-9',
+      title: 'Task Nine',
+      session_id: null,
+      worktree_path: worktreePath,
+      branch_name: null,
+    } as never);
+
+    await vi.waitFor(() => {
+      expect(removeWorktreeMock).toHaveBeenCalledTimes(1);
+    });
+    expect(removeWorktreeMock).toHaveBeenCalledWith(
+      worktreePath,
+      expect.objectContaining({ caller: 'mcp_delete', reapLeftRunning: expectedReapLeftRunning }),
+    );
   });
 
   // Pins the `await spawnsSettled` in onTaskDeleted. `removeByTaskId` resolves

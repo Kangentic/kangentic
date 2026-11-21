@@ -268,7 +268,8 @@ export function removalPathClassOf(worktreePath: string, failedPath: unknown): R
   if (typeof failedPath !== 'string' || failedPath === '') return 'none';
   const relative = path.relative(path.resolve(worktreePath), path.resolve(failedPath));
   if (relative === '') return 'root';
-  if (relative.startsWith('..') || path.isAbsolute(relative)) return 'other';
+  // A climb is `..` as a whole segment: a child named `..cache` is inside the worktree.
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return 'other';
   const segments = relative.split(/[\\/]+/);
   if (segments[0] === '.git') return '.git';
   if (segments.includes('node_modules')) return 'node_modules';

@@ -127,6 +127,24 @@ describe('retryDoneWorktreeRemoval', () => {
     expect(updates.filter((patch) => patch.worktree_path === null)).toEqual([]);
   });
 
+  describe('the in-place removal it falls back to', () => {
+    beforeEach(() => {
+      taskRows.set('task-1', { id: 'task-1', swimlane_id: 'lane-done', worktree_path: WORKTREE, branch_name: null });
+      // The move aside fails, so the removal runs in place.
+      moveWorktreeAside.mockResolvedValue(false);
+    });
+
+    it('names itself done_retry and carries the reap verdict when the reap left a process in the worktree', async () => {
+      await retryDoneWorktreeRemoval(context(), PROJECT_PATH, 'task-1', { reapLeftRunning: true });
+      expect(removeWorktree).toHaveBeenCalledWith(WORKTREE, { removalProfile: 'moderate', caller: 'done_retry', reapLeftRunning: true });
+    });
+
+    it('reports reapLeftRunning false when it is given no options', async () => {
+      await retryDoneWorktreeRemoval(context(), PROJECT_PATH, 'task-1');
+      expect(removeWorktree).toHaveBeenCalledWith(WORKTREE, { removalProfile: 'moderate', caller: 'done_retry', reapLeftRunning: false });
+    });
+  });
+
   // These two run against the real withTaskLock (nothing here mocks it): the
   // lock is what makes the re-read in retryDoneWorktreeRemoval current.
   describe('under the task lock', () => {
@@ -182,6 +200,21 @@ describe('scheduleDoneWorktreeRemovalRetry', () => {
       // One attempt only.
       await vi.advanceTimersByTimeAsync(DONE_REMOVAL_RETRY_DELAY_MS * 3);
       expect(moveWorktreeAside).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('passes the reap verdict through to the in-place removal when the timer fires', async () => {
+    vi.useFakeTimers();
+    try {
+      taskRows.set('task-1', { id: 'task-1', swimlane_id: 'lane-done', worktree_path: WORKTREE, branch_name: null });
+      moveWorktreeAside.mockResolvedValue(false);
+      scheduleDoneWorktreeRemovalRetry(context(), PROJECT_PATH, 'task-1', DONE_REMOVAL_RETRY_DELAY_MS, { reapLeftRunning: true });
+
+      await vi.advanceTimersByTimeAsync(DONE_REMOVAL_RETRY_DELAY_MS);
+      await vi.waitFor(() => expect(removeWorktree).toHaveBeenCalledTimes(1));
+      expect(removeWorktree).toHaveBeenCalledWith(WORKTREE, { removalProfile: 'moderate', caller: 'done_retry', reapLeftRunning: true });
     } finally {
       vi.useRealTimers();
     }
