@@ -244,9 +244,14 @@ describe('what runs here', () => {
     expect(runnableAutomationCounts(list, NO_AGENT_COLUMN)).toEqual({ enter: 1, turn_end: 0, exit: 1 });
   });
 
-  it('counts no enter rows on To Do, where an enter automation can never fire', () => {
-    const list = [draft({ trigger: 'enter' }), draft({ id: 'a2', trigger: 'exit' })];
-    expect(runnableAutomationCounts(list, TODO_COLUMN)).toEqual({ enter: 0, turn_end: 0, exit: 1 });
+  it('counts the enter rows To Do can run, and not the ones it refuses', () => {
+    // #1141: a webhook runs on enter in To Do; a script has no worktree there.
+    const list = [
+      draft({ trigger: 'enter' }),
+      draft({ id: 'a2', type: 'run_script', trigger: 'enter', config: { script: 'echo hi' } }),
+      draft({ id: 'a3', trigger: 'exit' }),
+    ];
+    expect(runnableAutomationCounts(list, TODO_COLUMN)).toEqual({ enter: 1, turn_end: 0, exit: 1 });
   });
 
   it('names the rows a count covers, for the tooltip', () => {

@@ -452,34 +452,60 @@ test.describe('Column automations', () => {
     await expect(message.locator('[data-testid="column-automation-enabled"]')).toHaveAttribute('aria-checked', 'true');
   });
 
-  // 6 ─ To Do and Done take exit rows only ───────────────────────────────────
+  // 6 ─ To Do and Done: Notify and Webhook on enter, no turn end (#1141) ─────
 
-  test('To Do renders the exit group only, with the reason where On enter and On agent turn end would be', async () => {
+  test('To Do offers On enter with the refused types disabled, and no turn-end group', async () => {
     await openColumn('To Do');
 
     await expect(dialog().locator('[data-testid="column-automation-group"]')).toHaveCount(3);
-    const enterGroup = dialog().locator('[data-testid="column-automation-group"][data-trigger="enter"]');
-    await expect(enterGroup).toContainText('Nothing runs when a task enters To Do');
-    // No Add control in a blocked group: it would only build something inert.
-    await expect(enterGroup.locator('[data-testid="column-automation-add"]')).toHaveCount(0);
     const turnEndGroup = dialog().locator('[data-testid="column-automation-group"][data-trigger="turn_end"]');
     await expect(turnEndGroup).toContainText('Nothing runs at a turn end in To Do.');
     await expect(turnEndGroup.locator('[data-testid="column-automation-add"]')).toHaveCount(0);
-    await expect(dialog().locator('[data-testid="column-automation-add"][data-trigger="exit"]')).toBeVisible();
 
-    await addThroughPicker('exit', 'notify');
-    await editDialog().locator('[data-testid="edit-automation-name"]').fill('Reset notice');
-    // The dialog's Trigger offers On exit only, and the blocked options are
-    // disabled rather than absent, so the reader can see the rule.
+    // The enter group has its Add, and the picker shows the types that cannot
+    // run here disabled with the reason, rather than hiding them.
+    await dialog().locator('[data-testid="column-automation-add"][data-trigger="enter"]').click();
+    const picker = page.locator('[data-testid="column-automation-picker"]');
+    await expect(picker).toBeVisible();
+    const sendOption = picker.locator('[data-testid="column-automation-picker-type"][data-type="send_message"]');
+    await expect(sendOption).toHaveAttribute('aria-disabled', 'true');
+    await expect(sendOption).toContainText('No agent runs in To Do.');
+    const scriptOption = picker.locator('[data-testid="column-automation-picker-type"][data-type="run_script"]');
+    await expect(scriptOption).toHaveAttribute('aria-disabled', 'true');
+    await expect(scriptOption).toContainText('A task in To Do has no worktree to run in.');
+    await picker.locator('[data-testid="column-automation-picker-type"][data-type="notify"]').click();
+    await expect(editDialog()).toBeVisible();
+    await editDialog().locator('[data-testid="edit-automation-name"]').fill('Back to To Do');
     await openTriggerSection();
-    await expect(editDialog().locator('[data-testid="edit-automation-trigger-enter"]')).toBeDisabled();
+    await expect(editDialog().locator('[data-testid="edit-automation-trigger-enter"]')).toHaveAttribute('aria-checked', 'true');
     await expect(editDialog().locator('[data-testid="edit-automation-trigger-turn_end"]')).toBeDisabled();
-    await expect(editDialog().locator('[data-testid="edit-automation-trigger-exit"]')).toHaveAttribute('aria-checked', 'true');
     await editDialog().locator('[data-testid="edit-automation-done"]').click();
     await saveManager();
 
     const rows = await readColumnRows('To Do');
-    expect(rows.map((entry) => `${entry.name}:${entry.trigger}`)).toEqual(['Reset notice:exit']);
+    expect(rows.map((entry) => `${entry.name}:${entry.trigger}`)).toEqual(['Back to To Do:enter']);
+  });
+
+  test('a Send message row on enter in Done stays listed with its switch off, and its dialog disables On enter', async () => {
+    await seedColumn('Done', [
+      { name: 'Ask for a summary', type: 'send_message', trigger: 'enter', config: { message: 'Summarize', mode: 'immediate' } },
+    ]);
+    await openColumn('Done');
+
+    const summary = row('Ask for a summary');
+    await expect(summary).toHaveAttribute('data-can-run', 'false');
+    await expect(summary.locator('[data-testid="column-automation-enabled"]')).toHaveAttribute('aria-checked', 'false');
+
+    await summary.locator('[data-testid="column-automation-edit"]').click();
+    await expect(editDialog()).toBeVisible();
+    await openTriggerSection();
+    const enterOption = editDialog().locator('[data-testid="edit-automation-trigger-enter"]');
+    await expect(enterOption).toBeDisabled();
+    await expect(enterOption).toHaveAccessibleDescription('No agent runs in Done.');
+    // On exit stays open, so the row can be moved where it runs.
+    await expect(editDialog().locator('[data-testid="edit-automation-trigger-exit"]')).toBeEnabled();
+    await editDialog().getByRole('button', { name: 'Cancel' }).click();
+    await cancelManager();
   });
 
   // 7 ─ Delete, and Cancel undoing it ────────────────────────────────────────
@@ -738,6 +764,10 @@ test.describe('Column automations', () => {
       { name: 'B', type: 'run_script', trigger: 'enter', config: { script: 'echo b' } },
       { name: 'C', type: 'run_script', trigger: 'enter', enabled: false, config: { script: 'echo c' } },
     ]);
+    await seedColumn('To Do', [
+      { name: 'Reopen', type: 'webhook', trigger: 'enter', config: { url: 'https://tracker.example.com/reopen' } },
+      { name: 'Script', type: 'run_script', trigger: 'enter', config: { script: 'echo no' } },
+    ]);
     await openColumn('Executing');
     await openOverview();
 
@@ -760,12 +790,14 @@ test.describe('Column automations', () => {
     // A switched-off row is not counted: 3 rows, 2 of them runnable.
     await expect(overviewRow('Executing').locator('[data-enter]')).toHaveAttribute('data-enter', '2');
 
-    // To Do has no agent at all, so those cells dash with a reason rather than
-    // claiming a default they could never use. An enter row can never fire
-    // there either.
+    // To Do has no agent at all, so its turn-end cell dashes with a reason
+    // rather than claiming a count it could never use. Its On enter cell counts
+    // what will run there (#1141): the webhook, not the script, which has no
+    // worktree in To Do.
     const todo = overviewRow('To Do');
-    await expect(todo.locator('[data-enter] [data-state="not-applicable"]')).toBeVisible();
-    await expect(todo.locator('[data-enter] [data-state="not-applicable"]')).toHaveAccessibleDescription(/.+/);
+    await expect(todo.locator('[data-turn-end] [data-state="not-applicable"]')).toBeVisible();
+    await expect(todo.locator('[data-turn-end] [data-state="not-applicable"]')).toHaveAccessibleDescription(/.+/);
+    await expect(todo.locator('[data-enter]')).toHaveAttribute('data-enter', '1');
     await expect(todo.locator('[data-exit] [data-state="unchanged"]')).toHaveText('0');
 
     // The two booleans render the same switch the column page uses, read-only.

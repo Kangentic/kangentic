@@ -134,6 +134,10 @@ msgstr ""
 msgid "A task cannot wait for itself."
 msgstr "Úloha nemůže čekat sama na sebe."
 
+#: src/shared/automation-manifest.ts
+msgid "A task in {columnName} has no worktree to run in."
+msgstr ""
+
 #: src/shared/workflow-refusals.ts
 #, fuzzy
 msgid "A task visits at least one column."
@@ -723,6 +727,10 @@ msgstr "Další terminál v libovolném projektu"
 msgid "Next terminal in this project"
 msgstr "Další terminál v tomto projektu"
 
+#: src/shared/automation-manifest.ts
+msgid "No agent runs in {columnName}."
+msgstr ""
+
 #: src/shared/automation-describe.ts
 #, fuzzy
 msgid "No message yet."
@@ -757,11 +765,6 @@ msgstr "U tohoto spouštěče není k dispozici."
 #, fuzzy
 msgid "Nothing runs at a turn end in {column}."
 msgstr "Na konci tahu ve sloupci {column} se nic nespustí."
-
-#: src/shared/automation-manifest.ts
-#, fuzzy
-msgid "Nothing runs when a task enters To Do or Done."
-msgstr "Při vstupu úkolu do sloupce To Do nebo Done se nic nespustí."
 
 #: src/shared/automation-describe.ts
 #, fuzzy

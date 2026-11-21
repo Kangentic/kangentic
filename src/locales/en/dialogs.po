@@ -1800,10 +1800,6 @@ msgstr "Not a branch, tag or commit SHA"
 msgid "Not image data"
 msgstr "Not image data"
 
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-msgid "Not offered on this trigger."
-msgstr "Not offered on this trigger."
-
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 msgid "not readable"
 msgstr "not readable"
@@ -1831,12 +1827,6 @@ msgstr "Nothing new on {baseBranch}."
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Nothing runs at a turn end in {terminalName}."
 msgstr "Nothing runs at a turn end in {terminalName}."
-
-#: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#: src/renderer/components/dialogs/BoardManagerDialog.tsx
-msgid "Nothing runs when a task enters {columnName}."
-msgstr "Nothing runs when a task enters {columnName}."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Nothing to search by"

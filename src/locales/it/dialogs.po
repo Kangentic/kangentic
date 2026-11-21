@@ -2176,11 +2176,6 @@ msgstr ""
 msgid "Not image data"
 msgstr "Dati non di immagine"
 
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
-msgid "Not offered on this trigger."
-msgstr "Non disponibile per questo trigger."
-
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 #, fuzzy
 msgid "not readable"
@@ -2215,13 +2210,6 @@ msgstr "Nessuna novità su {baseBranch}."
 #, fuzzy
 msgid "Nothing runs at a turn end in {terminalName}."
 msgstr "Nessuna esecuzione a fine turno in {terminalName}."
-
-#: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
-msgid "Nothing runs when a task enters {columnName}."
-msgstr "Non viene eseguito nulla quando un'attività entra in {columnName}."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy

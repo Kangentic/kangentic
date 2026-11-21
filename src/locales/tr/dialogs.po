@@ -2176,11 +2176,6 @@ msgstr ""
 msgid "Not image data"
 msgstr "Görüntü verisi değil"
 
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
-msgid "Not offered on this trigger."
-msgstr "Bu tetikleyicide sunulmuyor."
-
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 #, fuzzy
 msgid "not readable"
@@ -2215,13 +2210,6 @@ msgstr "{baseBranch} dalında yeni bir şey yok."
 #, fuzzy
 msgid "Nothing runs at a turn end in {terminalName}."
 msgstr "{terminalName} içinde tur sonunda hiçbir şey çalışmaz."
-
-#: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
-msgid "Nothing runs when a task enters {columnName}."
-msgstr "Bir görev {columnName} sütununa girdiğinde hiçbir şey çalışmaz."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy

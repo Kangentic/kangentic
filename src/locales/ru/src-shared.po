@@ -134,6 +134,10 @@ msgstr ""
 msgid "A task cannot wait for itself."
 msgstr "Задача не может ждать саму себя."
 
+#: src/shared/automation-manifest.ts
+msgid "A task in {columnName} has no worktree to run in."
+msgstr ""
+
 #: src/shared/workflow-refusals.ts
 #, fuzzy
 msgid "A task visits at least one column."
@@ -723,6 +727,10 @@ msgstr "Следующий терминал в любом проекте"
 msgid "Next terminal in this project"
 msgstr "Следующий терминал в этом проекте"
 
+#: src/shared/automation-manifest.ts
+msgid "No agent runs in {columnName}."
+msgstr ""
+
 #: src/shared/automation-describe.ts
 #, fuzzy
 msgid "No message yet."
@@ -757,11 +765,6 @@ msgstr "Недоступно для этого триггера."
 #, fuzzy
 msgid "Nothing runs at a turn end in {column}."
 msgstr "В конце хода в {column} ничего не выполняется."
-
-#: src/shared/automation-manifest.ts
-#, fuzzy
-msgid "Nothing runs when a task enters To Do or Done."
-msgstr "При поступлении задачи в To Do или Done ничего не выполняется."
 
 #: src/shared/automation-describe.ts
 #, fuzzy

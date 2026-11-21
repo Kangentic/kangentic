@@ -215,7 +215,7 @@ A failed **Send message to agent** row on exit has no Run again. The task has le
 and its agent now belongs to the next column, so the message is not sent there. Move the task back
 and out again to send it.
 
-**To Do and Done** run exit automations only. Nothing runs when a task enters them.
+**To Do and Done** run **Notify me** and **Call webhook** when a task enters them, for "tell me when it's done" or a webhook that closes the issue in your tracker. They run after the move has stopped the agent and taken the task's worktree away, so the other types are off there, each with its reason. Add automation shows them disabled, and a row of one keeps its switch off. Only moving a task there runs them, not promoting it from the Backlog or creating it in To Do. Nothing runs at a turn end in either column, and exit automations work as in any column.
 
 **Holding one task.** Right-click a card and choose **Pause automations** to keep the board from
 advancing it, for example while it waits on CI. While paused, no automation runs for that task in

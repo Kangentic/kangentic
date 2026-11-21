@@ -41,7 +41,7 @@ const AUTOMATION_ROW_SCHEMA = z.object({
   id: z.string().optional().describe('Existing automation id, to keep this row\'s identity and run history across the write. Omit for a new row. Read one from kangentic_list_automations.'),
   name: z.string().max(200).describe('Label for this automation, unique on its column ignoring case. Shown in the Column Manager and in the run log.'),
   type: z.enum(AUTOMATION_TYPE_VALUES).describe('What this automation does. send_message types a message at the column\'s agent; run_script runs a shell script in the task\'s worktree; webhook calls a URL; notify raises a desktop notification; move_to_column (on "turn_end" only) moves the task to another column with a message for the agent there, and ends the list.'),
-  on: z.enum(AUTOMATION_TRIGGERS).optional().describe('When it runs: "enter" as a task ENTERS this column, "turn_end" each time the column\'s agent FINISHES A TURN there, "exit" as the task LEAVES. Defaults to "enter". To Do and Done can only run exit automations.'),
+  on: z.enum(AUTOMATION_TRIGGERS).optional().describe('When it runs: "enter" as a task ENTERS this column, "turn_end" each time the column\'s agent FINISHES A TURN there, "exit" as the task LEAVES. Defaults to "enter". On enter, To Do and Done run only notify and webhook; they run no "turn_end" rows.'),
   enabled: z.boolean().optional().describe('Defaults to true. A switched-off automation stays in the list and is skipped.'),
   // The schema takes a sentence or an object and refuses anything else (a list,
   // a number) in zod's words. What is inside the object is checked in the

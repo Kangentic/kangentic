@@ -205,7 +205,20 @@ export interface AutomationManifestEntry {
    * so the rows after it no longer apply. Move to column is the one.
    */
   endsGroup?: boolean;
+  /**
+   * Whether the type runs on enter in To Do and Done, and if not, why (#1141).
+   * A move into either column resets or suspends the task's agent and takes its
+   * worktree away before the enter group runs, so only a type that needs
+   * neither can run there. Required, so a new type decides rather than
+   * inheriting an answer: `'runs'` (Notify, Webhook), `'no-agent'` (no agent
+   * runs there to receive it), `'no-worktree'` (Run script: the reset removes
+   * the worktree and Done sets it aside). Read through `systemColumnEnterRefusal`.
+   */
+  systemColumnEnter: SystemColumnEnter;
 }
+
+/** How a type answers On task enter in To Do and Done (`AutomationManifestEntry.systemColumnEnter`). */
+export type SystemColumnEnter = 'runs' | 'no-agent' | 'no-worktree';
 
 /**
  * Keys the `kangentic.json` row shape owns, so no adapter may declare a field
@@ -259,6 +272,7 @@ export const AUTOMATION_MANIFEST: Record<AutomationType, AutomationManifestEntry
     needs: ['agent'],
     timeoutMs: null,
     retry: null,
+    systemColumnEnter: 'no-agent',
     fields: [
       {
         key: 'message',
@@ -292,6 +306,8 @@ export const AUTOMATION_MANIFEST: Record<AutomationType, AutomationManifestEntry
     needs: [],
     timeoutMs: DEFAULT_SCRIPT_TIMEOUT_MINUTES * 60_000,
     retry: null,
+    // It would fall back to the project checkout, which is not the task's.
+    systemColumnEnter: 'no-worktree',
     fields: [
       {
         key: 'script',
@@ -337,6 +353,7 @@ export const AUTOMATION_MANIFEST: Record<AutomationType, AutomationManifestEntry
     needs: [],
     timeoutMs: 30_000,
     retry: { attempts: 3, on: 'network-or-retryable-status' },
+    systemColumnEnter: 'runs',
     fields: [
       { key: 'url', label: msg({ message: 'URL', context: 'automation field' }), kind: 'text', escape: 'url', templateVariables: true, placeholder: 'https://hooks.example.com/abc' },
       {
@@ -378,6 +395,7 @@ export const AUTOMATION_MANIFEST: Record<AutomationType, AutomationManifestEntry
     needs: [],
     timeoutMs: null,
     retry: null,
+    systemColumnEnter: 'runs',
     fields: [
       // {{title}}, not {{taskTitle}}: the latter belongs to the separate
       // Shortcut command system in `src/shared/template-vars.ts`, and is one of
@@ -401,6 +419,8 @@ export const AUTOMATION_MANIFEST: Record<AutomationType, AutomationManifestEntry
     // row never waits on that agent's first turn.
     timeoutMs: null,
     retry: null,
+    // Never reached: `triggers` refuses enter first, with its own reason.
+    systemColumnEnter: 'no-agent',
     triggers: ['turn_end'],
     // The hover tip on the dialog's disabled On task enter and On task exit,
     // so it stays one short line. The why (on enter or exit the task is
@@ -438,6 +458,8 @@ export const AUTOMATION_MANIFEST: Record<AutomationType, AutomationManifestEntry
     needs: [],
     timeoutMs: null,
     retry: null,
+    // It starts an agent, and To Do and Done never start one.
+    systemColumnEnter: 'no-agent',
     fields: [
       { key: 'promptTemplate', label: msg({ message: 'Prompt', context: 'automation field' }), kind: 'textarea', escape: 'none', templateVariables: true, rows: 3 },
     ],
@@ -489,17 +511,38 @@ export function canColumnRun(
   trigger: AutomationTrigger,
   row: AutomationRowFacts = {},
 ): AutomationRunnability {
-  const group = canTriggerRun(column, trigger);
-  if (!group.ok) return group;
-  if (!isTypeOfferedOnTrigger(type, trigger)) {
-    return { ok: false, reason: AUTOMATION_MANIFEST[type].triggerUnavailableReason ?? msg`Not offered on this trigger.` };
-  }
+  const offered = canColumnOfferTrigger(type, column, trigger);
+  if (!offered.ok) return offered;
   if (AUTOMATION_MANIFEST[type].needs.includes('agent') && !column.autoSpawn) {
     return { ok: false, reason: msg`Start an agent here is off.` };
   }
   if (trigger === 'turn_end' && row.textMatchSource === 'user' && column.reportsUserMessages === false) {
     return { ok: false, reason: USER_MESSAGES_UNREPORTED_REASON };
   }
+  return { ok: true };
+}
+
+/**
+ * The first half of `canColumnRun`: whether this column offers this type on
+ * this trigger at all, before the column's agent setting and the row's own
+ * settings. The Edit automation dialog's Trigger options read it, so a trigger
+ * is disabled for the same reason, in the same order, as the engine skips it.
+ * The system-column check runs before `canColumnRun`'s `needs` check, because
+ * in To Do and Done "Start an agent here is off." would point at a setting
+ * those columns do not have.
+ */
+export function canColumnOfferTrigger(
+  type: AutomationType,
+  column: AutomationColumnFacts,
+  trigger: AutomationTrigger,
+): AutomationRunnability {
+  const group = canTriggerRun(column, trigger);
+  if (!group.ok) return group;
+  if (!isTypeOfferedOnTrigger(type, trigger)) {
+    return { ok: false, reason: AUTOMATION_MANIFEST[type].triggerUnavailableReason ?? msg`Not offered on this trigger.` };
+  }
+  const systemColumnReason = systemColumnEnterRefusal(type, column, trigger);
+  if (systemColumnReason !== null) return { ok: false, reason: systemColumnReason };
   return { ok: true };
 }
 
@@ -513,26 +556,57 @@ const SYSTEM_COLUMN_LABELS: Record<SwimlaneRole, string> = {
 };
 
 /**
+ * The system column a column is (To Do or Done), or null.
+ *
+ * Reads `NEVER_AUTO_SPAWN_ROLES` rather than naming todo and done again. The
+ * rules built on it are not that rule: `spawnAgent` refuses those roles an
+ * agent, while the automation rules here refuse them a turn-end group, and an
+ * enter row of any type that needs an agent or a worktree. They name the same
+ * two system columns, and spelling that pair out twice is how a third system
+ * role would be added to one set and silently missed by the other, leaving the
+ * board offering a row the engine will never run. A future role has to decide
+ * every question; sharing the set is what forces whoever adds it to come here.
+ */
+function systemRoleOf(column: AutomationColumnFacts): SwimlaneRole | null {
+  return column.role !== null && NEVER_AUTO_SPAWN_ROLES.has(column.role) ? column.role : null;
+}
+
+/**
+ * Why this type cannot run on enter in To Do or Done, or null where it can
+ * (and on any other trigger or column). The move into either column has
+ * already ended the agent and taken the worktree away when the enter group
+ * runs, so only Notify and Webhook run there (`systemColumnEnter`). Read
+ * through `canColumnOfferTrigger`.
+ */
+export function systemColumnEnterRefusal(
+  type: AutomationType,
+  column: AutomationColumnFacts,
+  trigger: AutomationTrigger,
+): MessageDescriptor | null {
+  if (trigger !== 'enter') return null;
+  const systemRole = systemRoleOf(column);
+  if (systemRole === null) return null;
+  // The column's name stays English: seeded column names are persisted data.
+  const columnName = SYSTEM_COLUMN_LABELS[systemRole];
+  switch (AUTOMATION_MANIFEST[type].systemColumnEnter) {
+    case 'runs':
+      return null;
+    case 'no-agent':
+      return msg`No agent runs in ${{ columnName }}.`;
+    case 'no-worktree':
+      return msg`A task in ${{ columnName }} has no worktree to run in.`;
+  }
+}
+
+/**
  * Can ANY automation run on this trigger in this column? The half of
  * `canColumnRun` that does not depend on the type, so the Automations pane can
  * replace a whole group with its reason instead of offering an Add that builds
- * something inert.
+ * something inert. On enter every column takes rows: To Do and Done refuse
+ * them per type (`systemColumnEnterRefusal`).
  */
 export function canTriggerRun(column: AutomationColumnFacts, trigger: AutomationTrigger): AutomationRunnability {
-  // Reads `NEVER_AUTO_SPAWN_ROLES` rather than naming todo and done again. The
-  // two rules are NOT the same concept and this is not derived from that one:
-  // `spawnAgent` refuses those roles an agent, while this refuses them an ENTER
-  // automation of any type, which is a product decision (To Do and Done take
-  // exit rows only). They happen to name the same two system columns, and
-  // spelling that pair out twice is how the promise above stops being true - a
-  // third system role would be added to one set and silently missed by the
-  // other, leaving the board offering a row the engine will never run.
-  // A future role has to decide BOTH questions; sharing the set is what forces
-  // whoever adds it to come here and say so.
-  const systemRole = column.role !== null && NEVER_AUTO_SPAWN_ROLES.has(column.role) ? column.role : null;
-  if (trigger === 'enter' && systemRole !== null) {
-    return { ok: false, reason: msg`Nothing runs when a task enters To Do or Done.` };
-  }
+  const systemRole = systemRoleOf(column);
   if (trigger === 'turn_end') {
     // No agent works in To Do or Done, and one that never starts here ends no
     // turn here. An agent that reports no turn end (only terminal silence)

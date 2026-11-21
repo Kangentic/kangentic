@@ -111,6 +111,10 @@ msgstr ""
 msgid "A task cannot wait for itself."
 msgstr "任务不能等待自身。"
 
+#: src/shared/automation-manifest.ts
+msgid "A task in {columnName} has no worktree to run in."
+msgstr ""
+
 #: src/shared/workflow-refusals.ts
 msgid "A task visits at least one column."
 msgstr "任务至少要经过一列。"
@@ -603,6 +607,10 @@ msgstr "任意项目中的下一个终端"
 msgid "Next terminal in this project"
 msgstr "此项目中的下一个终端"
 
+#: src/shared/automation-manifest.ts
+msgid "No agent runs in {columnName}."
+msgstr ""
+
 #: src/shared/automation-describe.ts
 msgid "No message yet."
 msgstr "尚无消息。"
@@ -630,10 +638,6 @@ msgstr "此触发器不支持此类型。"
 #: src/shared/automation-manifest.ts
 msgid "Nothing runs at a turn end in {column}."
 msgstr "在 {column} 中，轮次结束时不运行任何操作。"
-
-#: src/shared/automation-manifest.ts
-msgid "Nothing runs when a task enters To Do or Done."
-msgstr "任务进入「待办」或「已完成」时不运行任何操作。"
 
 #: src/shared/automation-describe.ts
 msgid "Notifies \"{title}\""

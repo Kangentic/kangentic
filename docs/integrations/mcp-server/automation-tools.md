@@ -94,7 +94,9 @@ These rules decide whether a row actually runs, and they are reported by
 
 - A row whose switch is off is skipped.
 - A `send_message` row on a column whose `autoSpawn` is off can never run: no agent starts there.
-- An On enter row on To Do or Done can never run: neither column runs automations on entry.
+- On enter, To Do and Done run only `notify` and `webhook` rows. Any other type there can never
+  run, and its reason names the column: "No agent runs in Done." for `send_message`, "A task in
+  Done has no worktree to run in." for `run_script`.
 - A `turn_end` row can never run on To Do or Done, on a column whose `autoSpawn` is off, or where
   the column's agent can't report when it finishes a turn. The reasons read "Nothing runs at a turn
   end in To Do." (or "in Done."), "Start an agent here is off, so no agent ends a turn here.", and

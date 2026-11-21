@@ -111,6 +111,10 @@ msgstr "{workflowTitle} has tasks on {boards}, whose SSH host was removed. Add t
 msgid "A task cannot wait for itself."
 msgstr "A task cannot wait for itself."
 
+#: src/shared/automation-manifest.ts
+msgid "A task in {columnName} has no worktree to run in."
+msgstr "A task in {columnName} has no worktree to run in."
+
 #: src/shared/workflow-refusals.ts
 msgid "A task visits at least one column."
 msgstr "A task visits at least one column."
@@ -595,6 +599,10 @@ msgstr "Next terminal in any project"
 msgid "Next terminal in this project"
 msgstr "Next terminal in this project"
 
+#: src/shared/automation-manifest.ts
+msgid "No agent runs in {columnName}."
+msgstr "No agent runs in {columnName}."
+
 #: src/shared/automation-describe.ts
 msgid "No message yet."
 msgstr "No message yet."
@@ -622,10 +630,6 @@ msgstr "Not offered on this trigger."
 #: src/shared/automation-manifest.ts
 msgid "Nothing runs at a turn end in {column}."
 msgstr "Nothing runs at a turn end in {column}."
-
-#: src/shared/automation-manifest.ts
-msgid "Nothing runs when a task enters To Do or Done."
-msgstr "Nothing runs when a task enters To Do or Done."
 
 #: src/shared/automation-describe.ts
 msgid "Notifies \"{title}\""
