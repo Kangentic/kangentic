@@ -32,9 +32,12 @@ const DIST_DIR = path.resolve(__dirname, '..', '..', 'dist', 'demo');
  * with the same Chromium (demo/README.md, "JS heap after a forced GC"). Repeated reads agree to
  * 0.1 MB still and 0.6 MB looping, so the headroom is for creep, not noise. The still budget rose
  * from 21 MB by the 0.4 MB the demo's shipped faces cost a still board frame (20.5 to 20.9 MB,
- * measured back to back on 2026-11-12; the README names the cause).
+ * measured back to back on 2026-11-12; the README names the cause). It rose again to 22 MB by the
+ * 0.3 MB the tooltip on every card's title costs a still board frame (21.2 to 21.5 MB, measured
+ * back to back against origin/main on 2026-11-21; the same build with the tooltips taken out read
+ * 21.2 again).
  */
-const BOARD_STILL_BUDGET_MB = 21.5;
+const BOARD_STILL_BUDGET_MB = 22;
 const BOARD_LOOP_BUDGET_MB = 29;
 /** Below this the read is broken, not light: a blank page reads about 0.5 MB. */
 const FLOOR_MB = 5;

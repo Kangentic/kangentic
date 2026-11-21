@@ -2220,7 +2220,7 @@ The cut is lucide's whole icon map (Before first paint, above). Every case lost 
 2.8 MB on a page's first board frame and 0.8 MB on each frame after it, since frames on a page share
 compiled code.
 
-`tests/demo/heap-budget.spec.ts` holds one board frame to 21.5 MB still and 29 MB looping, through
+`tests/demo/heap-budget.spec.ts` holds one board frame to 22 MB still and 29 MB looping, through
 `demo/heap.mjs`. That was about 15 percent over what it read on 2026-10-20: 18.3 and 24.5 MB here,
 and 18.2 and 23.9 to 24.4 MB on Ubuntu 24.04 with the same Chromium build (Playwright 1.63's
 headless shell, run under WSL, three runs each). Repeated reads agree to 0.1 MB still and 0.6 MB
@@ -2228,7 +2228,12 @@ looping, so the headroom is for creep rather than noise, and CI's web demo shard
 every run. The still budget went from 21 to 21.5 MB with the shipped faces (Fonts, above), read back
 to back against the tree before them on 2026-11-12: a still board frame 20.5 MB before and 20.9
 after, a looping one 25.2 and 25.4, four still frames 42.6 and 43.9. A heap snapshot puts the 0.4 MB
-in V8 objects (about 3,800 more `Object`s) and Blink's font resources for the 19 faces it loads. It
+in V8 objects (about 3,800 more `Object`s) and Blink's font resources for the 19 faces it loads. The
+still budget went from 21.5 to 22 MB with the tooltip on every board card's title (#1146), read back
+to back against origin/main on 2026-11-21, five runs each: a still board frame 21.2 MB before and 21.5
+after, four still frames 44.6 and 45.5, a looping frame 25.6 and 25.9. The same build with the two
+title tooltips taken out of a scratch copy read 21.2 and 44.7 again, so they are the whole
+difference: one tooltip per card, which the Monitor card already carried. It
 also fails when the frame's terminal draws without WebGL: headless Chromium has WebGL on both
 platforms, as a visitor's browser does, and a runner without it would measure the DOM renderer,
 which no visitor's tab runs. The icon map coming back reads 21.1 MB, right at the still budget, so
