@@ -385,7 +385,7 @@ export class ConfigManager {
       }
     }
 
-    // One-time migration: adopt Auto-apply board config changes' `on` default, for
+    // One-time migration: adopt kangentic.json Auto-apply changes' `on` default, for
     // the same reason: a saved `false` beats the new default on every install that
     // ran under the old one, and it cannot be told from a deliberate off. The marker
     // bounds this to one rewrite, so turning it off afterwards sticks.

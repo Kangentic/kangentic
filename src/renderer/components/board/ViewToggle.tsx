@@ -258,7 +258,7 @@ export const ViewToggle = React.memo(function ViewToggle() {
 
       <div className={collapse.divider} />
 
-      {/* Priorities before Labels, the order a card's pill row draws them in. */}
+      {/* Priorities before Labels, the order a card and the task window draw them in. */}
       <div className="flex items-center gap-1.5 shrink-0">
         <PrioritiesPopover collapse={collapse.filterControl} labelHidden={filterLabelsHidden} />
         <LabelsPopover collapse={collapse.filterControl} labelHidden={filterLabelsHidden} />

@@ -343,9 +343,9 @@ describe('Config Manager - idle timeout switch migration', () => {
     expect((await createConfigManager()).load().agent.idleTimeoutEnabled).toBe(false);
   });
 
-  // Auto-apply board config changes moved from off to on, for the same reason as the
+  // kangentic.json Auto-apply changes moved from off to on, for the same reason as the
   // idle timer above: an install saved under the old default carries a literal false.
-  it('gives a fresh install Auto-apply board config changes on', async () => {
+  it('gives a fresh install Auto-apply changes on', async () => {
     expect((await createConfigManager()).load().skipBoardConfigConfirm).toBe(true);
   });
 
@@ -358,7 +358,7 @@ describe('Config Manager - idle timeout switch migration', () => {
     expect((await createConfigManager()).load().skipBoardConfigConfirm).toBe(true);
   });
 
-  it('turns Auto-apply board config changes on once for an install saved under the old default', async () => {
+  it('turns Auto-apply changes on once for an install saved under the old default', async () => {
     fs.writeFileSync(configPath, JSON.stringify({ skipBoardConfigConfirm: false }));
 
     const config = (await createConfigManager()).load();
@@ -369,7 +369,7 @@ describe('Config Manager - idle timeout switch migration', () => {
     expect(raw.hasMigratedSkipBoardConfigConfirmDefault).toBe(true);
   });
 
-  it('lets a user turn Auto-apply board config changes off afterwards, and it stays off across a restart', async () => {
+  it('lets a user turn Auto-apply changes off afterwards, and it stays off across a restart', async () => {
     fs.writeFileSync(configPath, JSON.stringify({ skipBoardConfigConfirm: false }));
     const configManager = await createConfigManager();
     configManager.load();
