@@ -652,9 +652,11 @@ create into a column), so no move lands without its record, including the ones t
 nothing. `origin` is who moved it: `renderer`, `agent`, `mobile`, `auto-move`, `automation`,
 `workflow`, `rollback`, `unarchive` or `create`. `reason` is the Move to column row's name, or a
 workflow's step. `from_swimlane_id` is NULL for a task born into the column. `owner_requested` is 1
-on an `agent` move made in a turn the owner started (`TaskMoveProvenance.ownerRequested`, set by
-the MCP move path from the calling session's transcript), which starts a row's Frequency over as a
-person's move does. `recordMove` writes 0 for every other origin, whatever the caller passed. Only
+on an `agent` move the owner asked for (`TaskMoveProvenance.ownerRequested`, set by the MCP move
+path from the calling session: any Command Terminal's move, one from a client outside Kangentic
+that names no session, or one whose turn the owner started, read from the transcript), which
+starts a row's Frequency over as a person's move does. `recordMove` writes 0 for every other
+origin, whatever the caller passed. Only
 `countRuns` reads it, so `TaskMoveRecord` leaves it out. It comes last because an `ALTER TABLE`
 added it.
 

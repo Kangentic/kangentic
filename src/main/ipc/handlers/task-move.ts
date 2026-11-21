@@ -382,17 +382,14 @@ export async function handleTaskMove(
   // the reply the last column ended on, so a return to the main conversation
   // does not repeat that reply in its recap (`return-recap.ts`).
   //
-  // `ownerRequested` is the read of whether an `'agent'` move was made in a
-  // turn the owner started (`turnStartedByOwner`). True marks the row, which
-  // starts a Frequency over as a person's move does. Only the MCP move path
-  // passes it, started when the call came in. The move awaits it after it
-  // registers, so a newer move of the task still supersedes this one.
-  //
-  // `moverIsCommandTerminal` says an `'agent'` move came from a Command
-  // Terminal. Its turn cannot be read for the owner (`turnStartedByOwner`), and
-  // asking one to move a task is the usual way the owner does it, so it counts
-  // as the owner's for one check only: whether the move ends an idle pause
-  // (Priority 4). It never marks the row `owner_requested`.
+  // `ownerRequested` says whether the owner asked for an `'agent'` move. It is
+  // true for a Command Terminal's move and for one from a client outside
+  // Kangentic (#1150). For a task session's move it is the read of whether the
+  // owner started its turn (`turnStartedByOwner`). True marks the row, which
+  // starts a Frequency over as a person's move does, and lets the move end an
+  // idle pause (Priority 4). Only the MCP move path passes it, started when the
+  // call came in. The move awaits it after it registers, so a newer move of the
+  // task still supersedes this one.
   options?: {
     continuationPrompt?: string;
     onCommitted?: () => void;
@@ -403,7 +400,6 @@ export async function handleTaskMove(
     expectedFromSwimlaneId?: string;
     carriesMessage?: boolean;
     ownerRequested?: Promise<boolean>;
-    moverIsCommandTerminal?: boolean;
   },
 ): Promise<void> {
   // A workflow task's lock, asked BEFORE anything below aborts work in flight:
@@ -1667,14 +1663,13 @@ export async function handleTaskMove(
       // pause was Kangentic freeing memory, not the user's choice, and the same
       // move sends a running agent the same turn, so the plan goes on and Phase 3
       // starts the agent (`spawnAgent`'s `liftsIdlePause`). The owner's move is a
-      // person's (a drag, the phone), an agent's made in a turn the owner started,
-      // or a Command Terminal's, which counts as the owner's for this check only.
+      // person's (a drag, the phone), or an agent's the owner asked for: a
+      // Command Terminal's, or one made in a turn the owner started.
       // A row's, a plan approval's or a workflow's move keeps the pause, and so
       // do a paused workflow, a workflow recovery and a failed launch.
       const latestRecord = sessionRepo.getLatestForTask(task.id);
       const pauseHoldsThisMove = Boolean(toLane) && !suppressAutoCommand && isHeldPause(latestRecord);
-      const ownerMove = isMoveByAPerson(origin)
-        || (origin === 'agent' && (ownerRequested || options?.moverIsCommandTerminal === true));
+      const ownerMove = isMoveByAPerson(origin) || (origin === 'agent' && ownerRequested);
       const liftsIdlePause = pauseHoldsThisMove && ownerMove
         && isLiftableIdlePause(task, resolvedProjectId, latestRecord);
       if (toLane && pauseHoldsThisMove && !liftsIdlePause) {

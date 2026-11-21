@@ -130,8 +130,10 @@ const EXECUTED_STATUSES_SQL = "status IN ('running', 'succeeded', 'failed', 'int
 /**
  * The origins of a person's move (`MOVED_BY_A_PERSON`). One of those, to
  * another column, starts a row's Frequency over (`countRuns`), and so does an
- * agent's move made in a turn the owner started (`task_moves.owner_requested`).
- * The board's own movers never do, so a review loop keeps its round-trip limit
+ * agent's move the owner asked for (`task_moves.owner_requested`): a Command
+ * Terminal's, one from a client outside Kangentic, or one made in a turn the
+ * owner started. The board's own movers
+ * never do, in either direction, so a review loop keeps its round-trip limit
  * and an agent cannot reset its own with `kangentic_move_task` in a turn the
  * board started. A restore from the Completed list is a person's too, but it
  * always leaves Done, which starts the count over by itself.
@@ -706,16 +708,19 @@ export class AutomationRunRepository {
    * since the newer of two moves: the last a person made to another column
    * (`MOVED_BY_A_PERSON`), and the last out of Done, by anyone. A person who
    * sends a card back for another pass means it to go through those columns
-   * again, so its earlier runs no longer spend the limit. An agent's move in a
-   * turn the owner started is the person's too: the owner asked for it in the
-   * session (`owner_requested`, #1100). One in a turn the board started is not,
-   * so a Code Review agent that sends itself back after `/code-review` keeps
-   * its round-trip limit. A task taken back out of Done goes through the board
-   * again as if for the first time. A rollback out of Done is not a return: it
-   * undoes a move into Done that failed, and the task never finished. When
-   * that failed move was a person's drag, its own row already started the
-   * count over. A row born into a column (no `from`) and a reorder inside one
-   * are not moves.
+   * again, so its earlier runs no longer spend the limit. An agent's move the
+   * owner asked for is the person's too (`owner_requested`): any Command
+   * Terminal's or outside client's (#1150), and one in a turn the owner
+   * started (#1100). One in a turn the board started is not, so a Code Review
+   * agent that sends itself back after `/code-review` keeps its round-trip
+   * limit. Which way a move goes never matters: a board mover sending a task
+   * back keeps the count, or a loop's own backward row ("Back for revisions")
+   * would never reach its limit. A task taken back out of Done goes through the
+   * board again as if for the first time. A rollback out of Done is not a
+   * return: it undoes a move into Done that failed, and the task never
+   * finished. When that failed move was a person's drag, its own row already
+   * started the count over. A row born into a column (no `from`) and a reorder
+   * inside one are not moves.
    *
    * The move is written before the groups it fires run, so a person's move
    * starts the count of the column it leaves (exit rows) and the column it

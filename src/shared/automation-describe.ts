@@ -456,9 +456,11 @@ export function describeAutomationTextMatch(finalLine: string | null, i18n: I18n
 /**
  * A row's Frequency as one sentence, or null when it has none: "At most 3 times
  * until you move the task." The tooltip of the Frequency mark, whose visible
- * part is the bare count. "You" is the rule: a person's move starts the count
- * over, and the board's own moves do not, except a move out of Done, which
- * starts it over whoever makes it (`AutomationRunRepository.countRuns`).
+ * part is the bare count. "You" is the rule: the owner's move starts the count
+ * over (a drag, the phone, or an agent asked to move it, a Command Terminal's
+ * included), and the board's own moves do not, in either direction, except a
+ * move out of Done, which starts it over whoever makes it
+ * (`AutomationRunRepository.countRuns`).
  */
 export function describeAutomationFrequency(maxRuns: number | null, i18n: I18n): string | null {
   return maxRuns === null ? null : resolveText(i18n, GUARDS.frequency, { maxRuns });

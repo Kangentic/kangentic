@@ -52,13 +52,12 @@ function readWithinBudget(read: Promise<UserMessageRead>, budgetMs: number): Pro
  * message at all (one a task notification or a wakeup opened). The agent
  * passes nothing that decides it.
  *
- * A Command Terminal's move is never the owner's, by decision. Kangentic
- * records nothing it types into a session with no task (`recordKangenticTyped`),
- * and another agent can message one with `kangentic_send_session_message`, so
- * no read could tell those texts from the owner's. Its session has no
- * `sessions` row, so the read answers false on its own. Whether a move ends an
- * idle pause counts a Command Terminal's move as the owner's anyway, by its own
- * check (`moverIsCommandTerminal`), and leaves this answer alone.
+ * A Command Terminal's move never reaches this read: it is the owner's, by
+ * decision (#1150), and the MCP move path says so without asking. No read
+ * could tell, since Kangentic records nothing it types into a session with no
+ * task (`recordKangenticTyped`) and its session has no `sessions` row, so this
+ * would answer false. The owner accepts that another agent can message a
+ * Command Terminal (`kangentic_send_session_message`) into moving a task.
  *
  * Never rejects. `handleTaskMove` waits on this answer before it commits, and
  * `kangentic_move_task` fires that move without awaiting it, so a throw here

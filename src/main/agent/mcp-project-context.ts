@@ -277,31 +277,34 @@ export function buildCommandContextForProject(
     // purely to recover a title for the toast.
     onTaskMove: async (input, options) => {
       const message = options?.message?.trim();
-      // Whether the owner started the calling session's turn, decided from
-      // its transcript, never from anything the agent passed. Started now and
-      // awaited by the move once it has registered (`handleTaskMove`), so a
-      // newer move of the task still supersedes this one during the read.
-      const ownerRequested = options?.callerSessionId
-        ? turnStartedByOwner(ipcContext.sessionManager, options.callerSessionId)
-        : undefined;
-      // A Command Terminal's move counts as the owner's for whether it ends an
-      // idle pause, and only for that (`handleTaskMove`'s Priority 4). Read from
-      // the session the call came from, never from a tool parameter.
-      const callerSession = options?.callerSessionId
-        ? ipcContext.sessionManager.getSession(options.callerSessionId)
-        : undefined;
-      const moverIsCommandTerminal = callerSession !== undefined && isCommandTerminalSession(callerSession);
+      // Whether the owner asked for this move, decided from the session the
+      // call came from, never from anything the agent passed. A Command
+      // Terminal's move is the owner's, as a drag is (#1150): asking one is the
+      // usual way the owner moves a task from a terminal. So is a call with no
+      // caller session: every agent Kangentic starts names its session in its
+      // MCP URL (`appendCallerSession`), so an unnamed caller is a client the
+      // owner runs outside Kangentic. Any other session's move is the owner's
+      // when the owner started its turn, read from its transcript. That read
+      // starts now and the move awaits it once it has registered
+      // (`handleTaskMove`), so a newer move of the task still supersedes this
+      // one during the read.
+      const callerSessionId = options?.callerSessionId;
+      let ownerRequested: Promise<boolean>;
+      if (!callerSessionId) {
+        ownerRequested = Promise.resolve(true);
+      } else {
+        const callerSession = ipcContext.sessionManager.getSession(callerSessionId);
+        ownerRequested = callerSession !== undefined && isCommandTerminalSession(callerSession)
+          ? Promise.resolve(true)
+          : turnStartedByOwner(ipcContext.sessionManager, callerSessionId);
+      }
       const moveOptions = {
         ...(options?.moverIsTaskAgent ? { moverIsTaskAgent: true } : {}),
         ...(options?.moverSessionId ? { moverSessionId: options.moverSessionId } : {}),
         ...(message ? { carriesMessage: true } : {}),
-        ...(ownerRequested ? { ownerRequested } : {}),
-        ...(moverIsCommandTerminal ? { moverIsCommandTerminal: true } : {}),
+        ownerRequested,
       };
-      await handleTaskMove(
-        ipcContext, input, 'agent', projectId, projectPath,
-        Object.keys(moveOptions).length > 0 ? moveOptions : undefined,
-      );
+      await handleTaskMove(ipcContext, input, 'agent', projectId, projectPath, moveOptions);
       if (!message) return;
       // Only once the task really landed: a refused or superseded move has
       // nobody in the destination to hand the message to.

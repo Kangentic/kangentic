@@ -72,9 +72,10 @@ contract was kept in sync across three files by prose comments alone.
 - **The owner's move ends an idle pause, through `spawnAgent`.** The one exception to the bullet
   above: when the owner moves a task the idle timeout paused (`'auto'`) into a column that starts
   an agent, Priority 4 of `handleTaskMove` keeps its spawn plan and Phase 3 calls `spawnAgent`
-  with `liftsIdlePause: true`. The owner's move is a person's (`isMoveByAPerson`), an agent's
-  made in a turn the owner started (`ownerRequested`), or a Command Terminal's
-  (`moverIsCommandTerminal`, which marks nothing on the move row). `spawnAgent` re-asks
+  with `liftsIdlePause: true`. The owner's move is a person's (`isMoveByAPerson`) or an agent's
+  the owner asked for (`ownerRequested`): any Command Terminal's, one from a client outside
+  Kangentic, or one made in a turn the owner started. The same flag marks the move row, which
+  starts a row's Frequency over. `spawnAgent` re-asks
   `isLiftableIdlePause` (`helpers/idle-pause-lift.ts`) under the task lock, so a user's Pause, a
   paused workflow, a workflow recovery and a failed launch still hold. It runs the whole enter
   group, unlike `resumesEntry`. When the re-check declines, `spawnAgent` runs the enter group

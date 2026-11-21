@@ -21,7 +21,9 @@
  * `kangentic_move_task`. An agent's move in a turn the owner started is the
  * owner's (`owner_requested`, #1100): in #1029 the owner answered the Merge
  * agent, which sent the card back to Executing, and the re-review's "On to
- * Testing" stopped the card with its one run spent on the first pass.
+ * Testing" stopped the card with its one run spent on the first pass. So is
+ * any Command Terminal's move (#1150): #1147 stopped the same way after the
+ * owner asked one to send the card back.
  *
  * Real better-sqlite3 with the real migrations, and the moves written by the
  * real `TaskRepository`, so the boundary is read from the rows production writes.
@@ -49,6 +51,7 @@ describe('where Frequency starts counting', () => {
   let doneLane: Swimlane;
   let executingLane: Swimlane;
   let codeReviewLane: Swimlane;
+  let testingLane: Swimlane;
   let mergeLane: Swimlane;
   let runCounter = 0;
 
@@ -61,6 +64,7 @@ describe('where Frequency starts counting', () => {
     doneLane = lanes.find((lane) => lane.role === 'done')!;
     executingLane = lanes.find((lane) => lane.name === 'Executing')!;
     codeReviewLane = lanes.find((lane) => lane.name === 'Code Review')!;
+    testingLane = lanes.find((lane) => lane.name === 'Testing')!;
     mergeLane = lanes.find((lane) => lane.name === 'Merge')!;
     runs = new AutomationRunRepository(database);
     tasks = new TaskRepository(database);
@@ -266,6 +270,70 @@ describe('where Frequency starts counting', () => {
       const flag = database.prepare('SELECT owner_requested FROM task_moves WHERE id = ?').get('move-before-the-column') as { owner_requested: number };
       expect(flag.owner_requested).toBe(0);
       expect(runs.countRuns('row-on-to-testing', TASK_ID)).toBe(1);
+    });
+  });
+
+  // A Command Terminal's move is the owner's (#1150): the MCP move path hands
+  // it `ownerRequested: true` (`mcp-project-context.test.ts`), and this is the
+  // boundary that row draws. The board's own moves keep the count whichever
+  // way they go, or a loop's own backward row would never reach its limit.
+  describe('a move backwards, and a Command Terminal\'s move', () => {
+    const backForRevisions = (): ColumnAutomation => ({
+      ...onToTesting(),
+      id: 'row-back-for-revisions',
+      name: 'Back for revisions',
+      config: { targetColumn: 'Executing' },
+      max_runs: 3,
+    });
+
+    const onToCodeReview = (): ColumnAutomation => ({
+      ...onToTesting(),
+      id: 'row-on-to-code-review',
+      swimlane_id: executingLane.id,
+      name: 'On to Code Review',
+      config: { targetColumn: 'Code Review' },
+      max_runs: 4,
+    });
+
+    it('runs On to Testing again after the owner had a Command Terminal send the card back (#1147)', () => {
+      // 23:35: On to Testing ran once and moved the card on.
+      placeTask(codeReviewLane);
+      recordRun('succeeded', EARLIER);
+      moveTask(testingLane, 'automation');
+      // 23:44: the Command Terminal's `kangentic_move_task`, Testing to Executing.
+      tasks.move({ taskId: TASK_ID, targetSwimlaneId: executingLane.id, targetPosition: 0 }, { origin: 'agent', ownerRequested: true });
+      // 23:55: On to Code Review brought it back for the review that ended Ready.
+      moveTask(codeReviewLane, 'automation');
+
+      expect(runs.countRuns('row-on-to-testing', TASK_ID)).toBe(0);
+      expect(frequencyLimitReason(onToTesting(), runs, TASK_ID)).toBeNull();
+    });
+
+    it('stops Back for revisions after three round trips, though each of its moves goes backwards', () => {
+      placeTask(codeReviewLane);
+      for (let round = 1; round <= 3; round += 1) {
+        expect(frequencyLimitReason(backForRevisions(), runs, TASK_ID)).toBeNull();
+        recordRun('succeeded', undefined, backForRevisions());
+        moveTask(executingLane, 'automation');
+        recordRun('succeeded', undefined, onToCodeReview());
+        moveTask(codeReviewLane, 'automation');
+      }
+
+      expect(runs.countRuns('row-back-for-revisions', TASK_ID)).toBe(3);
+      expect(frequencyLimitReason(backForRevisions(), runs, TASK_ID)).toBe('Already ran 3 times on this task, its limit.');
+    });
+
+    it('keeps On to Code Review\'s count when a review agent sends itself back in a turn the board started', () => {
+      placeTask(codeReviewLane);
+      for (let round = 1; round <= 4; round += 1) {
+        // The agent's own `kangentic_move_task` after `/code-review`: no owner flag.
+        moveTask(executingLane, 'agent');
+        recordRun('succeeded', undefined, onToCodeReview());
+        moveTask(codeReviewLane, 'automation');
+      }
+
+      expect(runs.countRuns('row-on-to-code-review', TASK_ID)).toBe(4);
+      expect(frequencyLimitReason(onToCodeReview(), runs, TASK_ID)).toBe('Already ran 4 times on this task, its limit.');
     });
   });
 

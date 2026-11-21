@@ -175,9 +175,11 @@ is the appending slot.
 `position` has no useful effect when moving into Done, which archives the task and takes it off the
 board.
 
-A move made in a turn the owner started (they typed into the calling session) counts as the owner's
-for a row's Frequency, and one made in a turn the board started does not. Kangentic decides it from
-the transcript, so the call takes no parameter for it ([Automation tools](automation-tools.md)).
+A move from a Command Terminal, or from a client outside Kangentic (its MCP URL names no session),
+counts as the owner's for a row's Frequency. From a task's session, a move made in a turn the owner
+started (they typed into the calling session) counts as the owner's, and one made in a turn the
+board started does not. Kangentic decides it from the calling session and its transcript, so the
+call takes no parameter for it ([Automation tools](automation-tools.md)).
 
 Naming the task's current column with no `position` moves nothing and answers `Task "<title>" is
 already in <column>.` That is a success, not an error, so an agent that repeats a move it already

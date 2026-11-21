@@ -391,22 +391,27 @@ describe('buildCommandContextForProject - onTaskMove', () => {
   it('forwards the task\'s own agent and its session to the move', async () => {
     const context = buildCommandContextForProject(makeIpcContext(makeProject({ id: DEFAULT_ID, path: '/repos/myboard' })), DEFAULT_ID);
 
-    await context!.onTaskMove(MOVE_INPUT, { moverIsTaskAgent: true, moverSessionId: 'session-own' });
+    await context!.onTaskMove(MOVE_INPUT, { moverIsTaskAgent: true, moverSessionId: 'session-own', callerSessionId: 'session-own' });
 
     expect(handleTaskMove).toHaveBeenCalledWith(
       expect.anything(), MOVE_INPUT, 'agent', DEFAULT_ID, '/repos/myboard',
-      { moverIsTaskAgent: true, moverSessionId: 'session-own' },
+      { moverIsTaskAgent: true, moverSessionId: 'session-own', ownerRequested: expect.any(Promise) },
     );
-    // Options with no caller session read no turn and carry no answer.
-    expect(turnStartedByOwnerSpy).not.toHaveBeenCalled();
   });
 
-  it('passes no options for a move by anyone else', async () => {
+  // Every agent Kangentic starts names its session in its MCP URL, so a call
+  // with none comes from a client the owner runs outside Kangentic (#1150).
+  it('hands the owner\'s answer to a move with no caller session, reading no turn', async () => {
     const context = buildCommandContextForProject(makeIpcContext(makeProject({ id: DEFAULT_ID, path: '/repos/myboard' })), DEFAULT_ID);
 
     await context!.onTaskMove(MOVE_INPUT);
 
-    expect(handleTaskMove).toHaveBeenCalledWith(expect.anything(), MOVE_INPUT, 'agent', DEFAULT_ID, '/repos/myboard', undefined);
+    expect(handleTaskMove).toHaveBeenCalledWith(
+      expect.anything(), MOVE_INPUT, 'agent', DEFAULT_ID, '/repos/myboard',
+      { ownerRequested: expect.any(Promise) },
+    );
+    const options = vi.mocked(handleTaskMove).mock.calls[0][5] as { ownerRequested: Promise<boolean> };
+    expect(await options.ownerRequested).toBe(true);
     expect(turnStartedByOwnerSpy).not.toHaveBeenCalled();
   });
 
@@ -456,9 +461,11 @@ describe('buildCommandContextForProject - onTaskMove', () => {
     });
   });
 
-  // A Command Terminal's move ends an idle pause as the owner's would
-  // (`handleTaskMove`, Priority 4). Main reads it from the calling session,
-  // and it is never the Frequency read: that stays false for a terminal.
+  // A Command Terminal's move is the owner's, as a drag is (#1150): it marks
+  // the move row, which starts a row's Frequency over, and it ends an idle
+  // pause (`handleTaskMove`, Priority 4). Main reads it from the calling
+  // session, never from a tool parameter. Every other caller session still
+  // gets the transcript read, which decides for itself.
   describe('a move a Command Terminal made', () => {
     function contextWithCaller(callerSession: Record<string, unknown>) {
       const ipcContext = makeIpcContext(makeProject({ id: DEFAULT_ID, path: '/repos/myboard' }));
@@ -468,45 +475,47 @@ describe('buildCommandContextForProject - onTaskMove', () => {
       return buildCommandContextForProject(ipcContext, DEFAULT_ID)!;
     }
 
-    function optionsHandedToTheMove(): Record<string, unknown> | undefined {
-      return vi.mocked(handleTaskMove).mock.calls[0][5] as Record<string, unknown> | undefined;
+    function optionsHandedToTheMove(): { ownerRequested?: Promise<boolean> } {
+      return vi.mocked(handleTaskMove).mock.calls[0][5] as { ownerRequested?: Promise<boolean> };
     }
 
-    it('marks the move as a Command Terminal\'s and leaves the owner read as it was', async () => {
+    it('hands the move the owner\'s answer without reading the terminal\'s turn', async () => {
       const context = contextWithCaller({ id: 'session-terminal', transient: true, workflowId: null });
 
       await context.onTaskMove(MOVE_INPUT, { callerSessionId: 'session-terminal' });
 
       const options = optionsHandedToTheMove();
-      expect(options?.moverIsCommandTerminal).toBe(true);
-      // The same read every caller session gets, which answers false for a
-      // terminal by itself: no `owner_requested` mark comes from this.
-      expect(turnStartedByOwnerSpy).toHaveBeenCalledWith(expect.anything(), 'session-terminal');
-      expect(await options?.ownerRequested).toBe(false);
+      expect(await options.ownerRequested).toBe(true);
+      // The read would answer false for a terminal (no `sessions` row), which
+      // is what left #1147's move the board's.
+      expect(turnStartedByOwnerSpy).not.toHaveBeenCalled();
     });
 
-    it('does not mark a task agent\'s move', async () => {
+    it('leaves a task agent\'s move to the read of its turn', async () => {
       const context = contextWithCaller({ id: 'session-task', taskId: 'task-9' });
 
       await context.onTaskMove(MOVE_INPUT, { callerSessionId: 'session-task' });
 
-      expect(optionsHandedToTheMove()?.moverIsCommandTerminal).toBeUndefined();
+      expect(turnStartedByOwnerSpy).toHaveBeenCalledWith(expect.anything(), 'session-task');
+      expect(await optionsHandedToTheMove().ownerRequested).toBe(false);
     });
 
-    it('does not mark a workflow agent\'s move, which is transient but no Command Terminal', async () => {
+    it('leaves a workflow agent\'s move to the read, since it is transient but no Command Terminal', async () => {
       const context = contextWithCaller({ id: 'session-workflow', transient: true, workflowId: 'workflow-1' });
 
       await context.onTaskMove(MOVE_INPUT, { callerSessionId: 'session-workflow' });
 
-      expect(optionsHandedToTheMove()?.moverIsCommandTerminal).toBeUndefined();
+      expect(turnStartedByOwnerSpy).toHaveBeenCalledWith(expect.anything(), 'session-workflow');
+      expect(await optionsHandedToTheMove().ownerRequested).toBe(false);
     });
 
-    it('does not mark a move whose caller session is gone', async () => {
+    it('leaves a move whose caller session is gone to the read', async () => {
       const context = contextWithCaller({ id: 'session-other', transient: true });
 
       await context.onTaskMove(MOVE_INPUT, { callerSessionId: 'session-gone' });
 
-      expect(optionsHandedToTheMove()?.moverIsCommandTerminal).toBeUndefined();
+      expect(turnStartedByOwnerSpy).toHaveBeenCalledWith(expect.anything(), 'session-gone');
+      expect(await optionsHandedToTheMove().ownerRequested).toBe(false);
     });
   });
 
@@ -517,7 +526,8 @@ describe('buildCommandContextForProject - onTaskMove', () => {
   // hand the agent neither.
   //
   // Red-green: pass `carriesMessage: true` for any `options.message` (or drop it)
-  // in mcp-project-context.ts's `onTaskMove` and the matching test fails.
+  // in mcp-project-context.ts's `onTaskMove` and the matching test fails. These
+  // calls name no caller session, so each also carries the owner's answer.
   describe('a move that carries a message', () => {
     beforeEach(() => {
       landedTaskState.swimlaneId = MOVE_INPUT.targetSwimlaneId;
@@ -533,7 +543,7 @@ describe('buildCommandContextForProject - onTaskMove', () => {
 
       expect(handleTaskMove).toHaveBeenCalledWith(
         expect.anything(), MOVE_INPUT, 'agent', DEFAULT_ID, '/repos/myboard',
-        { carriesMessage: true },
+        { carriesMessage: true, ownerRequested: expect.any(Promise) },
       );
       expect(deliverMessageAfterMoveSpy).toHaveBeenCalledWith(
         expect.anything(), DEFAULT_ID, MOVE_INPUT.taskId, 'Code Review', 'Address the findings.',
@@ -549,7 +559,7 @@ describe('buildCommandContextForProject - onTaskMove', () => {
 
       expect(handleTaskMove).toHaveBeenCalledWith(
         expect.anything(), MOVE_INPUT, 'agent', DEFAULT_ID, '/repos/myboard',
-        { moverIsTaskAgent: true, moverSessionId: 'session-own', carriesMessage: true },
+        { moverIsTaskAgent: true, moverSessionId: 'session-own', carriesMessage: true, ownerRequested: expect.any(Promise) },
       );
     });
 
@@ -560,7 +570,8 @@ describe('buildCommandContextForProject - onTaskMove', () => {
       await contextForMove().onTaskMove(MOVE_INPUT, { message });
 
       expect(handleTaskMove).toHaveBeenCalledWith(
-        expect.anything(), MOVE_INPUT, 'agent', DEFAULT_ID, '/repos/myboard', undefined,
+        expect.anything(), MOVE_INPUT, 'agent', DEFAULT_ID, '/repos/myboard',
+        { ownerRequested: expect.any(Promise) },
       );
       expect(deliverMessageAfterMoveSpy).not.toHaveBeenCalled();
     });
@@ -570,7 +581,7 @@ describe('buildCommandContextForProject - onTaskMove', () => {
 
       expect(handleTaskMove).toHaveBeenCalledWith(
         expect.anything(), MOVE_INPUT, 'agent', DEFAULT_ID, '/repos/myboard',
-        { moverIsTaskAgent: true },
+        { moverIsTaskAgent: true, ownerRequested: expect.any(Promise) },
       );
     });
 
@@ -582,7 +593,7 @@ describe('buildCommandContextForProject - onTaskMove', () => {
       // The move still told its recap about the message it was asked to carry.
       expect(handleTaskMove).toHaveBeenCalledWith(
         expect.anything(), MOVE_INPUT, 'agent', DEFAULT_ID, '/repos/myboard',
-        { carriesMessage: true },
+        { carriesMessage: true, ownerRequested: expect.any(Promise) },
       );
       expect(deliverMessageAfterMoveSpy).not.toHaveBeenCalled();
     });
