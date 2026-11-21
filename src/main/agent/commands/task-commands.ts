@@ -37,7 +37,16 @@ import { needsRunningWorkCheck, refuseRunningWork, teardownOfColumn } from './ru
 import { handleCreateBacklogTask, BACKLOG_DESCRIPTION_MAX_LENGTH } from './backlog-commands';
 import { isLabelListOrAbsent, LABELS_NOT_A_LIST, priorityScaleError, priorityScaleOf, splitLabelEntries } from './label-and-priority';
 import { resolveProfileSelector } from './profile-commands';
-import { artifactRoomRefusal, formatArtifactLines, parseArtifactInputs, parseArtifactUrls, unknownArtifactUrls } from './artifact-params';
+import { applyArtifactChanges, cleanArtifactName } from '../../../shared/task-artifacts';
+import {
+  alreadyLinkedNotes,
+  artifactRoomRefusal,
+  formatArtifactLines,
+  parseArtifactInputs,
+  parseArtifactRenames,
+  parseArtifactUrls,
+  unknownArtifactUrls,
+} from './artifact-params';
 import { linkPRForTask } from '../../pr/pr-linking';
 import { prReadinessNote } from '../../pr/pr-readiness-note';
 import { prNumberFromUrl } from '../../../shared/pr-url';
@@ -499,6 +508,8 @@ function applyTaskUpdate(
   if (addArtifacts !== null && 'error' in addArtifacts) return { success: false, error: `${addArtifacts.error} The task was not updated.` };
   const removeArtifacts = parseArtifactUrls(params.removeArtifacts, 'removeArtifacts');
   if (removeArtifacts !== null && 'error' in removeArtifacts) return { success: false, error: `${removeArtifacts.error} The task was not updated.` };
+  const renameArtifacts = parseArtifactRenames(params.renameArtifacts, 'renameArtifacts');
+  if (renameArtifacts !== null && 'error' in renameArtifacts) return { success: false, error: `${renameArtifacts.error} The task was not updated.` };
 
   // Observability for the "labels dropped on a large description" bug
   // (task #229). See the matching note in handleCreateTask.
@@ -624,34 +635,53 @@ function applyTaskUpdate(
   if (newRunMode !== undefined) updates.run_mode = newRunMode;
   if (newAutomationsDisabled !== null) updates.automations_disabled = newAutomationsDisabled;
 
-  // A removal that names a link the task does not hold is refused, with the
-  // links it does hold: left silent, the agent would report a removal that
-  // never happened.
+  // A removal or a rename that names a link the task does not hold is refused,
+  // with the links it does hold: left silent, the agent would report a change
+  // that never happened.
   const hasArtifactAdds = addArtifacts !== null && addArtifacts.length > 0;
   const hasArtifactRemovals = removeArtifacts !== null && removeArtifacts.length > 0;
+  const hasArtifactRenames = renameArtifacts !== null && renameArtifacts.length > 0;
+  const unknownLinkRefusal = (parameter: string, urls: readonly string[]): string | null => {
+    const unknown = unknownArtifactUrls(task.artifacts, urls);
+    if (unknown.length === 0) return null;
+    const held = formatArtifactLines(task.artifacts);
+    return `${parameter} names ${unknown.length === 1 ? 'a link' : 'links'} this task does not have: ${unknown.join(', ')}. `
+      + (held.length > 0 ? `Its artifacts are:\n${held.join('\n')}\n` : 'It has no artifacts. ')
+      + 'The task was not updated.';
+  };
   if (hasArtifactRemovals) {
-    const unknown = unknownArtifactUrls(task.artifacts, removeArtifacts);
-    if (unknown.length > 0) {
-      const held = formatArtifactLines(task.artifacts);
-      return {
-        success: false,
-        error: `removeArtifacts names ${unknown.length === 1 ? 'a link' : 'links'} this task does not have: ${unknown.join(', ')}. `
-          + (held.length > 0 ? `Its artifacts are:\n${held.join('\n')}\n` : 'It has no artifacts. ')
-          + 'The task was not updated.',
-      };
-    }
+    const refusal = unknownLinkRefusal('removeArtifacts', removeArtifacts);
+    if (refusal) return { success: false, error: refusal };
+  }
+  if (hasArtifactRenames) {
+    const refusal = unknownLinkRefusal('renameArtifacts', renameArtifacts.map((rename) => rename.url));
+    if (refusal) return { success: false, error: refusal };
   }
   if (hasArtifactAdds) {
     const roomRefusal = artifactRoomRefusal(task.artifacts, addArtifacts, removeArtifacts ?? []);
     if (roomRefusal) return { success: false, error: `${roomRefusal} The task was not updated.` };
   }
-  if (hasArtifactAdds || hasArtifactRemovals) {
-    updates.artifactChanges = {
-      ...(hasArtifactAdds ? { add: addArtifacts } : {}),
-      ...(hasArtifactRemovals ? { remove: removeArtifacts } : {}),
-      source: 'agent',
-    };
-  }
+  // Read off the task before the write: the links it already held (less the
+  // ones this call removes first), and whether the change does anything at all.
+  // The merge itself answers that on the task's list, so a re-add of a named
+  // link or a rename to the name a link already has reports nothing updated.
+  const artifactNotes = hasArtifactAdds ? alreadyLinkedNotes(task.artifacts, addArtifacts, removeArtifacts ?? []) : [];
+  const artifactChanges = {
+    ...(hasArtifactAdds ? { add: addArtifacts } : {}),
+    ...(hasArtifactRemovals ? { remove: removeArtifacts } : {}),
+    ...(hasArtifactRenames ? { rename: renameArtifacts } : {}),
+    source: 'agent' as const,
+  };
+  const artifactsChanged = (hasArtifactAdds || hasArtifactRemovals || hasArtifactRenames)
+    && applyArtifactChanges({ artifacts: task.artifacts, dismissed: [] }, artifactChanges, '').changed;
+  if (artifactsChanged) updates.artifactChanges = artifactChanges;
+  // A rename that changed nothing: the link already carried that name, chosen.
+  const renameNotes = hasArtifactRenames && !artifactsChanged
+    ? renameArtifacts.map((rename) => {
+      const name = cleanArtifactName(rename.name);
+      return name === null ? `- ${rename.url} already has no name.` : `- ${rename.url} is already named "${name}".`;
+    })
+    : [];
 
   // A workflow task's own plan approval goes through the workflow's setter, so
   // the inspector and an agent are held to one rule. Written before the other
@@ -703,11 +733,19 @@ function applyTaskUpdate(
   // equivalent guard in handleUpdateBacklogItem. Reachable only via attachments,
   // since the tool layer forwards attachments past its "at least one field"
   // gate while attachments contribute to changedFields only when one succeeds.
+  // Also reached by addArtifacts that only re-add links the task already holds
+  // under a name, and by renameArtifacts that give links the names they have:
+  // nothing to write, and the agent is told what the links are called.
   if (!hasScalarChange && attachmentsAdded === 0 && !planApprovalChanged) {
     const attachmentsRequested = newAttachments?.length ?? 0;
-    return attachmentsRequested > 0
-      ? { success: false, error: `Failed to attach any of the ${attachmentsRequested} requested file(s); no other fields were updated.${attachmentNote}` }
-      : { success: false, error: 'No fields provided to update' };
+    if (attachmentsRequested > 0) {
+      return { success: false, error: `Failed to attach any of the ${attachmentsRequested} requested file(s); no other fields were updated.${attachmentNote}` };
+    }
+    const unchangedNotes = [...artifactNotes, ...renameNotes];
+    if (unchangedNotes.length > 0) {
+      return { success: true, message: `Nothing to update for "${task.title}":\n${unchangedNotes.join('\n')}` };
+    }
+    return { success: false, error: 'No fields provided to update' };
   }
 
   // After the row is written, as on create: a refused update saves no color.
@@ -765,7 +803,7 @@ function applyTaskUpdate(
   if (newAutomationsDisabled !== null) changedFields.push('automationsDisabled');
   if (planApprovalChanged) changedFields.push('planApproval');
   if (attachmentsAdded > 0) changedFields.push('attachments');
-  if (hasArtifactAdds || hasArtifactRemovals) changedFields.push('artifacts');
+  if (artifactsChanged) changedFields.push('artifacts');
 
   return {
     success: true,
@@ -776,7 +814,8 @@ function applyTaskUpdate(
         ? ' A running session restarts if it is not already on these settings, which ends its current turn.'
           + ' A queued session starts with them.'
         : '')
-      + attachmentNote,
+      + attachmentNote
+      + (artifactNotes.length > 0 ? `\nAlready on the task:\n${artifactNotes.join('\n')}` : ''),
     data: {
       id: updated.id,
       displayId: updated.display_id,
@@ -1381,9 +1420,13 @@ export function handleMoveTaskToProject(
     labels: task.labels,
     priority: task.priority,
     // The task's links go with it. Who added each is not carried: the new row
-    // records them as the user's, which is who asked for the move. The links
-    // taken off it go too, or the description's own would be detected back.
-    ...(task.artifacts.length > 0 ? { artifacts: task.artifacts.map((artifact) => ({ url: artifact.url, name: artifact.name })) } : {}),
+    // records them as the user's, which is who asked for the move. Where a name
+    // came from is, so a publish title or a borrowed name still gives way to the
+    // next publish there. The links taken off it go too, or the description's
+    // own would be detected back.
+    ...(task.artifacts.length > 0
+      ? { artifacts: task.artifacts.map((artifact) => ({ url: artifact.url, name: artifact.name, ...(artifact.name_from ? { nameFrom: artifact.name_from } : {}) })) }
+      : {}),
     dismissedArtifacts: sourceTaskRepo.getDismissedArtifacts(task.id),
     createdAt: task.created_at,
     // A user setting, like the labels: a relocated task is still held. Only a

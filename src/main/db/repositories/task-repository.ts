@@ -1,12 +1,20 @@
 import { v4 as uuidv4 } from 'uuid';
 import type Database from 'better-sqlite3';
 import type { Task, TaskArtifact, TaskArtifactChanges, TaskCreateInput, TaskUpdateInput, TaskMoveInput, TaskMoveProvenance, TaskWorkflowMembership, ArchivedTasksPreview, AutoCommandState, WorktreeSkipReason, PlanApproval } from '../../../shared/types';
-import { findArtifactLinks } from '../../../shared/artifact-platforms';
-import { applyArtifactChanges, MAX_DISMISSED_ARTIFACTS, parseStoredArtifacts, type ArtifactMergeResult } from '../../../shared/task-artifacts';
+import { artifactKey, findArtifactLinks, parseArtifactUrl } from '../../../shared/artifact-platforms';
+import {
+  applyArtifactChanges,
+  artifactNamesByKey,
+  borrowArtifactNames,
+  MAX_DISMISSED_ARTIFACTS,
+  parseStoredArtifacts,
+  type ArtifactMergeResult,
+} from '../../../shared/task-artifacts';
 import { worktreeFolderUnderRoot } from '../../../shared/worktree-folder';
 import { devPortRepository } from './dev-port-repository';
 import { writeTransaction } from '../transaction';
 import { cachedStatement } from '../statement-cache';
+import { parseStringList } from '../string-list';
 import { removeLinksInWorkflowHome } from './workflow-home-links';
 import { isPlanApproval } from '../../../shared/plan-approval';
 import { TaskMoveRepository, type CappedColumnTask } from './task-move-repository';
@@ -28,14 +36,9 @@ interface TaskRow extends Omit<Task, 'labels' | 'skipped_swimlane_ids' | 'automa
   fork_point_sha?: string | null;
 }
 
-function parseStringList(raw: string | null | undefined): string[] {
-  if (!raw) return [];
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === 'string') : [];
-  } catch {
-    return [];
-  }
+function compareText(left: string, right: string): number {
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
 }
 
 function rowToTask(row: TaskRow): Task {
@@ -519,16 +522,77 @@ export class TaskRepository {
     const row = this.db.prepare('SELECT artifacts, dismissed_artifacts FROM tasks WHERE id = ?').get(taskId) as
       { artifacts: string | null; dismissed_artifacts: string | null } | undefined;
     if (!row) return null;
-    const result = applyArtifactChanges(
+    const result = this.withBorrowedNames(taskId, applyArtifactChanges(
       { artifacts: parseStoredArtifacts(row.artifacts), dismissed: parseStringList(row.dismissed_artifacts) },
       changes,
       now,
-    );
+    ));
     if (result.changed) {
       this.db.prepare('UPDATE tasks SET artifacts = ?, dismissed_artifacts = ? WHERE id = ?')
         .run(JSON.stringify(result.artifacts), JSON.stringify(result.dismissed), taskId);
     }
     return result;
+  }
+
+  /**
+   * `result` with each nameless row it added named the way another task in the
+   * project already names that link, so a canvas one task called "Jira import
+   * design" is not a bare link on the next. Only rows the merge added: a link
+   * the task already held keeps its own name or none, and a dismissed link or
+   * one past the cap was never added, so it costs no lookup. Every write comes
+   * through here (an edit, MCP, a publish, detection in messages and in the
+   * description), so the lookup lives in the write and not in one caller.
+   */
+  private withBorrowedNames(taskId: string, result: ArtifactMergeResult): ArtifactMergeResult {
+    const wanted = new Set(result.added.filter((artifact) => artifact.name === null).map((artifact) => artifactKey(artifact.url)));
+    if (wanted.size === 0) return result;
+    const added = borrowArtifactNames(result.added, this.projectArtifactNames(taskId, wanted));
+    if (added === result.added) return result;
+    const replacements = new Map<TaskArtifact, TaskArtifact>(result.added.map((artifact, position) => [artifact, added[position]]));
+    return { ...result, added, artifacts: result.artifacts.map((artifact) => replacements.get(artifact) ?? artifact) };
+  }
+
+  /**
+   * The names other tasks give `keys`, the oldest task's first (then by id, so
+   * the pick matches the migration's). SQL keeps only the rows whose stored list
+   * contains the link's path (or its host, for a path too short to tell links
+   * apart), so a link no other task holds parses nothing. The match ignores case
+   * and tries the decoded path too, because a stored link is kept as written
+   * while the URL parser lowercases the host and percent-encodes the path. It is
+   * only a prefilter: `artifactKey` confirms each match.
+   */
+  private projectArtifactNames(taskId: string, keys: ReadonlySet<string>): Map<string, string> {
+    const needles = new Set<string>();
+    for (const key of keys) {
+      const url = parseArtifactUrl(key);
+      if (!url) continue;
+      const path = url.pathname.replace(/\/+$/, '');
+      if (path.length < 8) {
+        needles.add(url.hostname.toLowerCase());
+        continue;
+      }
+      needles.add(path.toLowerCase());
+      try {
+        needles.add(decodeURI(path).toLowerCase());
+      } catch {
+        // report-ok: a path that does not decode was written encoded, and the encoded needle covers it
+      }
+    }
+    const rowsById = new Map<string, { id: string; created_at: string; artifacts: string }>();
+    const statement = cachedStatement(
+      this.db,
+      "SELECT id, created_at, artifacts FROM tasks WHERE id <> ? AND artifacts <> '[]' AND instr(lower(artifacts), ?) > 0",
+    );
+    for (const needle of needles) {
+      for (const row of statement.all(taskId, needle) as Array<{ id: string; created_at: string; artifacts: string }>) {
+        rowsById.set(row.id, row);
+      }
+    }
+    const lists = [...rowsById.values()]
+      // Compared without a locale, as SQLite compares text, so the pick matches the migration's ORDER BY.
+      .sort((left, right) => compareText(left.created_at, right.created_at) || compareText(left.id, right.id))
+      .map((row) => parseStoredArtifacts(row.artifacts));
+    return artifactNamesByKey(lists, keys);
   }
 
   /**

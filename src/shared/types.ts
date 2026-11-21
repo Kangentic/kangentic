@@ -784,8 +784,20 @@ export type WorktreeSkipReason =
   | 'remote-agent'
   | 'worktree-missing';
 
-/** Who put an artifact on a task. Recorded and returned over MCP, never drawn. */
-export type TaskArtifactSource = 'user' | 'agent' | 'detected';
+/**
+ * Who put an artifact on a task. Recorded and returned over MCP, never drawn.
+ * `publish` is an agent's own publish (a tool its adapter's hooks watch),
+ * told apart from an MCP add because its title is the page's own name.
+ */
+export type TaskArtifactSource = 'user' | 'agent' | 'publish' | 'detected';
+
+/**
+ * Where an artifact's name came from, when nobody chose it: a publish's title,
+ * or a name another task in the project gave the same link. Either one gives
+ * way to a later publish's title. A name a person typed, or one an agent set,
+ * carries none and is never replaced by a publish.
+ */
+export type TaskArtifactNameFrom = 'publish' | 'borrowed';
 
 /**
  * One link a task keeps as an artifact (#1056): a design, a diagram, a
@@ -798,6 +810,8 @@ export interface TaskArtifact {
   url: string;
   /** A name a person or an agent gave it, or a publish's title. Null shows the name in the link, else the link cut short. */
   name: string | null;
+  /** Set only for a name nobody chose (see `TaskArtifactNameFrom`). Absent on a given name. */
+  name_from?: TaskArtifactNameFrom;
   source: TaskArtifactSource;
   /** When it was added (UTC ISO 8601). The list stays in this order. */
   added_at: string;
@@ -807,6 +821,12 @@ export interface TaskArtifact {
 export interface TaskArtifactInput {
   url: string;
   name?: string | null;
+  /**
+   * Where `name` came from, when nobody chose it. Main sets it only to carry a
+   * row's own mark, as a task moved to another project does. The task window's
+   * IPC handlers strip it, so a name a person sends is always a chosen one.
+   */
+  nameFrom?: TaskArtifactNameFrom;
 }
 
 /** A change to a task's artifacts, applied in one write. */
@@ -814,7 +834,7 @@ export interface TaskArtifactChanges {
   add?: TaskArtifactInput[];
   /** Links to take off the task. A removed link is never detected back onto it. */
   remove?: string[];
-  /** New names by link. Null clears a name. */
+  /** New names by link, always kept over a later publish's title. Null clears a name. */
   rename?: Array<{ url: string; name: string | null }>;
   /** Who is making the change. Defaults to `user`. */
   source?: TaskArtifactSource;

@@ -80,7 +80,10 @@ const ARTIFACT_GUIDE =
   'An artifact is a link to something the task is built from or produces: a design (Figma, Penpot), a diagram '
   + '(Miro, Excalidraw, Mermaid), a requirements document (Google Docs, Notion, Confluence), a generated page or app '
   + '(a Claude artifact, v0, Lovable). The task shows them on its card and passes them to every agent that works it. '
-  + 'Add one when you publish or are handed such a link. Not for the task\'s pull request (prUrl) or a local file (attachments). '
+  + 'Add one when you are handed such a link, or make one somewhere Kangentic does not see. A page published with a tool '
+  + 'Kangentic watches (Claude\'s Artifact tool) is linked by itself under the title it was published with: check '
+  + 'kangentic_get_current_task before adding it again. Name an artifact for what it is about ("Checkout flow"), not for '
+  + 'what kind of thing it is ("Design canvas"). Not for the task\'s pull request (prUrl) or a local file (attachments). '
   + 'Any http or https link is accepted.';
 
 /**
@@ -683,22 +686,26 @@ export function registerTaskTools(
           filePath: z.string().describe('Absolute path to the file to attach'),
           filename: z.string().optional().describe('Override display filename'),
         })).optional().describe('File attachments to ADD to the task. This is additive - existing attachments are kept, not replaced. Each entry needs `filePath` (absolute) and may override the display `filename`. Use kangentic_remove_task_attachment to remove one.'),
-        addArtifacts: z.array(ARTIFACT_ENTRY_SCHEMA).max(MAX_TASK_ARTIFACTS).optional().describe(`Links to ADD to the task's artifacts. Additive: the rest stay. A link the task already has is not added twice, and a "name" sent with it renames it. ${ARTIFACT_GUIDE}`),
+        addArtifacts: z.array(ARTIFACT_ENTRY_SCHEMA).max(MAX_TASK_ARTIFACTS).optional().describe(`Links to ADD to the task's artifacts. Additive: the rest stay. A link the task already has is not added twice and keeps its name: a "name" sent with it only fills an empty one, and the result says what the link is already called. Use renameArtifacts to rename. ${ARTIFACT_GUIDE}`),
         removeArtifacts: z.array(z.string()).max(MAX_TASK_ARTIFACTS).optional().describe('Links to take off the task\'s artifacts, each as kangentic_get_current_task or kangentic_find_task prints it. Refused when a link is not on the task. A removed link is not detected back onto the task.'),
+        renameArtifacts: z.array(z.object({
+          url: z.string().describe('The link, as kangentic_get_current_task or kangentic_find_task prints it.'),
+          name: z.string().max(200).nullable().describe('The new name, e.g. "Checkout flow". null or "" clears it, and the task shows the name in the link, or the link cut short.'),
+        })).max(MAX_TASK_ARTIFACTS).optional().describe('New names for links already on the task. Refused when a link is not on the task. A name set here is kept when the page is published again.'),
         automationsDisabled: z.boolean().optional().describe(AUTOMATIONS_DISABLED_DESCRIPTION),
         planApproval: PLAN_APPROVAL_SCHEMA.nullable().optional().describe(TASK_PLAN_APPROVAL_DESCRIPTION),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ taskId, title, description, descriptionEdits, appendDescription, prUrl, prNumber, agent, priority, labels, baseBranch, useWorktree, model, effort, permissionMode, profile, runMode, attachments, addArtifacts, removeArtifacts, automationsDisabled, planApproval, project }) => {
+    async ({ taskId, title, description, descriptionEdits, appendDescription, prUrl, prNumber, agent, priority, labels, baseBranch, useWorktree, model, effort, permissionMode, profile, runMode, attachments, addArtifacts, removeArtifacts, renameArtifacts, automationsDisabled, planApproval, project }) => {
       if (
         title === undefined && description === undefined && descriptionEdits === undefined && appendDescription === undefined &&
         prUrl === undefined && prNumber === undefined &&
         agent === undefined && priority === undefined && labels === undefined && baseBranch === undefined &&
         useWorktree === undefined && model === undefined && effort === undefined && permissionMode === undefined &&
         profile === undefined && runMode === undefined && attachments === undefined && automationsDisabled === undefined &&
-        planApproval === undefined && addArtifacts === undefined && removeArtifacts === undefined
+        planApproval === undefined && addArtifacts === undefined && removeArtifacts === undefined && renameArtifacts === undefined
       ) {
         return { content: [{ type: 'text' as const, text: 'Provide at least one field to update.' }], isError: true };
       }
@@ -773,6 +780,7 @@ export function registerTaskTools(
           attachments: attachments ?? null,
           addArtifacts: addArtifacts ?? null,
           removeArtifacts: removeArtifacts ?? null,
+          renameArtifacts: renameArtifacts ?? null,
           automationsDisabled: automationsDisabled ?? null,
           // Tri-state, as the handler reads it: absent leaves it, null follows the columns.
           planApproval,

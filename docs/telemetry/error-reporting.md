@@ -388,7 +388,8 @@ in one Sentry org, one triage surface.
   When a person or an agent adds a link that no platform pattern matches, main reports that link's
   domain so the list grows from what is used. That includes a page on a listed site that no pattern
   covers, such as a YouTube channel (`src/main/artifacts/artifact-domain-report.ts`). The event carries
-  two tags, `artifact_domain` and `artifact_source` (`user` or `agent`), and is fingerprinted per
+  two tags, `artifact_domain` and `artifact_source` (`user` or `agent`; a publish adds only
+  recognised links, so `publish` never reports), and is fingerprinted per
   domain, so Sentry holds one issue per site. The domain is the site the host belongs to, without a
   leading `www.`, and every label left of it collapsed to `*` (`collapseTenantLabels`):
   `acme.sharepoint.com` goes as `*.sharepoint.com`, because a tenant host names the customer's

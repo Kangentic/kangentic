@@ -954,8 +954,8 @@ export class SessionManager extends EventEmitter {
       },
       onArtifactPublished: (sessionId, urls, title) => {
         // A publish tool answered with links. The IPC listener keeps the
-        // recognised ones on the task as artifacts the agent added.
-        this.emit('artifact-links', sessionId, { urls, title, source: 'agent' });
+        // recognised ones on the task as the agent's publish, named by its title.
+        this.emit('artifact-links', sessionId, { urls, title, source: 'publish' });
       },
       onAgentSessionId: (sessionId, agentReportedId, options) => {
         // Agent session ID capture covers four cases (the fourth is below):

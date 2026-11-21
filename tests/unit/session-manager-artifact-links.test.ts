@@ -2,7 +2,7 @@
  * `SessionManager` re-emits a telemetry publish as `artifact-links` (#1056).
  * A user loses: a page an agent published never reaching the task's Artifacts
  * list because the manager stopped forwarding the telemetry callback, or the
- * links arriving under a source other than `agent`.
+ * links arriving under a source other than `publish`.
  *
  * The real manager and the real `SessionTelemetry` it builds; a tool-end event
  * carrying `urls` is ingested the way the event bridge's output is. Modelled on
@@ -73,7 +73,7 @@ describe('SessionManager artifact-links emit', () => {
     manager.dispose();
   });
 
-  it('re-emits a publish as artifact-links with the links, the title and source agent', () => {
+  it('re-emits a publish as artifact-links with the links, the title and source publish', () => {
     const emitted: unknown[][] = [];
     manager.on('artifact-links', (...args: unknown[]) => emitted.push(args));
 
@@ -81,7 +81,8 @@ describe('SessionManager artifact-links emit', () => {
       { ts: Date.now(), type: EventType.ToolEnd, tool: 'Artifact', toolId: 'tool-a', urls: [PAGE], urlsTitle: 'Checkout mock' },
     ]);
 
-    expect(emitted).toEqual([['sess-art-1', { urls: [PAGE], title: 'Checkout mock', source: 'agent' }]]);
+    // `publish`, not `agent`: only a publish's title may replace an earlier title.
+    expect(emitted).toEqual([['sess-art-1', { urls: [PAGE], title: 'Checkout mock', source: 'publish' }]]);
   });
 
   it('emits nothing for a tool end that carries no links', () => {
