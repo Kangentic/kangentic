@@ -24,13 +24,14 @@ const SESSION: LimitedSession = { sessionId: 'session-1', taskId: 'task-1', proj
 
 function rig(accounts: AgentAccount[], readUsageNow: (accountId: string) => Promise<void> = async () => undefined) {
   const read = vi.fn(readUsageNow);
-  const continueOn = vi.fn(async (_session: LimitedSession, _accountId: string, _prompt: string) => true);
+  const continueOn = vi.fn(async (_session: LimitedSession, _accountId: string, _prompt: string | undefined) => true);
   const notifySwitched = vi.fn();
   const notifyAllFull = vi.fn();
   const continuation = new AccountContinuation({
     readConfig: () => ({ orderMode: 'manual', autoSwitchAtLimit: true }),
     findTaskSession: (sessionId) => (sessionId === SESSION.sessionId ? SESSION : null),
-    canContinue: () => true, openingPrompt: () => null,
+    canContinue: () => true,
+    openingPrompt: () => null,
     isUsageLimitFailure: (_agent, detail) => detail.includes('rate_limit'),
     ordered: () => accounts,
     readUsageNow: read,

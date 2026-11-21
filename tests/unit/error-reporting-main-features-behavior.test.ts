@@ -296,7 +296,8 @@ describe('account continuation', () => {
     const continuation = new AccountContinuation({
       readConfig: () => ({ orderMode: 'manual', autoSwitchAtLimit: true }),
       findTaskSession: () => session,
-      canContinue: () => true, openingPrompt: () => null,
+      canContinue: () => true,
+      openingPrompt: () => null,
       isUsageLimitFailure: () => true,
       ordered: () => accounts as never,
       readUsageNow: async () => { throw new TypeError('usage read defect'); },
@@ -316,7 +317,8 @@ describe('account continuation', () => {
     const continuation = new AccountContinuation({
       readConfig: () => ({ orderMode: 'manual', autoSwitchAtLimit: true }),
       findTaskSession: () => { throw new TypeError('session lookup defect'); },
-      canContinue: () => true, openingPrompt: () => null,
+      canContinue: () => true,
+      openingPrompt: () => null,
       isUsageLimitFailure: () => true,
       ordered: () => [],
       readUsageNow: async () => {},

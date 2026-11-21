@@ -7,7 +7,8 @@ import { resolveProjectContext } from '../helpers/project-repos';
 import { announceTaskWrite } from '../helpers/task-write-announce';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
 import { loadTaskProfile } from '../helpers/task-profile';
-import { reconcileTaskSessionRef, restartSessionForSettingsChange } from './session-reconcile';
+import { reconcileTaskSessionRef } from './session-reconcile';
+import { restartIdleKeepingRecap } from '../helpers/idle-restart-keeps-recap';
 import {
   resolveReportedEffort,
   resolveRestartReason,
@@ -145,9 +146,8 @@ export async function applyTaskSettingsToLiveSession(
   // The shared helper resumes idle (no auto_command, no continuation), so an
   // in-flight turn stops, and it keeps `--resume` viable, so a respawn failure
   // leaves the record `suspended` for the existing "Resume" UI to retry.
-  const result = await restartSessionForSettingsChange(
-    context, projectId, projectPath, taskId,
-    { phase: restartPhaseFor(restartReason) },
+  const result = await restartIdleKeepingRecap(
+    context, projectId, projectPath, taskId, task.session_id, restartPhaseFor(restartReason),
   );
   return result.ok
     ? { ok: true, mode: 'restart' }
