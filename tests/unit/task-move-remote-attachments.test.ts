@@ -92,7 +92,7 @@ vi.mock('../../src/main/ipc/helpers/index', () => ({
   createTransitionEngine: vi.fn(() => ({ executeTransition: vi.fn(async () => ({ outcomes: [], failures: [] })) })),
   cleanupTaskResources: vi.fn(async () => {}),
   deleteTaskWorktree: vi.fn(async () => true),
-  reapTaskLeftovers: vi.fn(async () => {}),
+  reapTaskLeftovers: vi.fn(async () => ({ tasksLeftRunningInWorktree: new Set<string>() })),
   reportAutomationFailures: vi.fn(),
   autoSpawnForTask: vi.fn(async () => {}),
 }));

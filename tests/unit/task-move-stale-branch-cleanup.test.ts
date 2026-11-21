@@ -362,7 +362,7 @@ describe('handleTaskMove stale-resource cleanup: branch deletion', () => {
 
       expect(mockRemoveWorktree).toHaveBeenCalled();
       for (const call of mockRemoveWorktree.mock.calls) {
-        expect(call[1]).toEqual({ removalProfile: 'moderate' });
+        expect(call[1]).toEqual({ removalProfile: 'moderate', caller: 'stale_cleanup' });
       }
     } finally {
       existsSpy.mockRestore();

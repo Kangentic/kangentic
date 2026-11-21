@@ -121,7 +121,7 @@ vi.mock('../../src/main/ipc/helpers/index', () => ({
   reportAutomationFailures: vi.fn(),
   cleanupTaskResources: (...args: unknown[]) => mockCleanupTaskResources(...args),
   deleteTaskWorktree: vi.fn(async () => true),
-  reapTaskLeftovers: vi.fn(async () => {}),
+  reapTaskLeftovers: vi.fn(async () => ({ tasksLeftRunningInWorktree: new Set<string>() })),
   scheduleDoneWorktreeRemovalRetry: vi.fn(),
   autoSpawnForTask: vi.fn(async () => {}),
 }));

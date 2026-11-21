@@ -23,7 +23,7 @@ vi.mock('../../src/main/ipc/helpers', () => ({
   autoSpawnForTask: vi.fn(() => Promise.resolve()),
   // The MCP delete path reaps what the session left running before it removes
   // the worktree. Inert here: the ordering is pinned in the reap wiring tests.
-  reapTaskLeftovers: vi.fn(() => Promise.resolve()),
+  reapTaskLeftovers: vi.fn(() => Promise.resolve(({ tasksLeftRunningInWorktree: new Set<string>() }))),
 }));
 
 // The MCP delete closes the task's pop-outs and offscreen lane once its
@@ -1499,6 +1499,7 @@ describe('buildCommandContextForProject - onTaskDeleted worktree teardown orderi
 
     vi.mocked(reapTaskLeftovers).mockImplementationOnce(async () => {
       timeline.push('reapTaskLeftovers');
+      return { tasksLeftRunningInWorktree: new Set<string>() };
     });
 
     const project = makeProject({ id: DEFAULT_ID, path: PROJECT_PATH });
@@ -1594,6 +1595,7 @@ describe('buildCommandContextForProject - onTaskDeleted worktree teardown orderi
 
     vi.mocked(reapTaskLeftovers).mockImplementationOnce(async () => {
       timeline.push('reapTaskLeftovers');
+      return { tasksLeftRunningInWorktree: new Set<string>() };
     });
     vi.mocked(closeTaskWindows).mockImplementationOnce(() => {
       timeline.push('closeTaskWindows');
@@ -1724,6 +1726,7 @@ describe('buildCommandContextForProject - onTaskDeleted worktree teardown orderi
     } as unknown as typeof WorktreeManager);
     vi.mocked(reapTaskLeftovers).mockImplementationOnce(async () => {
       timeline.push('reapTaskLeftovers');
+      return { tasksLeftRunningInWorktree: new Set<string>() };
     });
     vi.mocked(prepareWorktreeForRemoval).mockImplementationOnce(async () => {
       timeline.push('prepareWorktreeForRemoval');

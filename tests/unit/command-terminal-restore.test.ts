@@ -14,7 +14,7 @@ import type DatabaseType from 'better-sqlite3';
 
 const hoisted = vi.hoisted(() => ({
   startCommandTerminal: vi.fn(),
-  reapTaskLeftovers: vi.fn(async () => undefined),
+  reapTaskLeftovers: vi.fn(async () => ({ tasksLeftRunningInWorktree: new Set<string>() })),
   stopBackgroundSession: vi.fn(async () => undefined),
   shuttingDown: false,
   handlers: new Map<string, (...args: unknown[]) => unknown>(),

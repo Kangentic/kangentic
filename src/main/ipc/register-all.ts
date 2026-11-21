@@ -412,7 +412,10 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   // moved into the agent CLI's own background session is stopped first.
   const commandTerminalLeftovers = new CommandTerminalLeftoverReaper({
     sessionManager,
-    reap: (projectPath, task, wslDistros) => reapTaskLeftovers(requireContext(), projectPath, [task], { wslDistros, skipStopScript: true }),
+    // No worktree is removed after a Command Terminal's reap, so its verdict goes nowhere.
+    reap: async (projectPath, task, wslDistros) => {
+      await reapTaskLeftovers(requireContext(), projectPath, [task], { wslDistros, skipStopScript: true });
+    },
     stopBackgroundSession: (ended) => stopEndedCommandTerminalBackgroundSession(requireContext(), ended),
     willRestore: (session) => isRestorableAfterHostLoss(requireContext(), session),
     isShuttingDown,

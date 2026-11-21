@@ -540,7 +540,7 @@ describe('project recovery pass failures', () => {
       '../../src/main/config/apply-runtime-config': () => ({ applyRuntimeConfig: vi.fn() }),
       '../../src/main/ipc/helpers': () => ({
         ensureGitignore: vi.fn(async () => undefined),
-        reapTaskLeftovers: vi.fn(async () => undefined),
+        reapTaskLeftovers: vi.fn(async () => ({ tasksLeftRunningInWorktree: new Set<string>() })),
         leftoverSweepOptions: vi.fn(() => ({ stoppingEnabled: () => true, onReport: () => undefined })),
         autoSpawnForTask: vi.fn(async () => undefined),
       }),

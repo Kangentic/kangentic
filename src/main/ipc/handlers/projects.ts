@@ -248,7 +248,7 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
   // Kill whatever every task of the project left running, archived ones too,
   // once their sessions have exited and before the worktrees go: a live
   // process holding a worktree as its cwd blocks the removal on Windows.
-  await reapTaskLeftovers(context, projectPath, [...allTasks, ...archivedTasks]);
+  const reapVerdict = await reapTaskLeftovers(context, projectPath, [...allTasks, ...archivedTasks]);
 
   // 2. Cleanly detach git worktrees (keeps branches with user code intact)
   if (isGitRepo(projectPath)) {
@@ -260,7 +260,10 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
           // which the removal inside the queue would refuse.
           await prepareWorktreeForRemoval(task.worktree_path, 'thorough');
           await worktreeManager.withLock(
-            () => worktreeManager.removeWorktree(task.worktree_path!),
+            () => worktreeManager.removeWorktree(task.worktree_path!, {
+              caller: 'project_delete',
+              reapLeftRunning: reapVerdict.tasksLeftRunningInWorktree.has(task.id),
+            }),
             { label: 'project-delete-worktree' },
           );
         } catch (err) {

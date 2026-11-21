@@ -25,6 +25,7 @@ type SpawnBehavior = { exitCode: number; stderr?: string };
 
 const hoisted = vi.hoisted(() => ({
   reportHandledError: vi.fn(),
+  trackEvent: vi.fn(),
   removeWithRetry: vi.fn(async (_target: string, _options?: unknown): Promise<void> => {}),
   describeWorktreeHolders: vi.fn(
     async (): Promise<Array<{ pid: number; image: string; commandLine: string }>> => [],
@@ -36,6 +37,12 @@ const hoisted = vi.hoisted(() => ({
 
 vi.mock('../../src/main/analytics/error-reporting', () => ({
   reportHandledError: hoisted.reportHandledError,
+}));
+
+// The Aptabase count a removal sends in place of a report.
+vi.mock('../../src/main/analytics/analytics', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/analytics/analytics')>()),
+  trackEvent: hoisted.trackEvent,
 }));
 
 // The session-id report asks whether `node` is on PATH; answer at once, as a machine with node would.
@@ -113,6 +120,7 @@ let tempDirectory: string;
 beforeEach(() => {
   tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'report-behavior-'));
   hoisted.reportHandledError.mockClear();
+  hoisted.trackEvent.mockClear();
   hoisted.removeWithRetry.mockReset();
   hoisted.describeWorktreeHolders.mockReset();
   hoisted.describeWorktreeHolders.mockResolvedValue([]);
@@ -129,19 +137,82 @@ afterEach(() => {
 });
 
 describe('worktree removal failure report', () => {
+  function worktreePathFor(removalProfile: string): string {
+    return path.join(tempDirectory, '.kangentic', 'worktrees', `task-${removalProfile}`);
+  }
+
   async function removeFailingWorktree(
     removalProfile: 'fast' | 'moderate' | 'thorough',
     manualRemovalError: Error,
+    options: Omit<import('../../src/main/git/worktree-manager').WorktreeRemovalOptions, 'removalProfile'> = {},
   ): Promise<boolean> {
-    const worktreePath = path.join(tempDirectory, '.kangentic', 'worktrees', `task-${removalProfile}`);
+    const worktreePath = worktreePathFor(removalProfile);
     fs.mkdirSync(worktreePath, { recursive: true });
     hoisted.spawnBehavior.current = { exitCode: 1, stderr: 'fatal: unable to remove worktree' };
     hoisted.removeWithRetry.mockRejectedValue(manualRemovalError);
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { WorktreeManager } = await import('../../src/main/git/worktree-manager');
-    return new WorktreeManager(tempDirectory).removeWorktree(worktreePath, { removalProfile });
+    return new WorktreeManager(tempDirectory).removeWorktree(worktreePath, { removalProfile, ...options });
   }
+
+  /** An EBUSY as Node's fs raises it, with the syscall and the path it failed on. */
+  function busyError(syscall: string, failedPath: string): Error {
+    return Object.assign(new Error(`EBUSY: resource busy or locked, ${syscall} '${failedPath}'`), { code: 'EBUSY', syscall, path: failedPath });
+  }
+
+  // Sentry DESKTOP-3P: 15 events, every one EBUSY on Windows, from folders the
+  // task's own reap had left a process working in.
+  it('counts a removal the task\'s reap left a process in, and reports nothing', async () => {
+    const removed = await removeFailingWorktree('moderate', busyError('rmdir', worktreePathFor('moderate')), {
+      caller: 'done_fallback',
+      reapLeftRunning: true,
+    });
+
+    expect(removed).toBe(false);
+    expect(hoisted.reportHandledError).not.toHaveBeenCalled();
+    expect(hoisted.trackEvent).toHaveBeenCalledWith('app_error', expect.objectContaining({
+      source: 'worktree_removal',
+      reason: 'reap_left_running',
+      caller: 'done_fallback',
+      profile: 'moderate',
+      errno: 'EBUSY',
+    }));
+  });
+
+  it('still reports a failure with nothing left there, with its caller, the part of the folder and the syscall', async () => {
+    const lockedFile = path.join(worktreePathFor('moderate'), 'node_modules', '.bin', 'vite');
+
+    await removeFailingWorktree('moderate', busyError('unlink', lockedFile), { caller: 'cleanup', reapLeftRunning: false });
+
+    expect(hoisted.trackEvent).not.toHaveBeenCalledWith('app_error', expect.objectContaining({ source: 'worktree_removal' }));
+    expect(hoisted.reportHandledError).toHaveBeenCalledTimes(1);
+    const tags = hoisted.reportHandledError.mock.calls[0][1] as Record<string, string>;
+    expect(tags).toMatchObject({ caller: 'cleanup', path_class: 'node_modules', syscall: 'unlink' });
+    // The path never leaves: it holds the task's folder name.
+    expect(JSON.stringify(tags)).not.toContain('task-moderate');
+  });
+
+  it('names the folder itself and its .git apart from the rest', async () => {
+    const { removalPathClassOf, removalSyscallOf } = await import('../../src/main/git/worktree-manager');
+    const worktreePath = worktreePathFor('classes');
+
+    expect(removalPathClassOf(worktreePath, worktreePath)).toBe('root');
+    expect(removalPathClassOf(worktreePath, path.join(worktreePath, '.git', 'index.lock'))).toBe('.git');
+    expect(removalPathClassOf(worktreePath, path.join(worktreePath, 'packages', 'web', 'node_modules', 'x'))).toBe('node_modules');
+    expect(removalPathClassOf(worktreePath, path.join(worktreePath, 'src', 'index.ts'))).toBe('other');
+    expect(removalPathClassOf(worktreePath, path.join(tempDirectory, 'elsewhere'))).toBe('other');
+    expect(removalPathClassOf(worktreePath, undefined)).toBe('none');
+    expect(removalSyscallOf('rmdir')).toBe('rmdir');
+    expect(removalSyscallOf('something we never call')).toBe('other');
+    expect(removalSyscallOf(undefined)).toBe('none');
+  });
+
+  it('tags a removal with no caller named as other', async () => {
+    await removeFailingWorktree('moderate', busyError('rmdir', worktreePathFor('moderate')));
+
+    expect(hoisted.reportHandledError.mock.calls[0][1]).toMatchObject({ caller: 'other', path_class: 'root', syscall: 'rmdir' });
+  });
 
   it('reports a removal that fails, tagged with profile, timeout, holders, refusal and platform', async () => {
     const eperm = Object.assign(new TypeError('EPERM: operation not permitted'), { code: 'EPERM' });

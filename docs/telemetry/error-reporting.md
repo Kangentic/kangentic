@@ -487,7 +487,7 @@ in one Sentry org, one triage surface.
     `db_migration` (tags `database`, `stage`: `open`, `pragma`, `migrate`, `initialize`), `held_messages`, `session_handlers` (tag `stage`),
     `session_transcript_path` (a write of the agent's reported transcript path to its session row
     that threw; tag `stage`: `status_line`, `session_start_hook`), `accounts`, `artifact_detection`, `metrics_snapshot`, `worktree_removal` (tags `profile`,
-    `timed_out`, `holders`, `refused`, `platform`), `preload` (our own windows only),
+    `timed_out`, `holders`, `refused`, `platform`, `caller`, `path_class` and `syscall`, below), `preload` (our own windows only),
     `pop_out_load` (tags `kind`, `error_code`), `dictation`, `owner_turn` (the read of whether an
     agent's move came in a turn the owner started; the move still runs, as the agent's),
     `idle_pause_lift` (a workflow that could not be read while deciding whether an open or an
@@ -978,6 +978,34 @@ in one Sentry org, one triage surface.
   permissions are not a defect in the app (Sentry DESKTOP-28 was this folder arriving through the
   config write instead). The Add project flow turns the sentinel into a toast, and nothing is
   registered, so `project_create` does not fire either.
+- **A worktree the task's reap left a process in is counted, not reported.** Every terminal
+  transition runs `reapTaskLeftovers` (`src/main/ipc/helpers/task-cleanup.ts`) before it removes the
+  task's worktree. The reap keeps some processes on purpose (shared, outside, a visible app, under
+  tmux or a live PTY), cannot stop some, and with "Stop leftover processes" off stops none. A kept
+  process working inside the worktree holds the folder on Windows, so the removal fails with `EBUSY`.
+  The user was told through the leftover-processes toast, and the removal is retried once the
+  process ends. The reap now resolves with its verdict (`ReapVerdict`: the tasks it left a process
+  working inside the worktree of), and the removal right after it passes `reapLeftRunning`. A failed
+  removal with that set sends `app_error` (`source: worktree_removal`, `reason: reap_left_running`,
+  with `caller`, `profile`, `errno`) instead of an issue. The Done move hands the same verdict to its
+  delayed retry ten seconds later, since the kept process is usually still there. A retry that a
+  Stop, a late reap answer or the row's recheck starts carries none: the process it waited for is
+  gone, so a failure then is reported. A reap that failed, or that the host had not answered in time,
+  names no task, and a failure after it reports. Sentry DESKTOP-3P was 15 events, every one `EBUSY`
+  on Windows. Its `holders: none` on 11 of them is no evidence against a kept process: the holder
+  scan (`findWorktreePathHolders`) reads command lines, and a process holding the folder only as its
+  working directory cannot be seen on Windows.
+
+  What still reports carries three more fixed values to split the rest. `caller` names the path
+  that asked: `done_fallback` (a Done move's in-place delete after its move aside failed),
+  `done_retry`, `cleanup` (To Do, Backlog, delete), `stale_cleanup` (a failed creation's leftovers),
+  `startup_retry`, `mcp_delete`, `project_delete`, `spare`, `create_clear`, or `other`. The stack
+  cannot say: DESKTOP-3P's frames were cut at an `await` inside the removal. `path_class` is where
+  the manual removal last failed: `root`, `.git`, `node_modules`, `other`, or `none` when the error
+  named no path. `syscall` is the syscall it failed in (`rmdir`, `unlink`, `rename` and a few more
+  a removal makes), `other`, or `none`. The path itself never leaves: it holds the task's folder
+  name. The process readers are not widened to read an untagged process's working directory to
+  explain the rest. Their gates forbid it by design.
 - **A recoverable utility crash is counted, not reported.** Only the crash that exhausts the
   restart cap produces a Sentry issue, and only once per latch, except an embed worker that could not
   load a native module (`ERR_DLOPEN_FAILED`), which is reported on its first crash because it

@@ -90,7 +90,7 @@ describe('cleanupTaskResources annotation draft', () => {
 
     await expect(cleanupTaskResources(makeContext() as never, TASK, tasks as never, undefined, PROJECT_PATH)).resolves.toBeUndefined();
 
-    expect(removeWorktree).toHaveBeenCalledWith(TASK.worktree_path, { removalProfile: 'moderate' });
+    expect(removeWorktree).toHaveBeenCalledWith(TASK.worktree_path, { removalProfile: 'moderate', caller: 'cleanup', reapLeftRunning: false });
     expect(tasks.update).toHaveBeenCalledWith(expect.objectContaining({ worktree_path: null }));
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('annotation draft'));
     warn.mockRestore();

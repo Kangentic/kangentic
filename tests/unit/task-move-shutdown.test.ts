@@ -203,7 +203,7 @@ vi.mock('../../src/main/ipc/helpers/index', () => ({
   // The Done branch reaps what the task left running after its session exits
   // and before the worktree delete. Inert here; covered by
   // session-leftover-reap-wiring.test.ts and task-tagged-reap.test.ts.
-  reapTaskLeftovers: vi.fn(async () => {}),
+  reapTaskLeftovers: vi.fn(async () => ({ tasksLeftRunningInWorktree: new Set<string>() })),
   // A move out of a column that is not To Do runs its exit automations and
   // reports their failures through this.
   reportAutomationFailures: vi.fn(),

@@ -94,7 +94,7 @@ vi.mock('../../src/main/ipc/helpers', () => ({
   // The open chain reads the sweep options; without them it throws inside the
   // promise chain and session recovery silently never runs.
   leftoverSweepOptions: vi.fn(() => ({ stoppingEnabled: () => false, onReport: () => {} })),
-  reapTaskLeftovers: vi.fn(async () => {}),
+  reapTaskLeftovers: vi.fn(async () => ({ tasksLeftRunningInWorktree: new Set<string>() })),
 }));
 vi.mock('../../src/main/ipc/helpers/project-entry-search', () => ({
   searchProjectEntries: vi.fn(async () => ({ entries: [], truncated: false })),

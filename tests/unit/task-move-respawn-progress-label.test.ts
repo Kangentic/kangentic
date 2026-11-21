@@ -138,7 +138,7 @@ vi.mock('../../src/main/ipc/helpers/index', () => ({
   // The Done branch reaps what the task left running after its session exits
   // and before the worktree delete. Inert here; covered for real by
   // session-reap-real-processes.test.ts.
-  reapTaskLeftovers: vi.fn(async () => {}),
+  reapTaskLeftovers: vi.fn(async () => ({ tasksLeftRunningInWorktree: new Set<string>() })),
 }));
 vi.mock('../../src/main/pr/pr-linking', () => ({
   autoLinkPRForTask: vi.fn(),

@@ -55,7 +55,7 @@ vi.mock('../../src/main/config/apply-runtime-config', () => ({ applyRuntimeConfi
 vi.mock('../../src/main/ipc/helpers', () => ({
   ensureGitignore: vi.fn(),
   leftoverSweepOptions: vi.fn(() => ({ stoppingEnabled: () => false, onReport: () => {} })),
-  reapTaskLeftovers: vi.fn(async () => {}),
+  reapTaskLeftovers: vi.fn(async () => ({ tasksLeftRunningInWorktree: new Set<string>() })),
 }));
 vi.mock('../../src/main/ipc/helpers/project-entry-search', () => ({
   searchProjectEntries: vi.fn(async () => ({ entries: [], truncated: false })),

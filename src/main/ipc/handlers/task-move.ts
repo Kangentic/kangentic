@@ -1146,7 +1146,10 @@ export async function handleTaskMove(
         // removal below fail and leaves a husk with no git admin entry - the
         // failure that later hangs a fresh worktree creation. After the
         // suspend, so the session has exited; before deleteTaskWorktree.
-        await reapTaskLeftovers(context, resolvedProjectPath, [task], { signal });
+        // Its verdict goes to the removal below: a process the reap kept in the
+        // worktree holds it, so that failure is counted and not reported.
+        const reapVerdict = await reapTaskLeftovers(context, resolvedProjectPath, [task], { signal });
+        const reapLeftRunning = reapVerdict.tasksLeftRunningInWorktree.has(task.id);
 
         // Capture git churn (fire-and-forget, best-effort). In the PR flow the
         // branch is usually already merged by the time a task reaches Done, so
@@ -1162,14 +1165,14 @@ export async function handleTaskMove(
         // Delete the local worktree to reclaim disk. Preserve branch_name and
         // session records so moving back out of Done can restore both.
         if (task.worktree_path) {
-          const worktreeDeleted = await deleteTaskWorktree(context, task, tasks, resolvedProjectPath);
+          const worktreeDeleted = await deleteTaskWorktree(context, task, tasks, resolvedProjectPath, { caller: 'done_fallback', reapLeftRunning });
           if (worktreeDeleted) {
             console.log(`[TASK_MOVE] Deleted worktree for task ${task.id.slice(0, 8)} (moved to Done; branch + session preserved)`);
           } else {
             console.warn(`[TASK_MOVE] Partial worktree delete for task ${task.id.slice(0, 8)} (moved to Done; directory could not be deleted - will retry shortly, then on next startup)`);
             // A holder on its way out (a process still closing files in the
             // directory) is usually gone seconds later.
-            scheduleDoneWorktreeRemovalRetry(context, resolvedProjectPath ?? null, task.id);
+            scheduleDoneWorktreeRemovalRetry(context, resolvedProjectPath ?? null, task.id, undefined, { reapLeftRunning });
           }
           if (resolvedProjectPath) {
             WorktreeManager.scheduleBackgroundPrune(resolvedProjectPath);
@@ -1872,7 +1875,7 @@ export async function handleTaskMove(
                   // explicitly best-effort ("will retry on next attempt"), and a
                   // still-pinned path is picked up by the husk-reuse and
                   // startup-retry net either way.
-                  await worktreeManager.removeWorktree(expectedPath, { removalProfile: 'moderate' });
+                  await worktreeManager.removeWorktree(expectedPath, { removalProfile: 'moderate', caller: 'stale_cleanup' });
                 } catch (removalError) {
                   console.warn(`[TASK_MOVE] Skipped stale worktree candidate ${expectedPath}:`, removalError);
                   continue;
