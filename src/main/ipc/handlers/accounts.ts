@@ -15,6 +15,7 @@ import {
 } from '../../../shared/agent-accounts';
 import { EventType, type SessionEvent, type SessionUsage } from '../../../shared/types';
 import { AccountContinuation } from '../../accounts/account-continuation';
+import { carryRecapAcross, forgetRecapSession, pauseRecapTurnWait } from '../../automations/turn-end/recap-turns';
 import { AccountLoginRunner } from '../../accounts/account-login';
 import { AccountLoginWatch } from '../../accounts/account-login-watch';
 import { createTaskAccountSwitcher, setTaskAccountSwitcher, type TaskAccountSwitcherHandle } from '../../accounts/account-task-switch';
@@ -212,17 +213,31 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
     if (!task || !projectPath) return false;
     // Replaced by another pass that already put the task on this account: nothing left to do.
     if (task.session_id !== session.sessionId) return liveAccountOf(session.taskId) === accountId;
-    const restart = await restartSessionForSettingsChange(context, session.projectId, projectPath, session.taskId, {
-      phase: 'switching-account',
-      resumePrompt: prompt,
-      accountId,
-    });
+    // A session replaced before its recap turn ended hands its recap mark to the session that
+    // replaces it, so a column message waiting on the recap goes to that session once its recap
+    // turn ends, instead of being dropped with this one (task #1147). The replacement is read off
+    // the task row, the same source the waiting delivery reads, so a replacement that is queued
+    // rather than running still takes the mark.
+    const taskSessionId = (): string | null => getProjectRepos(context, session.projectId).tasks.getById(session.taskId)?.session_id ?? null;
+    const restart = await carryRecapAcross(
+      session.sessionId,
+      () => restartSessionForSettingsChange(context, session.projectId, projectPath, session.taskId, {
+        phase: 'switching-account',
+        resumePrompt: prompt,
+        accountId,
+      }),
+      taskSessionId,
+    );
     // The restart cleared task.session_id before its suspend, so the board holds a stale id.
     sendToRenderer(context.mainWindow, IPC.TASK_SESSION_RESYNC, session.projectId);
     if (!restart.ok) {
       console.warn(`[ACCOUNTS] Could not restart task ${session.taskId.slice(0, 8)} on another account: ${restart.reason}`);
       return false;
     }
+    // Resumed idle, the replacement takes no turn of its own: what waited on the recap goes now.
+    const replacementId = taskSessionId();
+    // `!prompt`, as the restart itself reads it: an empty prompt resumes idle too.
+    if (!prompt && replacementId) forgetRecapSession(replacementId, true);
     movedTasks.set(session.taskId, Date.now());
     // The account could not be prepared and the session came back on the agent's own login: the
     // session restarted, the move did not happen.
@@ -302,6 +317,9 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
       const allFull: AgentAccountsAllFull = { agent, resetsAt: firstFree?.resetsAt ?? null };
       sendToRenderer(context.mainWindow, IPC.ACCOUNTS_ALL_FULL, allFull);
     },
+    // A session that cannot take its recap's turn until an account frees: the recap's bound
+    // (`RETURN_RECAP_TURN_WAIT_MS`) would otherwise send the column message to it.
+    onWaiting: (session) => pauseRecapTurnWait(session.sessionId),
   });
   /**
    * What a failed turn says about the account it ran on: a conversation the provider refuses

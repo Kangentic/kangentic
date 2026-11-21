@@ -41,11 +41,19 @@
  * restart loses it, which costs nothing: a recovered session is a new spawn
  * that marks itself again, and a `return` mark's waiters are told the session
  * is gone.
+ *
+ * A restart in place that replaces the session before its recap turn ended
+ * (an account continuation at a usage limit, task #1147) carries the mark to
+ * the session that replaces it (`carryRecapAcross`), so what waited on the
+ * recap goes once the replacement's recap turn ends, instead of being dropped
+ * with the old session.
  */
 
 export type RecapKind = 'expired' | 'return';
 
 interface RecapSession {
+  /** The session the mark is on now. It changes when a restart carries the mark. */
+  sessionId: string;
   kind: RecapKind;
   /** When the session first went idle, or null while its opening turn runs. */
   firstIdleAt: number | null;
@@ -53,7 +61,11 @@ interface RecapSession {
   promptedAfterIdle: boolean;
   /** Told once the recap's turn ends (true) or the session leaves without one (false). */
   waiters: Array<(proceed: boolean) => void>;
-  /** A `whenRecapTurnEnds` bound, cleared with the mark. */
+  /** The `whenRecapTurnEnds` bound, kept so a carried mark can start it again. */
+  timeoutMs: number | null;
+  /** True while the session waits at a usage limit and cannot take its recap's turn. */
+  waitPaused: boolean;
+  /** The running bound, cleared with the mark. */
   timer: ReturnType<typeof setTimeout> | null;
 }
 
@@ -63,7 +75,16 @@ const recapSessions = new Map<string, RecapSession>();
 export function markRecapSession(sessionId: string, kind: RecapKind = 'expired'): void {
   const previous = recapSessions.get(sessionId);
   if (previous) settle(previous, true);
-  recapSessions.set(sessionId, { kind, firstIdleAt: null, promptedAfterIdle: false, waiters: [], timer: null });
+  recapSessions.set(sessionId, {
+    sessionId,
+    kind,
+    firstIdleAt: null,
+    promptedAfterIdle: false,
+    waiters: [],
+    timeoutMs: null,
+    waitPaused: false,
+    timer: null,
+  });
 }
 
 /** Record the first time a marked session went idle. */
@@ -122,15 +143,97 @@ export function whenRecapTurnEnds(sessionId: string, timeoutMs: number): Promise
   if (!entry) return Promise.resolve(true);
   return new Promise<boolean>((resolve) => {
     entry.waiters.push(resolve);
-    if (entry.timer === null) {
-      entry.timer = setTimeout(() => {
-        if (recapSessions.get(sessionId) !== entry) return;
-        console.log(`[recap-turns] The recap turn of session ${sessionId.slice(0, 8)} did not end within ${Math.round(timeoutMs / 60_000)} minutes; what waited on it goes now.`);
-        forgetRecapSession(sessionId, true);
-      }, timeoutMs);
-      entry.timer.unref?.();
-    }
+    entry.timeoutMs ??= timeoutMs;
+    armWait(entry);
   });
+}
+
+/** Starts the mark's bound, unless one runs, none was asked for, or the wait is paused. */
+function armWait(entry: RecapSession): void {
+  if (entry.timer !== null || entry.timeoutMs === null || entry.waitPaused) return;
+  const timeoutMs = entry.timeoutMs;
+  entry.timer = setTimeout(() => {
+    entry.timer = null;
+    if (recapSessions.get(entry.sessionId) !== entry) return;
+    console.log(`[recap-turns] The recap turn of session ${entry.sessionId.slice(0, 8)} did not end within ${Math.round(timeoutMs / 60_000)} minutes; what waited on it goes now.`);
+    forgetRecapSession(entry.sessionId, true);
+  }, timeoutMs);
+  entry.timer.unref?.();
+}
+
+/**
+ * The session waits at a usage limit with every account full, so it cannot
+ * take its recap's turn. Its bound stops, or what waited on the recap would go
+ * to a session that cannot answer it. It starts again, whole, on the session a
+ * later restart carries the mark to (`carryRecapAcross`).
+ */
+export function pauseRecapTurnWait(sessionId: string): void {
+  const entry = recapSessions.get(sessionId);
+  if (!entry) return;
+  entry.waitPaused = true;
+  if (entry.timer !== null) clearTimeout(entry.timer);
+  entry.timer = null;
+}
+
+/**
+ * Runs `replace`, a restart in place of `fromSessionId`, and carries that
+ * session's recap mark to the session that replaces it (`replacementOf`, read
+ * once `replace` settles). The replacement opens on the same recap, so its
+ * first turn is the recap's, and what waited on the old session's recap goes
+ * once that turn ends. The old session's removal then settles nothing.
+ *
+ * With no replacement (the restart failed and the task has no session), or a
+ * `replace` or `replacementOf` that throws, the waiters are told the session is
+ * gone, as its removal would have told them. A
+ * replacement already marked takes the carried waiters into its own mark.
+ */
+export async function carryRecapAcross<T>(
+  fromSessionId: string,
+  replace: () => Promise<T>,
+  replacementOf: () => string | null,
+): Promise<T> {
+  const entry = recapSessions.get(fromSessionId);
+  if (!entry) return replace();
+  recapSessions.delete(fromSessionId);
+  if (entry.timer !== null) clearTimeout(entry.timer);
+  entry.timer = null;
+  let result: T;
+  try {
+    result = await replace();
+  } catch (error) {
+    settle(entry, false);
+    throw error;
+  }
+  let replacement: string | null;
+  try {
+    replacement = replacementOf();
+  } catch (error) {
+    // The mark is off the map and its bound is cleared: nothing else would ever tell the waiters.
+    settle(entry, false);
+    throw error;
+  }
+  if (replacement === null) {
+    settle(entry, false);
+    return result;
+  }
+  const existing = recapSessions.get(replacement);
+  if (existing) {
+    existing.waiters.push(...entry.waiters.splice(0));
+    existing.timeoutMs ??= entry.timeoutMs;
+    armWait(existing);
+    return result;
+  }
+  // Only a restart that kept the old session (it failed with the session still
+  // live) keeps the old session's progress through its turn.
+  if (replacement !== fromSessionId) {
+    entry.firstIdleAt = null;
+    entry.promptedAfterIdle = false;
+  }
+  entry.sessionId = replacement;
+  entry.waitPaused = false;
+  recapSessions.set(replacement, entry);
+  armWait(entry);
+  return result;
 }
 
 /**

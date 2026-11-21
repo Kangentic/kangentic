@@ -458,11 +458,17 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
    * Send now, or, behind a return recap, once its turn has ended. A move of the
    * task meanwhile (`supersedeMessageDeliveries`), or the session leaving, sends
    * nothing and calls `dropped` instead. Calls made in order send in order.
+   *
+   * `send` gets the session to send to: null to send now (the caller's own), or
+   * the task's session once the recap's turn ended. That is another session
+   * when an account continuation restarted the task on another account during
+   * the recap and carried the mark to its replacement (`carryRecapAcross`,
+   * task #1147). A task with no session by then sends nothing.
    */
-  const afterRecapTurn = (send: (freshlySpawned: boolean) => void, dropped: () => void): void => {
+  const afterRecapTurn = (send: (freshlySpawned: boolean, sessionId: string | null) => void, dropped: () => void): void => {
     const gate = recapTurnGate;
     if (gate === null) {
-      send(true);
+      send(true, null);
       return;
     }
     const controller = new AbortController();
@@ -473,8 +479,13 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       settled = true;
       controller.signal.removeEventListener('abort', onAbort);
       release();
+      if (!proceed || controller.signal.aborted) {
+        dropped();
+        return;
+      }
+      const currentSessionId = tasks.getById(task.id)?.session_id ?? null;
       // The recap's turn is over and the session idles: no first edge to wait for.
-      if (proceed && !controller.signal.aborted) send(false);
+      if (currentSessionId !== null) send(false, currentSessionId);
       else dropped();
     };
     // A move drops the message at once, not when the recap's turn ends, so
@@ -1305,10 +1316,10 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     // An `immediate` message on a fresh spawn rode the opening instead, after
     // the template, unless it is a slash command or the opening had no room.
     // Behind a return recap, once the recap's turn has ended.
-    afterRecapTurn((freshlySpawned) => {
+    afterRecapTurn((freshlySpawned, liveSessionId) => {
       deliverAgentMessageInBackground(context, {
         taskId: currentTask.id,
-        sessionId,
+        sessionId: liveSessionId ?? sessionId,
         message: outgoing,
         mode,
         verifier: resolveInjectionVerifier(targetAgent, sessionRepo, currentTask.id),
@@ -1339,7 +1350,7 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     if (held !== null && heldAfterLeadTurn) {
       // Behind a return recap, the paste is queued once the recap's turn ends,
       // after the lead, and waits out the lead's own turn as usual.
-      afterRecapTurn(() => pasteHeldAfterTurn(context, held, sessionId), () => held.release({ flush: true }));
+      afterRecapTurn((_freshlySpawned, liveSessionId) => pasteHeldAfterTurn(context, held, liveSessionId ?? sessionId), () => held.release({ flush: true }));
       heldHandedOff = true;
     }
     const carried = held !== null && heldJoinsNextMessage ? held : null;
@@ -1351,10 +1362,10 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       heldJoinsNextMessage = false;
       heldHandedOff = true;
     }
-    afterRecapTurn((freshlySpawned) => {
+    afterRecapTurn((freshlySpawned, liveSessionId) => {
       deliverAgentMessageInBackground(context, {
         taskId: task.id,
-        sessionId,
+        sessionId: liveSessionId ?? sessionId,
         message: remainder,
         mode: 'immediate',
         verifier: resolveInjectionVerifier(targetAgent, sessionRepo, task.id),

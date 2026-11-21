@@ -8,6 +8,8 @@ sources:
   - resource: src/main/db/repositories/sent-session-message-repository.ts
   - resource: src/main/ipc/helpers/agent-spawn.ts
     title: spawnAgent folds held messages into the opening message
+  - resource: src/main/ipc/helpers/idle-restart-keeps-recap.ts
+    title: an idle settings restart keeps what waits on a return recap
   - resource: src/main/ipc/handlers/session-resume.ts
   - resource: src/main/agent/mcp-http/steering-tools.ts
   - resource: src/main/automations/turn-end/deliver-message.ts
@@ -163,7 +165,10 @@ lead it rides the same opening message, before the lead and the held messages. A
 command it is the resume's whole prompt, so the command goes once the recap's turn ends and the
 held messages are pasted once the command's own turn ends, as behind any slash command. A move of
 the task, or the session leaving, before the recap's turn ends releases them with a flush: they
-stay held, and go to the task's agent at once if one is live.
+stay held, and go to the task's agent at once if one is live. An account continuation that
+restarts the session during the recap carries the wait to the session replacing it instead, and
+so does a settings change that restarts it idle. That replacement takes no recap turn, so the wait
+ends at once.
 
 ## The claim
 

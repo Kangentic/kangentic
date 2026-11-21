@@ -40,6 +40,10 @@ sources:
   - resource: src/main/agent/shared/submitted-text-verifier.ts
   - resource: src/main/transition-engine/resume-prompt-delivery.ts
   - resource: src/main/ipc/handlers/task-runtime-override.ts
+  - resource: src/main/ipc/handlers/strategy-propagation.ts
+    title: a column or Board Profile edit restarts the live sessions it changes
+  - resource: src/main/ipc/helpers/idle-restart-keeps-recap.ts
+    title: an idle settings restart keeps a recap's waiting message
 ---
 # Command injection
 
@@ -64,7 +68,9 @@ in that column it changes, each resuming idle. A queued session in that column i
 `applyTaskSettingsToQueuedStart` rebuilds its waiting command and it keeps its place in line. Each restart runs under its own task lock and first
 re-reads the task: if a move, a ContextBar pick, or an earlier edit already restarted or moved the
 session, it skips. An edit that did not change effort never restarts for effort, so drift it never
-touched (a manual `/effort`) leaves the turn alone; a move still realigns it.
+touched (a manual `/effort`) leaves the turn alone; a move still realigns it. A session still
+answering a return recap keeps the column's waiting message across either restart
+(`restartIdleKeepingRecap`, see [Resume](../sessions/resume.md#a-return-to-the-main-conversation-opens-on-a-recap)).
 The ContextBar pick decides with the same rule, `resolveRestartReason`, in
 `applyTaskSettingsToLiveSession` (`task-runtime-override.ts`). The target is the task's effective
 value after the write. The source is what the session runs at: for effort, the same

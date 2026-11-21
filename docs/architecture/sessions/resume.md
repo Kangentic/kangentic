@@ -21,6 +21,8 @@ sources:
   - resource: src/main/ipc/handlers/session-reconcile.ts
   - resource: src/main/transition-engine/spawn-progress.ts
   - resource: src/main/automations/turn-end/recap-turns.ts
+  - resource: src/main/ipc/helpers/idle-restart-keeps-recap.ts
+    title: an idle settings restart keeps a recap's waiting message
   - resource: src/main/transition-engine/resume-prompt-delivery.ts
   - resource: src/main/transition-engine/return-recap.ts
 ---
@@ -408,8 +410,16 @@ held for the task go with it (`returnRecapOpeningFor`):
   (`before-command`). The session is marked a `return` recap (`recap-turns.ts`), so that turn runs
   no On agent turn end rows and no workflow step. The command, and any held messages, wait for that
   turn to end (`whenRecapTurnEnds`) and then go as usual. After 20 minutes without a turn end (an
-  interrupted recap) they go anyway. A move of the task or the session leaving first sends nothing:
-  the column's message is reported cancelled and held messages are released.
+  interrupted recap) they go anyway, except while the session waits at a usage limit with every
+  account full, when that bound is paused (`pauseRecapTurnWait`). A move of the task or the session
+  leaving first sends nothing:
+  the column's message is reported cancelled and held messages are released. An account
+  continuation that restarts the session during the recap is not a leave. It carries the mark to
+  the session that replaces it (`carryRecapAcross`), which opens on the same recap, and what waited
+  goes to that session once its recap turn ends. A settings change that restarts the session idle
+  during the recap (a column or Board Profile edit, a model or effort pick) carries the mark too
+  (`restartIdleKeepingRecap`). That replacement takes no recap turn, so what waited goes to it at
+  once.
 - **No lead and nothing held** makes the recap the whole prompt, which asks for a one-line reply
   and then a wait (`acknowledge`). That turn is a `return` recap too, so it runs no rows and no
   step. This is a send-back (Code Review moving the task to a column whose own message is off),
