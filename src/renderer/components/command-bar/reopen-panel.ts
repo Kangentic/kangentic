@@ -53,6 +53,30 @@ function reopenStillWanted(projectId: string): boolean {
   return !useSessionStore.getState().commandBarVisible;
 }
 
+/**
+ * Read the sessions from main again, so the decision below is made on what main
+ * holds and not on what the replica has heard so far.
+ *
+ * Main's wait answers once every restored terminal is registered, but the replica
+ * learns of them from pushes, which can trail that answer. A reload in the middle
+ * of a restore gives it a boot list taken before the restore finished, too. A
+ * replica that is behind reads as "nothing came back", and that read erases the
+ * record, so the panel never reopens over terminals that are running (a rare CI
+ * flake in `command-terminal-restart.spec.ts`, seen on two unrelated PRs).
+ *
+ * `syncSessions` only merges, so this adds what main holds and drops nothing. A
+ * sync answers false when its list could not be read or a newer sync superseded
+ * it, and asking once more settles which, as the detached window's boot does.
+ */
+async function relistSessions(): Promise<void> {
+  const { syncSessions } = useSessionStore.getState();
+  try {
+    if (!(await syncSessions())) await syncSessions();
+  } catch {
+    // report-ok: a failed re-list leaves the replica as it was, which is what this decision read before the re-list existed, and the live check after it still decides.
+  }
+}
+
 export async function reopenCommandTerminalPanelAfterRestart(projectId: string): Promise<void> {
   const config = useConfigStore.getState();
   if (config.globalConfig.commandTerminalOpenProjectId !== projectId) return;
@@ -63,6 +87,9 @@ export async function reopenCommandTerminalPanelAfterRestart(projectId: string):
   for (let asked = 0; !restoreOver && asked < RESTORE_WAIT_EXTRA_ASKS && reopenStillWanted(projectId); asked += 1) {
     restoreOver = await restoreIsOver(projectId);
   }
+  if (!reopenStillWanted(projectId)) return;
+  await relistSessions();
+  // The re-list is an await too: a project switch, or a panel the user opened, can land in it.
   if (!reopenStillWanted(projectId)) return;
   const sessionState = useSessionStore.getState();
   if (selectLiveCommandTerminalSlots(sessionState.sessions, projectId).size === 0) {

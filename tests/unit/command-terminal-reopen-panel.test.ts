@@ -23,6 +23,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const configSetMock = vi.fn();
 const waitForRestoreMock = vi.fn<(projectId: string) => Promise<boolean | undefined>>();
+/** The replica's re-list from main, which the reopen runs after the wait and before it decides. */
+const syncSessionsMock = vi.fn<() => Promise<boolean>>();
 
 (globalThis as Record<string, unknown>).window = {
   electronAPI: {
@@ -97,6 +99,9 @@ describe('reopenCommandTerminalPanelAfterRestart', () => {
     clearPanelEnterSkip();
     waitForRestoreMock.mockReset();
     waitForRestoreMock.mockResolvedValue(undefined);
+    // A re-list that finds the replica already current: it changes nothing.
+    syncSessionsMock.mockReset();
+    syncSessionsMock.mockResolvedValue(true);
     recordOpenProject(PROJECT_ID);
     useProjectStore.setState({ currentProject: makeProject(PROJECT_ID) });
     useSessionStore.setState({
@@ -104,6 +109,113 @@ describe('reopenCommandTerminalPanelAfterRestart', () => {
       commandBarVisible: false,
       commandBarOpening: false,
       _pendingOpenCommandTerminal: false,
+      syncSessions: syncSessionsMock,
+    });
+  });
+
+  // Main's wait answers once every restored terminal is registered, but the
+  // replica hears of them from pushes, which can trail that answer, and a reload
+  // in the middle of a restore gives it a boot list taken before the restore
+  // finished. A replica that is behind read as "nothing came back": the record was
+  // erased and the panel never reopened over terminals that were running. It
+  // flaked `command-terminal-restart.spec.ts` on CI, on two unrelated PRs.
+  describe('a replica that trails main when the wait answers', () => {
+    it('re-lists the sessions, so a terminal the replica had not heard of reopens the panel', async () => {
+      useSessionStore.setState({ sessions: [] });
+      syncSessionsMock.mockImplementationOnce(async () => {
+        // Main holds the restored terminal; the replica learns of it from this list.
+        useSessionStore.setState({ sessions: [makeTerminal({ id: 'restored-late' })] });
+        return true;
+      });
+
+      await reopenCommandTerminalPanelAfterRestart(PROJECT_ID);
+
+      expect(syncSessionsMock).toHaveBeenCalledTimes(1);
+      expect(useSessionStore.getState()._pendingOpenCommandTerminal).toBe(true);
+      expect(isPanelEnterSkipped()).toBe(true);
+      expect(configSetMock).not.toHaveBeenCalled();
+      expect(useConfigStore.getState().globalConfig.commandTerminalOpenProjectId).toBe(PROJECT_ID);
+    });
+
+    it('re-lists after the wait has answered, never before', async () => {
+      const calls: string[] = [];
+      waitForRestoreMock.mockImplementationOnce(async () => {
+        calls.push('wait');
+        return true;
+      });
+      syncSessionsMock.mockImplementationOnce(async () => {
+        calls.push('sync');
+        return true;
+      });
+
+      await reopenCommandTerminalPanelAfterRestart(PROJECT_ID);
+
+      expect(calls).toEqual(['wait', 'sync']);
+    });
+
+    it('asks once more when a sync is superseded or could not read the list', async () => {
+      useSessionStore.setState({ sessions: [] });
+      syncSessionsMock.mockResolvedValueOnce(false);
+      syncSessionsMock.mockImplementationOnce(async () => {
+        useSessionStore.setState({ sessions: [makeTerminal({ id: 'restored-late' })] });
+        return true;
+      });
+
+      await reopenCommandTerminalPanelAfterRestart(PROJECT_ID);
+
+      expect(syncSessionsMock).toHaveBeenCalledTimes(2);
+      expect(useSessionStore.getState()._pendingOpenCommandTerminal).toBe(true);
+      expect(configSetMock).not.toHaveBeenCalled();
+    });
+
+    it('stops at the second ask, so a sync that keeps failing cannot hold the reopen', async () => {
+      syncSessionsMock.mockResolvedValue(false);
+
+      await reopenCommandTerminalPanelAfterRestart(PROJECT_ID);
+
+      expect(syncSessionsMock).toHaveBeenCalledTimes(2);
+      // The replica already holds a terminal, so the read it had still decides.
+      expect(useSessionStore.getState()._pendingOpenCommandTerminal).toBe(true);
+    });
+
+    it('decides on the replica it has when the re-list throws', async () => {
+      syncSessionsMock.mockRejectedValue(new Error('main cannot say'));
+
+      await reopenCommandTerminalPanelAfterRestart(PROJECT_ID);
+
+      expect(useSessionStore.getState()._pendingOpenCommandTerminal).toBe(true);
+      expect(configSetMock).not.toHaveBeenCalled();
+    });
+
+    it('still forgets the record when the re-list finds nothing back either', async () => {
+      useSessionStore.setState({ sessions: [] });
+
+      await reopenCommandTerminalPanelAfterRestart(PROJECT_ID);
+
+      expect(syncSessionsMock).toHaveBeenCalledTimes(1);
+      expect(useSessionStore.getState()._pendingOpenCommandTerminal).toBe(false);
+      expect(configSetMock).toHaveBeenCalledWith({ commandTerminalOpenProjectId: null });
+    });
+
+    it('does not re-list when the record names another project', async () => {
+      recordOpenProject(OTHER_PROJECT_ID);
+
+      await reopenCommandTerminalPanelAfterRestart(PROJECT_ID);
+
+      expect(syncSessionsMock).not.toHaveBeenCalled();
+    });
+
+    it('leaves the record and the panel alone when a project switch lands during the re-list', async () => {
+      useSessionStore.setState({ sessions: [] });
+      syncSessionsMock.mockImplementationOnce(async () => {
+        useProjectStore.setState({ currentProject: makeProject(OTHER_PROJECT_ID) });
+        return true;
+      });
+
+      await reopenCommandTerminalPanelAfterRestart(PROJECT_ID);
+
+      expect(useSessionStore.getState()._pendingOpenCommandTerminal).toBe(false);
+      expect(configSetMock).not.toHaveBeenCalled();
     });
   });
 

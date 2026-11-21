@@ -470,9 +470,14 @@ part is small, because it already adopts a live terminal into its slot:
   `AppConfig.commandTerminalOpenProjectId` on each open and hide, skipping the first value so a
   boot's closed panel cannot erase it, and a quit writes nothing, so the record survives. After
   `restoreWorkspaceForProject` the cold path calls `reopenCommandTerminalPanelAfterRestart`
-  (`reopen-panel.ts`), which waits for the restore and arms the pending-open flag only if a terminal
-  of that project is live. With none it clears the key: a reopened panel would start a fresh
-  terminal and run a checkout with nobody at the desk. A hard reload reopens the panel the same way.
+  (`reopen-panel.ts`), which waits for the restore, re-lists the sessions from main, and arms the
+  pending-open flag only if a terminal of that project is live. The re-list is what the decision
+  reads: main's wait answers once every restored terminal is registered, but the replica learns of
+  them from pushes that can trail that answer, and a reload mid-restore gives it a boot list taken
+  before the restore finished. A replica that was behind read as "nothing came back" and erased
+  the key, so the panel never reopened over running terminals. With none live it clears the key: a
+  reopened panel would start a fresh terminal and run a checkout with nobody at the desk. A hard
+  reload reopens the panel the same way.
   The backdrop paints flat, since this is a restore (`restore-no-animation-replay.md`).
 
 A detached window does not come back, as no pop-out does on boot. Its terminals show in the panel.
