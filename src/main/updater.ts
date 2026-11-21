@@ -256,6 +256,38 @@ export function isElevationDeniedError(error: Error): boolean {
   return ELEVATION_DENIED_PATTERN.test(error.message ?? '');
 }
 
+/** The Security framework's two refusals of an authorization request, as Squirrel.Mac's message prints them. */
+const AUTHORIZATION_DENIED_PATTERN = /\bOSStatus error -60005(?!\d)/;
+const AUTHORIZATION_CANCELED_PATTERN = /\bOSStatus error -60006(?!\d)/;
+
+/**
+ * True when a macOS install could not get the administrator rights it asked
+ * for, denied or canceled. The macOS twin of isElevationDeniedError (DESKTOP-4M).
+ *
+ * Squirrel.Mac starts its ShipIt installer with admin rights when the app or
+ * its folder is not writable by the user running it (an app an administrator
+ * put in /Applications, run by a standard user), and macOS shows a password
+ * prompt for the new helper. -60005 is errAuthorizationDenied: the rights were
+ * refused, a wrong password or an account that is no administrator. -60006 is
+ * errAuthorizationCanceled: the user pressed Cancel (Authorization.h). Neither
+ * is a defect, and no build of ours changes either.
+ *
+ * Message-only for the reason isReadOnlyVolumeError gives: Squirrel.Mac raises
+ * it and MacUpdater only forwards it, with no stack. The match is the status
+ * code alone, never the sentence around it, which carries a curly apostrophe
+ * and is free to change. Unanchored for the reason benign-renderer-errors.ts
+ * documents, with no digit allowed after the code.
+ */
+export function isAuthorizationRefusedError(error: Error): boolean {
+  const message = error.message ?? '';
+  return AUTHORIZATION_DENIED_PATTERN.test(message) || AUTHORIZATION_CANCELED_PATTERN.test(message);
+}
+
+/** True for -60006 alone: the user pressed Cancel on the prompt, so they already know. */
+export function isAuthorizationCanceledError(error: Error): boolean {
+  return AUTHORIZATION_CANCELED_PATTERN.test(error.message ?? '');
+}
+
 /** The opening sentence of Squirrel.Mac's SQRLUpdaterErrorDomain read-only message. */
 const READ_ONLY_VOLUME_PATTERN = /Cannot update while running on a read-only volume/;
 
@@ -589,6 +621,12 @@ const SIGNATURE_REQUIREMENT_MESSAGE = msg`Download Kangentic again to keep it up
 const NO_GRAPHICAL_ELEVATION_MESSAGE = msg`No graphical password prompt, such as pkexec, is installed.`;
 
 /**
+ * The body for a macOS install whose administrator prompt was denied
+ * (DESKTOP-4M). It names who can let it through, since a standard user cannot.
+ */
+const AUTHORIZATION_DENIED_MESSAGE = msg`macOS needs an administrator to install this update.`;
+
+/**
  * Tell the user, once per app run, that this install can never update itself.
  * `message` is the toast's body, which the renderer shows verbatim, so a
  * descriptor is translated here, after the latch and window guards.
@@ -599,9 +637,10 @@ const NO_GRAPHICAL_ELEVATION_MESSAGE = msg`No graphical password prompt, such as
  * this flag would be 11 toasts. With no package manager, or with only a sudo that
  * cannot prompt (DESKTOP-44), every "Restart to update" click does, and the second
  * fires twice per click. A refused signature (DESKTOP-2R) comes back on every
- * check. One latch covers all four. The two Linux cases never meet each other or
- * the macOS ones: a host with no package manager fails before any elevation. The
- * two macOS cases can both be true of one copy, and then the first one sent in a run
+ * check, and a denied administrator prompt (DESKTOP-4M) on every click. One latch
+ * covers all five. The two Linux cases never meet each other or the macOS ones: a
+ * host with no package manager fails before any elevation. The macOS cases can be
+ * true of one copy together, and then the first one sent in a run
  * is the one the user reads; the next launch tells them the other once the first
  * is fixed. The latch is in memory and not persisted on purpose - a
  * later launch of the same install still cannot update, and the person who missed
@@ -817,11 +856,12 @@ export function initUpdater(mainWindow: BrowserWindow): void {
     markReported(error);
   };
 
-  // Log every error. Surface four to the user: the read-only volume
+  // Log every error. Surface five to the user: the read-only volume
   // (DESKTOP-1A), a copy whose signature no release satisfies (DESKTOP-2R),
-  // a .deb install with no package manager (DESKTOP-R), and a Linux host whose
-  // only elevator is a sudo that cannot prompt (DESKTOP-44). Each is permanent and
-  // silent and would otherwise leave an install frozen on its version with no
+  // a macOS install whose administrator prompt was denied (DESKTOP-4M), a .deb
+  // install with no package manager (DESKTOP-R), and a Linux host whose only
+  // elevator is a sudo that cannot prompt (DESKTOP-44). Each repeats on every
+  // attempt and would otherwise leave an install frozen on its version with no
   // explanation. Everything else stays invisible, because there is nothing the
   // user could do about it.
   //
@@ -882,6 +922,19 @@ export function initUpdater(mainWindow: BrowserWindow): void {
     if (isElevationDeniedError(error)) {
       console.log('[UPDATER] Counting but not reporting a denied elevation prompt:',
         errorPreview);
+      return;
+    }
+    // The macOS install path's twin (DESKTOP-4M): ShipIt asked for admin rights
+    // and macOS refused them. Counted, never filed, at the same position. A
+    // Cancel (-60006) is the user's own answer, so it stays quiet, as the Linux
+    // decline above does. A denial (-60005) is told: it comes back on every
+    // "Restart to update", and the modal the user already saw now does nothing,
+    // which is the argument the signature refusal below makes. A standard user
+    // never gets past it without an administrator.
+    if (isAuthorizationRefusedError(error)) {
+      console.log('[UPDATER] Counting but not reporting a refused macOS authorization:',
+        errorPreview);
+      if (!isAuthorizationCanceledError(error)) notifyUpdateBlocked(AUTHORIZATION_DENIED_MESSAGE);
       return;
     }
     // The macOS install path's equivalent, and a case the user has to hear

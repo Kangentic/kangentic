@@ -28,7 +28,7 @@ vi.mock('../../src/main/pty/spawn/pty-spawn', () => ({
 }));
 
 import { handleSpawnFailure, type SpawnAttempt, type SpawnFailureContext } from '../../src/main/pty/spawn/spawn-failure-handler';
-import { diagnoseSpawnFailure } from '../../src/main/pty/spawn/pty-spawn';
+import { diagnoseSpawnFailure, recordSpawnFailure } from '../../src/main/pty/spawn/pty-spawn';
 import { SessionRegistry } from '../../src/main/pty/session-registry';
 import type { Session } from '../../src/shared/types';
 
@@ -164,6 +164,24 @@ describe('handleSpawnFailure', () => {
       // Beside the plain "spawn failed" line every failure logs.
       expect(consoleError).toHaveBeenCalledTimes(2);
       expect(context.host.post).toHaveBeenCalledWith({ type: 'initSession', sessionId: 'failed-session-id', scrollback: `carried bytes${hint}`, cols: 120 });
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it.each([
+    ['a HostUnreachableError', 'HostUnreachableError', true],
+    ['a plain Error', 'Error', false],
+  ])('tells the failure record whether the link refused: %s', (_label, errorName, expected) => {
+    vi.mocked(recordSpawnFailure).mockClear();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { context } = makeContext();
+    try {
+      const error = new Error('Lab box is not connected.');
+      error.name = errorName;
+      handleSpawnFailure(error, makeAttempt(), context);
+
+      expect(recordSpawnFailure).toHaveBeenCalledWith(expect.objectContaining({ remoteLinkRefusal: expected }));
     } finally {
       consoleError.mockRestore();
     }

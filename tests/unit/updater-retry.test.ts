@@ -19,9 +19,14 @@
  *          (DESKTOP-R), which is their own choice rather than a defect, so it is counted but
  *          never filed. Its gate sits directly below branch 3's, between the two reporters,
  *          and the same two position regressions are pinned here.
+ *      4b. isAuthorizationRefusedError - trackEvent YES, reportHandledError NO. The macOS
+ *          twin of branch 4 (DESKTOP-4M): ShipIt's administrator prompt was refused
+ *          (OSStatus -60005) or cancelled (-60006). A denial also gets the
+ *          updater:blocked push, since it repeats on every "Restart to update"; a Cancel
+ *          is the user's own answer and says nothing.
  *       5. isReadOnlyVolumeError - trackEvent YES, reportHandledError NO, PLUS one
  *          updater:blocked push. The same split again for the macOS install path
- *          (DESKTOP-1A), and one of four branches in the handler that say anything to
+ *          (DESKTOP-1A), and one of five branches in the handler that say anything to
  *          the user: an app running from a read-only volume never updates again,
  *          silently, until someone moves it. The push is latched for the app run, so
  *          a condition every 4-hour check rediscovers still toasts once.
@@ -549,6 +554,55 @@ describe("autoUpdater.on('error') listener", () => {
     consoleLogSpy.mockRestore();
   });
 
+  // DESKTOP-4M: ShipIt asked macOS for admin rights to replace an app the user
+  // cannot write, and the request was denied. Squirrel.Mac raises it natively,
+  // so it arrives with the NSError's code and no stack. The sentence holds a
+  // U+2019 apostrophe, kept as the real character because it is data.
+  const authorizationFailure = (status: number): Error => {
+    const error = makeError(`The operation couldn’t be completed. (OSStatus error ${status}.)`);
+    (error as Error & { code?: number }).code = status;
+    return error;
+  };
+
+  it('counts a denied macOS authorization, never reports it, and tells the user once', () => {
+    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    mocks.sanitizeErrorMessage.mockReturnValue('sanitized authorization failure');
+
+    const errorListener = getRegisteredListener('error');
+    errorListener(authorizationFailure(-60005));
+    errorListener(authorizationFailure(-60005));
+
+    expect(mocks.trackEvent).toHaveBeenCalledTimes(2);
+    expect(mocks.trackEvent).toHaveBeenCalledWith('app_error', {
+      source: 'updater',
+      message: 'sanitized authorization failure',
+    });
+    expect(mocks.reportHandledError).not.toHaveBeenCalled();
+    expect(consoleLogSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[UPDATER] Counting but not reporting a refused macOS authorization:'),
+      expect.any(String),
+    );
+    // Every "Restart to update" fails the same way, so the user hears it, once.
+    expect(mocks.webContentsSend).toHaveBeenCalledTimes(1);
+    expect(mocks.webContentsSend.mock.calls[0]).toEqual(['updater:blocked', 'macOS needs an administrator to install this update.']);
+
+    consoleLogSpy.mockRestore();
+  });
+
+  it('counts a cancelled macOS authorization prompt, never reports it, and says nothing', () => {
+    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const errorListener = getRegisteredListener('error');
+    errorListener(authorizationFailure(-60006));
+
+    expect(mocks.trackEvent).toHaveBeenCalledTimes(1);
+    expect(mocks.reportHandledError).not.toHaveBeenCalled();
+    // The user pressed Cancel themselves.
+    expect(mocks.webContentsSend).not.toHaveBeenCalled();
+
+    consoleLogSpy.mockRestore();
+  });
+
   it('counts a read-only volume but does NOT report it, and tells the user once', () => {
     const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     mocks.sanitizeErrorMessage.mockReturnValue('sanitized read-only volume');
@@ -606,6 +660,34 @@ describe("autoUpdater.on('error') listener", () => {
     expect(mocks.trackEvent).toHaveBeenCalledTimes(3);
     // Told once.
     expect(mocks.webContentsSend).toHaveBeenCalledTimes(1);
+    expect(mocks.reportHandledError).not.toHaveBeenCalled();
+
+    consoleLogSpy.mockRestore();
+  });
+
+  // One latch spans every blocked cause, so a denial and a read-only volume never stack two toasts.
+  it.each([
+    ['a denied authorization, then a read-only volume', true],
+    ['a read-only volume, then a denied authorization', false],
+  ])('tells the user once for %s', (_label, denialFirst) => {
+    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const errorListener = getRegisteredListener('error');
+    const readOnly = makeError('Cannot update while running on a read-only volume.');
+    const denial = authorizationFailure(-60005);
+
+    if (denialFirst) {
+      errorListener(denial);
+      errorListener(readOnly);
+    } else {
+      errorListener(readOnly);
+      errorListener(denial);
+    }
+
+    const blockedPushes = mocks.webContentsSend.mock.calls.filter((call) => call[0] === 'updater:blocked');
+    expect(blockedPushes).toHaveLength(1);
+    expect(mocks.webContentsSend).toHaveBeenCalledTimes(1);
+    // Both are still counted, and neither is filed.
+    expect(mocks.trackEvent).toHaveBeenCalledTimes(2);
     expect(mocks.reportHandledError).not.toHaveBeenCalled();
 
     consoleLogSpy.mockRestore();

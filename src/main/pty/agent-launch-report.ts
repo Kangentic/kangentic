@@ -43,6 +43,7 @@ import { AGENT_READY_CEILING_MS } from './lifecycle/agent-output-tracker';
 import { parseWslShellSpec } from './process-tag/task-process-tag';
 import { AgentBatchShimUnresolvedError, AgentCommandTooLongError, AgentStartRefusedError } from './spawn/agent-start-refused';
 import type { ManagedSession } from './session-registry';
+import { HOST_UNREACHABLE_ERROR_NAME } from '../remote/link/host-unreachable-error';
 
 // Re-exported for the callers that also read this file's report functions. A
 // module that must not reach `electron` imports `launch-output-class.ts` itself.
@@ -443,6 +444,30 @@ function preflightCauseOf(cause: string, error: unknown): string {
   return error instanceof AgentBatchShimUnresolvedError ? 'batch_shim_unresolved' : cause;
 }
 
+/**
+ * The refusals of an SSH host's link, matched by name because they cross the pty host's transport.
+ * `UnsupportedOnHostError` is a literal because its class lives in the link hub, which main never
+ * bundles. Both are also in `EXPECTED_FAILURE_NAMES`.
+ */
+const REMOTE_LINK_REFUSALS: ReadonlySet<string> = new Set([HOST_UNREACHABLE_ERROR_NAME, 'UnsupportedOnHostError']);
+
+function isRemoteLinkRefusalClass(error: unknown): boolean {
+  return error instanceof Error && REMOTE_LINK_REFUSALS.has(error.name);
+}
+
+/**
+ * True for a remote start the host's link refused, or a wrapper of one (one level
+ * of `cause`, as `wrapWorktreeSetupError` wraps): the host has no link here, or the
+ * request has no meaning on a host. That is the host's state, not a defect, and
+ * the refusal's text has named the host's id. Only these classes: a pty host that
+ * timed out or exited during a start is still ours to look at.
+ */
+export function isRemoteLinkRefusal(error: unknown): boolean {
+  if (isRemoteLinkRefusalClass(error)) return true;
+  const cause = (error as { cause?: unknown } | null | undefined)?.cause;
+  return cause !== undefined && cause !== error && isRemoteLinkRefusalClass(cause);
+}
+
 /** What `reportPreflightFailure` takes. */
 export interface PreflightFailure {
   /** A fixed value: the step that failed. */
@@ -469,6 +494,14 @@ export interface PreflightFailure {
  * a real failure on the same path later in the run still reports (Sentry
  * DESKTOP-3Z spent the run's one OpenCode resume key on one).
  *
+ * A remote start its host's link refused (`isRemoteLinkRefusal`, bare or as the
+ * `cause` of a wrapper) goes the same way: a local line, a `spawn_failed` count,
+ * no event and no key. Sentry DESKTOP-4N was a `HostUnreachableError` sent as
+ * `AgentLaunchPreflightError (worktree_other)`, a name that hid what it was. Not
+ * every `isExpectedFailure` class: `AgentCwdMissingError` is one, and a start
+ * whose folder is gone is reported here on purpose, since the folder can be our
+ * own leak (DESKTOP-2P).
+ *
  * The event carries the error's name, errno and frames under a fixed message,
  * never the error's text (`fixedMessageCopyOf`).
  *
@@ -484,6 +517,15 @@ export function reportPreflightFailure(failure: PreflightFailure): void {
     if (error instanceof AgentCommandTooLongError) {
       markReported(error);
       if (alreadyCounted !== true) trackEvent('spawn_failed', { agent: agentTag(agent), reason: cause });
+      return;
+    }
+    if (isRemoteLinkRefusal(error)) {
+      markReported(error);
+      // breadcrumb-ok: a fixed cause, an agent from a fixed list and a start path.
+      console.warn(`[AGENT-LAUNCH] stage=preflight cause=${cause} agent=${agentTag(agent)} start_path=${startPath} expected=yes`);
+      // Unlike a command too long, which fails the same way at any time, a quit takes the links down
+      // under starts still running, and those refusals are the quit, not a failed start.
+      if (alreadyCounted !== true && !isShuttingDown()) trackEvent('spawn_failed', { agent: agentTag(agent), reason: cause });
       return;
     }
     const tags = {

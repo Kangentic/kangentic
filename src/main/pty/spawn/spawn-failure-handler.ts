@@ -3,7 +3,7 @@ import type { SessionRegistry, ManagedSession } from '../session-registry';
 import type { PtyHostClient } from '../host/pty-host-client';
 import { toSession } from '../session-registry';
 import { diagnoseSpawnFailure, recordSpawnFailure } from './pty-spawn';
-import { preflightTagsOf } from '../agent-launch-report';
+import { isRemoteLinkRefusal, preflightTagsOf } from '../agent-launch-report';
 
 /**
  * Snapshot of the inputs that went into a spawn attempt - everything
@@ -73,6 +73,7 @@ export function handleSpawnFailure(
       agentCliVersion: input.agentCliVersion,
       startPath: input.startPath,
     }),
+    remoteLinkRefusal: isRemoteLinkRefusal(err),
   });
 
   // Print the raw error in the terminal, whatever its shape.

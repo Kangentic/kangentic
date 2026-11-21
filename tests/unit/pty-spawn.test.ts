@@ -20,12 +20,14 @@ import {
   FULL_REPAINT_ENV_KEY,
   SCROLL_SPEED_ENV_KEY,
 } from '../../src/main/pty/spawn/pty-spawn';
+import { isRemoteLinkRefusal } from '../../src/main/pty/agent-launch-report';
 import { reportHandledError } from '../../src/main/analytics/error-reporting';
 import { trackEvent } from '../../src/main/analytics/analytics';
 import { preflightTagsOf, resetLaunchReports } from '../../src/main/pty/agent-launch-report';
 import { processNotStartedError } from '../../src/main/pty/host/root-pid-gate';
 import { fromPtyHostError, toPtyHostError } from '../../src/main/pty/host/protocol';
 import { buildSpawnClearPrelude } from '../../src/shared/paths';
+import { HOST_NOT_CONNECTED_SENTENCE, HOST_UNREACHABLE_ERROR_NAME, HostUnreachableError } from '../../src/main/remote/link/host-unreachable-error';
 import { parseWslShellSpec } from '../../src/main/pty/process-tag/task-process-tag';
 
 describe('buildSpawnClearPrelude', () => {
@@ -836,6 +838,30 @@ describe('recordSpawnFailure', () => {
     recordSpawnFailure({ diagnostic, shellExe: 'pwsh', launchTags });
     recordSpawnFailure({ diagnostic, shellExe: 'pwsh', launchTags });
     expect(reportHandledError).toHaveBeenCalledTimes(1);
+  });
+
+  // The link hub refuses a remote spawn whose host has no link, and the refusal
+  // crosses the pty host's transport. It is the host's state, not a defect, so it
+  // is counted and never filed, and it spends no key.
+  it('counts a spawn the host link refused, files nothing, and still reports a real failure after it', () => {
+    const refused = fromPtyHostError(toPtyHostError(new HostUnreachableError('host-a', HOST_NOT_CONNECTED_SENTENCE)));
+    expect(refused.name).toBe(HOST_UNREACHABLE_ERROR_NAME);
+    expect(isRemoteLinkRefusal(refused)).toBe(true);
+    const refusedDiagnostic = diagnoseSpawnFailure({ err: refused, shellExe: 'bash', effectiveCwd: '/tmp', originalCwd: '/tmp' });
+    recordSpawnFailure({ diagnostic: refusedDiagnostic, shellExe: 'bash', launchTags, remoteLinkRefusal: isRemoteLinkRefusal(refused) });
+
+    expect(trackEvent).toHaveBeenCalledTimes(1);
+    expect(reportHandledError).not.toHaveBeenCalled();
+
+    const realDiagnostic = diagnoseSpawnFailure({ err: new Error('spawn failed'), shellExe: 'bash', effectiveCwd: '/tmp', originalCwd: '/tmp' });
+    recordSpawnFailure({ diagnostic: realDiagnostic, shellExe: 'bash', launchTags });
+    expect(reportHandledError).toHaveBeenCalledTimes(1);
+  });
+
+  it('still files a pty host that timed out on a spawn, which is ours to look at', () => {
+    const timeout = new Error('The pty host did not answer');
+    timeout.name = 'PtyHostTimeoutError';
+    expect(isRemoteLinkRefusal(timeout)).toBe(false);
   });
 
   it('sends no path to either service, whatever the shell setting holds', () => {

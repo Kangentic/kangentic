@@ -23,11 +23,12 @@ import {
   StaleWorktreeDirectoryError,
   isRepositoryStateRefusal,
 } from '../../src/main/git/worktree-errors';
-import { reportPreflightFailure, resetLaunchReports } from '../../src/main/pty/agent-launch-report';
+import { isRemoteLinkRefusal, reportPreflightFailure, resetLaunchReports } from '../../src/main/pty/agent-launch-report';
 import { AgentCwdMissingError } from '../../src/main/pty/spawn/pty-spawn';
 import { AgentCommandTooLongError } from '../../src/main/pty/spawn/agent-start-refused';
+import { HostUnreachableError } from '../../src/main/remote/link/host-unreachable-error';
 import { isUserConfigurationError } from '../../src/shared/user-configuration-error';
-import { isReported } from '../../src/main/analytics/handled-report';
+import { EXPECTED_FAILURE_NAMES, isReported } from '../../src/main/analytics/handled-report';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { Task } from '../../src/shared/types';
 
@@ -177,6 +178,96 @@ describe('a refused agent start', () => {
 
     expect(reportHandledError).toHaveBeenCalledTimes(1);
     expect(reportHandledError.mock.calls[0][1]).toMatchObject({ cause: 'resume', agent: 'opencode', error_type: 'Error' });
+  });
+
+  // Sentry DESKTOP-4N: an open in the first seconds after launch asked a host whose
+  // link did not exist yet, and the refusal went out renamed as a preflight defect.
+  describe('a host whose link is not up', () => {
+    const unreachable = (): HostUnreachableError => new HostUnreachableError('host-a', 'Lab box is not connected.');
+
+    it.each([
+      ['bare', unreachable],
+      ['as the cause of a plain Error', () => new Error('Cannot create worktree', { cause: unreachable() })],
+    ])('sends nothing for one %s, and counts it', (_label, makeError) => {
+      const error = makeError();
+      reportPreflightFailure({ cause: 'worktree_other', error, agent: 'claude', startPath: 'open' });
+
+      expect(reportHandledError).not.toHaveBeenCalled();
+      expect(trackEvent).toHaveBeenCalledWith('spawn_failed', { agent: 'claude', reason: 'worktree_other' });
+      expect(isReported(error)).toBe(true);
+    });
+
+    it('counts one failure once, though the resume and the notice both report it', () => {
+      const error = unreachable();
+      reportPreflightFailure({ cause: 'worktree_other', error, agent: 'claude', startPath: 'open' });
+      reportPreflightFailure({ cause: 'worktree_other', error, agent: 'claude', startPath: 'open' });
+      expect(trackEvent).toHaveBeenCalledTimes(1);
+    });
+
+    it('spends no key, so a real failure after it on the same path still reports', () => {
+      reportPreflightFailure({ cause: 'worktree_other', error: unreachable(), agent: 'claude', startPath: 'open' });
+      reportPreflightFailure({ cause: 'worktree_other', error: new Error('git said no'), agent: 'claude', startPath: 'open' });
+
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({ cause: 'worktree_other', error_type: 'Error' });
+    });
+
+    it('does not count a refusal its caller already counted, and still sends nothing', () => {
+      const error = unreachable();
+      reportPreflightFailure({ cause: 'worktree_other', error, agent: 'claude', startPath: 'open', alreadyCounted: true });
+
+      expect(trackEvent).not.toHaveBeenCalled();
+      expect(reportHandledError).not.toHaveBeenCalled();
+      expect(isReported(error)).toBe(true);
+    });
+
+    it('counts and sends nothing while shutting down, since a quit takes the links down under a start', () => {
+      shuttingDown.value = true;
+      try {
+        const error = unreachable();
+        reportPreflightFailure({ cause: 'worktree_other', error, agent: 'claude', startPath: 'open' });
+
+        expect(trackEvent).not.toHaveBeenCalled();
+        expect(reportHandledError).not.toHaveBeenCalled();
+        expect(isReported(error)).toBe(true);
+      } finally {
+        shuttingDown.value = false;
+      }
+    });
+
+    describe('isRemoteLinkRefusal', () => {
+      const namedError = (name: string, options?: { cause?: unknown }): Error => {
+        const error = new Error('refused', options);
+        error.name = name;
+        return error;
+      };
+      const selfCaused = (): Error => {
+        const error = new Error('loop');
+        (error as Error & { cause?: unknown }).cause = error;
+        return error;
+      };
+
+      it.each([
+        ['an UnsupportedOnHostError', () => namedError('UnsupportedOnHostError'), true],
+        ['a HostUnreachableError as the cause of a plain Error', () => new Error('wrapper', { cause: namedError('HostUnreachableError') }), true],
+        [
+          'a refusal two levels down',
+          () => new Error('outer', { cause: new Error('middle', { cause: namedError('HostUnreachableError') }) }),
+          false,
+        ],
+        ['an Error whose cause is itself', selfCaused, false],
+        ['null', () => null, false],
+        ['undefined', () => undefined, false],
+        ['a plain Error', () => new Error('git said no'), false],
+      ])('is %s -> %s', (_label, makeError, expected) => {
+        expect(isRemoteLinkRefusal(makeError())).toBe(expected);
+      });
+
+      it('has both of its names in EXPECTED_FAILURE_NAMES, so every other reporter skips a refusal too', () => {
+        expect(EXPECTED_FAILURE_NAMES.has('HostUnreachableError')).toBe(true);
+        expect(EXPECTED_FAILURE_NAMES.has('UnsupportedOnHostError')).toBe(true);
+      });
+    });
   });
 
   it('sends no reason for an error that is not a refusal', () => {

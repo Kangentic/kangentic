@@ -15,6 +15,8 @@ import * as path from 'node:path';
 import { PassThrough } from 'node:stream';
 import type { spawn } from 'node:child_process';
 import { HostRouter, type RoutedCore } from '../../src/main/remote/host-router';
+import { HostUnreachableError } from '../../src/main/remote/link/host-unreachable-error';
+import type { PortForwarderOptions } from '../../src/main/remote/link/port-forward';
 import type { PtyHostEvent, PtyHostSpawnParams } from '../../src/main/pty/host/protocol';
 import type { RemoteHostConnection } from '../../src/main/remote/protocol/messages';
 import { dialHelper, makeHelperRig, settle, spawnParams, type HelperRig } from './helpers/remote-link-rig';
@@ -99,7 +101,10 @@ describe('spawns', () => {
     const rig = makeRig();
 
     const attempt = rig.router.handleRequest('spawn', fullSpawn('remote-1', 11, 'host-missing'));
-    await expect(attempt).rejects.toThrow('no connection set up for host host-missing');
+    // The host's state, never its id: the sentence reaches a terminal (Sentry DESKTOP-4N).
+    const refusal = await attempt.then(() => null, (error: unknown) => error);
+    expect((refusal as Error).message).toBe('This host is not connected.');
+    expect((refusal as Error).name).toBe('HostUnreachableError');
     expect(rig.core.handleRequest).not.toHaveBeenCalled();
   });
 });
@@ -174,7 +179,7 @@ describe('the remote request', () => {
 
   it('refuses to ask a host it holds no link for', async () => {
     const rig = makeRig();
-    await expect(rig.router.handleRequest('remote', { op: 'helper', hostId: 'nobody', method: 'hostInfo', params: {} })).rejects.toThrow('no connection set up');
+    await expect(rig.router.handleRequest('remote', { op: 'helper', hostId: 'nobody', method: 'hostInfo', params: {} })).rejects.toThrow('This host is not connected.');
   });
 
   it('stops dialing a host that was removed and forgets its routes', async () => {
@@ -184,7 +189,7 @@ describe('the remote request', () => {
     await rig.router.handleRequest('remote', { op: 'removeHost', hostId: 'host-a' });
 
     expect(rig.router.hub.linkOf('host-a')).toBeUndefined();
-    await expect(rig.router.handleRequest('spawn', fullSpawn('remote-1', 11, 'host-a'))).rejects.toThrow('no connection set up');
+    await expect(rig.router.handleRequest('spawn', fullSpawn('remote-1', 11, 'host-a'))).rejects.toThrow('This host is not connected.');
   });
 });
 
@@ -235,6 +240,19 @@ describe('forwarding a host\'s dev-server ports', () => {
     await router.handleRequest('remote', { op: 'removeHost', hostId: 'host-a' });
     expect(stopped).toHaveLength(1);
     expect(await router.handleRequest('remote', { op: 'listForwards', hostId: 'host-a' })).toEqual([]);
+  });
+});
+
+describe('the port forwarder asking a host that has no link', () => {
+  it('is refused with a HostUnreachableError that says the host is not connected', async () => {
+    const rig = makeRig();
+    const { requestListening } = (rig.router.forwarder as unknown as { options: PortForwarderOptions }).options;
+
+    const refusal = await requestListening('host-never-added').then(() => null, (error: unknown) => error as Error);
+
+    expect(refusal).toBeInstanceOf(HostUnreachableError);
+    expect(refusal?.name).toBe('HostUnreachableError');
+    expect(refusal?.message).toBe('This host is not connected.');
   });
 });
 
@@ -340,7 +358,7 @@ describe('a new app process rejoining what the host kept running', () => {
 
   it('refuses a host it has no connection for, with a sentence', async () => {
     const rig = makeRig();
-    await expect(rig.router.handleRequest('remote', { op: 'adopt', hostId: 'host-missing', sessions: [] })).rejects.toThrow('no connection set up for host host-missing');
+    await expect(rig.router.handleRequest('remote', { op: 'adopt', hostId: 'host-missing', sessions: [] })).rejects.toThrow('This host is not connected.');
   });
 });
 
