@@ -680,6 +680,35 @@ export class ActivityEngine {
   }
 
   /**
+   * Drop the in-flight work a turn the user stopped with Ctrl+C left behind,
+   * because a prompt submitted after the Ctrl+C began the next turn
+   * (`UserInterruptCoordinator.notePromptSubmitted`, task #1149). Clears the
+   * engine's share of what the synthetic `Interrupted` would have, the pending
+   * tools and subagent slots whose ends the interrupt swallowed. The caller
+   * closes the same calls in the open-work ledger. A stale slot would make the
+   * new turn's own Stop read as a subagent's inner stop, and the turn would
+   * never end.
+   *
+   * Commits nothing and leaves `turnActive` alone. The new prompt is processed
+   * right after and keeps the turn going, so the board never shows the live
+   * turn idle. Background shells stay too. A Ctrl+C does not end one, and
+   * dropping a live shell from the counts folds it into the watcher's helper
+   * baseline (see `resetInFlightCounters`).
+   */
+  discardInterruptedTurnWork(sessionId: string): void {
+    if (this.disposed) return;
+    const state = this.states.get(sessionId);
+    if (!state) return;
+    state.pendingToolCount = 0;
+    state.pendingToolStack.length = 0;
+    state.currentTool = null;
+    releaseSubagentSlots(state);
+    state.pendingIdleAt = null;
+    state.idleHintPending = false;
+    state.retryFailurePending = false;
+  }
+
+  /**
    * Reset `lastSignalAt` without firing a transition. Used by paths
    * that observe the agent is alive but don't want to flip state
    * (e.g. the status-file heartbeat keeping a thinking session warm

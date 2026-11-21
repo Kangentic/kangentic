@@ -1402,6 +1402,18 @@ export class SessionTelemetry {
         && event.toolId !== undefined
         && (this.activityEngine.getState(sessionId)?.pendingToolStack.some((pending) => pending.id === event.toolId) ?? false);
 
+      // A prompt the agent received, never PTY output standing in for one. One
+      // submitted after a Ctrl+C ends that Ctrl+C's settle window, before the
+      // engine starts the new turn on it (task #1149). The calls the stopped
+      // turn left open close in the ledger too, as a fired window closes them.
+      if (
+        event.type === EventType.Prompt
+        && event.detail !== PromptReason.PtyActivity
+        && this.userInterrupts.notePromptSubmitted(sessionId, event.ts)
+      ) {
+        this.openWork.noteInterrupted(sessionId);
+      }
+
       this.activityEngine.processEvent(sessionId, event);
       this.noteOpenWork(sessionId, event);
 

@@ -273,6 +273,190 @@ describe('UserInterruptCoordinator', () => {
     });
   });
 
+  // Task #1149: the owner pressed Ctrl+C, Claude Code put the prompt back,
+  // and the owner resubmitted inside the window. The window then idled the
+  // resubmitted turn, so its turn end read no message from the owner.
+  describe('a prompt submitted after the Ctrl+C', () => {
+    function interruptedTurnWithDeadWork() {
+      const fixture = makeCoordinator();
+      fixture.engine.initSession(SESSION_ID);
+      fixture.engine.processEvent(SESSION_ID, { ts: Date.now(), type: EventType.Prompt });
+      fixture.engine.processEvent(SESSION_ID, { ts: Date.now(), type: EventType.SubagentStart, subagentId: 'agent-1' });
+      fixture.engine.processEvent(SESSION_ID, { ts: Date.now(), type: EventType.ToolStart, tool: 'Bash', toolId: 'call-1' });
+      const state = fixture.engine.getState(SESSION_ID);
+      expect(state?.pendingToolCount).toBe(1);
+      expect(state?.subagentDepth).toBe(1);
+      return fixture;
+    }
+
+    it('ends the window and discards the interrupted turn\'s work without an idle', () => {
+      const { coordinator, engine, pushedEvents } = interruptedTurnWithDeadWork();
+      coordinator.notify(SESSION_ID);
+      vi.advanceTimersByTime(SETTLE_MS / 2);
+
+      const resubmitted: SessionEvent = { ts: Date.now(), type: EventType.Prompt };
+      const discarded = coordinator.notePromptSubmitted(SESSION_ID, resubmitted.ts);
+      engine.processEvent(SESSION_ID, resubmitted);
+      vi.advanceTimersByTime(SETTLE_MS * 2);
+
+      expect(discarded).toBe(true);
+      expect(pushedEvents).toHaveLength(0);
+      const state = engine.getState(SESSION_ID);
+      expect(state?.activity).toBe('thinking');
+      expect(state?.turnActive).toBe(true);
+      expect(state?.pendingToolCount).toBe(0);
+      expect(state?.pendingToolStack).toEqual([]);
+      expect(state?.currentTool).toBeNull();
+      expect(state?.subagentDepth).toBe(0);
+
+      coordinator.dispose();
+      engine.dispose();
+    });
+
+    it('keeps a background shell the Ctrl+C did not end', () => {
+      const { coordinator, engine, pushedEvents } = interruptedTurnWithDeadWork();
+      engine.processEvent(SESSION_ID, { ts: Date.now(), type: EventType.BackgroundShellStart, detail: 'shell-abc123' });
+      expect(engine.getState(SESSION_ID)?.activeBackgroundShellIds.has('shell-abc123')).toBe(true);
+
+      coordinator.notify(SESSION_ID);
+      vi.advanceTimersByTime(SETTLE_MS / 2);
+      const resubmitted: SessionEvent = { ts: Date.now(), type: EventType.Prompt };
+      expect(coordinator.notePromptSubmitted(SESSION_ID, resubmitted.ts)).toBe(true);
+      engine.processEvent(SESSION_ID, resubmitted);
+      vi.advanceTimersByTime(SETTLE_MS * 2);
+
+      const state = engine.getState(SESSION_ID);
+      expect(pushedEvents).toHaveLength(0);
+      expect(state?.pendingToolCount).toBe(0);
+      expect(state?.activeBackgroundShellIds.has('shell-abc123')).toBe(true);
+      expect(state?.activeBackgroundShellIds.size).toBe(1);
+      expect(state?.anonymousBackgroundShellCount).toBe(0);
+
+      coordinator.dispose();
+      engine.dispose();
+    });
+
+    it('discards nothing when the hooks settled the turn before the resubmit', () => {
+      const { coordinator, engine, pushedEvents } = makeCoordinator();
+      engine.initSession(SESSION_ID);
+      engine.processEvent(SESSION_ID, { ts: Date.now(), type: EventType.Prompt });
+      engine.processEvent(SESSION_ID, { ts: Date.now(), type: EventType.ToolStart, tool: 'Bash', toolId: 'call-1' });
+      coordinator.notify(SESSION_ID);
+      vi.advanceTimersByTime(SETTLE_MS / 4);
+      engine.processEvent(SESSION_ID, { ts: Date.now(), type: EventType.ToolEnd, tool: 'Bash', toolId: 'call-1' });
+      engine.processEvent(SESSION_ID, { ts: Date.now(), type: EventType.Idle });
+      expect(engine.getState(SESSION_ID)?.activity).toBe('idle');
+
+      vi.advanceTimersByTime(SETTLE_MS / 4);
+      expect(coordinator.notePromptSubmitted(SESSION_ID, Date.now())).toBe(false);
+      vi.advanceTimersByTime(SETTLE_MS * 2);
+      expect(pushedEvents).toHaveLength(0);
+
+      // The window was cleared, so a later advance has no timer left to fire.
+      vi.advanceTimersByTime(SETTLE_MS * 2);
+      expect(pushedEvents).toHaveLength(0);
+
+      coordinator.dispose();
+      engine.dispose();
+    });
+
+    it('keeps a live subagent\'s slot when only it holds the turn', () => {
+      const { coordinator, engine, pushedEvents } = makeCoordinator();
+      engine.initSession(SESSION_ID);
+      engine.processEvent(SESSION_ID, { ts: Date.now(), type: EventType.Prompt });
+      engine.processEvent(SESSION_ID, { ts: Date.now(), type: EventType.SubagentStart, subagentId: 'agent-1' });
+      expect(engine.getState(SESSION_ID)?.pendingToolCount).toBe(0);
+      expect(engine.getState(SESSION_ID)?.subagentDepth).toBe(1);
+
+      coordinator.notify(SESSION_ID);
+      vi.advanceTimersByTime(SETTLE_MS / 2);
+      expect(coordinator.notePromptSubmitted(SESSION_ID, Date.now())).toBe(false);
+      expect(engine.getState(SESSION_ID)?.subagentDepth).toBe(1);
+      vi.advanceTimersByTime(SETTLE_MS * 2);
+      expect(pushedEvents).toHaveLength(0);
+
+      coordinator.dispose();
+      engine.dispose();
+    });
+
+    it('upgrades an idle-prompt window to a Ctrl+C, so a resubmit discards and ends it', () => {
+      const { coordinator, engine, pushedEvents } = interruptedTurnWithDeadWork();
+      coordinator.notify(SESSION_ID, 'idle-prompt');
+      vi.advanceTimersByTime(100);
+      coordinator.notify(SESSION_ID);
+      vi.advanceTimersByTime(100);
+
+      const resubmitted: SessionEvent = { ts: Date.now(), type: EventType.Prompt };
+      expect(coordinator.notePromptSubmitted(SESSION_ID, resubmitted.ts)).toBe(true);
+      engine.processEvent(SESSION_ID, resubmitted);
+      vi.advanceTimersByTime(SETTLE_MS * 2);
+
+      expect(pushedEvents).toHaveLength(0);
+      expect(engine.getState(SESSION_ID)?.pendingToolCount).toBe(0);
+
+      coordinator.dispose();
+      engine.dispose();
+    });
+
+    // The interrupted submit fires its own UserPromptSubmit, and its hook line
+    // can reach main after the Ctrl+C's IPC. It is the turn the user stopped.
+    it('keeps the window for the interrupted submit\'s own prompt, delivered late', () => {
+      const { coordinator, engine, pushedEvents } = interruptedTurnWithDeadWork();
+      const interruptedSubmitTs = Date.now();
+      vi.advanceTimersByTime(700);
+      coordinator.notify(SESSION_ID);
+      vi.advanceTimersByTime(SETTLE_MS / 2);
+
+      coordinator.notePromptSubmitted(SESSION_ID, interruptedSubmitTs);
+      engine.processEvent(SESSION_ID, { ts: interruptedSubmitTs, type: EventType.Prompt });
+      vi.advanceTimersByTime(SETTLE_MS);
+
+      expect(pushedEvents).toHaveLength(1);
+      expect(pushedEvents[0].event.detail).toBe('user-ctrl-c');
+      expect(engine.getState(SESSION_ID)?.activity).toBe('idle');
+
+      coordinator.dispose();
+      engine.dispose();
+    });
+
+    it('leaves an idle-prompt window to the hook-line cancel', () => {
+      const { coordinator, engine, pushedEvents } = makeCoordinator();
+      engine.initSession(SESSION_ID);
+      engine.processEvent(SESSION_ID, { ts: Date.now(), type: EventType.ToolStart, tool: 'Bash' });
+      coordinator.notify(SESSION_ID, 'idle-prompt');
+      vi.advanceTimersByTime(100);
+
+      coordinator.notePromptSubmitted(SESSION_ID, Date.now());
+      vi.advanceTimersByTime(SETTLE_MS);
+
+      expect(pushedEvents).toHaveLength(1);
+      expect(pushedEvents[0].event.detail).toBe('idle-prompt');
+
+      coordinator.dispose();
+      engine.dispose();
+    });
+
+    it('arms a fresh window for a Ctrl+C pressed after the resubmit', () => {
+      const { coordinator, engine, pushedEvents } = interruptedTurnWithDeadWork();
+      coordinator.notify(SESSION_ID);
+      vi.advanceTimersByTime(SETTLE_MS / 2);
+      const resubmitted: SessionEvent = { ts: Date.now(), type: EventType.Prompt };
+      coordinator.notePromptSubmitted(SESSION_ID, resubmitted.ts);
+      engine.processEvent(SESSION_ID, resubmitted);
+
+      vi.advanceTimersByTime(SETTLE_MS * 2);
+      coordinator.notify(SESSION_ID);
+      vi.advanceTimersByTime(SETTLE_MS);
+
+      expect(pushedEvents).toHaveLength(1);
+      expect(pushedEvents[0].event.detail).toBe('user-ctrl-c');
+      expect(engine.getState(SESSION_ID)?.activity).toBe('idle');
+
+      coordinator.dispose();
+      engine.dispose();
+    });
+  });
+
   describe('fireIfStillHot suppression: engine already idle', () => {
     it('does not push an event when the session is already idle at fire time', () => {
       const { coordinator, engine, pushedEvents } = makeCoordinator();

@@ -457,6 +457,13 @@ describe('matchUserMessage', () => {
         .toEqual({ met: true, reason: 'Your message 2 of 2 in this turn matched.' });
     });
 
+    // Task #1149: a typo submitted, stopped with Ctrl+C, and resubmitted. The
+    // turn holds both, and the corrected one decides.
+    it('runs on a sign-off resubmitted after an interrupted typo', () => {
+      expect(matchUserMessage(SIGN_OFF, { readable: true, messages: ['signedo ff', 'signed off'] }))
+        .toEqual({ met: true, reason: 'Your message 2 of 2 in this turn matched.' });
+    });
+
     it('rules out a message that matches both a plain and a ! pattern', () => {
       expect(matchUserMessage(SIGN_OFF, { readable: true, messages: ['signed off', 'not signed off'] }).met).toBe(false);
     });

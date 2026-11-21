@@ -104,7 +104,7 @@ Surrounding infrastructure:
 |------|------|
 | `src/main/activity-engine/session-telemetry.ts` | Wires the engine to event ingestion + PTY tracker + watchers + user-interrupt coordinator |
 | `src/main/activity-engine/open-work-ledger.ts` | What each session still has open (tool calls, background shells, background subagents), from its hook events and closed only by a real end (see [Open work](#open-work)) |
-| `src/main/activity-engine/user-interrupt-coordinator.ts` | 3-second settle timer for Ctrl+C; synthesizes Interrupted if engine still hot |
+| `src/main/activity-engine/user-interrupt-coordinator.ts` | 3-second settle timer for Ctrl+C; synthesizes Interrupted if engine still hot, unless a newer prompt ends it first |
 | `src/main/activity-engine/usage-accumulator.ts` | Per-tool usage stats (call count, run time paired by `toolId`, calls that waited on the user, cost, tokens) and the per-session usage cache. Stamps each reported rate-limit window with its reset generation before caching it, and brings sibling caches up when a reset opens. A report that leaves a window out keeps the session's last value for it (an idle Claude status carried only the seven-day window, measured), so the cache a renderer reload rebuilds its rate-limit snapshot from still holds both |
 | `src/main/activity-engine/rate-limit-ledger.ts` | Per-session rate-limit history that stamps each window's reset `generation`, so a free usage reset (usage falls, `resetsAt` stays) replaces stale sibling reports; and `withRateLimitAgent`, which stamps each window with the agent whose session reported it, so each agent's pill draws only its own |
 | `src/main/activity-engine/pr-command-detector.ts` | PR command pattern detector |
@@ -379,11 +379,17 @@ When the user presses Ctrl+C in a session terminal, the renderer fires the `noti
 
 If Claude's hooks already recovered the engine state during the settle window, the synthetic is a no-op (state isn't hot). Multiple rapid Ctrl+C presses collapse to one - the existing timer is cleared and re-armed each time.
 
+A prompt the agent's own hook reports ends a Ctrl+C window early (`UserInterruptCoordinator.notePromptSubmitted`, called from `processAdmittedEvents` before the engine sees the prompt). Claude Code puts an interrupted prompt back in the input, and a user who fixes it and resubmits inside 3 s has started a new turn. Before this check, the window fired on that live turn and committed a false idle. The idle moved the turn's transcript anchor past the message just sent, so a column's Text match on the user's message read none (task #1149).
+
+Now the prompt clears the window, with no idle and no new turn stamp. When the window would have fired, the engine discards what the stopped turn left in flight, its pending tools and subagent slots (`ActivityEngine.discardInterruptedTurnWork`), and the open-work ledger closes the same calls, as it does for a synthesized `Interrupted`. The turn end then reads from where the first submit began, both messages included.
+
+Only a prompt stamped after the Ctrl+C counts. The stopped turn's own UserPromptSubmit can reach main after the Ctrl+C's IPC, and its hook stamped it earlier. A PTY-activity prompt (`PromptReason.PtyActivity`) never ends the window. Two cases can misread the order. A Ctrl+C pressed before the hook's bridge has started (a few hundred ms after Enter) reads as a resubmit. A hook stamped by another clock (a WSL distro after the host slept, a remote host) can misorder either way. Each falls back to behavior that predates the check. The window fires, or the turn waits for the agent's own hooks.
+
 Without this path, hook-drop scenarios on Ctrl+C have to wait for the 5-minute stuck-pending-tools watchdog to fire.
 
 ### The idle prompt arms the same window
 
-Live hooks make the PTY tracker ignore the adapter's `detectIdle` match. An adapter whose idle prompt paints only between turns declares `idlePromptEndsOpenTurn`, and then a match seen while hooks are live arms this same window, with `detail: 'idle-prompt'` (`SessionTelemetry.notifyPtyIdle`). A line the agent's hooks write inside the window drops it (`notifyHookLines`), since a live hook proves the turn is running: a footer can paint just before the next turn's first hook. So does new terminal text after the prompt (`notifyPtyData`), which means the match came from a tool's output rather than the footer. A status line's events do not drop it. A repeated prompt keeps the first deadline, and the window never ends a turn a live subagent holds. A Ctrl+C window is kept through all of these, and keeps its own detail.
+Live hooks make the PTY tracker ignore the adapter's `detectIdle` match. An adapter whose idle prompt paints only between turns declares `idlePromptEndsOpenTurn`, and then a match seen while hooks are live arms this same window, with `detail: 'idle-prompt'` (`SessionTelemetry.notifyPtyIdle`). A line the agent's hooks write inside the window drops it (`notifyHookLines`), since a live hook proves the turn is running: a footer can paint just before the next turn's first hook. So does new terminal text after the prompt (`notifyPtyData`), which means the match came from a tool's output rather than the footer. A status line's events do not drop it. A repeated prompt keeps the first deadline, and the window never ends a turn a live subagent holds. A Ctrl+C window is kept through all of these, and keeps its own detail. Only a new prompt ends one, as above.
 
 Antigravity is the one adapter that declares it. Measured on agy 1.5.13: an Esc during a tool fired neither PostToolUse nor Stop, so the engine held the turn with the tool pending until the next prompt, while the `? for shortcuts` footer was already on screen. An approval dialog keeps the `esc to cancel` footer, so a wait on the user does not match. Pinned by `tests/unit/session-telemetry-idle-prompt-interrupt.test.ts`.
 
@@ -402,9 +408,10 @@ work ended closes an entry:
 
 - **A tool call** opens on its `tool_start` and closes on its own `tool_end` (by id, else the newest
   open call of that name), on its move to a background shell, on `interrupted` or `turn_failed` (a
-  synthesized interrupt included), on the main agent's turn end, on a denial read from the
-  transcript, and at the session's end. A `subagent_start`, a `prompt`, an `idle_hint` or a reset
-  closes nothing.
+  synthesized interrupt included), on a `prompt` that ends a Ctrl+C window in its place (see
+  [Ctrl+C user-interrupt synthesis](#ctrlc-user-interrupt-synthesis-3s)), on the main agent's turn
+  end, on a denial read from the transcript, and at the session's end. A `subagent_start`, any
+  other `prompt`, an `idle_hint` or a reset closes nothing.
 - **A background shell** opens when the engine starts holding a named shell, so an exempt service
   never opens. It carries the command that started it: an anonymous launch's, or the `tool_start`
   detail of the call the CLI moved to the background (a foreground Bash at its timeout, a
@@ -415,7 +422,7 @@ work ended closes an entry:
   [Background shells](background-shells.md)), being marked a service, and the session's end. The
   hatch and the output-quiescence reclaim close nothing.
 - **A subagent** opens on its `subagent_start` and closes on its named `subagent_stop`,
-  `interrupted`, `turn_failed` and the session's end. One started before the main agent's latest
+  `interrupted`, `turn_failed`, a `prompt` that ends a Ctrl+C window, and the session's end. One started before the main agent's latest
   turn end is background work.
 
 `SessionManager.getOpenWork(sessionId)` reads it. Each spawn starts the session's ledger empty, so a
