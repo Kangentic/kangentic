@@ -511,6 +511,13 @@ describe('a request while the host is still connecting', () => {
     };
   }
 
+  // The router's refusal reaches main as a plain Error with this name, once its link is gone.
+  function routerRefusal(): Error {
+    const refusal = new Error(HOST_NOT_CONNECTED_SENTENCE);
+    refusal.name = 'HostUnreachableError';
+    return refusal;
+  }
+
   afterEach(() => {
     vi.useRealTimers();
   });
@@ -576,35 +583,25 @@ describe('a request while the host is still connecting', () => {
   });
 
   it('says a host with no link is not connected, by name, where the router knows no name', async () => {
-    const routerRefusal = new Error(HOST_NOT_CONNECTED_SENTENCE);
-    routerRefusal.name = 'HostUnreachableError';
-    const { service } = makeService({ send: vi.fn(async () => { throw routerRefusal; }) });
+    const refusalFromRouter = routerRefusal();
+    const { service } = makeService({ send: vi.fn(async () => { throw refusalFromRouter; }) });
 
     const refusal = await service.runCommand('host-a', { file: 'git', args: [], timeoutMs: 5_000 }).then(() => null, (error: unknown) => error);
 
     expect(refusal).toBeInstanceOf(HostUnreachableError);
     expect((refusal as Error).message).toBe('Lab box is not connected.');
-    expect((refusal as Error).cause).toBe(routerRefusal);
+    expect((refusal as Error).cause).toBe(refusalFromRouter);
   });
 
   it('names why the last connect failed when the router finds no link', async () => {
-    const routerRefusal = new Error(HOST_NOT_CONNECTED_SENTENCE);
-    routerRefusal.name = 'HostUnreachableError';
     const { service } = makeService({
       install: async () => { throw new Error('Permission denied (publickey).'); },
-      send: vi.fn(async () => { throw routerRefusal; }),
+      send: vi.fn(async () => { throw routerRefusal(); }),
     });
     await service.connect('host-a').catch(() => undefined);
 
     await expect(service.hostInfo('host-a')).rejects.toThrow('Lab box is not connected: Permission denied (publickey).');
   });
-
-  // The router's refusal reaches main as a plain Error with this name, once its link is gone.
-  function routerRefusal(): Error {
-    const refusal = new Error(HOST_NOT_CONNECTED_SENTENCE);
-    refusal.name = 'HostUnreachableError';
-    return refusal;
-  }
 
   /** A `send` that answers until `state.refuse` is set, then refuses as the router does for a host with no link. */
   function refusingSend() {
@@ -713,15 +710,139 @@ describe('a request while the host is still connecting', () => {
     });
   });
 
-  describe('a Reconnect queued behind a dropped connect', () => {
-    function perCallInstalls() {
-      const installs: Array<{ finish: () => void }> = [];
-      const install = vi.fn((): Promise<InstalledHost> => new Promise((resolve) => {
-        installs.push({ finish: () => resolve({ directory: '/home/dev/.kangentic/host/1.2.3', relayCommand: 'node relay.js', installed: true }) });
-      }));
-      return { install, installs };
+  function perCallInstalls() {
+    const installs: Array<{ finish: () => void }> = [];
+    const install = vi.fn((): Promise<InstalledHost> => new Promise((resolve) => {
+      installs.push({ finish: () => resolve({ directory: '/home/dev/.kangentic/host/1.2.3', relayCommand: 'node relay.js', installed: true }) });
+    }));
+    return { install, installs };
+  }
+
+  const installedHost: InstalledHost = { directory: '/home/dev/.kangentic/host/1.2.3', relayCommand: 'node relay.js', installed: true };
+
+  /** Lets promise continuations run under fake timers without moving the clock. */
+  async function flushPromises(): Promise<void> {
+    for (let turn = 0; turn < 10; turn++) await vi.advanceTimersByTimeAsync(0);
+  }
+
+  describe('a Reconnect of a host that is already connected', () => {
+    /** The first install succeeds, the second stays pending until `endSecond` is called. */
+    function reconnectingService() {
+      let rejectSecond: ((error: Error) => void) | null = null;
+      const install = vi.fn()
+        .mockResolvedValueOnce(installedHost)
+        .mockImplementationOnce(() => new Promise<InstalledHost>((_resolve, reject) => { rejectSecond = reject; }));
+      const made = makeService({ install });
+      return { ...made, install, failSecond: (error: Error) => rejectSecond?.(error) };
     }
 
+    it('sends a request on to the router when the Reconnect fails, and the router answers', async () => {
+      const { service, sent, install, failSecond } = reconnectingService();
+      await service.connect('host-a');
+      const reconnect = service.connect('host-a').catch(() => undefined);
+      await vi.waitFor(() => expect(install).toHaveBeenCalledTimes(2));
+
+      const asked = service.hostInfo('host-a');
+      failSecond(new Error('Permission denied (publickey).'));
+      await reconnect;
+
+      await expect(asked).resolves.toMatchObject({ shellName: 'fish' });
+      expect(sent.some((request) => request.op === 'helper' && request.method === 'hostInfo')).toBe(true);
+    });
+
+    it('sends a request on to the router at the bound when the Reconnect never ends, rather than saying it is still connecting', async () => {
+      vi.useFakeTimers();
+      const { service, sent, install } = reconnectingService();
+      await service.connect('host-a');
+      void service.connect('host-a').catch(() => undefined);
+      await flushPromises();
+      expect(install).toHaveBeenCalledTimes(2);
+
+      const asked = service.hostInfo('host-a').then((answer) => ({ answer }), (error: unknown) => ({ error }));
+      await flushPromises();
+      expect(sent.some((request) => request.op === 'helper')).toBe(false);
+      await vi.advanceTimersByTimeAsync(HOST_READY_WAIT_MS);
+
+      const outcome = await asked;
+      expect(outcome).not.toHaveProperty('error');
+      expect(outcome).toMatchObject({ answer: { shellName: 'fish' } });
+      expect(sent.some((request) => request.op === 'helper' && request.method === 'hostInfo')).toBe(true);
+    });
+  });
+
+  describe('writeFileRaw while the host is still connecting', () => {
+    it('sends nothing until the link is added, then sends the write', async () => {
+      const { service, sent, finishInstall } = connectingService();
+      const connecting = service.connect('host-a');
+
+      const asked = service.writeFileRaw('host-a', '/home/dev/x', 'body');
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(sent.some((request) => request.op === 'helper')).toBe(false);
+
+      finishInstall();
+      await connecting;
+      await asked;
+
+      const helperRequests = sent.filter((request) => request.op === 'helper');
+      expect(helperRequests).toHaveLength(1);
+      expect(helperRequests[0]).toMatchObject({ method: 'writeFileRaw', hostId: 'host-a', params: { path: '/home/dev/x' } });
+    });
+
+    it('names the host when the router finds no link', async () => {
+      const { service } = makeService({ send: vi.fn(async () => { throw routerRefusal(); }) });
+
+      const refusal = await service.writeFileRaw('host-a', '/home/dev/x', 'body').then(() => null, (error: unknown) => error);
+
+      expect(refusal).toBeInstanceOf(HostUnreachableError);
+      expect((refusal as Error).message).toBe('Lab box is not connected.');
+    });
+  });
+
+  describe('the wait\'s bound', () => {
+    it('counts from the request, so a Reconnect that starts later does not restart it', async () => {
+      vi.useFakeTimers();
+      const { install, installs } = perCallInstalls();
+      const { service, sent } = makeService({ install });
+      const dropped = service.connect('host-a');
+      await service.disconnect('host-a');
+      void service.connect('host-a').catch(() => undefined);
+      const asked = service.hostInfo('host-a').then(() => null, (error: unknown) => (error as Error).message);
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      installs[0].finish();
+      await dropped;
+      await flushPromises();
+      expect(installs).toHaveLength(2);
+
+      // Not yet at the bound since the request: 10 s were spent before the Reconnect began its install.
+      await vi.advanceTimersByTimeAsync(HOST_READY_WAIT_MS - 10_000 - 1);
+      let settled = false;
+      void asked.then(() => { settled = true; });
+      await flushPromises();
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await asked).toBe('Lab box is still connecting.');
+      expect(sent.some((request) => request.op === 'helper')).toBe(false);
+    });
+
+    it('is cleared once the request has waited for its connect', async () => {
+      vi.useFakeTimers();
+      const { service, finishInstall } = connectingService();
+      const connecting = service.connect('host-a');
+      const asked = service.hostInfo('host-a');
+      await flushPromises();
+
+      finishInstall();
+      await connecting;
+      await asked;
+
+      expect(vi.getTimerCount()).toBe(0);
+    });
+  });
+
+  describe('a Reconnect queued behind a dropped connect', () => {
     it('delivers a request made before it, one made after it and one made as the dropped connect ends, each only once the link is added', async () => {
       const { install, installs } = perCallInstalls();
       const { service, sent } = makeService({ install });

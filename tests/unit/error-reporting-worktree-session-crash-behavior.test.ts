@@ -208,6 +208,33 @@ describe('worktree removal failure report', () => {
     expect(removalSyscallOf(undefined)).toBe('none');
   });
 
+  it('reads the syscall and part of the folder off the error a timeout wraps', async () => {
+    // A timed-out manual removal rejects with the timeout error, and the failure
+    // that was in flight (an EBUSY on a locked file) rides on its cause.
+    const lockedFile = path.join(worktreePathFor('fast'), 'node_modules', '.bin', 'vite');
+    const timeout = new Error('ran out of time', { cause: busyError('unlink', lockedFile) });
+    timeout.name = 'WorktreeRemovalTimeoutError';
+
+    await removeFailingWorktree('fast', timeout, { caller: 'cleanup' });
+
+    expect(hoisted.reportHandledError).toHaveBeenCalledTimes(1);
+    expect(hoisted.reportHandledError.mock.calls[0][1]).toMatchObject({
+      timed_out: 'true',
+      syscall: 'unlink',
+      path_class: 'node_modules',
+    });
+  });
+
+  it('counts a child folder whose name starts with two dots as inside the worktree', async () => {
+    const { removalPathClassOf } = await import('../../src/main/git/worktree-manager');
+    const worktreePath = worktreePathFor('dots');
+
+    expect(removalPathClassOf(worktreePath, path.join(worktreePath, '..cache', 'node_modules', 'x'))).toBe('node_modules');
+    expect(removalPathClassOf(worktreePath, path.join(worktreePath, '..cache', 'x'))).toBe('other');
+    expect(removalPathClassOf(worktreePath, path.join(worktreePath, '..', 'sibling'))).toBe('other');
+    expect(removalPathClassOf(worktreePath, path.join(worktreePath, '..', 'sibling', 'node_modules', 'x'))).toBe('other');
+  });
+
   it('tags a removal with no caller named as other', async () => {
     await removeFailingWorktree('moderate', busyError('rmdir', worktreePathFor('moderate')));
 

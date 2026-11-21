@@ -365,6 +365,9 @@ export function diagnoseSpawnFailure(params: {
   return { kind, errorMessage, scrollbackSuffix, errno, cwdExists, shellExists };
 }
 
+/** The `pty_spawn` count's message for a spawn an SSH host's link refused. */
+export const REMOTE_LINK_REFUSAL_MESSAGE = 'A remote host link refused the spawn';
+
 /**
  * Emit the spawn-failure analytics event. Split from diagnose so tests
  * of diagnose don't need to mock analytics.
@@ -380,7 +383,11 @@ export function recordSpawnFailure(params: {
   const shell = shellLabelOf(params.shellExe);
   trackEvent('app_error', {
     source: 'pty_spawn',
-    message: sanitizeErrorMessage(params.diagnostic.errorMessage),
+    // A link refusal's text names the host and can carry ssh's own words (a user, an address), which
+    // the path scrub does not touch, so it is sent as a fixed sentence.
+    message: params.remoteLinkRefusal === true
+      ? REMOTE_LINK_REFUSAL_MESSAGE
+      : sanitizeErrorMessage(params.diagnostic.errorMessage),
     // The label, never the setting: a configured shell's path names a home folder.
     shell,
     cwdExists: String(params.diagnostic.cwdExists),
