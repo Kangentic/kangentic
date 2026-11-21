@@ -884,6 +884,45 @@ describe('TASK_CREATE handler', () => {
     });
   });
 
+  describe('artifacts sent from the task window are a person\'s', () => {
+    const LINK = 'https://claude.ai/artifact/WpdicMm97cV1F6AUGU3RFA';
+
+    // Red: pass the payload through and a typed name keeps the mark that lets a
+    // later publish replace it, and a payload source of 'publish' is trusted.
+    it('TASK_CREATE hands the repository the link and name only, with no payload source', async () => {
+      await callCreateHandler(context, {
+        swimlane_id: 'lane-doing',
+        title: 'Typed',
+        artifacts: [{ url: LINK, name: 'Typed', nameFrom: 'borrowed' }],
+        artifactSource: 'publish',
+      });
+
+      const createInput = taskRepo.create.mock.calls[0][0] as Record<string, unknown>;
+      expect(createInput.artifacts).toEqual([{ url: LINK, name: 'Typed' }]);
+      expect(createInput.artifacts).not.toContainEqual(expect.objectContaining({ nameFrom: expect.anything() }));
+      expect('artifactSource' in createInput).toBe(false);
+    });
+
+    it('TASK_UPDATE strips nameFrom from added artifacts and forces the source to user', async () => {
+      const update = vi.fn((input: { id: string }) => ({ id: input.id, artifacts: [] }));
+      mockGetProjectRepos.mockReturnValue({
+        tasks: { getById: vi.fn(() => ({ id: 'task-1', title: 'T', description: '', artifacts: [] })), update },
+      });
+      const handler = capturedHandlers.get(IPC.TASK_UPDATE);
+      if (!handler) throw new Error(`Handler for ${IPC.TASK_UPDATE} was not registered`);
+
+      await handler(null, {
+        id: 'task-1',
+        artifactChanges: { add: [{ url: LINK, name: 'Typed', nameFrom: 'borrowed' }], source: 'publish' },
+      }, null);
+
+      const updateInput = update.mock.calls[0][0] as { artifactChanges: { add: unknown[]; source: string } };
+      expect(updateInput.artifactChanges.add).toEqual([{ url: LINK, name: 'Typed' }]);
+      expect(updateInput.artifactChanges.add).not.toContainEqual(expect.objectContaining({ nameFrom: expect.anything() }));
+      expect(updateInput.artifactChanges.source).toBe('user');
+    });
+  });
+
   describe('announces the create on the board-changed bus', () => {
     // A paired phone re-reads the board when the bus fires, so the row must
     // exist by then, and the id is the one the repository generated, never one

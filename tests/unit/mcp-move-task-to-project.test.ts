@@ -145,6 +145,37 @@ describe('handleMoveTaskToProject', () => {
   // Red: drop either field from the target's create call and the matching
   // assertion fails (without the dismissed list the description's own link is
   // detected back onto the new task).
+  // Red: drop `nameFrom` from the target's create input and the publish title
+  // arrives as a chosen name, which the next publish there would never retitle.
+  it('carries where a name came from, so a publish title stays retitleable and a chosen name stays chosen', () => {
+    const publishedLink = 'https://claude.ai/artifact/WpdicMm97cV1F6AUGU3RFA';
+    const chosenLink = 'https://miro.com/app/board/uXjVabc123=/';
+    const sourceTaskRepo = new TaskRepository(sourceDb);
+    const created = sourceTaskRepo.create({
+      title: 'Published task',
+      description: '',
+      swimlane_id: sourceTodo.id,
+      artifacts: [{ url: publishedLink, name: 'Published title', nameFrom: 'publish' }, { url: chosenLink, name: 'Chosen name' }],
+    });
+    expect(sourceTaskRepo.getById(created.id)?.artifacts.map((artifact) => artifact.name_from)).toEqual(['publish', undefined]);
+
+    const response = handleMoveTaskToProject({ taskId: created.id }, source, target);
+    expect(response.success).toBe(true);
+
+    const targetTaskRepo = new TaskRepository(targetDb);
+    const [newTask] = targetTaskRepo.list(targetTodo.id);
+    expect(newTask.artifacts.map((artifact) => [artifact.url, artifact.name, artifact.name_from])).toEqual([
+      [publishedLink, 'Published title', 'publish'],
+      [chosenLink, 'Chosen name', undefined],
+    ]);
+
+    targetTaskRepo.applyArtifactChanges(newTask.id, {
+      add: [{ url: publishedLink, name: 'Retitled' }, { url: chosenLink, name: 'Republished' }],
+      source: 'publish',
+    });
+    expect(targetTaskRepo.getById(newTask.id)?.artifacts.map((artifact) => artifact.name)).toEqual(['Retitled', 'Chosen name']);
+  });
+
   it('carries the task\'s artifacts (link and name) and its removed links to the target project', () => {
     const removedLink = 'https://www.figma.com/design/AbC123xyz/Old-File';
     const keptLink = 'https://miro.com/app/board/uXjVabc123=/';
