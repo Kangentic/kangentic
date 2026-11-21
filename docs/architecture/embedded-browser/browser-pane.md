@@ -240,7 +240,7 @@ The Browser tab in `AppSettingsPanel` (per-project, above the separator) exposes
 | First-party Google sign-in inside the pane (navigate to `accounts.google.com`) | Works | empirically confirmed 2026-08-26: completes and yields a full authenticated session; see decisions 15 and 33 |
 | Google OAuth "Sign in with Google" popup (third-party federated) | Unverified | Google returned `disallowed_useragent` to the popup while it sent the `Electron/` token (decision 15). The token is gone since decision 41 and the popup has not been re-tested; the refusal detector stays either way |
 | An agent's open putting a window over the user's work | Done | The pane mounts in a window born parked and no agent path shows one; see decision 44 |
-| Focus moving into the pane while an agent drives it | Accepted, and SHOWN | unavoidable: driving a page means clicking it, and a click focuses the guest. The terminal dims, the pane is marked "Agent typing here", and stray keystrokes are still routed to the terminal. Three attempts to eliminate it were built, measured, and reverted; see decisions 18 and 19 |
+| Focus moving into the pane while an agent drives it | Accepted, and SHOWN | unavoidable: driving a page means clicking it, and a click focuses the guest. The pane is marked (veil, accent border, and an "Agent is ..." label), the terminal stays bright, and stray keystrokes are still routed to the terminal. Three attempts to eliminate it were built, measured, and reverted; see decisions 18 and 19 |
 | Selector-less `type` / `keypress` | Refused unless the pane holds focus | a key sent while focus is elsewhere lands there, the user's terminal included, so every key is checked first and refused with `pane-not-focused`. Both tools take a `selector` to click first in the same call; see decision 18 |
 | A navigation the page's `beforeunload` refuses | Reported | the default dismiss keeps the page, and the load fails with `navigation-refused-by-page` instead of a bare `ERR_FAILED (-2)`. `kangentic_browser_handle_dialog` with `accept: true`, then navigating again, gets through. `navigateGuest` gives that armed accept to `will-prevent-unload` too, or the page leaves and the load still rejects with `ERR_ABORTED (-3)` |
 | Dictation into the pane's note input | Done | a focused text field wins over every terminal tier, and the transcript is written with the native value setter; see decision 21 |
@@ -415,7 +415,7 @@ src/renderer/window-manager/
   TaskDetailWindow.tsx                      browser/changes mutually exclusive (task detail is now a modeless window)
 src/renderer/components/dialogs/
   task-detail/TaskDetailBody.tsx            2-col layout when Browser is on; owns the drive-visible
-                                            treatment - dims the terminal side, accents the pane border
+                                            treatment - never dims the terminal, accents the pane border
   task-detail/TaskDetailHeader.tsx          Browser pill
 
 src/renderer/stores/
