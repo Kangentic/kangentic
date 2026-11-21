@@ -280,7 +280,6 @@ describe('canColumnRun: On task enter in To Do and Done', () => {
 });
 
 describe('canColumnRun', () => {
-
   it('allows an exit row on To Do and Done', () => {
     // A task LEAVING Done is a real move, and an exit automation is the only
     // way to act on it.
