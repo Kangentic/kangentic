@@ -31,7 +31,10 @@ new report from carrying what a user wrote. The design and every source: [docs/t
   it got, and `JSON.parse` quotes its input.
 - **Tags are short enums.** A stage, a cause, an agent name, an errno. Never a task title, a path,
   a channel's argument, a column or automation name, a URL host (an artifact domain collapses its
-  tenant label: `*.sharepoint.com`), or free text.
+  tenant label: `*.sharepoint.com`), or free text. The one non-enum tag is a `correlationTags`
+  entry: a fixed-shape random id that joins the event to another system's record
+  (`relay_dial_id`). It is minted per occurrence and derived from nothing. It stays out of the
+  latch key, and Settings > Privacy names it.
 - **Skip what is not a defect.** `isExpectedFailure` covers shutdown, aborts,
   `UserConfigurationError` and its `RefusalError`, the named expected classes, and network
   failures. A refusal main throws to the renderer is a `RefusalError`, never a plain `Error`.

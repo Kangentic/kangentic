@@ -1792,6 +1792,43 @@ describe('BridgeSession park-buffer behavior (#635)', () => {
   });
 });
 
+describe('BridgeSession.relayDialId', () => {
+  function sessionOver(transport: Transport): BridgeSession {
+    return new BridgeSession({
+      identity: testIdentity(),
+      deviceId: 'device-1',
+      remoteStaticPublicKey: generateX25519KeyPair().publicKey,
+      capabilities: new Set(['read-board']) as CapabilitySet,
+      transport,
+    });
+  }
+
+  it('returns the transport current dial id when it names one', () => {
+    const { desktop } = createReconnectableLoopback();
+    const session = sessionOver(Object.assign(desktop, { currentDialId: '0123456789abcdef' as string | null }));
+    expect(session.relayDialId).toBe('0123456789abcdef');
+  });
+
+  it('returns null when the transport names a dial but has not dialed yet', () => {
+    const { desktop } = createReconnectableLoopback();
+    const session = sessionOver(Object.assign(desktop, { currentDialId: null as string | null }));
+    expect(session.relayDialId).toBeNull();
+  });
+
+  it('follows the transport as its dial changes', () => {
+    const { desktop } = createReconnectableLoopback();
+    const identified = Object.assign(desktop, { currentDialId: 'aaaaaaaaaaaaaaaa' as string | null });
+    const session = sessionOver(identified);
+    identified.currentDialId = 'bbbbbbbbbbbbbbbb';
+    expect(session.relayDialId).toBe('bbbbbbbbbbbbbbbb');
+  });
+
+  it('returns null for a transport with no currentDialId property', () => {
+    const { desktop } = createReconnectableLoopback();
+    expect(sessionOver(desktop).relayDialId).toBeNull();
+  });
+});
+
 describe('responseTooLargeRefusal', () => {
   it('is a failed capability-response for the request, carrying the stable response-too-large code', () => {
     // The wire text and code are the contract a phone branches on, so they
