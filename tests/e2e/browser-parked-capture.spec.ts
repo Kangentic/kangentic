@@ -21,6 +21,10 @@
  * task, the same window un-parks with the same guest, and the capture runs on
  * a showing pane (`surface=pane`).
  *
+ * A separate Linux-only case reads the real `ozone-platform` switch, which
+ * `src/main/browser/display-server.ts` reports to Sentry and which only a real
+ * Electron writes back. Under CI's xvfb it is x11.
+ *
  * Network-free: the page is served from a loopback server the test owns.
  */
 import fs from 'node:fs';
@@ -79,8 +83,8 @@ async function dragTaskToColumn(page: Page, taskTitle: string, targetColumn: str
   await page.waitForTimeout(100);
   await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + 80, { steps: 15 });
   await page.waitForTimeout(200);
+  // No settle wait after the drop. The caller polls for the session the move starts.
   await page.mouse.up();
-  await page.waitForTimeout(500);
 }
 
 /** The running session of one task: the agent `open_pane` serves. */
@@ -153,16 +157,29 @@ const CAPTURE_WAIT_MS = 8000;
 
 async function captureWithin(client: Client): Promise<{ outcome: ToolOutcome; elapsedMs: number }> {
   const startedAt = Date.now();
-  const outcome = await Promise.race([
-    callTool(client, 'kangentic_browser_screenshot', {}),
-    new Promise<never>((_resolve, reject) => {
-      setTimeout(() => reject(new Error(`kangentic_browser_screenshot did not return within ${CAPTURE_WAIT_MS} ms`)), CAPTURE_WAIT_MS);
-    }),
-  ]);
-  return { outcome, elapsedMs: Date.now() - startedAt };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const outcome = await Promise.race([
+      callTool(client, 'kangentic_browser_screenshot', {}),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`kangentic_browser_screenshot did not return within ${CAPTURE_WAIT_MS} ms`)), CAPTURE_WAIT_MS);
+      }),
+    ]);
+    return { outcome, elapsedMs: Date.now() - startedAt };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 test.describe('Screenshot of a born-parked Browser pane', () => {
+  test('Chromium writes its chosen ozone backend back to the switch Sentry reads', async ({ sharedApp }) => {
+    test.skip(process.platform !== 'linux', 'The ozone-platform switch is only read on Linux.');
+    // Chromium writes its choice back to this switch when none was passed, and
+    // display-server.ts depends on that. CI runs under xvfb, so the value is x11.
+    const ozonePlatform = await sharedApp.app.evaluate(({ app }) => app.commandLine.getSwitchValue('ozone-platform'));
+    expect(ozonePlatform).toBe('x11');
+  });
+
   test('captures a pane whose window was born parked, and the same pane once the user shows it', async ({ freshProject }) => {
     const { page, tmpDir } = freshProject;
     const pageServer = await startPageServer();
