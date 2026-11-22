@@ -604,8 +604,8 @@ export interface ScreenshotOptions {
  * `holdGuestRendering` closed that gap with no switch: it keeps the guest drawing
  * and the host's compositor running behind a covered or minimized app, with
  * nothing on screen. This bound now
- * answers a host hidden outright, and whatever the hold does not reach. macOS
- * and Linux have not been measured.
+ * answers a host hidden outright, and whatever the hold does not reach. Linux
+ * was measured on X11 and Wayland in CI venues (decision 44); macOS has not been.
  */
 export const SCREENSHOT_TIMEOUT_MS = 5000;
 

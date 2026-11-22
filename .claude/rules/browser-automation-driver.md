@@ -149,7 +149,11 @@ the two surfaces forking the CDP driver (so click/type/screenshot semantics drif
      capture, a full page, png, jpeg and an element, with no visibility change. It must overlap: one
      call fired first hung every shape but the plain one on a minimized host. It stays off a host
      hidden outright (`win.hide()`, so the quit path and macOS Cmd+H), where `capturePage` itself never
-     settles and its count would leak. macOS and Linux are unmeasured.
+     settles and its count would leak. On Linux a born-parked pane captured in under 40 ms on X11
+     (xvfb) and Wayland (headless Weston), visible and after the app's own `minimize()`. Neither
+     venue has a desktop compositor, and on Wayland a window the USER minimized still reads
+     visible while the compositor may stop drawing it, which no hold can undo (decision 44).
+     macOS is unmeasured.
   2. `captureScreenshot` races the command against `SCREENSHOT_TIMEOUT_MS` (`cdp/cdp.ts`). This is
      the backstop for whatever the hold does not reach. Do not remove it on the strength of the hold.
      The hold cannot help a subtree that is not drawn, so nothing that hides a pane uses
@@ -277,7 +281,12 @@ the two surfaces forking the CDP driver (so click/type/screenshot semantics drif
   guest, so whether Chromium still draws is the probe's to answer: re-run it on an Electron upgrade.
   `tests/unit/error-reporting-mcp-browser-behavior.test.ts` times out a real capture and pins that
   the report names the surface, the host window, the hold, whether the hold's calls on each side
-  returned (`host_hold`, `guest_hold`), and the time since the last wake.
+  returned (`host_hold`, `guest_hold`), the time since the last wake, and the display server
+  (`display_server`, from `--ozone-platform`, never an env value).
+  `tests/e2e/browser-parked-capture.spec.ts` opens a pane through `open_pane` as the task's own
+  agent, so its window is born parked, asserts `list_panes` reads `parked`, and captures it, then
+  captures again once the user's click un-parks it. On CI that is the X11 measurement under xvfb,
+  which has no compositor; it cannot speak for Wayland.
 - **Test (pane-bounded capture):** `tests/unit/browser-capture-bounds.test.ts` holds its own
   statement of Chromium's `requested_image_size` rule, checks it reproduces the shipped bug, and
   asserts no planned capture exceeds its pane across display scales 1 to 2, four pane sizes, and
