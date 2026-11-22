@@ -35,7 +35,7 @@ vi.mock('../../src/main/analytics/error-reporting', () => ({ reportHandledError 
 vi.mock('electron', () => ({
   webContents: { fromId: vi.fn() },
   BrowserWindow: { fromWebContents: vi.fn(() => null) },
-  app: { getPath: () => '/tmp', isPackaged: false },
+  app: { getPath: () => '/tmp', isPackaged: false, commandLine: { getSwitchValue: vi.fn(() => '') } },
 }));
 
 // runHandler's dependency: the one handler throws whatever the test armed.
@@ -117,7 +117,7 @@ vi.mock('../../src/main/browser/cdp/cdp', async (importOriginal) => ({
   getDeviceMetrics: vi.fn(() => null),
 }));
 
-import { BrowserWindow, webContents } from 'electron';
+import { app, BrowserWindow, webContents } from 'electron';
 import { attachDebugger, getDeviceMetrics, isDebuggerAttached, SCREENSHOT_TIMEOUT_MS } from '../../src/main/browser/cdp/cdp';
 import { captureScreenshotWithBudget } from '../../src/main/browser/cdp/screenshot';
 import { noteWake, resetWakeClockForTests } from '../../src/main/browser/wake-clock';
@@ -462,6 +462,57 @@ describe('withGuest reports a driver failure', () => {
       });
     });
 
+    describe('names the display server Chromium draws to, from its own command line', () => {
+      const realPlatform = process.platform;
+
+      function setPlatform(platform: NodeJS.Platform): void {
+        Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+      }
+
+      async function timeOutParkedCapture(): Promise<void> {
+        browserPaneRegistry.detachAll();
+        browserPaneRegistry.register({
+          handle: 'pane_s', ownerSessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null, visibility: 'parked',
+        });
+        vi.mocked(webContents.fromId).mockReturnValue(uncompositedGuest(true) as never);
+        vi.mocked(BrowserWindow.fromWebContents).mockReturnValue({ isMinimized: () => false, isVisible: () => true } as never);
+        await captureUntilTimeout();
+      }
+
+      afterEach(() => {
+        setPlatform(realPlatform);
+        vi.mocked(app.commandLine.getSwitchValue).mockReset();
+        vi.mocked(app.commandLine.getSwitchValue).mockReturnValue('');
+      });
+
+      // `auto` and `''` are what the switch reads when Chromium did not write back its choice.
+      it.each([
+        { switchValue: 'x11', expected: 'x11' },
+        { switchValue: 'wayland', expected: 'wayland' },
+        { switchValue: 'headless', expected: 'other' },
+        { switchValue: 'auto', expected: 'other' },
+        { switchValue: '', expected: 'other' },
+      ])('tags --ozone-platform=$switchValue on Linux as $expected', async ({ switchValue, expected }) => {
+        setPlatform('linux');
+        vi.mocked(app.commandLine.getSwitchValue).mockReturnValue(switchValue);
+
+        await timeOutParkedCapture();
+
+        expect(reportHandledError).toHaveBeenCalledTimes(1);
+        expect(reportedTags()).toMatchObject({ error_name: 'ScreenshotNotComposited', surface: 'parked', display_server: expected });
+        expect(app.commandLine.getSwitchValue).toHaveBeenCalledWith('ozone-platform');
+      });
+
+      it('tags other off Linux, whatever the switch says', async () => {
+        setPlatform('win32');
+        vi.mocked(app.commandLine.getSwitchValue).mockReturnValue('wayland');
+
+        await timeOutParkedCapture();
+
+        expect(reportedTags()).toMatchObject({ error_name: 'ScreenshotNotComposited', display_server: 'other' });
+      });
+    });
+
     it('tags a hold whose host calls never returned, so a stopped compositor reads apart', async () => {
       browserPaneRegistry.detachAll();
       browserPaneRegistry.register({
@@ -533,7 +584,7 @@ describe('withGuest reports a driver failure', () => {
       });
 
       const tags = reportedTags();
-      for (const captureTag of ['surface', 'host_window', 'hold', 'host_hold', 'guest_hold', 'since_wake']) {
+      for (const captureTag of ['surface', 'host_window', 'hold', 'host_hold', 'guest_hold', 'since_wake', 'display_server']) {
         expect(tags).not.toHaveProperty(captureTag);
       }
     });
@@ -561,7 +612,7 @@ describe('withGuest reports a driver failure', () => {
       expect(reportHandledError).toHaveBeenCalledTimes(1);
       const tags = reportedTags();
       expect(tags).toMatchObject({ source: 'browser_driver', error_name: 'ScreenshotNotComposited' });
-      for (const captureTag of ['surface', 'host_window', 'hold', 'host_hold', 'guest_hold', 'since_wake']) {
+      for (const captureTag of ['surface', 'host_window', 'hold', 'host_hold', 'guest_hold', 'since_wake', 'display_server']) {
         expect(tags).not.toHaveProperty(captureTag);
       }
       expect(JSON.stringify(tags)).not.toContain('bogus');
@@ -647,6 +698,8 @@ describe('withGuest reports a driver failure', () => {
         emulated: 'no',
         widget_size: 'reported',
       });
+      // The display server is a timeout's tag, not a refusal's.
+      expect(reportedTags()).not.toHaveProperty('display_server');
     });
 
     it('tags a clip-free viewport under a viewport override', async () => {
