@@ -27,7 +27,7 @@ Double-click any row to open it for editing. You can also choose **Edit** from t
 
 Each row shows its priority, title and description, labels, and when it was last updated.
 
-- **Priority** is a level meter in a pill tinted with the level's color: one bar per level above None, filled up to the item's level, so the bar count tells levels apart without relying on color. Hover the pill for the level's name. None shows an empty meter.
+- **Priority** is a level meter in a pill tinted with the level's color: one bar per level above None, all the same height, lit up to the item's level, so the count of lit bars tells levels apart without relying on color. Hover the pill for the level's name. None shows an empty meter.
 - **Labels** stay on one line. The ones that do not fit fold into a **+N** chip; hover it, or Tab to it, to see them. A label too long for the column ends in an ellipsis, and hovering it shows the whole name.
 - **Updated** is when the item last changed: an edit, a new priority or labels, or a drag to a new place in the list. Hover the date to see when the item was created.
 
@@ -41,7 +41,7 @@ Click **Labels** in the toolbar to manage labels. Labels are free-form text tags
 
 ## Priorities
 
-Click **Priorities** in the toolbar to manage the priority scale. The default scale is None, Low, Medium, High, Urgent (indices 0 to 4; a scale you extend has more, and agents set a level by its index). You can rename priority levels, reorder them, add new ones, or remove existing ones. Priority colors are customizable. Each level's pill in the popover shows its meter beside its name, so it is the key to the meters in the list and on board cards. The meter has one bar per level above None, so adding or removing a level changes every meter.
+Click **Priorities** in the toolbar to manage the priority scale. The default scale is None, Low, Medium, High, Urgent (indices 0 to 4; a scale you extend has more, and agents set a level by its index). You can rename priority levels, reorder them, add new ones up to 7 levels in all (None included), or remove existing ones. Priority colors are customizable. Each level's pill in the popover shows its meter beside its name, so it is the key to the meters in the list and on board cards. The meter has one bar per level above None, so adding or removing a level changes every meter. Its sizes and rules come from the shared Kangentic branding package, so the phone app draws the same meter.
 
 ## Filtering
 

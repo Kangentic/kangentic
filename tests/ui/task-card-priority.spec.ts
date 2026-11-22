@@ -2,7 +2,8 @@
  * UI tests for priority and labels on the task card (#1053, #1143, #1146).
  *
  * Intent: a task's priority is the bare level meter in the card's title row,
- * after the title and before #N (#1146), so a card with no labels spends no row
+ * after #N and before the browser globe (#1146, #1160), centered on the row,
+ * so a card with no labels spends no row
  * on it. The label row holds labels only. The bottom entry of the scale (index
  * 0, "None" by default) draws nothing, so a board where nobody sets priority
  * looks as it did. The rule above a footer closes the label row: a card under an
@@ -116,6 +117,16 @@ async function setConfig(target: Page, partial: Record<string, boolean>): Promis
 
 const card = (target: Page, taskId: string) => target.locator(`[data-task-id="${taskId}"]`);
 
+/** Mark which tasks have a running Browser pane, the session-store fact the card's globe reads. */
+async function setBrowserGuestTasks(target: Page, entries: Array<[string, number]>): Promise<void> {
+  await target.evaluate((guestEntries) => {
+    const stores = (window as unknown as {
+      __zustandStores: { session: { setState: (partial: Record<string, unknown>) => void } };
+    }).__zustandStores;
+    stores.session.setState({ browserGuestTasks: new Map(guestEntries) });
+  }, entries);
+}
+
 /**
  * Whether the board card's footer draws its rule, read off its computed border
  * WIDTH: Tailwind's preflight gives every element `border-style: solid` at 0px,
@@ -146,15 +157,23 @@ test.describe('Task card priority and labels', () => {
     await browser?.close();
   });
 
-  test('the meter sits in the title row, before #N, named for its level', async () => {
+  test('the meter sits in the title row, after #N, named for its level', async () => {
     const mark = card(page, LABELLED_TASK_ID).locator('[data-card-title-row] > [data-testid="priority-pill"]');
     await expect(mark).toHaveAccessibleName('Priority: High');
     await expect(mark).toHaveAttribute('data-variant', 'inline');
     // High is the third of four levels above None: three filled bars of four.
     await expect(mark.locator('[data-testid="priority-meter"] > span')).toHaveCount(4);
     await expect(mark.locator('[data-testid="priority-meter"] [data-filled]')).toHaveCount(3);
-    // The ticket number follows the meter directly.
-    await expect(card(page, LABELLED_TASK_ID).locator('[data-testid="priority-pill"] + [data-testid="task-card-display-id"]')).toHaveText('#1048');
+    // The meter follows the ticket number directly.
+    await expect(card(page, LABELLED_TASK_ID).locator('[data-testid="task-card-display-id"] + [data-testid="priority-pill"]')).toHaveCount(1);
+  });
+
+  test('a running Browser pane puts the globe last, after the meter', async () => {
+    await setBrowserGuestTasks(page, [[LABELLED_TASK_ID, 1]]);
+    const row = card(page, LABELLED_TASK_ID).locator('[data-card-title-row]');
+    await expect(row.locator('[data-testid="task-card-display-id"] + [data-testid="priority-pill"] + [data-testid="task-card-browser-alive"]')).toHaveCount(1);
+    await setBrowserGuestTasks(page, []);
+    await expect(row.locator('[data-testid="task-card-browser-alive"]')).toHaveCount(0);
   });
 
   test('the label row holds labels only', async () => {
@@ -177,6 +196,13 @@ test.describe('Task card priority and labels', () => {
     const withMeter = await card(page, LABELLED_TASK_ID).locator('[data-card-title-row]').boundingBox();
     const withoutMeter = await card(page, NONE_TASK_ID).locator('[data-card-title-row]').boundingBox();
     expect(Math.abs((withMeter?.height ?? 0) - (withoutMeter?.height ?? 0))).toBeLessThanOrEqual(0.5);
+    // Equal 10px bars, centered on the row (#1160): the rising meter's lit
+    // bars sat low beside #N and the globe.
+    const meterBox = await mark.locator('[data-testid="priority-meter"]').boundingBox();
+    expect(Math.abs((meterBox?.height ?? 0) - 10)).toBeLessThanOrEqual(0.5);
+    const meterCenter = (meterBox?.y ?? 0) + (meterBox?.height ?? 0) / 2;
+    const rowCenter = (withMeter?.y ?? 0) + (withMeter?.height ?? 0) / 2;
+    expect(Math.abs(meterCenter - rowCenter)).toBeLessThanOrEqual(1);
   });
 
   test('the bottom entry of the scale draws no meter', async () => {
@@ -224,6 +250,7 @@ test.describe('Task card priority and labels', () => {
   test('the Done list row shows the meter in its title line', async () => {
     const row = card(page, DONE_TASK_ID);
     await expect(row.locator('[data-testid="compact-title"] ~ [data-testid="priority-pill"]')).toHaveAccessibleName('Priority: Urgent');
+    await expect(row.locator('[data-testid="task-card-display-id"] + [data-testid="priority-pill"]')).toHaveCount(1);
     await expect(row.locator('[data-testid="task-pills"] [data-testid="priority-pill"]')).toHaveCount(0);
   });
 

@@ -278,6 +278,22 @@ test('backlog table columns', async () => {
     await expect(colorButtons).toHaveCount(0);
   });
 
+  await test.step('Add Priority stops at the branding cap of 7 levels and says why (#1160)', async () => {
+    await page.locator('[data-testid="manage-priorities-btn"]').click();
+    const colorButtons = page.getByRole('button', { name: 'Change color' });
+    const addPriority = page.locator('[data-testid="add-priority"]');
+    await expect(colorButtons).toHaveCount(6);
+    await expect(addPriority).toBeEnabled();
+    await addPriority.click();
+    await expect(colorButtons).toHaveCount(7);
+    await expect(addPriority).toBeDisabled();
+    await addPriority.hover({ force: true });
+    await expect(page.locator('[data-tooltip]')).toHaveText('Up to 7 levels');
+    await page.mouse.move(0, 0);
+    await page.keyboard.press('Escape');
+    await expect(colorButtons).toHaveCount(0);
+  });
+
   await test.step('the open row menu is portaled out of the backlog view and wraps on the arrow keys', async () => {
     const button = page.locator('[data-testid="backlog-task-row"]').first().locator('[data-testid="backlog-row-menu-btn"]');
     await button.click();

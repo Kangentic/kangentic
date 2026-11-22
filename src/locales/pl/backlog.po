@@ -38,6 +38,10 @@ msgid "{loadedCount, plural, one {# item loaded} other {# items loaded}}"
 msgstr "{loadedCount, plural, one {Załadowano # element} few {Załadowano # elementy} many {Załadowano # elementów} other {Załadowano # elementu}}"
 
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
+msgid "{maxPriorityLevels, plural, one {Up to # level} other {Up to # levels}}"
+msgstr ""
+
+#: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
 #, fuzzy
 msgid "{pendingDeletePriorityCount, plural, one {# item} other {# items}} with this priority will be reset to \"{fallbackPriorityLabel}\"."
 msgstr "{pendingDeletePriorityCount, plural, one {# element z tym priorytetem zostanie zresetowany do „{fallbackPriorityLabel}”.} few {# elementy z tym priorytetem zostaną zresetowane do „{fallbackPriorityLabel}”.} many {# elementów z tym priorytetem zostanie zresetowanych do „{fallbackPriorityLabel}”.} other {# elementu z tym priorytetem zostanie zresetowane do „{fallbackPriorityLabel}”.}}"

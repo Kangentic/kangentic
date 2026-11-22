@@ -135,7 +135,7 @@ Applies to every project (Settings > Task, not a per-project override). These de
 | Card Density | Amount of detail shown on task cards (compact, default, comfortable) |
 | Card Preview | The text under each card's title: the latest agent message (default), recent agent messages one line each, or the task description |
 | Ticket Numbers | Show each task's `#N` number as a muted badge on its card (on by default) |
-| Priority | Show each task's priority meter in its card's title row, before `#N` (on by default) |
+| Priority | Show each task's priority meter in its card's title row, after `#N` (on by default) |
 | Labels | Show each task's labels on its card (on by default). Turn it off to drop the label row, for example on a board with many imported labels |
 
 Priority and Labels apply to board cards, the Done list, workflow canvas cards and Agent Monitor cards. The task window and the Backlog list always show both.

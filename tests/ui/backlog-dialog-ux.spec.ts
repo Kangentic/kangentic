@@ -343,13 +343,26 @@ test.describe('New Backlog Task Dialog - Header, Delete, Meta', () => {
 
     // A set priority used to draw a badge beside the title, repeating the
     // field right under it. Removed for #1053, as in Edit Task's title bar.
-    await dialog.locator('[data-testid="backlog-task-priority"]').selectOption({ label: 'Medium' });
+    const field = dialog.locator('[data-testid="backlog-task-priority"]');
+    const pick = async (level: string) => {
+      await field.click();
+      await page.locator(`[data-testid="backlog-task-priority-option"][data-value="${level}"]`).click();
+      await expect(field).toHaveAttribute('data-value', level);
+    };
+    // Every level in the list draws its meter, as everywhere else a priority shows (#1160).
+    await field.click();
+    await expect(page.locator('[data-testid="backlog-task-priority-option"] [data-testid="priority-meter"]')).toHaveCount(5);
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeVisible();
+    await pick('2');
+    await expect(field).toContainText('Medium');
+    await expect(field.locator('[data-testid="priority-meter"] [data-filled]')).toHaveCount(2);
     await expect(headerTitle).toHaveText('New Backlog Task');
     await expect(headerTitle.locator('[data-testid="priority-pill"]')).toHaveCount(0);
 
     // Back to None so the form is clean again and Escape closes without a
     // discard confirm.
-    await dialog.locator('[data-testid="backlog-task-priority"]').selectOption({ label: 'None' });
+    await pick('0');
 
     await page.keyboard.press('Escape');
     await expect(dialog).not.toBeVisible();

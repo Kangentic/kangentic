@@ -1358,6 +1358,9 @@ const SEARCH_INPUT = '[data-testid="search-palette-input"]';
 const NEW_TASK_TITLE = '[data-testid="new-task-dialog"] input[placeholder="Task title"]';
 const NEW_TASK_DESCRIPTION = '[data-testid="task-description"]';
 const NEW_TASK_PRIORITY = '[data-testid="new-task-dialog"] [data-testid="task-priority"]';
+/** The Priority list's Medium and None rows. The list is portaled to the body, outside the dialog. */
+const NEW_TASK_PRIORITY_MEDIUM = '[data-testid="task-priority-option"][data-value="2"]';
+const NEW_TASK_PRIORITY_NONE = '[data-testid="task-priority-option"][data-value="0"]';
 const NEW_TASK_LABELS = '[data-testid="new-task-dialog"] [data-testid="task-labels"]';
 const NEW_TASK_FEATURE_LABEL = '[data-testid="new-task-dialog"] [aria-label="Remove feature"]';
 /** A Changes panel file row's select button (the row's first), and its Viewed toggle. */
@@ -2279,13 +2282,16 @@ export const SCENES: Record<string, SceneDefinition> = {
     choreography: [
       { type: { into: NEW_TASK_TITLE, text: 'Add a health check route' }, ms: 700 },
       { type: { into: NEW_TASK_DESCRIPTION, text: 'Serve GET /healthz with the build version and the uptime.' }, ms: 1000 },
-      { choose: { in: NEW_TASK_PRIORITY, value: '2' }, ms: 900 },
+      // The Priority field is a listbox that draws each level's meter (#1160), not a native select.
+      { click: NEW_TASK_PRIORITY, waitFor: NEW_TASK_PRIORITY_MEDIUM, ms: 500 },
+      { click: NEW_TASK_PRIORITY_MEDIUM, waitFor: `${NEW_TASK_PRIORITY}[data-value="2"]`, ms: 900 },
       { type: { into: NEW_TASK_LABELS, text: 'feat' }, waitFor: '[data-testid="label-suggestion"]', ms: 600 },
       { click: '[data-testid="label-suggestion"]', waitFor: NEW_TASK_FEATURE_LABEL, ms: 900 },
       { hover: '[data-testid="new-task-dialog"] button[type="submit"]', ms: 1600 },
       { cut: true },
       { click: NEW_TASK_FEATURE_LABEL, waitFor: `[data-testid="new-task-dialog"]:not(:has([aria-label="Remove feature"]))` },
-      { choose: { in: NEW_TASK_PRIORITY, value: '0' } },
+      { click: NEW_TASK_PRIORITY, waitFor: NEW_TASK_PRIORITY_NONE },
+      { click: NEW_TASK_PRIORITY_NONE, waitFor: `${NEW_TASK_PRIORITY}[data-value="0"]` },
       { type: { into: NEW_TASK_DESCRIPTION, text: '' } },
       { type: { into: NEW_TASK_TITLE, text: '' } },
       { click: '[data-testid="new-task-dialog"] h3' },

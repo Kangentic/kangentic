@@ -38,6 +38,10 @@ msgid "{loadedCount, plural, one {# item loaded} other {# items loaded}}"
 msgstr "{loadedCount, plural, other {항목 #개 로드됨}}"
 
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
+msgid "{maxPriorityLevels, plural, one {Up to # level} other {Up to # levels}}"
+msgstr ""
+
+#: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
 #, fuzzy
 msgid "{pendingDeletePriorityCount, plural, one {# item} other {# items}} with this priority will be reset to \"{fallbackPriorityLabel}\"."
 msgstr "{pendingDeletePriorityCount, plural, other {이 우선순위가 지정된 항목 #개가 \"{fallbackPriorityLabel}\"(으)로 재설정됩니다.}}"

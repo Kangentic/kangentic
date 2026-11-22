@@ -1,42 +1,61 @@
 import React from 'react';
+import meterContract from '@kangentic/branding/assets/priority/meter.json';
+import { useDevicePixelRatio } from '../../hooks/useDevicePixelRatio';
 
-/** Width of one bar, in px. */
-const BAR_WIDTH_PX = 3;
-/** Gap between two bars, in px. */
-const BAR_GAP_PX = 2;
-/** Height of the first bar, in px. */
-const SHORTEST_BAR_PX = 5;
-/** Height of the last bar, and of the meter, in px. */
-const TALLEST_BAR_PX = 14;
-/** Opacity of a bar above the level. */
-const UNFILLED_OPACITY = 0.3;
-/** Opacity of every bar of the bottom entry (None). */
-const NONE_OPACITY = 0.45;
+/**
+ * The meter's numbers come from `@kangentic/branding` (`assets/priority/meter.json`), the
+ * contract the desktop, the web demo and the phone all draw from (#1160), so the three
+ * cannot drift apart. The contract's bar height is the capital height of the card title's
+ * 14px text, so the meter sits level with #N and the globe in a card's title row.
+ */
+const BAR = meterContract.bar;
+const OPACITY = meterContract.opacity;
+
+/** The most levels a scale may have. Adding a level stops here; a longer scale still draws. */
+export const MAX_PRIORITY_LEVELS = meterContract.maxLevels;
 
 export interface PriorityMeterBar {
-  heightPx: number;
   filled: boolean;
+  opacity: number;
 }
 
 /**
- * One bar per level above the scale's bottom entry, rising from the shortest bar to the tallest, filled up to
- * `level`. The bar count carries the rank, so two levels never differ by color alone. A
- * level past the end of the scale fills every bar.
+ * One bar per level above the scale's bottom entry, all the same height, lit up to
+ * `level` from the left. The number of lit bars carries the rank, so two levels never
+ * differ by color alone. A level past the end of the scale lights every bar. Lit bars
+ * draw at full strength, the rest dimmed, and every bar of the bottom entry (None)
+ * dimmed a little less, so None reads as a meter rather than as nothing.
  */
 export function priorityMeterBars(level: number, levelCount: number): PriorityMeterBar[] {
   const barCount = Math.max(1, levelCount - 1);
-  const filledCount = Math.max(0, Math.min(level, barCount));
-  const rise = TALLEST_BAR_PX - SHORTEST_BAR_PX;
-  return Array.from({ length: barCount }, (_unused, index) => ({
-    heightPx: SHORTEST_BAR_PX + Math.round((index * rise) / Math.max(1, barCount - 1)),
-    filled: index < filledCount,
-  }));
+  const litCount = Math.min(Math.max(level, 0), barCount);
+  return Array.from({ length: barCount }, (_unused, index) => {
+    const filled = index < litCount;
+    return {
+      filled,
+      opacity: filled ? OPACITY.lit : (level > 0 ? OPACITY.unlit : OPACITY.none),
+    };
+  });
 }
 
-/** The meter's width in px for a scale of `levelCount` entries. */
-export function priorityMeterWidth(levelCount: number): number {
+/**
+ * The meter's width in px for a scale of `levelCount` entries, as `PriorityMeter` draws it
+ * at `devicePixelRatio`: its bars and gaps snapped to whole device pixels. At 1x it is the
+ * contract's width.
+ */
+export function priorityMeterWidth(levelCount: number, devicePixelRatio = 1): number {
   const barCount = Math.max(1, levelCount - 1);
-  return barCount * BAR_WIDTH_PX + (barCount - 1) * BAR_GAP_PX;
+  return barCount * snapToDevicePixels(BAR.width, devicePixelRatio)
+    + (barCount - 1) * snapToDevicePixels(BAR.gap, devicePixelRatio);
+}
+
+/**
+ * A length in layout px rounded to whole device pixels, half up (the contract's
+ * `pixelSnap`). Each edge of a bar otherwise rounds on its own, and 3px bars come out
+ * unequal at 125%, 150% and 175% display scaling.
+ */
+export function snapToDevicePixels(lengthPx: number, devicePixelRatio: number): number {
+  return Math.floor(lengthPx * devicePixelRatio + 0.5) / devicePixelRatio;
 }
 
 interface PriorityMeterProps {
@@ -47,27 +66,34 @@ interface PriorityMeterProps {
 
 /**
  * The priority level meter, drawn from spans rather than an inline SVG
- * (ui-conventions.md). Decorative: the `PriorityBadge` around it carries the level's name.
+ * (ui-conventions.md). Every surface that shows a priority draws this one meter.
+ * Decorative: the element around it (`PriorityBadge`, a picker row) carries the level's
+ * name.
  */
 export const PriorityMeter = React.memo(function PriorityMeter({ level, levelCount, color }: PriorityMeterProps) {
+  const devicePixelRatio = useDevicePixelRatio();
+  const barWidth = snapToDevicePixels(BAR.width, devicePixelRatio);
+  const barGap = snapToDevicePixels(BAR.gap, devicePixelRatio);
+  const barHeight = snapToDevicePixels(BAR.height, devicePixelRatio);
   const bars = priorityMeterBars(level, levelCount);
   return (
     <span
-      className="inline-flex shrink-0 items-end"
-      style={{ height: TALLEST_BAR_PX, gap: BAR_GAP_PX }}
+      className="inline-flex shrink-0 items-center"
+      style={{ height: barHeight, gap: barGap }}
       aria-hidden
       data-testid="priority-meter"
     >
       {bars.map((bar, index) => (
         <span
           key={index}
-          className="block rounded-[1px]"
+          className="block"
           data-filled={bar.filled ? 'true' : undefined}
           style={{
-            width: BAR_WIDTH_PX,
-            height: bar.heightPx,
+            width: barWidth,
+            height: barHeight,
+            borderRadius: BAR.radius,
             backgroundColor: color,
-            opacity: bar.filled ? 1 : (level > 0 ? UNFILLED_OPACITY : NONE_OPACITY),
+            opacity: bar.opacity,
           }}
         />
       ))}

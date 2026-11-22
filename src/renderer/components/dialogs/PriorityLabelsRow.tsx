@@ -1,11 +1,13 @@
 import { useLingui } from '@lingui/react/macro';
 import { useConfigStore } from '../../stores/config-store';
 import { useAllExistingLabels } from '../../hooks/useAllExistingLabels';
-import { Field, FIELD_SELECT_CLASS } from '../Field';
+import { Field } from '../Field';
+import { GlyphPicker } from '../GlyphPicker';
 import { LabelInput } from '../LabelInput';
-import { Select } from '../settings/shared';
 import { DEFAULT_PRIORITY_CONFIG } from '../../../shared/types';
 import { displayPriorityLabel } from '../backlog/priority-labels';
+import { PriorityMeter, priorityMeterWidth } from '../backlog/PriorityMeter';
+import { useDevicePixelRatio } from '../../hooks/useDevicePixelRatio';
 
 interface PriorityLabelsRowProps {
   priority: number;
@@ -24,7 +26,7 @@ interface PriorityLabelsRowProps {
  * The Priority + Labels pair, side by side.
  *
  * Lived as three verbatim copies (NewTaskDialog, TaskDetailEditForm,
- * NewBacklogTaskDialog), each carrying its own duplicate of the Select's class
+ * NewBacklogTaskDialog), each carrying its own duplicate of the field's class
  * string. That is what let the three drift, and what would have made "verify in
  * both modes" a manual inspection rather than a structural guarantee.
  *
@@ -42,20 +44,26 @@ export function PriorityLabelsRow({
   const labelColors = useConfigStore((state) => state.config.backlog?.labelColors) ?? {};
   const priorities = useConfigStore((state) => state.config.backlog?.priorities) ?? DEFAULT_PRIORITY_CONFIG;
   const allExistingLabels = useAllExistingLabels();
+  // The meter snaps its bars to device pixels, so its slot is sized at the same ratio.
+  const devicePixelRatio = useDevicePixelRatio();
 
   return (
     <div className="flex gap-3">
       <Field label={t`Priority`} className="flex-1 min-w-0">
-        <Select
-          value={priority}
-          onChange={(event) => setPriority(Number((event.target as HTMLSelectElement).value))}
-          className={FIELD_SELECT_CLASS}
-          data-testid={`${testIdPrefix}priority`}
-        >
-          {priorities.map((priorityEntry, index) => (
-            <option key={index} value={index}>{displayPriorityLabel(priorityEntry.label)}</option>
-          ))}
-        </Select>
+        {/* Each level with its meter, as everywhere else a priority shows (#1160).
+            A native select's options hold text only, so this is the listbox field. */}
+        <GlyphPicker
+          value={String(priority)}
+          choices={priorities.map((priorityEntry, index) => ({
+            value: String(index),
+            label: displayPriorityLabel(priorityEntry.label),
+            glyph: <PriorityMeter level={index} levelCount={priorities.length} color={priorityEntry.color} />,
+          }))}
+          onChange={(next) => setPriority(Number(next))}
+          testId={`${testIdPrefix}priority`}
+          ariaLabel={t`Priority`}
+          glyphSlotWidth={priorityMeterWidth(priorities.length, devicePixelRatio)}
+        />
       </Field>
       <Field label={t`Labels`} className="flex-1 min-w-0">
         <LabelInput

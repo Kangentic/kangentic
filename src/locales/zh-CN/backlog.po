@@ -34,6 +34,10 @@ msgid "{loadedCount, plural, one {# item loaded} other {# items loaded}}"
 msgstr "{loadedCount, plural, other {已加载 # 项}}"
 
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
+msgid "{maxPriorityLevels, plural, one {Up to # level} other {Up to # levels}}"
+msgstr ""
+
+#: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
 msgid "{pendingDeletePriorityCount, plural, one {# item} other {# items}} with this priority will be reset to \"{fallbackPriorityLabel}\"."
 msgstr "{pendingDeletePriorityCount, plural, other {具有此优先级的 # 项将重置为「{fallbackPriorityLabel}」。}}"
 
