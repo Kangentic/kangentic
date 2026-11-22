@@ -157,6 +157,13 @@ agent said, when a later turn no longer says so. A spent row's pennant stays unt
 the card. On a workflow task it shows when the agent ends on `Needs owner:` or recovery runs out, not
 while recovery is still trying.
 
+**A row held for its owner.** The `Needs owner:` line also holds the column's Send message rows
+that have no Condition and no Text match, since each would only ask the agent to go on. Each one
+shows as skipped with the reason in the run log, the column's other rows still run, and the next
+turn is judged from scratch. A row with an Agent evaluation or a Text match runs on its own terms,
+which is how you opt a row out. The line holds no rows on a workflow task. To keep a Send message
+row from nudging one past its question, give the row the Text match `!Needs owner*`.
+
 **Reading a row.** Every row has the same two lines. The second says what the row does, and to
 what: the verb and the type's one required value, such as `Sends "Review the changes"`, `Moves the
 task to Executing`, or `Runs npm run lint` (a script shows in code type). A long value ends where

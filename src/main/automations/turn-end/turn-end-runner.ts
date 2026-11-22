@@ -23,7 +23,7 @@ import { createChokepointReporter } from '../../analytics/handled-report';
  * them all for that task.
  */
 export const turnEndReporter = createChokepointReporter('turn_end');
-import { hasCondition, hasFinalLine, hasUserTextMatch, needsAgentReply, rowMatchesTaskFilter } from '../row-guards';
+import { hasCondition, hasFinalLine, hasUserTextMatch, heldForOwner, needsAgentReply, rowMatchesTaskFilter } from '../row-guards';
 import { automationRegistry } from '../automation-registry';
 import { resolveMoveTarget, routeOf } from '../move-target';
 import { heldMoveReason, runWorkflowStep, workflowStepApplies, type WorkflowStepResult } from '../../workflows/workflow-step';
@@ -148,9 +148,10 @@ import type { TranscriptAnchor } from '../../agent/shared/transcript-anchor';
  *   (`column-stop.ts`), once no row moved the task or messaged the agent. That
  *   read is why a column whose rows are all spent still reads the reply. A
  *   column with no rows never gets here, by the fast path below.
- * - **A turn the column waited on says why its rows did not run; the rest stay
- *   silent.** Silent: the task left the column or the session is not its own
- *   (`resolveSubject`), a move superseded the pass, a newer turn began, every
+ * - **A turn the column waited on says why its rows did not run, and so does a
+ *   row held for the owner; the rest stay silent.** Silent: the task left the
+ *   column or the session is not its own (`resolveSubject`), a move
+ *   superseded the pass, a newer turn began, every
  *   row already ran or cannot run here, and the recap turn, which asks the
  *   user to act next.
  * - **Cheap when there is nothing to do.** Every hook agent's every turn ends
@@ -176,6 +177,12 @@ import type { TranscriptAnchor } from '../../agent/shared/transcript-anchor';
  * - **A reply that ends on the `No changes needed:` line skips the rows.** The
  *   step acts on it, and a row with no Text match would otherwise message the
  *   agent and take this turn end's step with it.
+ * - **Off a workflow, a reply that ends on `Needs owner:` holds the nudges**
+ *   (`heldForOwner`): the rows that message the agent and carry no Agent
+ *   evaluation and no Text match. Each says why once a visit, the rest of the
+ *   rows run, and the stop check records the stop. Without the hold such a row
+ *   always messaged the agent, the check never ran, and the nudge's own line
+ *   (`Findings: applied`) moved the card on past the question (#1160).
  * - **A workflow step that does not move the task on is recovered**
  *   (`workflow-recovery.ts`). Its verdict arms the recovery, and so does a
  *   resume whose reply was already judged (a restart) and a commit to idle
@@ -557,6 +564,33 @@ export const CARRIED_IN_TURN_REASON = 'The agent\'s turn began before the task e
 /** A row's skip when the session was not idle on the same turn when the rows were due. */
 export const AGENT_NOT_IDLE_REASON = 'The agent was not idle when this was due to run.';
 
+/** A row's skip when the agent's reply ends on `Needs owner:` and the row would have nudged it (`heldForOwner`). */
+export const NEEDS_OWNER_HOLD_REASON = 'The agent\'s last message ends on Needs owner, so this waits for its owner.';
+
+/**
+ * Hold the rows that would nudge the agent when its reply ends on
+ * `Needs owner:`, each with a skip once per visit, and return the rest. The
+ * reply is read only when a row could be held. The question itself stays out
+ * of the reason, which must match exactly to be written once a visit.
+ */
+async function holdForOwner(
+  runs: AutomationRunRepository,
+  task: Task,
+  column: Swimlane,
+  pending: ColumnAutomation[],
+  visitStartedAt: string | null,
+  readReply: () => Promise<string | null>,
+): Promise<ColumnAutomation[]> {
+  const held = pending.filter(heldForOwner);
+  if (held.length === 0 || needsOwnerQuestion(await readReply()) === null) return pending;
+  for (const row of held) recordSkipOncePerVisit(runs, row, task.id, visitStartedAt, NEEDS_OWNER_HOLD_REASON);
+  console.log(
+    `[turn-end] Held ${held.length} message row(s) for task ${task.id.slice(0, 8)} in ${column.name}: `
+    + 'the agent\'s reply ends on Needs owner.',
+  );
+  return pending.filter((row) => !held.includes(row));
+}
+
 /**
  * Record why a row did not run, once per visit: the same reason written at
  * every turn end of a long chat would bury the runs that matter.
@@ -766,9 +800,16 @@ async function runPass(context: IpcContext, request: PassRequest): Promise<void>
     // takes this turn end's step with it (below). The step acts on the line, and
     // rows wait for a turn that does not end on it.
     const endsTaskUnchanged = stepRuns && noChangesReason(await readReply()) !== null;
-    const rowsOutcome = pending.length > 0 && !endsTaskUnchanged
+    // Off a workflow, a reply that ends on `Needs owner:` holds the rows that
+    // would nudge the agent, so no message asks it to go on and the stop check
+    // below records the stop. Gated on `judgesStop`, as that check is, so a
+    // held nudge always comes with the mark. The next turn is judged from scratch.
+    const rowsToRun = judgesStop
+      ? await holdForOwner(runs, task, column, pending, visitStartedAt, readReply)
+      : pending;
+    const rowsOutcome = rowsToRun.length > 0 && !endsTaskUnchanged
       ? await runRows(context, payload, {
-        task, column, repos, sessionRepo, pending, visitStartedAt, controller, readReply, readUserMessage,
+        task, column, repos, sessionRepo, pending: rowsToRun, visitStartedAt, controller, readReply, readUserMessage,
         acceptHeld: held,
         holdMovesForBackgroundWork: stepApplies,
       })

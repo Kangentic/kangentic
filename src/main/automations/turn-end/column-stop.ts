@@ -18,7 +18,9 @@ import { hasCondition, hasFinalLine, hasUserTextMatch, textMatchSourceOf } from 
  *
  * 1. Free, in code. A spent row that moves the task and would have run: it has
  *    no guard, or its Text match meets the reply. Or a reply that ends on
- *    `Needs owner:`.
+ *    `Needs owner:`. The runner holds the column's unguarded agent messages on
+ *    that line (`heldForOwner`), so a nudge with no Condition never keeps the
+ *    pass from getting here.
  * 2. One call on the Automation agent: each spent move row's own Condition,
  *    plus the built-in question below. A check answers no when the facts do not
  *    say, so only a card we know is stopped wears the mark.
