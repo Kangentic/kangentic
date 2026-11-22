@@ -517,8 +517,8 @@ export interface BoardTaskWire {
    * A later suspend that names nobody keeps who paused first: a column move or
    * a quit of a task the idle timeout paused still reads `idle`. A restart
    * keeps it too, on the re-registered paused session `paused_session_id`
-   * then names. Words only:
-   * whether opening the task resumes it is the desktop's call (see
+   * then names. The field picks words and nothing else. Whether opening the
+   * task resumes it is the desktop's call (see
    * `StartSessionRequestPayload.trigger`), never this field's.
    *
    * A value a client does not know draws plain "Paused" and no Resume line, as
