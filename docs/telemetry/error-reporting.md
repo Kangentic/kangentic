@@ -41,6 +41,7 @@ sources:
   - resource: scripts/sentry-upload-gate.js
   - resource: src/main/analytics/handled-report.ts
   - resource: src/main/browser/wake-clock.ts
+  - resource: src/main/browser/display-server.ts
   - resource: src/main/analytics/ipc-handler-report.ts
   - resource: src/shared/handled-error-copy.ts
   - resource: src/shared/ipc-rejection.ts
@@ -469,7 +470,7 @@ in one Sentry org, one triage surface.
   - `mobile_verb` (tag `verb`, plus `relay_dial_id`), `automation_runner` (tag `automation_type`), `turn_end`,
     `workflow_engine` (tag `stage`), `pr` (tag `stage`), `browser_driver` (tag `kind`, built-in
     classes and the attach, capture and composite failures only). A `ScreenshotNotComposited`
-    report also carries six fixed tags, so it can say why the capture got no frame (Sentry
+    report also carries seven fixed tags, so it can say why the capture got no frame (Sentry
     DESKTOP-46, a timeout 18 s after an unlock that could not say whether the capture hold armed):
     `surface` (`pane`, `hidden`, `parked`, `popout`, `lane`), `host_window` (`visible`,
     `minimized`, `hidden`, `none`) and `hold` (`armed`, `skipped_hidden`, `no_host`), both read
@@ -481,9 +482,15 @@ in one Sentry org, one triage surface.
     event armed the hold on a visible host and still got no frame: `host_hold: none` means the
     host compositor stopped answering, and `settled` on both means the hold was answered and CDP's
     capture hung anyway. They mean something only with `hold: armed`. A hold that never armed
-    reports `none` on both. None is a new data class: the `electron` breadcrumbs already carry
-    power events and window focus with their timestamps, and the two hold tags describe
-    Kangentic's own calls. A `CaptureExceedsSurface` report carries five, so it can say what
+    reports `none` on both. The seventh, `display_server` (`x11`, `wayland`, `other`), names the
+    display server Chromium draws to, read from Electron's own `--ozone-platform` switch and never
+    from an env value (`src/main/browser/display-server.ts`). It is `other` off Linux and for any
+    other backend. It came after two 0.61.0 events from one Debian install timed out on a parked
+    pane: on Wayland a minimized app still reads `host_window: visible`, so `host_window` alone
+    cannot say whether the app was on screen. None is a new data class: the `electron` breadcrumbs
+    already carry power events and window focus with their timestamps, the two hold tags describe
+    Kangentic's own calls, and the display server is a three-value fact about the machine, the
+    same class as `host_window`. A `CaptureExceedsSurface` report carries five, so it can say what
     the refused request looked like (Sentry DESKTOP-48, a refusal that could not say which of the
     bound's inputs was wrong): `surface` as above, `target` (`viewport`, `full_page`, `element`),
     `clipped` (`yes`, `no`), `emulated` (`yes`, `no`, and `unknown` when no CDP session was
