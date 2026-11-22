@@ -19,7 +19,7 @@ const PRIORITY_MARK_GAP_PX = 2;
  * Priority column). `bare` draws the meter alone (a task's pill row, `TaskPills`), so beside
  * the label pills it reads as a mark rather than one more, louder label (#1143). `inline` is
  * the bare meter in a card's title row (#1146): no pill-row height and no trailing gap, so the
- * row keeps its 20px line and its own gap spaces the meter from the title and #N.
+ * row keeps its 20px line and its own gap spaces the meter from #N and the globe (#1160).
  */
 export type PriorityBadgeVariant = 'pill' | 'bare' | 'inline';
 

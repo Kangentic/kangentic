@@ -506,11 +506,11 @@ function MonitorFullCard({
             {row.taskTitle}
           </div>
         </Tooltip>
-        {/* After the title and before #N, as on the board card (#1146). */}
-        {shownPriority !== 0 && <PriorityBadge priority={shownPriority} variant="inline" />}
         {showTaskNumbers && row.displayId !== null && (
           <TicketNumber displayId={row.displayId} testId="monitor-card-display-id" className="select-text" />
         )}
+        {/* After #N and before the globe, as on the board card (#1160). */}
+        {shownPriority !== 0 && <PriorityBadge priority={shownPriority} variant="inline" />}
         {row.browserRunning && <BrowserAliveGlobe testId="monitor-card-browser-alive" />}
       </div>
 

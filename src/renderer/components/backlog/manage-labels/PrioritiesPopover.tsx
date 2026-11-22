@@ -19,6 +19,7 @@ import { plural } from '@lingui/core/macro';
 import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
 import { Pill, TINTED_PILL_FILL, TINTED_PILL_EDGE } from '../../Pill';
 import { Tooltip } from '../../Tooltip';
+import { tipLabel } from '../../../utils/tooltip';
 import { useBacklogStore } from '../../../stores/backlog-store';
 import { useBoardStore } from '../../../stores/board-store';
 import { useConfigStore } from '../../../stores/config-store';
@@ -27,7 +28,7 @@ import { IntentKeyboardSensor } from '../../../utils/intent-keyboard-sensor';
 import { KEYBOARD_SENSOR_OPTIONS, POINTER_SENSOR_OPTIONS } from '../../../utils/dnd-sensor-options';
 import { DEFAULT_PRIORITY_CONFIG, type AppConfig } from '../../../../shared/types';
 import { displayPriorityLabel, storedPriorityLabel } from '../priority-labels';
-import { PriorityMeter } from '../PriorityMeter';
+import { MAX_PRIORITY_LEVELS, PriorityMeter } from '../PriorityMeter';
 import { ColorPickerPopover } from './ColorPickerPopover';
 import { PopoverShell } from './PopoverShell';
 import type { ToolbarControlCollapse } from '../../board/toolbar-collapse';
@@ -59,6 +60,12 @@ export function PrioritiesPopover({ collapse, labelHidden = false }: PrioritiesP
   const pendingDeletePriorityLabel = displayPriorityLabel(pendingDeletePriority?.label ?? '');
   const pendingDeletePriorityCount = pendingDeletePriority?.count ?? 0;
   const fallbackPriorityLabel = displayPriorityLabel(priorities[0]?.label ?? 'None');
+  // The branding contract's cap (`maxLevels`): a meter has room for so many bars. A
+  // scale that is already longer still draws; it just takes no more.
+  const atMaxLevels = priorities.length >= MAX_PRIORITY_LEVELS;
+  // A named local, so the disabled reason's placeholder reads `{maxPriorityLevels}`.
+  // Inlining the constant renames the message and orphans every translation of it.
+  const maxPriorityLevels = MAX_PRIORITY_LEVELS;
 
   // Close on click outside
   useEffect(() => {
@@ -113,6 +120,7 @@ export function PrioritiesPopover({ collapse, labelHidden = false }: PrioritiesP
     updateConfig({ backlog: { ...config.backlog, priorities: updated } } as Partial<AppConfig>);
   }, [priorities, config.backlog, updateConfig]);
 
+  // Only the Add Priority button calls this, and it is disabled at the cap.
   const handleAdd = useCallback(() => {
     // Stored English, like the seeded names: displayPriorityLabel translates it on display.
     const updated = [...priorities, { label: `Priority ${priorities.length}`, color: '#6b7280' }];
@@ -233,14 +241,23 @@ export function PrioritiesPopover({ collapse, labelHidden = false }: PrioritiesP
           </div>
 
           <div className="border-t border-edge" />
-          <button
-            type="button"
-            onClick={handleAdd}
-            className="flex items-center gap-1.5 w-full px-3 py-2 text-sm text-fg-muted hover:text-fg hover:bg-surface-hover/40 transition-colors"
+          <Tooltip
+            label={tipLabel({
+              disabled: atMaxLevels,
+              disabledReason: t`${plural(maxPriorityLevels, { one: 'Up to # level', other: 'Up to # levels' })}`,
+            })}
           >
-            <Plus size={14} />
-            <Trans>Add Priority</Trans>
-          </button>
+            <button
+              type="button"
+              onClick={handleAdd}
+              disabled={atMaxLevels}
+              className="flex items-center gap-1.5 w-full px-3 py-2 text-sm text-fg-muted enabled:hover:text-fg enabled:hover:bg-surface-hover/40 disabled:opacity-50 disabled:cursor-default transition-colors"
+              data-testid="add-priority"
+            >
+              <Plus size={14} />
+              <Trans>Add Priority</Trans>
+            </button>
+          </Tooltip>
         </div>
       </PopoverShell>
 

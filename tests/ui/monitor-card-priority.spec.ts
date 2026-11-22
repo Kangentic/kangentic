@@ -2,7 +2,7 @@
  * UI tests for priority and labels on the Agent Monitor card (#1053, #1146).
  *
  * Intent: a monitor card draws them as the board card does. The priority meter
- * sits in the title row, after the title and before #N, and the label row holds
+ * sits in the title row, after #N and before the browser globe (#1160), and the label row holds
  * labels only. The rule above the footer closes the label row, so a card under an
  * agent message trail with no labels has none and a labelled one keeps it. A row
  * with no priority (0, or a row built before the field existed) draws no meter.
@@ -132,7 +132,7 @@ test.describe('Monitor card priority and labels', () => {
     await browser?.close();
   });
 
-  test('a priority-only card shows the meter before #N and no rule under its trail', async () => {
+  test('a priority-only card shows the meter after #N and no rule under its trail', async () => {
     const card = monitorCard(page, PRIORITY_SESSION_ID);
     // The trail must be showing, or a missing rule proves nothing.
     await expect(card.locator('[data-testid="monitor-card-trail"]')).toBeVisible();
@@ -140,7 +140,8 @@ test.describe('Monitor card priority and labels', () => {
     await expect(mark).toHaveAccessibleName('Priority: High');
     await expect(mark).toHaveAttribute('data-variant', 'inline');
     await expect(mark.locator('[data-testid="priority-meter"] [data-filled]')).toHaveCount(3);
-    await expect(card.locator('[data-testid="priority-pill"] + [data-testid="monitor-card-display-id"]')).toHaveText('#1040');
+    await expect(card.locator('[data-testid="monitor-card-display-id"] + [data-testid="priority-pill"]')).toHaveCount(1);
+    await expect(card.locator('[data-testid="monitor-card-display-id"]')).toHaveText('#1040');
     await expect(card.locator('[data-testid="task-pills"]')).toHaveCount(0);
     await expect.poll(() => footerRule(page, PRIORITY_SESSION_ID)).toBe('none');
   });

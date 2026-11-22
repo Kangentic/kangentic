@@ -598,12 +598,15 @@ function TaskCardBodyContent({ task, view, density, hideDisplayId, idleFooter }:
         <Tooltip label={task.title}>
           <div className="text-sm text-fg font-medium truncate flex-1 min-w-0" data-testid="task-card-title">{task.title}</div>
         </Tooltip>
-        {/* The priority sits in the title row on every card, after the title
-            and before #N (#1146), so a card with no labels has no row for it.
-            A card with none mounts no meter, as hundreds of cards would each
-            subscribe to the priority scale only to draw nothing. */}
-        {view.shownPriority !== 0 && <PriorityBadge priority={view.shownPriority} variant="inline" />}
+        {/* The right end reads #N, priority, globe (#1160): ordered by how often
+            each is there. #N always, the priority when the task has one, the
+            globe only while a Browser pane runs, so the globe keeps the corner.
+            The priority sits in the title row on every card (#1146), so a card
+            with no labels has no row for it. A card with none mounts no meter
+            and reserves no slot, as hundreds of cards would each subscribe to
+            the priority scale only to draw nothing. */}
         <DisplayIdBadge task={task} view={view} hidden={hideDisplayId} />
+        {view.shownPriority !== 0 && <PriorityBadge priority={view.shownPriority} variant="inline" />}
         {/* Placement and treatment are documented on `BrowserAliveGlobe`. */}
         {view.browserAlive && <BrowserAliveGlobe testId="task-card-browser-alive" />}
       </div>
@@ -760,7 +763,7 @@ function TaskCardFooter({ view, idleFooter, divider }: { view: TaskCardViewModel
 /**
  * The Done column's compact card content (the completed list), inside the
  * host's root. Its title row is the full card's row (#1158): the title takes
- * the width, and the priority and #N sit at the right edge. It holds no
+ * the width, and #N and the priority sit at the right edge (#1160). It holds no
  * control: Delete is in the card's menu, which Shift+F10 and the Menu key
  * also open.
  */
@@ -772,8 +775,8 @@ export function TaskCardCompactBody({ task, view }: { task: Task; view: TaskCard
         <Tooltip label={task.title}>
           <span className="text-sm text-fg-tertiary truncate flex-1 min-w-0" data-testid="compact-title">{task.title}</span>
         </Tooltip>
-        {view.shownPriority !== 0 && <PriorityBadge priority={view.shownPriority} variant="inline" />}
         <DisplayIdBadge task={task} view={view} />
+        {view.shownPriority !== 0 && <PriorityBadge priority={view.shownPriority} variant="inline" />}
       </div>
       {/* This card is dimmer overall, so its trail keeps the `text-fg-faint`
           one step above its `text-fg-disabled` description rather than the

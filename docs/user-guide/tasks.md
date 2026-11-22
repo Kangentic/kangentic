@@ -12,7 +12,7 @@ sources:
 
 ## Create a Task
 
-Click the **+** button on any column header, or **New Task** in the backlog toolbar. Enter a title and optional description. A **Name from prompt** button beside the title suggests one from the description, and a task still carrying a placeholder title such as `fix` is renamed for you the first time its agent stops for you after its first 30 seconds, with a Task renamed toast. Both work only when an Automation agent is set up in Settings > Workflows. You can set a priority level, add labels, and attach files (images, documents, or any file type) by pasting from the clipboard or dragging files onto the dialog. Attachments are included in the agent's prompt.
+Click the **+** button on any column header, or **New Task** in the backlog toolbar. Enter a title and optional description. A **Name from prompt** button beside the title suggests one from the description, and a task still carrying a placeholder title such as `fix` is renamed for you the first time its agent stops for you after its first 30 seconds, with a Task renamed toast. Both work only when an Automation agent is set up in Settings > Workflows. You can set a priority level (the Priority list shows each level's meter beside its name), add labels, and attach files (images, documents, or any file type) by pasting from the clipboard or dragging files onto the dialog. Attachments are included in the agent's prompt.
 
 Pasted screenshots are capped at a 2000px long edge, which bounds a multi-monitor grab without costing the detail an agent needs to read small text. Oversized pastes are re-encoded as WebP, stepping quality down until each image lands under a ~1.5MB target, so a large grab is not rejected by the API. Small pastes (under 500KB), GIFs, SVGs, and PNGs already inside the cap are attached as-is.
 
@@ -97,7 +97,7 @@ conversation and sends the task once more.
 - **Terminal panel** at the bottom shows the active session's terminal output
 - **Activity tab** shows structured events (tool calls, idle state) instead of raw terminal output
 - **Context bar** below the terminal shows session metadata (shell, model, cost, tokens, context usage). Each element is configurable.
-- **Priority** is a bare level meter in the card's title row, after the title and before `#N` (one bar per level above None, filled up to the task's level; hover for its name). The bottom entry of the priority scale ("None" unless renamed) shows nothing. Hover the title to read it whole when the card cuts it short
+- **Priority** is a bare level meter in the card's title row, after `#N` and before the browser globe (one bar per level above None, all the same height, lit up to the task's level; hover for its name). The bottom entry of the priority scale ("None" unless renamed) shows nothing. Hover the title to read it whole when the card cuts it short
 - **Labels** sit on their own row under the preview, wrapping to a second line when they do not fit. Settings > Task > Priority and Labels hide either one on cards
 - The Done list, a Workflows card and an Agent Monitor card draw both the same way. The task detail keeps both on one row under the description, priority first, and the backlog table keeps the meter inside a tinted pill
 - **Task card status** - each card shows a contextual status bar at the bottom:

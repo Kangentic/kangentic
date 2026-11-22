@@ -132,7 +132,7 @@ colors a new label picks a color a person could have picked. Nothing is colored 
 stays uncolored.
 
 **Priorities.** A `Priorities` line lists the project's scale by number (`0 None, 1 Low, ...`). The
-scale is the project's own: a person can rename, reorder and extend it in the Priorities popover, so
+scale is the project's own: a person can rename, reorder and extend it in the Priorities popover, up to 7 levels, so
 the priority tools check a number against it and name levels from it rather than from the five
 Kangentic seeds.
 
