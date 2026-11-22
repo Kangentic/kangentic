@@ -514,9 +514,10 @@ export interface BoardTaskWire {
    * `start_blocked_reason`, when set, replaces all of these words: the footer
    * draws the blocked start and the Resume line is left out.
    *
-   * A second pause keeps who paused first: pausing a task the idle timeout
-   * already paused still reads `idle`. A restart keeps it too, on the
-   * re-registered paused session `paused_session_id` then names. Words only:
+   * A later suspend that names nobody keeps who paused first: a column move or
+   * a quit of a task the idle timeout paused still reads `idle`. A restart
+   * keeps it too, on the re-registered paused session `paused_session_id`
+   * then names. Words only:
    * whether opening the task resumes it is the desktop's call (see
    * `StartSessionRequestPayload.trigger`), never this field's.
    *
