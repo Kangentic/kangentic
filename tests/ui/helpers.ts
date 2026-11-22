@@ -697,6 +697,30 @@ export async function settleDndKitKeyboardSensor(page: Page): Promise<void> {
 }
 
 /**
+ * Put focus on `selector` the way a keyboard user does: the LAST focus move is
+ * Tab's own default action. `IntentKeyboardSensor` treats a script `focus()`
+ * alone as pointer-or-script placed, so Shift+Tab steps off the element and Tab
+ * steps back on. The element needs a previous Tab stop.
+ *
+ * The placement is retried as ONE unit. A late focus move from elsewhere (a
+ * terminal's arrival focus landing after the spec saw it settle, which a slow
+ * runner stretches) can take focus between the Shift+Tab and the Tab, so the Tab
+ * goes to the terminal and the target never regains focus. Retrying only the
+ * last poll cannot recover from that; redoing the whole sequence does, and a
+ * placement that never works still fails once the budget is spent.
+ */
+export async function focusByKeyboard(page: Page, selector: string): Promise<void> {
+  const isFocused = () => page.locator(selector).evaluate((element) => element === document.activeElement);
+  await expect(async () => {
+    await page.locator(selector).evaluate((element) => (element as HTMLElement).focus());
+    await page.keyboard.press('Shift+Tab');
+    await expect.poll(isFocused, { timeout: 2000 }).toBe(false);
+    await page.keyboard.press('Tab');
+    await expect.poll(isFocused, { timeout: 2000 }).toBe(true);
+  }).toPass({ timeout: 15000 });
+}
+
+/**
  * Resolves once `frames` animation frames have run. A state change that has
  * already landed in a store needs one frame for React to commit it and another
  * for anything that commit scheduled (a canvas repaint, a follow-up render), so
