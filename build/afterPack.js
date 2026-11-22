@@ -327,8 +327,8 @@ module.exports = async function afterPack(context) {
   // this config does not set, so an Electron upgrade that adds one fails the
   // build instead of shipping the new fuse at whatever default it came with.
   // Every fuse is therefore set explicitly, the last three at the defaults read
-  // off Electron 45.1.0's own wire. The nine fuses and their defaults are
-  // unchanged from 44.5.1 through 45.3.3.
+  // off Electron 45.4.1's own wire (`electron-fuses read`). The nine fuses and
+  // their defaults are unchanged from 44.5.1 through 45.4.1.
   await flipFusesWhenBinaryIdle(electronBinaryPath, {
     version: FuseVersion.V1,
     strictlyRequireAllFuses: true,
