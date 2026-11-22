@@ -265,6 +265,13 @@ export function sendHandledFailure(
 export interface ChokepointReportOptions {
   /** Short enums only (`channel`, `tool`, `verb`, `stage`). Never a title, path or message. */
   tags?: Record<string, string>;
+  /**
+   * Tags sent with the report but left out of the latch key: an id that joins
+   * this event to another system's record (`relay_dial_id`). A per-occurrence
+   * value in `tags` would make every occurrence a new key, so one defect would
+   * report again on each one and spend the cap.
+   */
+  correlationTags?: Record<string, string>;
   contexts?: ErrorReportContexts;
   /**
    * Only for a source whose frames cannot split an issue (a preload callback,
@@ -322,7 +329,13 @@ export function createChokepointReporter(source: string, options: ChokepointRepo
         }
         if (reportedKeys.size >= cap) return false;
         reportedKeys.add(key);
-        sendHandledFailure(source, error, tags, reportOptions.contexts, reportOptions.fingerprint ?? fingerprintOf(error));
+        sendHandledFailure(
+          source,
+          error,
+          { ...reportOptions.correlationTags, ...tags },
+          reportOptions.contexts,
+          reportOptions.fingerprint ?? fingerprintOf(error),
+        );
         return true;
       } catch {
         // report-ok: this is the reporter; a failed send must never break the path that called it.

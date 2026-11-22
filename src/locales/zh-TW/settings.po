@@ -205,6 +205,10 @@ msgstr "預設集會為你選擇即時與精修模型，自訂則可自行選擇
 msgid "A private key file; Kangentic keeps a copy in its own folder"
 msgstr "私密金鑰檔案；Kangentic 會在自己的資料夾中保留複本"
 
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "A random id for each mobile relay connection attempt, which the relay's own log also keeps for about a week"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "A relay you run"
 msgstr "自行架設的中繼"

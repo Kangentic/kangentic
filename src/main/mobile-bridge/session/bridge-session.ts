@@ -21,7 +21,7 @@ import {
 } from '@kangentic/protocol';
 import type { MobileDeviceConnectionState } from '../../../shared/types';
 import type { BridgeIdentity } from '../identity';
-import { isRedialableTransport } from '../transport/relay-client';
+import { isDialIdentifiedTransport, isRedialableTransport } from '../transport/relay-client';
 import { FORCED_REDIAL_DESCRIPTIONS, type ForcedRedialReason } from './forced-redial-reason';
 
 /** WireGuard's REKEY_AFTER_TIME: bounded post-compromise security via periodic re-handshake, not just initial forward secrecy. */
@@ -277,6 +277,15 @@ export class BridgeSession extends EventEmitter {
   /** The underlying transport's current connection state, as the service's transition lines report it. */
   get transportState(): TransportState {
     return this.transport.state;
+  }
+
+  /**
+   * The relay dial this session's transport is on, for a Sentry report's
+   * `relay_dial_id` tag, or null for a transport that names none (a test
+   * double, or before the first dial).
+   */
+  get relayDialId(): string | null {
+    return isDialIdentifiedTransport(this.transport) ? this.transport.currentDialId : null;
   }
 
   /**

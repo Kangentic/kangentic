@@ -76,6 +76,11 @@ class FakeWebSocket {
   }
 }
 
+/** The `dial` query param of the Nth fake socket's dial URL. */
+function dialIdOf(index: number): string | null {
+  return new URL(FakeWebSocket.instances[index].url).searchParams.get('dial');
+}
+
 function stubFakeWebSocket(): void {
   FakeWebSocket.instances = [];
   vi.stubGlobal('WebSocket', FakeWebSocket as unknown as typeof WebSocket);
@@ -691,7 +696,7 @@ describe('RelayClient redial and dial watchdog', () => {
     vi.advanceTimersByTime(40_000);
     FakeWebSocket.instances[2].fail(1006);
     expect(loggedLines(warnSpy)).toContain(
-      '[mobile-bridge/relay-client abcd1234] closed: code=1006 reason="" clean=false after 43 s connected, last relay ping 40 s ago; redial in 500 ms',
+      `[mobile-bridge/relay-client abcd1234] closed: code=1006 reason="" clean=false after 43 s connected, last relay ping 40 s ago; redial in 500 ms, dial ${dialIdOf(2)}`,
     );
   });
 
@@ -821,7 +826,7 @@ describe('RelayClient redial and dial watchdog', () => {
     activeClients.push(client);
     void client.connect().catch(() => undefined);
 
-    expect(injectedUrls).toEqual(['ws://127.0.0.1:1/?slot=test-slot&role=desktop']);
+    expect(injectedUrls).toEqual([`ws://127.0.0.1:1/?slot=test-slot&role=desktop&dial=${dialIdOf(0)}`]);
     // The fake's own instance list sees it once, through the subclass; the global was not called separately.
     expect(FakeWebSocket.instances).toHaveLength(1);
     expect(FakeWebSocket.instances[0]).toBeInstanceOf(InjectedWebSocket);
@@ -881,6 +886,153 @@ describe('RelayClient redial and dial watchdog', () => {
     client.redialNow({ force: true, reason: 'injected stack label' });
     FakeWebSocket.instances[1].fail(1006);
     expect(loggedLines(warnSpy).some((line) => line.includes('[mobile-bridge/relay-client injdial] dial failed:') && line.endsWith('(via injected)'))).toBe(true);
+  });
+
+  // The join key: the id the relay sees on the URL is the one the log line,
+  // the Sentry breadcrumb and a report's relay_dial_id tag carry.
+  it('sends each dial\'s id as the dial param and names it on that dial\'s log lines', () => {
+    vi.useFakeTimers();
+    stubFakeWebSocket();
+    const client = new RelayClient({ relayUrl: 'ws://127.0.0.1:1', slotId: 'test-slot', logLabel: 'dialid' });
+    activeClients.push(client);
+    expect(client.currentDialId).toBeNull();
+    void client.connect().catch(() => undefined);
+
+    const firstDialId = dialIdOf(0);
+    expect(firstDialId).toMatch(/^[0-9a-f]{16}$/);
+    expect(client.currentDialId).toBe(firstDialId);
+    FakeWebSocket.instances[0].open();
+    expect(loggedLines(logSpy).some((line) => line.startsWith('[mobile-bridge/relay-client dialid] connected after') && line.endsWith(`, dial ${firstDialId} (via node)`))).toBe(true);
+
+    FakeWebSocket.instances[0].fail(1006);
+    expect(loggedLines(warnSpy).some((line) => line.includes('closed: code=1006') && line.endsWith(`, dial ${firstDialId}`))).toBe(true);
+
+    vi.advanceTimersByTime(500);
+    const secondDialId = dialIdOf(1);
+    expect(secondDialId).not.toBe(firstDialId);
+    expect(client.currentDialId).toBe(secondDialId);
+    FakeWebSocket.instances[1].fail(1006);
+    expect(loggedLines(warnSpy).some((line) => line.includes('dial failed:') && line.endsWith(`, dial ${secondDialId} (via node)`))).toBe(true);
+    // The dial id rides beside the slot, never inside it.
+    expect(new URL(FakeWebSocket.instances[1].url).searchParams.get('slot')).toBe('test-slot');
+  });
+
+  it('tells its observer how each dial attempt ended, and nothing for a dial it ended itself', () => {
+    vi.useFakeTimers();
+    stubFakeWebSocket();
+    const outcomes: Array<{ dialId: string; stack: string; outcome: string }> = [];
+    const client = new RelayClient({ relayUrl: 'ws://127.0.0.1:1', slotId: 'test-slot', onDialOutcome: (outcome) => outcomes.push(outcome) });
+    activeClients.push(client);
+    void client.connect().catch(() => undefined);
+
+    FakeWebSocket.instances[0].open();
+    // An established socket closing is not a dial outcome.
+    FakeWebSocket.instances[0].fail(4408, 'park_timeout');
+    vi.advanceTimersByTime(500);
+    FakeWebSocket.instances[1].fail(1006);
+    vi.advanceTimersByTime(1000);
+    vi.advanceTimersByTime(30_000);
+    // A forced redial abandons the next dial: the client ended it, so no outcome.
+    client.redialNow({ force: true, reason: 'test' });
+
+    expect(outcomes).toEqual([
+      { dialId: dialIdOf(0), stack: 'node', outcome: 'opened' },
+      { dialId: dialIdOf(1), stack: 'node', outcome: 'failed' },
+      { dialId: dialIdOf(2), stack: 'node', outcome: 'timed_out' },
+    ]);
+  });
+
+  it('keeps dialing when its observer throws', () => {
+    vi.useFakeTimers();
+    stubFakeWebSocket();
+    const client = new RelayClient({
+      relayUrl: 'ws://127.0.0.1:1',
+      slotId: 'test-slot',
+      onDialOutcome: () => {
+        throw new Error('observer failed');
+      },
+    });
+    activeClients.push(client);
+    void client.connect().catch(() => undefined);
+    FakeWebSocket.instances[0].open();
+    expect(client.state).toBe('connected');
+  });
+
+  it('reports a throwing WebSocket constructor as a failed dial under the id the log line and currentDialId carry', () => {
+    vi.useFakeTimers();
+    FakeWebSocket.instances = [];
+    class ThrowingWebSocket {
+      constructor(_url: string) {
+        throw new Error('construction refused');
+      }
+    }
+    vi.stubGlobal('WebSocket', ThrowingWebSocket as unknown as typeof WebSocket);
+    const outcomes: Array<{ dialId: string; stack: string; outcome: string }> = [];
+    const client = new RelayClient({ relayUrl: 'ws://127.0.0.1:1', slotId: 'test-slot', logLabel: 'ctorthrow', onDialOutcome: (outcome) => outcomes.push(outcome) });
+    activeClients.push(client);
+    void client.connect().catch(() => undefined);
+
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]).toEqual({ dialId: client.currentDialId, stack: 'node', outcome: 'failed' });
+    expect(outcomes[0].dialId).toMatch(/^[0-9a-f]{16}$/);
+    const failedLine = loggedLines(warnSpy).find((line) => line.includes('dial failed: construction refused'));
+    expect(failedLine).toBeDefined();
+    expect(failedLine!.endsWith(`, dial ${outcomes[0].dialId} (via node)`)).toBe(true);
+  });
+
+  it('reports a watchdog timeout once as timed_out, and a late close from the timed-out socket adds nothing', () => {
+    vi.useFakeTimers();
+    stubFakeWebSocket();
+    const outcomes: Array<{ dialId: string; stack: string; outcome: string }> = [];
+    const client = new RelayClient({ relayUrl: 'ws://127.0.0.1:1', slotId: 'test-slot', onDialOutcome: (outcome) => outcomes.push(outcome) });
+    activeClients.push(client);
+    void client.connect().catch(() => undefined);
+
+    vi.advanceTimersByTime(30_000);
+    expect(outcomes).toEqual([{ dialId: dialIdOf(0), stack: 'node', outcome: 'timed_out' }]);
+
+    // The watchdog detached the socket's handlers, so its late close is inert.
+    FakeWebSocket.instances[0].fail(1006);
+    expect(outcomes).toEqual([{ dialId: dialIdOf(0), stack: 'node', outcome: 'timed_out' }]);
+  });
+
+  it('reports no outcome when close() ends a dial that is still connecting', () => {
+    vi.useFakeTimers();
+    stubFakeWebSocket();
+    const outcomes: Array<{ dialId: string; stack: string; outcome: string }> = [];
+    const client = new RelayClient({ relayUrl: 'ws://127.0.0.1:1', slotId: 'test-slot', onDialOutcome: (outcome) => outcomes.push(outcome) });
+    activeClients.push(client);
+    void client.connect().catch(() => undefined);
+
+    client.close();
+    FakeWebSocket.instances[0].fail(1006);
+    vi.advanceTimersByTime(30_000);
+
+    expect(outcomes).toEqual([]);
+  });
+
+  it('close() detaches the socket, so its late close after a reconnect cannot fail the new dial', () => {
+    vi.useFakeTimers();
+    stubFakeWebSocket();
+    const outcomes: Array<{ dialId: string; stack: string; outcome: string }> = [];
+    const client = new RelayClient({ relayUrl: 'ws://127.0.0.1:1', slotId: 'test-slot', onDialOutcome: (outcome) => outcomes.push(outcome) });
+    activeClients.push(client);
+    void client.connect().catch(() => undefined);
+    client.close();
+    void client.connect().catch(() => undefined);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    const firstDialId = dialIdOf(0);
+    const secondDialId = dialIdOf(1);
+    expect(secondDialId).not.toBe(firstDialId);
+
+    // The first socket's close event arrives only now, after the second dial began.
+    FakeWebSocket.instances[0].fail(1006);
+    expect(outcomes.some((outcome) => outcome.dialId === firstDialId)).toBe(false);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+
+    FakeWebSocket.instances[1].open();
+    expect(client.state).toBe('connected');
+    expect(outcomes).toEqual([{ dialId: secondDialId, stack: 'node', outcome: 'opened' }]);
   });
 
   describe('fallback stack', () => {
@@ -1073,7 +1225,31 @@ describe('RelayClient redial and dial watchdog', () => {
       expect(primaryConstructionAttempts).toBe(2);
       expect(FakeWebSocket.instances).toHaveLength(1);
       expect(FakeWebSocket.instances[0]).toBeInstanceOf(FallbackWebSocket);
-      expect(loggedLines(warnSpy).filter((line) => line === '[mobile-bridge/relay-client throwing] dial failed: construction refused; redial in 500 ms (via node)')).toHaveLength(1);
+      const throwingLines = loggedLines(warnSpy).filter((line) => line.startsWith('[mobile-bridge/relay-client throwing] dial failed: construction refused;'));
+      expect(throwingLines).toHaveLength(2);
+      expect(throwingLines[0]).toMatch(/^\[mobile-bridge\/relay-client throwing\] dial failed: construction refused; redial in 500 ms, dial [0-9a-f]{16} \(via node\)$/);
+      // Each attempt names its own dial, so the relay's log can tell them apart.
+      const loggedDialIds = throwingLines.map((line) => /, dial ([0-9a-f]{16}) /.exec(line)?.[1]);
+      expect(loggedDialIds[0]).toBeDefined();
+      expect(loggedDialIds[0]).not.toBe(loggedDialIds[1]);
+    });
+
+    it('mints a fresh dial id for every attempt, the fallback stack\'s turns included', () => {
+      vi.useFakeTimers();
+      stubFakeWebSocket();
+      const client = new RelayClient({ relayUrl: 'ws://127.0.0.1:1', slotId: 'test-slot', fallbackWebSocket: fallbackOption() });
+      activeClients.push(client);
+      void client.connect().catch(() => undefined);
+      FakeWebSocket.instances[0].fail(1006);
+      vi.advanceTimersByTime(500);
+      FakeWebSocket.instances[1].fail(1006);
+      vi.advanceTimersByTime(1000);
+      expect([stackOf(0), stackOf(1), stackOf(2)]).toEqual(['node', 'node', 'chromium']);
+
+      const dialIds = [0, 1, 2].map(dialIdOf);
+      for (const dialId of dialIds) expect(dialId).toMatch(/^[0-9a-f]{16}$/);
+      expect(new Set(dialIds).size).toBe(3);
+      expect(client.currentDialId).toBe(dialIds[2]);
     });
 
     it('dials with the fallback from the first dial while it is preferred (a configured proxy), and logs no hold', () => {

@@ -232,6 +232,10 @@ msgstr "Un preset sceglie per te i modelli live e di rifinitura. Personalizzato 
 msgid "A private key file; Kangentic keeps a copy in its own folder"
 msgstr "Un file di chiave privata; Kangentic ne conserva una copia nella propria cartella"
 
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "A random id for each mobile relay connection attempt, which the relay's own log also keeps for about a week"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
 msgid "A relay you run"

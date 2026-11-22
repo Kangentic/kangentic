@@ -14,7 +14,8 @@ import {
   toBrowserGuestCrashWarning,
   type NativeCrashContext,
 } from './native-crash-event';
-import { filterBreadcrumb } from '../../shared/sentry-breadcrumbs';
+import { filterBreadcrumb, RELAY_DIAL_BREADCRUMB_CATEGORY } from '../../shared/sentry-breadcrumbs';
+import type { RelayDialOutcome } from '../mobile-bridge/transport/relay-client';
 import { SENTRY_DATA_COLLECTION } from '../../shared/sentry-data-collection';
 import { redactEventPaths } from './redact-event-paths';
 import { rendererNameForReporting } from './renderer-classification';
@@ -180,6 +181,29 @@ export function setHostMemoryContext(sample: HostMemorySample): void {
     Sentry.setContext('host_memory', { ...sample });
   } catch {
     // Never disrupt the sampler for telemetry
+  }
+}
+
+/**
+ * Record how one mobile relay dial ended, as a breadcrumb keyed by its dial id
+ * (relay-client.ts mints it and sends it to the relay as `&dial=`). Any event
+ * that follows then names the recent dials, so an investigator can find each
+ * one in the relay's own log (the /sentry skill's join step). A breadcrumb and
+ * not a scope tag, because several relay clients are live at once and a tag on
+ * the global scope would keep only the last dial. Fixed values only; the
+ * `mobile-bridge.relay-dial` case in sentry-breadcrumbs.ts drops anything else
+ * and writes the crumb's message, so this sends none.
+ */
+export function addRelayDialBreadcrumb(dial: RelayDialOutcome): void {
+  if (!active) return;
+  try {
+    Sentry.addBreadcrumb({
+      category: RELAY_DIAL_BREADCRUMB_CATEGORY,
+      level: dial.outcome === 'opened' ? 'info' : 'warning',
+      data: { relay_dial_id: dial.dialId, stack: dial.stack, outcome: dial.outcome },
+    });
+  } catch {
+    // report-ok: this is the Sentry SDK failing; a lost breadcrumb costs one trail entry, and a relay dial must never fail for telemetry.
   }
 }
 

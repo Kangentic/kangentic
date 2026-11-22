@@ -214,6 +214,42 @@ describe('createChokepointReporter', () => {
     expect(reportHandledError).toHaveBeenCalledTimes(2);
   });
 
+  // A per-dial relay id joins the event to the relay's log. In the key, every
+  // dial would report the same defect again until the cap was spent.
+  it('sends correlation tags but keeps them out of the latch key', () => {
+    const reporter = createChokepointReporter('mobile_verb');
+    const defect = (): Error => new TypeError('handler failed');
+    const reportOnDial = (relayDialId: string): boolean =>
+      reporter.report(defect(), { tags: { verb: 'read-board' }, correlationTags: { relay_dial_id: relayDialId } });
+    expect(reportOnDial('0123456789abcdef')).toBe(true);
+    expect(reportOnDial('fedcba9876543210')).toBe(false);
+    expect(reportHandledError).toHaveBeenCalledTimes(1);
+    const [, tags] = reportHandledError.mock.calls[0] as [Error, Record<string, string>];
+    expect(tags).toMatchObject({ verb: 'read-board', relay_dial_id: '0123456789abcdef', source: 'mobile_verb' });
+  });
+
+  it('lets a correlation tag add a key but never override one of the report\'s own tags', () => {
+    const reporter = createChokepointReporter('mobile_verb');
+    reporter.report(new TypeError('handler failed'), {
+      tags: { verb: 'read-board' },
+      correlationTags: { verb: 'other', relay_dial_id: '0123456789abcdef' },
+    });
+    const [, tags] = reportHandledError.mock.calls[0] as [Error, Record<string, string>];
+    expect(tags.verb).toBe('read-board');
+    expect(tags.relay_dial_id).toBe('0123456789abcdef');
+  });
+
+  it('keeps the reporter\'s source and the error name when a correlation tag names them', () => {
+    const reporter = createChokepointReporter('mobile_verb');
+    reporter.report(new TypeError('handler failed'), {
+      tags: { verb: 'read-board' },
+      correlationTags: { source: 'spoofed', error_name: 'Spoofed' },
+    });
+    const [, tags] = reportHandledError.mock.calls[0] as [Error, Record<string, string>];
+    expect(tags.source).toBe('mobile_verb');
+    expect(tags.error_name).toBe('TypeError');
+  });
+
   it('latches two Azure DevOps server codes thrown from one line as two keys', () => {
     const reporter = createChokepointReporter('ipc_handler');
     const refusal = (azServerCode: string): Error => Object.assign(new Error('refused'), { azServerCode });

@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import type { CapabilityRequestMessage } from '@kangentic/protocol';
-import { CapabilityRouter } from '../../../src/main/mobile-bridge/capability-router';
+import { CapabilityRouter, mobileVerbReporter } from '../../../src/main/mobile-bridge/capability-router';
 import type { BridgeSession } from '../../../src/main/mobile-bridge/session/bridge-session';
 
 function fakeSession(capabilities: string[]): BridgeSession {
@@ -76,6 +76,77 @@ describe('CapabilityRouter', () => {
     const response = await router.dispatch(fakeRequest('answer-permission-prompt'), session);
     expect(response.ok).toBe(false);
     expect(response.error).toBe('handler exploded');
+  });
+
+  // The tag that joins a verb defect to the relay's log of the dial it came in on.
+  it('reports a throwing handler with the session\'s relay dial id as a tag', async () => {
+    const report = vi.spyOn(mobileVerbReporter, 'report').mockReturnValue(true);
+    try {
+      const router = new CapabilityRouter();
+      const session = { capabilities: new Set(['read-board']), relayDialId: '0123456789abcdef' } as unknown as BridgeSession;
+      const failure = new TypeError('handler exploded');
+      router.register('read-board', () => {
+        throw failure;
+      });
+
+      await router.dispatch(fakeRequest('read-board'), session);
+      expect(report).toHaveBeenCalledWith(failure, {
+        tags: { verb: 'read-board' },
+        correlationTags: { relay_dial_id: '0123456789abcdef' },
+      });
+    } finally {
+      report.mockRestore();
+    }
+  });
+
+  // A slow handler can outlast a forced redial, which mints a new dial id; the
+  // report must still name the dial the request arrived on.
+  it('tags the dial the request arrived on, not one a redial started while the handler ran', async () => {
+    const report = vi.spyOn(mobileVerbReporter, 'report').mockReturnValue(true);
+    try {
+      const router = new CapabilityRouter();
+      const session = { capabilities: new Set(['read-diff']), relayDialId: '0123456789abcdef' } as { capabilities: Set<string>; relayDialId: string };
+      let releaseHandler: () => void = () => undefined;
+      router.register('read-diff', async () => {
+        await new Promise<void>((resolve) => {
+          releaseHandler = resolve;
+        });
+        throw new TypeError('handler exploded');
+      });
+
+      const dispatched = router.dispatch(fakeRequest('read-diff'), session as unknown as BridgeSession);
+      session.relayDialId = 'fedcba9876543210';
+      releaseHandler();
+      await dispatched;
+      expect(report).toHaveBeenCalledWith(expect.any(TypeError), {
+        tags: { verb: 'read-diff' },
+        correlationTags: { relay_dial_id: '0123456789abcdef' },
+      });
+    } finally {
+      report.mockRestore();
+    }
+  });
+
+  it('sends no correlation tags when the session has no relay dial id', async () => {
+    const report = vi.spyOn(mobileVerbReporter, 'report').mockReturnValue(true);
+    try {
+      const router = new CapabilityRouter();
+      const session = { capabilities: new Set(['read-board']), relayDialId: null } as unknown as BridgeSession;
+      const failure = new TypeError('handler exploded');
+      router.register('read-board', () => {
+        throw failure;
+      });
+
+      await router.dispatch(fakeRequest('read-board'), session);
+      expect(report).toHaveBeenCalledTimes(1);
+      const [reportedError, reportOptions] = report.mock.calls[0];
+      expect(reportedError).toBe(failure);
+      expect(reportOptions?.tags).toEqual({ verb: 'read-board' });
+      // Undefined, not an empty object and not { relay_dial_id: null }.
+      expect(reportOptions?.correlationTags).toBeUndefined();
+    } finally {
+      report.mockRestore();
+    }
   });
 
   it('unregister() removes a handler so the verb falls back to fail-closed', async () => {
