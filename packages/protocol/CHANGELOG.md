@@ -2,6 +2,36 @@
 
 <!-- releases -->
 
+## [protocol-v0.29.0] - 2026-11-22
+
+Says who paused a task, and carries the two card switches that hide a card's
+priority meter and label row, so a phone can draw what the desktop card draws.
+Additive on the wire; `PROTOCOL_VERSION` stays '3'.
+
+`BoardTaskWire` gains `paused_by`, mirroring desktop commits 4fe1dfbdb and
+724b55b22. It is `idle` when the idle timeout paused the task (the card reads
+"Paused while idle", and the task window's Resume line reads "Paused while
+idle."), `held` when a person paused it from the desktop or the phone's
+`pause-session` (the card reads "Paused", and the Resume line reads "Stays
+paused until resumed."), and `system` when the desktop paused it on its own, such
+as a quit, a column move or a settings restart (the card reads "Paused", and
+there is no Resume line). It is null exactly when `paused` is false, and
+`parseBoardTaskWire` reads an absent or non-string value as null. A later suspend
+that names nobody keeps who paused first, and so does a restart. A start-blocked
+reason replaces all of these words, and a value a client does not know draws
+plain "Paused". `PausedByWire` and `PAUSED_BY_WIRE_VALUES` are exported.
+
+The board snapshot gains `showTaskPriority` and `showTaskLabels`, mirroring
+desktop commit 18f351747: the Settings > Task > Cards switches that hide the
+priority meter and the label row on board, Done list, workflow canvas and Agent
+Monitor cards. Absent reads as on. Settings raise no board event, so a change
+reaches a subscribed phone with its next snapshot, as `showTicketNumbers` does.
+The parser refuses a value that is not a boolean.
+
+### Features
+- Say who paused a task on its board row, and carry the card Priority and Labels switches on the snapshot (c183595e6)
+- Document which later suspend keeps who paused a task (bee714ce5)
+
 ## [protocol-v0.28.0] - 2026-11-11
 
 Lets a phone resume a task by opening it, the way the desktop does, and
