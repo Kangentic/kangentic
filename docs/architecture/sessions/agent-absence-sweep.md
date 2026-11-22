@@ -410,6 +410,13 @@ report is `stage: never_started`, one of the stages in
 `agentStartObservedAt` at its first SessionStart for this, and the start bound reads the same
 evidence for every launch.
 
+**It also reports a run that started and ended with nothing to resume.** An agent that ran, ended on
+its own under a minute later and never gave a session id reaches the launch report as `stage:
+agent_exited` with cause `no_conversation`, from the session-id outcome rather than from this
+sweep (`exitedWithNoConversation`). The retirement's kill is not a deliberate stop to that check:
+it carries `overrideExitCode` 0, the CLI's own end seen late, while any other `kill()` that keeps
+the row does not count. See [Error reporting](../../telemetry/error-reporting.md).
+
 **Which agents can report this.** Only Claude and Droid declare `reportsAgentStart`. The flag is
 static and read at spawn, so it has to hold for every way an adapter launches, print and resume
 included, and a wrong `true` pauses a healthy task. Audited over all 15 adapters:

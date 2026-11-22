@@ -329,9 +329,10 @@ describe('a session started with no opening prompt', () => {
 
 // Sentry DESKTOP-36: a Codex that ran and exited about four seconds later, with
 // no hook and no session written, read the same as a live conversation whose id
-// was missed. The row now keeps when its agent ran and when its PTY exited.
+// was missed. The row now keeps when its agent ran and when its PTY exited, and
+// such a run goes to the launch report: it had no conversation to capture.
 describe('a session that never gave an id', () => {
-  it('says how long its agent ran before its PTY exited, in the one report it sends', async () => {
+  it('sends an agent that exited seconds after it ran as one launch report, with how long it ran', async () => {
     const manager = makeManager();
     const sessionId = await spawnAgentSession(manager, 'command_line');
     await vi.advanceTimersByTimeAsync(27_000);
@@ -343,14 +344,20 @@ describe('a session that never gave an id', () => {
 
     await vi.advanceTimersByTimeAsync(SessionIdManager.CAPTURE_CEILING_MS);
 
-    const reports = reportsNamed('AgentSessionIdNotCapturedError');
+    const reports = reportsNamed('AgentLaunchAgentExitedError');
     expect(reports).toHaveLength(1);
     expect(reports[0].tags).toMatchObject({
+      source: 'agent_launch',
+      stage: 'agent_exited',
+      cause: 'no_conversation',
       opening_prompt: 'command_line',
+      prompt_seen: 'no',
       settled_by: 'ceiling',
       session_status: 'exited',
       agent_ran_for_s: '1-5',
+      id_store: 'absent',
     });
+    expect(reportsNamed('AgentSessionIdNotCapturedError')).toHaveLength(0);
     expect(reportsNamed('AgentSessionIdCapturedLateError')).toHaveLength(0);
   });
 
