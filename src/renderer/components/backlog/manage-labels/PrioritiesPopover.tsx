@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react';
-import { Trash2, GripVertical, Plus, Pencil, Signal } from 'lucide-react';
+import { Trash2, GripVertical, Plus, Pencil } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -32,6 +32,13 @@ import { MAX_PRIORITY_LEVELS, PriorityMeter } from '../PriorityMeter';
 import { ColorPickerPopover } from './ColorPickerPopover';
 import { PopoverShell } from './PopoverShell';
 import type { ToolbarControlCollapse } from '../../board/toolbar-collapse';
+
+/**
+ * The toolbar button's icon is a fixed meter, two of four bars lit, so it looks the same
+ * whatever scale a project keeps. The menu rows draw the live scale instead.
+ */
+const BUTTON_ICON_LEVEL = 2;
+const BUTTON_ICON_LEVEL_COUNT = 5;
 
 interface PrioritiesPopoverProps {
   /** See LabelsPopover: the class pair that sheds this trigger's text. */
@@ -188,7 +195,7 @@ export function PrioritiesPopover({ collapse, labelHidden = false }: PrioritiesP
           }`}
           data-testid="manage-priorities-btn"
         >
-          <Signal size={14} className="shrink-0" />
+          <PriorityMeter level={BUTTON_ICON_LEVEL} levelCount={BUTTON_ICON_LEVEL_COUNT} color="currentColor" />
           <span className={collapse?.label}>{prioritiesLabel}</span>
         </button>
       </Tooltip>

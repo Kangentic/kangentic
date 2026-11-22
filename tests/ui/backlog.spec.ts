@@ -228,7 +228,11 @@ test.describe('Backlog View', () => {
     await page.locator('[data-testid="view-toggle-backlog"]').click();
 
     await expect(page.locator('[data-testid="manage-labels-btn"]')).toBeVisible();
-    await expect(page.locator('[data-testid="manage-priorities-btn"]')).toBeVisible();
+    const prioritiesButton = page.locator('[data-testid="manage-priorities-btn"]');
+    await expect(prioritiesButton).toBeVisible();
+    // The button's icon is the priority meter as a fixed glyph: four bars, two lit.
+    await expect(prioritiesButton.locator('[data-testid="priority-meter"] > span')).toHaveCount(4);
+    await expect(prioritiesButton.locator('[data-testid="priority-meter"] [data-filled]')).toHaveCount(2);
 
     await browser.close();
   });
