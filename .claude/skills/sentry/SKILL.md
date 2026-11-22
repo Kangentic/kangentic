@@ -312,7 +312,8 @@ Limits, stated plainly:
 - **No match is expected for an event from before the join existed.** A desktop or mobile build
   without the dial id sends none, and a relay release that does not log it records none.
 - **A slow connection is not covered here.** The join finds a dial's record, not why it was slow.
-  For latency, see kangentic-relay's `docs/latency.md`.
+  For latency, see the latency doc in the kangentic-relay repo
+  (https://github.com/Kangentic/kangentic-relay/blob/main/docs/latency.md).
 
 ## Native minidumps (`platform: native`, mechanism `minidump`)
 
