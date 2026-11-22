@@ -1,7 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Trash2 } from 'lucide-react';
 import { useLingui } from '@lingui/react/macro';
 import { TaskChangesDialog } from '../dialogs/TaskChangesDialog';
 import { SendToBacklogDialog } from './SendToBacklogDialog';
@@ -34,6 +33,7 @@ interface TaskCardProps {
   task: Task;
   isDragOverlay?: boolean;
   compact?: boolean;
+  /** An archived card's menu Delete; the host confirms first. */
   onDelete?: (taskId: string) => void;
 }
 
@@ -214,28 +214,12 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
   // lets it skip the content (title row, activity mark, labels, footer) in all
   // of them, so only this root re-renders.
   const cardContent = useMemo(() => {
-    if (compact) {
-      return (
-        <TaskCardCompactBody
-          task={task}
-          view={view}
-          trailing={onDelete && (
-            <button
-              type="button"
-              onClick={(clickEvent) => { clickEvent.stopPropagation(); onDelete(task.id); }}
-              className="p-2 rounded-full text-fg-disabled hover:text-red-400 hover:bg-red-400/10 opacity-0 group-hover/card:opacity-100 transition-all flex-shrink-0"
-            >
-              <Trash2 size={14} />
-            </button>
-          )}
-        />
-      );
-    }
+    if (compact) return <TaskCardCompactBody task={task} view={view} />;
     return task.workflow_id
       // The drag overlay and the flying card are copies: their strip shows, and does nothing.
       ? <WorkflowTaskCardBody task={task} view={view} density={boardDensity} interactive={!isDragOverlay} />
       : <TaskCardBody task={task} view={view} density={boardDensity} />;
-  }, [compact, task, view, boardDensity, isDragOverlay, onDelete]);
+  }, [compact, task, view, boardDensity, isDragOverlay]);
 
   if (compact) {
     return (
@@ -248,7 +232,7 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
           onClick={handleClick}
           onContextMenu={handleContextMenu}
           data-task-id={task.id}
-          className={`bg-surface-raised/60 border border-edge/50 rounded-md px-2.5 py-1.5 cursor-grab active:cursor-grabbing select-none hover:border-edge-input transition-colors group/card ${
+          className={`bg-surface-raised/60 border border-edge/50 rounded-md px-2.5 py-1.5 cursor-grab active:cursor-grabbing select-none hover:border-edge-input transition-colors ${
             isDragOverlay ? 'shadow-xl' : ''
           }`}
         >

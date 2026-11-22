@@ -217,7 +217,7 @@ export class IntentKeyboardSensor extends KeyboardSensor {
         // The focused element must be the sortable node itself. Every site here
         // spreads the listeners on the node with no `setActivatorNodeRef`, so
         // the stock handler would also lift the card when a focusable CHILD
-        // (a compact card's delete button) takes Space, and prevent the button's
+        // (a board card's PR pill) takes Space, and prevent the button's
         // own activation while doing it. The child keeps its key.
         if (event.target !== event.currentTarget) return false;
         if (!wasFocusedByKeyboard(event.currentTarget)) {
