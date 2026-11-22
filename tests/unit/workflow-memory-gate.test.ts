@@ -19,80 +19,105 @@ describe('WorkflowMemoryGate', () => {
   });
 
   it('lets one item go, then holds the next until the first one\'s turn is under way and the pace allows', () => {
-    expect(gate.tryAcquire('nudge:a')).toEqual({ go: true });
-    gate.begin('nudge:a', 'session-a');
-    expect(gate.tryAcquire('nudge:b')).toEqual({ go: false, why: 'queued' });
+    expect(gate.tryAcquire('nudge:a', 'session-a')).toEqual({ go: true });
+    expect(gate.tryAcquire('nudge:b', 'session-b')).toEqual({ go: false, why: 'queued' });
 
     // The first agent works: the queue moves on, but only once the pace allows.
     gate.noteThinking('session-a');
-    expect(gate.tryAcquire('nudge:b')).toEqual({ go: false, why: 'queued' });
+    expect(gate.tryAcquire('nudge:b', 'session-b')).toEqual({ go: false, why: 'queued' });
     now += PACE_MS;
-    expect(gate.tryAcquire('nudge:b')).toEqual({ go: true });
+    expect(gate.tryAcquire('nudge:b', 'session-b')).toEqual({ go: true });
+  });
+
+  // The order a verified nudge sees: the agent's prompt hook commits thinking
+  // before the delivery returns. When the holder named its session only after
+  // that, the thinking freed nothing and the next task waited TURN_WAIT_MS
+  // (the recovery-level regression is in workflow-recovery.test.ts).
+  it('moves on for a session that goes thinking as soon as it is let go, and never for a session left in line', () => {
+    expect(gate.tryAcquire('nudge:a', 'session-a')).toEqual({ go: true });
+    expect(gate.tryAcquire('nudge:b', 'session-b')).toEqual({ go: false, why: 'queued' });
+    // A session still in line is not the one in flight: its thinking frees nothing.
+    gate.noteThinking('session-b');
+    now += PACE_MS;
+    expect(gate.tryAcquire('nudge:b', 'session-b')).toEqual({ go: false, why: 'queued' });
+
+    gate.noteThinking('session-a');
+    expect(gate.tryAcquire('nudge:b', 'session-b')).toEqual({ go: true });
   });
 
   it('releases in the order asked, first asked first', () => {
-    gate.tryAcquire('nudge:a');
+    gate.tryAcquire('nudge:a', 'session-a');
     gate.release('nudge:a');
     // b asks before c; once the pace has passed, c asking first still waits for b.
-    expect(gate.tryAcquire('nudge:b')).toEqual({ go: true });
+    expect(gate.tryAcquire('nudge:b', 'session-b')).toEqual({ go: true });
     gate.release('nudge:b');
-    expect(gate.tryAcquire('nudge:c')).toEqual({ go: true });
-    gate.begin('nudge:c', 'session-c');
-    gate.tryAcquire('nudge:d');
-    gate.tryAcquire('nudge:e');
+    expect(gate.tryAcquire('nudge:c', 'session-c')).toEqual({ go: true });
+    gate.tryAcquire('nudge:d', 'session-d');
+    gate.tryAcquire('nudge:e', 'session-e');
     gate.noteThinking('session-c');
     now += PACE_MS;
-    expect(gate.tryAcquire('nudge:e')).toEqual({ go: false, why: 'queued' });
-    expect(gate.tryAcquire('nudge:d')).toEqual({ go: true });
+    expect(gate.tryAcquire('nudge:e', 'session-e')).toEqual({ go: false, why: 'queued' });
+    expect(gate.tryAcquire('nudge:d', 'session-d')).toEqual({ go: true });
   });
 
   it('frees the queue at once for an item that started nothing, with no pace to wait out', () => {
-    expect(gate.tryAcquire('nudge:a')).toEqual({ go: true });
+    expect(gate.tryAcquire('nudge:a', 'session-a')).toEqual({ go: true });
     gate.release('nudge:a');
-    expect(gate.tryAcquire('nudge:b')).toEqual({ go: true });
+    expect(gate.tryAcquire('nudge:b', 'session-b')).toEqual({ go: true });
   });
 
   it('holds nothing longer than the turn wait when the turn never shows', () => {
-    gate.tryAcquire('nudge:a');
-    gate.begin('nudge:a', 'session-a');
+    gate.tryAcquire('nudge:a', 'session-a');
     now += TURN_WAIT_MS;
-    expect(gate.tryAcquire('nudge:b')).toEqual({ go: true });
+    expect(gate.tryAcquire('nudge:b', 'session-b')).toEqual({ go: true });
   });
 
   it('lets the key in flight continue its own load after the pace, ahead of the line and the turn wait', () => {
-    expect(gate.tryAcquire('task:a')).toEqual({ go: true });
-    gate.begin('task:a', 'session-a');
-    gate.tryAcquire('task:b');
+    expect(gate.tryAcquire('task:a', 'session-a')).toEqual({ go: true });
+    gate.tryAcquire('task:b', 'session-b');
     // The pace still holds: the next one reads memory with this load on it.
-    expect(gate.tryAcquire('task:a')).toEqual({ go: false, why: 'queued' });
+    expect(gate.tryAcquire('task:a', 'session-a')).toEqual({ go: false, why: 'queued' });
     now += PACE_MS;
-    expect(gate.tryAcquire('task:a')).toEqual({ go: true });
+    expect(gate.tryAcquire('task:a', 'session-a')).toEqual({ go: true });
     // Another key still waits for the turn that continuation starts.
-    gate.begin('task:a', 'session-a');
     now += PACE_MS;
-    expect(gate.tryAcquire('task:b')).toEqual({ go: false, why: 'queued' });
+    expect(gate.tryAcquire('task:b', 'session-b')).toEqual({ go: false, why: 'queued' });
     gate.noteThinking('session-a');
-    expect(gate.tryAcquire('task:b')).toEqual({ go: true });
+    expect(gate.tryAcquire('task:b', 'session-b')).toEqual({ go: true });
+  });
+
+  it('hands the flight to the session a continuation names, so only that session\'s thinking frees the queue', () => {
+    expect(gate.tryAcquire('task:a', 'session-a')).toEqual({ go: true });
+    expect(gate.tryAcquire('task:b', 'session-b')).toEqual({ go: false, why: 'queued' });
+    now += PACE_MS;
+    // The continuation names a new session: it is now the one in flight.
+    expect(gate.tryAcquire('task:a', 'session-a2')).toEqual({ go: true });
+    now += PACE_MS;
+    // The old session's thinking frees nothing.
+    gate.noteThinking('session-a');
+    expect(gate.tryAcquire('task:b', 'session-b')).toEqual({ go: false, why: 'queued' });
+    gate.noteThinking('session-a2');
+    expect(gate.tryAcquire('task:b', 'session-b')).toEqual({ go: true });
   });
 
   it('releases nothing while memory reads low, and resumes once it clears the recovery line', () => {
     gate.onSample(windowsSample(1 * GIBIBYTE));
     expect(gate.reading()).toEqual({ low: true, freeBytes: 1 * GIBIBYTE });
-    expect(gate.tryAcquire('nudge:a')).toEqual({ go: false, why: 'memory-low' });
+    expect(gate.tryAcquire('nudge:a', 'session-a')).toEqual({ go: false, why: 'memory-low' });
 
     // Between the threshold and the recovery line: still low (the latch's hysteresis).
     gate.onSample(windowsSample(3 * GIBIBYTE));
-    expect(gate.tryAcquire('nudge:a')).toEqual({ go: false, why: 'memory-low' });
+    expect(gate.tryAcquire('nudge:a', 'session-a')).toEqual({ go: false, why: 'memory-low' });
 
     gate.onSample(windowsSample(8 * GIBIBYTE));
-    expect(gate.tryAcquire('nudge:a')).toEqual({ go: true });
+    expect(gate.tryAcquire('nudge:a', 'session-a')).toEqual({ go: true });
   });
 
   it('never holds on a reading that went stale: a stopped sampler never holds the workflow', () => {
     gate.onSample(windowsSample(1 * GIBIBYTE));
     now += 4 * 60_000;
     expect(gate.reading().low).toBe(false);
-    expect(gate.tryAcquire('nudge:a')).toEqual({ go: true });
+    expect(gate.tryAcquire('nudge:a', 'session-a')).toEqual({ go: true });
   });
 
   it('reports no free-memory figure where the platform reports a level', () => {
@@ -116,29 +141,28 @@ describe('WorkflowMemoryGate', () => {
 
     gate.onSample(macWarn(36));
     expect(gate.reading()).toEqual({ low: false, freeBytes: 36 * GIBIBYTE * 0.36 });
-    expect(gate.tryAcquire('nudge:a')).toEqual({ go: true });
+    expect(gate.tryAcquire('nudge:a', 'session-a')).toEqual({ go: true });
     gate.release('nudge:a');
     now += PACE_MS;
 
     gate.onSample(macWarn(4));
     expect(gate.reading().low).toBe(true);
-    expect(gate.tryAcquire('nudge:b')).toEqual({ go: false, why: 'memory-low' });
+    expect(gate.tryAcquire('nudge:b', 'session-b')).toEqual({ go: false, why: 'memory-low' });
   });
 
   it('drops a waiting key nobody asks for again, so a holder that went away blocks nothing', () => {
-    gate.tryAcquire('nudge:a');
-    gate.begin('nudge:a', 'session-a');
-    gate.tryAcquire('nudge:gone');
+    gate.tryAcquire('nudge:a', 'session-a');
+    gate.tryAcquire('nudge:gone', 'session-gone');
     gate.noteThinking('session-a');
     now += 4 * 60_000;
-    expect(gate.tryAcquire('nudge:b')).toEqual({ go: true });
+    expect(gate.tryAcquire('nudge:b', 'session-b')).toEqual({ go: true });
   });
 
   it('lets a dropped holder out of line and out of flight, keeping the pace', () => {
-    gate.tryAcquire('nudge:a');
+    gate.tryAcquire('nudge:a', 'session-a');
     gate.drop('nudge:a');
-    expect(gate.tryAcquire('nudge:b')).toEqual({ go: false, why: 'queued' });
+    expect(gate.tryAcquire('nudge:b', 'session-b')).toEqual({ go: false, why: 'queued' });
     now += PACE_MS;
-    expect(gate.tryAcquire('nudge:b')).toEqual({ go: true });
+    expect(gate.tryAcquire('nudge:b', 'session-b')).toEqual({ go: true });
   });
 });

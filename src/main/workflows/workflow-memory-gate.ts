@@ -21,7 +21,11 @@ import { createLowMemoryLatch, memoryHeadroom, updateLowMemoryLatch } from '../d
  *   the workflow.
  * - **One at a time.** An item released holds the queue until its turn is
  *   under way (its session went thinking, `noteThinking`), it typed nothing
- *   (`release`), or `TURN_WAIT_MS` passed.
+ *   (`release`), or `TURN_WAIT_MS` passed. The holder names that session when
+ *   it asks, because the agent's prompt hook commits thinking before a
+ *   verified delivery returns. A turn that session starts before the holder
+ *   acts counts too: it is load all the same, and `PACE_MS` still spaces
+ *   the next release.
  * - **Paced.** At most one release every `PACE_MS`, about one sampler tick, so
  *   the next one reads memory with the last one's load on it.
  * - **In order.** First asked, first released. A key nobody has asked for again
@@ -56,7 +60,7 @@ export class WorkflowMemoryGate {
   private lastSampleAt: number | null = null;
   private lastFreeBytes: number | null = null;
   private readonly waiting: Array<{ key: string; lastAskedAt: number }> = [];
-  private inFlight: { key: string; sessionId: string | null; since: number } | null = null;
+  private inFlight: { key: string; sessionId: string; since: number } | null = null;
   private lastReleaseAt: number | null = null;
 
   constructor(private readonly now: () => number = () => Date.now()) {}
@@ -78,10 +82,11 @@ export class WorkflowMemoryGate {
   /**
    * Ask to go now. `go` when memory is fine, nothing released is still
    * settling, the pace allows it, and this key is first in line: the caller
-   * must then act, and `begin` (or `release`) what it did. Otherwise it is in
-   * line, and asks again later.
+   * must then act in `sessionId`, whose next thinking moves the queue on, or
+   * `release` if it typed nothing. Otherwise it is in line, and asks again
+   * later.
    */
-  tryAcquire(key: string): GateDecision {
+  tryAcquire(key: string, sessionId: string): GateDecision {
     const now = this.now();
     this.dropAbandoned(now);
     const queued = this.waiting.find((entry) => entry.key === key);
@@ -97,14 +102,9 @@ export class WorkflowMemoryGate {
     if (!continuing && this.waiting[0]?.key !== key) return { go: false, why: 'queued' };
 
     this.forget(key);
-    this.inFlight = { key, sessionId: null, since: now };
+    this.inFlight = { key, sessionId, since: now };
     this.lastReleaseAt = now;
     return { go: true };
-  }
-
-  /** The released item started its turn in this session; the queue moves on once that session works. */
-  begin(key: string, sessionId: string): void {
-    if (this.inFlight?.key === key) this.inFlight.sessionId = sessionId;
   }
 
   /** A session went thinking: an item waiting on that turn has it under way. */

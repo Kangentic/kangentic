@@ -371,8 +371,11 @@ src/main/workflows/
     percentage deciding at warn. The sampler feeds the gate every 60 s. A reading older than 3
     minutes is not low, so a sampler that stopped holds nothing. One item goes at a time: the next
     waits until the last one's session goes thinking, the last one typed nothing after all, or 3
-    minutes pass. At most one goes every 60 s (`PACE_MS`), about one sampler tick, so the next reads
-    memory with the last one's load on it. The pacing holds even while memory reads fine. A hold for
+    minutes pass. The gate learns that session when it lets the nudge go (`tryAcquire`), because
+    the agent's prompt hook commits thinking before a verified delivery returns. A session named
+    after the delivery would miss that thinking and hold each nudge 3 minutes, not 1. At most one
+    goes every 60 s (`PACE_MS`), about one sampler tick, so the next reads memory with the last
+    one's load on it. The pacing holds even while memory reads fine. A hold for
     memory spends no attempt, and the run log says so once per low spell. A task has one place in
     the queue (`workflowTaskGateKey`). Measured overnight: three nudges sent within four seconds
     started three gates at once, and all three failed on load. A nudge that said to rerun a gate

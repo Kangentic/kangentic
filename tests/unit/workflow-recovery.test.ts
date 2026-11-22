@@ -1257,7 +1257,7 @@ describe('a running workflow task whose turn ends without its step done', () => 
       },
       {
         name: 'the gate is busy with another task\'s nudge',
-        hold: (): void => { expect(workflowMemoryGate.tryAcquire('task:another').go).toBe(true); },
+        hold: (): void => { expect(workflowMemoryGate.tryAcquire('task:another', 'session-another').go).toBe(true); },
         clear: (): void => workflowMemoryGate.release('task:another'),
       },
       {
@@ -1464,6 +1464,28 @@ describe('a running workflow task whose turn ends without its step done', () => 
       expect(deliveriesTo(taskId)).toBe(1);
       expect(runs.listForTask(otherId).filter((run) => (run.type as string) === 'workflow_recovery').map((run) => run.detail))
         .toEqual(['Recovery 1 of 4: asked the agent to carry on.']);
+    });
+
+    // Red before: the attempt told the gate its session only after the
+    // delivery resolved, and a verified delivery resolves after the agent's
+    // prompt hook has committed thinking. The gate missed that thinking and
+    // held the second task for the full turn wait, three minutes, not one.
+    it('frees the queue when the first agent\'s turn starts before its nudge is confirmed', async () => {
+      const otherId = await stallTwoTasksThirtySecondsApart();
+      hoisted.deliverMessageToSession.mockImplementationOnce(async () => {
+        sessionManager.emit('activity', SESSION_ID, 'thinking');
+      });
+      await runPastTheFirstNudge();
+      expect(recoveryRows().map((run) => [run.status, run.detail]))
+        .toEqual([['succeeded', 'Recovery 1 of 4: asked the agent to carry on.']]);
+
+      // Due at 330 seconds: the first went only 30 seconds ago.
+      await wait(30_000);
+      expect(deliveriesTo(otherId)).toBe(0);
+
+      // The look at 390 seconds finds the pace passed, not the three-minute turn wait.
+      await wait(60_000);
+      expect(deliveriesTo(otherId)).toBe(1);
     });
 
     it('keeps the second task\'s nudge behind a first whose turn never starts, until the gate stops waiting for it', async () => {
