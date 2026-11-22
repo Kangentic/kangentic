@@ -1933,6 +1933,20 @@ export interface SessionRecord {
    * agent's own login, which is every session from before accounts.
    */
   account_id?: string | null;
+  /**
+   * Where the session's open turn began in its transcript, as JSON
+   * (`StoredTurnPosition`): written when a turn starts and cleared when its
+   * turn end takes it. A restart that cut the turn off leaves it set, for the
+   * recovery resume to carry. NULL with no open turn. Never the owner's words.
+   */
+  open_turn?: string | null;
+  /**
+   * The turn a restart cut off before its Stop, carried in by the recovery
+   * resume that started this record, as JSON (`CarriedOwnerTurn`). The
+   * session's first turn-end pass takes it, and reads the owner's messages
+   * from that turn's start when its own turn has none. NULL otherwise.
+   */
+  carried_owner_turn?: string | null;
 }
 
 /**

@@ -210,6 +210,13 @@ not overloaded for it: that event fires on every state change, and a Stop commit
   read yet, a fresh spawn, or an agent with no window read) reads the newest reply in the
   transcript instead. See
   [Automation triggers](../automations/triggers.md#on-agent-turn-end).
+- **`'turn-anchor'`** is `SessionManager`'s own event for where a task session's open turn began
+  (`TurnAnchorPayload`: `sessionId`, `taskId`, `projectId`, `anchor`, `turnStartedAt`). It fires when a
+  turn is stamped, when the trail read the turn follows moves its anchor, and with a null anchor when
+  the turn end takes it (a `'seed'` stamp, which has none, also announces null). A quit, kill or exit
+  fires nothing, so a turn cut off keeps its last value. Never for a Command Terminal. The turn-end
+  runner keeps it on the session row (`sessions.open_turn`) so a recovery resume can carry the turn
+  across a restart. See [Resume](../sessions/resume.md).
 - **Which agents have one.** Each adapter's runtime strategy declares `reportsTurnEnd`. True for
   Claude, Codex (its Stop hook), Copilot, Gemini, Antigravity, Qwen, Grok, OpenCode, Goose (its Stop
   hook), Kimi (whose wire protocol emits `turn.ended`) and Cursor (its `stop` hook on a session screen,

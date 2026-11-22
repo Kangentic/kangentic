@@ -25,6 +25,8 @@ sources:
     title: an idle settings restart keeps a recap's waiting message
   - resource: src/main/transition-engine/resume-prompt-delivery.ts
   - resource: src/main/transition-engine/return-recap.ts
+  - resource: src/main/automations/turn-end/carried-owner-turn.ts
+    title: the turn a restart cut off, carried by startup recovery
 ---
 # Resume
 
@@ -41,6 +43,14 @@ which also brings agents back after a pty host loss (`resumeSuspendedSessions`),
 `'recovery'`. Workflow recovery reads it: an agent Kangentic restarted lost the
 background commands it started, so its recovery starts over at once (see
 [Workflow engine](../workflows/workflow-engine.md)).
+Startup recovery also carries the turn the restart cut off. The old record's `open_turn` (where its
+last turn began, kept until a turn end takes it) is copied to the new record's `carried_owner_turn`
+and cleared on the old one (`carryInterruptedTurn`, `src/main/automations/turn-end/carried-owner-turn.ts`).
+A resume that ran no turn hands on what it carried: the old record's own `carried_owner_turn` wins,
+since it began earlier, and the old record's id is appended to its `recordIds`. The new session's first turn end then reads the owner's message
+from there, so a sign-off typed just before a restart still moves the card. Nothing moves at the
+resume itself (see [On agent turn end](../automations/triggers.md#on-agent-turn-end), "A turn a
+restart cut off keeps the owner's message"). A person's Resume carries nothing.
 A transient session emits none. Turn ends themselves arrive as `'turn-ended'`, or as
 `'turn-ended-held'` when the agent's Stop is held by background work (a running workflow task's step
 and a plain idle resume's held messages both act on it), both separate events from `'activity'`; see [Activity event types](../activity/event-types.md#turn-ends-onturnended).

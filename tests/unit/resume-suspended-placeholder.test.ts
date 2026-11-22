@@ -70,6 +70,8 @@ vi.mock('../../src/main/workflows/workflow-home', () => ({
 
 const markRecordSuspendedMock = vi.fn(() => true);
 const retireRecordMock = vi.fn(() => true);
+// The turn a restart cut off, carried to the record a resume writes (carried-owner-turn.ts).
+const carryOpenTurnMock = vi.fn((_fromRecordId: string, _toRecordId: string) => null);
 vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
   markRecordSuspended: (...args: unknown[]) => markRecordSuspendedMock(...args),
   retireRecord: (...args: unknown[]) => retireRecordMock(...args),
@@ -87,6 +89,7 @@ vi.mock('../../src/main/db/repositories/session-repository', () => {
     // The spawn pass's writes after a resume spawns.
     insert = vi.fn();
     updateAppliedSettings = vi.fn();
+    carryOpenTurn = (fromRecordId: string, toRecordId: string) => carryOpenTurnMock(fromRecordId, toRecordId);
   }
   return { SessionRepository: FakeSessionRepository };
 });
@@ -879,6 +882,22 @@ describe('resumeSuspendedSessions: a skipped resume releases its command\'s hold
 
     expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ id: 'prepared-session' }));
     expect(removeHooks).not.toHaveBeenCalled();
+  });
+
+  // A turn the crash cut off before its Stop may hold the owner's sign-off
+  // (kangentic-mobile #160): the resume hands it from the record it replaces to
+  // the one it writes, and the new session's first turn end reads it.
+  //
+  // Red-green: drop the `carryInterruptedTurn` call in resume-suspended.ts and this fails.
+  it('carries the turn the restart cut off from the record it replaces to the one it writes', async () => {
+    carryOpenTurnMock.mockClear();
+    const sessionManager = makeSessionManager();
+    sessionManager.spawn.mockResolvedValue({ id: 'prepared-session', status: 'running' });
+
+    await runResume(sessionManager);
+
+    expect(carryOpenTurnMock).toHaveBeenCalledTimes(1);
+    expect(carryOpenTurnMock).toHaveBeenCalledWith('record-1', 'prepared-session');
   });
 
   // The launch report's command_head tag and the start bound's ownership of the

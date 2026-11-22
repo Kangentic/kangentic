@@ -2242,6 +2242,23 @@ export function runProjectMigrations(db: Database.Database): void {
     db.exec('ALTER TABLE task_moves ADD COLUMN owner_requested INTEGER NOT NULL DEFAULT 0');
   }
 
+  // Migration: where a session's open turn began in its transcript, and the
+  // interrupted turn a recovery resume carried in. A restart that cuts a turn
+  // off before its Stop loses the in-memory anchor, so the next turn end could
+  // not read the owner's message that turn held. `open_turn` is the live turn's
+  // start, cleared at its turn end; `carried_owner_turn` is the one a recovery
+  // resume handed this record, taken by its first turn-end pass. Both JSON
+  // positions, never the owner's words. NULL on every existing row.
+  const sessionTurnColumns = new Set(
+    (db.pragma('table_info(sessions)') as Array<{ name: string }>).map((column) => column.name),
+  );
+  if (!sessionTurnColumns.has('open_turn')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN open_turn TEXT DEFAULT NULL');
+  }
+  if (!sessionTurnColumns.has('carried_owner_turn')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN carried_owner_turn TEXT DEFAULT NULL');
+  }
+
   stripLegacyTextMatchNot(db);
 }
 

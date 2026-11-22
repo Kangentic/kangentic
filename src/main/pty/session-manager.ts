@@ -314,6 +314,23 @@ export interface TurnEndedPayload {
   heldReported?: boolean;
 }
 
+/**
+ * The `'turn-anchor'` event's payload: where a task session's open turn began
+ * in its transcript, or null once its turn end took that (or a fresh spawn's
+ * first turn, which has none). Persisted on the session row so a restart that
+ * cuts the turn off before its Stop can hand the position to the recovery
+ * resume (`carried-owner-turn.ts`). Only a turn start, a read that moves the
+ * anchor, and a turn end announce it: a quit, kill or exit never clears it.
+ */
+export interface TurnAnchorPayload {
+  sessionId: string;
+  taskId: string;
+  projectId: string;
+  anchor: TranscriptAnchor | null;
+  /** When the turn began (epoch ms), or null when `anchor` is null. */
+  turnStartedAt: number | null;
+}
+
 /** How long the board's stop of a task lasts (`SessionManager.setTaskStopped`). */
 export type TaskStop = 'turn' | 'visit';
 
@@ -2441,7 +2458,11 @@ export class SessionManager extends EventEmitter {
     const turn = this.turnTranscriptAnchors.get(sessionId);
     if (turn?.followsReadInFlight) {
       turn.followsReadInFlight = false;
-      turn.anchor = this.sampleTranscriptPosition(sessionId).anchor ?? turn.anchor;
+      const sampledAnchor = this.sampleTranscriptPosition(sessionId).anchor ?? turn.anchor;
+      const anchorChanged = sampledAnchor?.agentSessionId !== turn.anchor?.agentSessionId
+        || sampledAnchor?.byteOffset !== turn.anchor?.byteOffset;
+      turn.anchor = sampledAnchor;
+      if (anchorChanged) this.announceTurnAnchor(sessionId, sampledAnchor, turn.turnStartedAt);
     }
   }
 
@@ -2490,6 +2511,7 @@ export class SessionManager extends EventEmitter {
     switch (cause) {
       case 'seed':
         this.turnTranscriptAnchors.set(sessionId, { turnStartedAt, anchor: null, followsReadInFlight: false });
+        this.announceTurnAnchor(sessionId, null, null);
         return;
       case 'idle': {
         const copy = this.idleTranscriptAnchors.get(sessionId);
@@ -2505,16 +2527,42 @@ export class SessionManager extends EventEmitter {
     }
     const followsReadInFlight = mayStillMove && this.trailReadInFlight(sessionId);
     this.turnTranscriptAnchors.set(sessionId, { turnStartedAt, anchor, followsReadInFlight });
+    this.announceTurnAnchor(sessionId, anchor, turnStartedAt);
+  }
+
+  /**
+   * Tell listeners where a task session's open turn began (`'turn-anchor'`).
+   * Never for a Command Terminal, which runs no turn-end rows. A listener that
+   * throws must not unwind the engine's commit this runs inside.
+   */
+  private announceTurnAnchor(sessionId: string, anchor: TranscriptAnchor | null, turnStartedAt: number | null): void {
+    const session = this.registry.get(sessionId);
+    if (!session || session.transient || !session.taskId) return;
+    const payload: TurnAnchorPayload = {
+      sessionId,
+      taskId: session.taskId,
+      projectId: session.projectId,
+      anchor,
+      turnStartedAt: anchor ? turnStartedAt : null,
+    };
+    try {
+      this.emit('turn-anchor', payload);
+    } catch (error) {
+      // report-ok: today's one listener defers `recordOpenTurn`, which reports its own failures; this keeps a later listener's throw out of the engine's commit.
+      console.error(`[SESSION] turn-anchor listener threw for ${sessionId.slice(0, 8)}:`, error);
+    }
   }
 
   /**
    * The anchor of the turn that began at `turnStartedAt`, consumed. An entry
    * stored under another stamp belongs to another turn, and reading from it
-   * would judge that turn's reply, so this turn end gets none.
+   * would judge that turn's reply, so this turn end gets none. A held entry's
+   * turn is no longer open either way, so its persisted start is cleared.
    */
   private takeTurnAnchor(sessionId: string, turnStartedAt: number | null): TranscriptAnchor | null {
     const stored = this.turnTranscriptAnchors.get(sessionId);
     this.turnTranscriptAnchors.delete(sessionId);
+    if (stored) this.announceTurnAnchor(sessionId, null, null);
     return stored && stored.turnStartedAt === turnStartedAt ? stored.anchor : null;
   }
 

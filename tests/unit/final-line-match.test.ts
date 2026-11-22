@@ -488,6 +488,29 @@ describe('matchUserMessage', () => {
         .toEqual({ met: true, reason: 'Your message 1 of 2 in this turn matched.' });
     });
   });
+
+  // A read carried across a restart (`carried-owner-turn.ts`) decides the same
+  // way, and its reasons say the message came from the turn the restart cut off.
+  describe('a read that reached back to a turn a restart cut off', () => {
+    const carried = (messages: string[]) => ({ readable: true as const, messages, carriedAcrossRestart: true });
+
+    it('names the cut-off turn in every reason', () => {
+      expect(matchUserMessage('*signed off*', carried(['signed off'])))
+        .toEqual({ met: true, reason: 'Your message in the turn a restart cut off matched.' });
+      expect(matchUserMessage('*signed off*', carried(['looks good'])))
+        .toEqual({ met: false, reason: 'Your message in the turn a restart cut off matched no pattern.' });
+      expect(matchUserMessage('*signed off*\n!*not signed off*', carried(['not signed off'])))
+        .toEqual({ met: false, reason: 'Your message in the turn a restart cut off matched a ! pattern.' });
+      expect(matchUserMessage('*signed off*', carried([])))
+        .toEqual({ met: false, reason: 'No message from you in this turn or the one a restart cut off.' });
+      expect(matchUserMessage('*signed off*', carried(['signed off', 'a question'])))
+        .toEqual({ met: true, reason: 'Your message 1 of 2 since the turn a restart cut off matched.' });
+      expect(matchUserMessage('*signed off*\n!*not signed off*', carried(['signed off', 'not signed off'])))
+        .toEqual({ met: false, reason: 'Your message 2 of 2 since the turn a restart cut off matched a ! pattern.' });
+      expect(matchUserMessage('*signed off*', carried(['one', 'two'])))
+        .toEqual({ met: false, reason: 'None of your 2 messages since the turn a restart cut off matched a pattern.' });
+    });
+  });
 });
 
 describe('textMatchVerdict', () => {

@@ -3,7 +3,7 @@ import { automationMoveTargetName, canColumnRun, canTaskRunAutomations } from '.
 import { englishText } from '../../../shared/i18n/english';
 import type { ColumnAutomation, Swimlane, Task, TaskMoveRecordOrigin } from '../../../shared/types';
 import type { IpcContext } from '../../ipc/ipc-context';
-import type { SessionResumedPayload, TurnEndedPayload } from '../../pty/session-manager';
+import type { SessionResumedPayload, TurnAnchorPayload, TurnEndedPayload } from '../../pty/session-manager';
 import { isTurnSettled } from '../../pty/turn-settled';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { getOpenProjectDb, getProjectDb } from '../../db/database';
@@ -54,7 +54,8 @@ import { refreshStoppedMark } from '../stopped-mark';
 import { judgeColumnStop, NEEDS_A_PERSON_CHECK_ID, NEEDS_A_PERSON_CONDITION } from './column-stop';
 import { deliverMessageToSession } from './deliver-message';
 import { moveTaskFromRow } from './move-from-row';
-import { readSessionFinalReply, readUserMessagesInTurn, sessionReportsUserMessages, tryReadSessionFinalReply } from './final-reply-reader';
+import { readSessionFinalReply, sessionReportsUserMessages, tryReadSessionFinalReply } from './final-reply-reader';
+import { readUserMessagesWithCarriedTurn, recordOpenTurn, takeCarriedOwnerTurn } from './carried-owner-turn';
 import { forgetTypedMessageSession } from './typed-message-ledger';
 import { trackTurnEndGroup } from './turn-end-passes';
 import { isSessionInOwnCall } from '../../ipc/handlers/own-call-turn-wait';
@@ -293,6 +294,12 @@ export function registerTurnEndAutomations(context: IpcContext): void {
     setImmediate(() => {
       void schedulePass(context, { payload, catchUp: false, held: true, ...marks });
     });
+  });
+  // Where a task session's open turn began, kept on its row so a restart that
+  // cuts the turn off can hand it to the recovery resume. Off the engine's
+  // commit stack; one queue, so a turn's start and its end land in order.
+  context.sessionManager.on('turn-anchor', (payload: TurnAnchorPayload) => {
+    setImmediate(() => recordOpenTurn(payload));
   });
   // Off the spawn's stack too: the resume writes the task's session id after
   // the spawn returns.
@@ -787,11 +794,19 @@ async function runPass(context: IpcContext, request: PassRequest): Promise<void>
       replyRead ??= readAgentReply(payload, sessionRepo);
       return replyRead;
     };
+    // The turn a restart cut off before its Stop, which a recovery resume
+    // handed this session (`carried-owner-turn.ts`). Taken by the first pass
+    // that gets this far, whatever it decides, so it counts once.
+    const carriedTurn = takeCarriedOwnerTurn(sessionRepo, payload.sessionId);
     // The user's messages in the turn, read once and only when a row needs
-    // it (#1078). Fails closed: unreadable unless read exactly.
+    // it (#1078). Fails closed: unreadable unless read exactly. With a carried
+    // turn and no message of the owner's in this one, read from where the
+    // cut-off turn began.
     let userMessageRead: Promise<UserMessageRead> | null = null;
     const readUserMessage = (): Promise<UserMessageRead> => {
-      userMessageRead ??= readUserMessagesInTurn(payload, sessionRepo, getOpenProjectDb(payload.projectId));
+      userMessageRead ??= readUserMessagesWithCarriedTurn(
+        payload, sessionRepo, getOpenProjectDb(payload.projectId), carriedTurn, visitStartedAt,
+      );
       return userMessageRead;
     };
 

@@ -119,18 +119,22 @@ export function sessionReportsUserMessages(sessionId: string, sessionRepo: Sessi
  * read failed or answered null, or the session's typed record is incomplete.
  * The row then does not run. The typed record is read under the record's own
  * id, the id Kangentic recorded under, even when the lookup matched the agent's.
+ *
+ * `earlierRecordIds` widen that filter to the records before this one, for a
+ * read from a turn a restart cut off (`carried-owner-turn.ts`).
  */
 export async function readUserMessagesInTurn(
   session: SessionReadInput,
   sessionRepo: SessionRepository,
   projectDb: Database.Database | null,
   timeoutMs: number = AGENT_REPLY_TIMEOUT_MS,
+  earlierRecordIds: readonly string[] = [],
 ): Promise<UserMessageRead> {
   if ((session.transcriptAnchor ?? null) === null) return { readable: false };
   try {
     const read = await callSessionTranscript('transcript.turnUserMessages', session, sessionRepo, timeoutMs);
     if (read === null) return { readable: false };
-    return personMessagesInTurn(projectDb, read.recordId, read.result ?? null);
+    return personMessagesInTurn(projectDb, read.recordId, read.result ?? null, earlierRecordIds);
   } catch (error) {
     console.warn(`[automations] Could not read the user's messages for ${session.sessionId.slice(0, 8)}:`, error);
     return { readable: false };

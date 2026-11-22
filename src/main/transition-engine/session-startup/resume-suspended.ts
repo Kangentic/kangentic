@@ -12,6 +12,7 @@ import { ConfigManager } from '../../config/config-manager';
 import type { BoardProfile, ConversationExpiredNotice, SessionRecord, StartBlockedReason, SuspendedBy, Task } from '../../../shared/types';
 import { createExpiredRecapSources } from '../expired-recap-sources';
 import { markRecapSession } from '../../automations/turn-end/recap-turns';
+import { carryInterruptedTurn } from '../../automations/turn-end/carried-owner-turn';
 import { NEVER_AUTO_SPAWN_ROLES } from '../../../shared/types';
 import { RESUME_HIDDEN_ROLES } from '../../../shared/session-resume-eligibility';
 import { isHeldPause } from '../../../shared/held-pause';
@@ -748,6 +749,10 @@ export async function resumeSuspendedSessions(
           start_head_sha: input.record.start_head_sha ?? null,
           account_id: input.accountId ?? null,
         });
+        // A turn the restart cut off before its Stop still has the owner's
+        // message in it: the new record's first turn end reads from where it
+        // began (`carried-owner-turn.ts`). Never moves anything here.
+        carryInterruptedTurn(sessionRepo, input.record.id, newSession.id);
         // Record what this resume applied (the `--model` / `--effort` flags land
         // on every resume) so a later column move diffs against the true value.
         sessionRepo.updateAppliedSettings(newSession.id, {

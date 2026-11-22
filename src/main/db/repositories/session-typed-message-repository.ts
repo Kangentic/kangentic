@@ -67,4 +67,20 @@ export class SessionTypedMessageRepository {
       .all(sessionId) as Array<{ text_hash: string }>;
     return new Set(rows.map((row) => row.text_hash));
   }
+
+  /**
+   * Every recorded key across several sessions (a read that spans a recovery
+   * resume's earlier records), or null when any of them has no `sessions` row:
+   * its record went with it, so what Kangentic typed there is unaccounted for.
+   */
+  keysForSessions(sessionIds: readonly string[]): Set<string> | null {
+    const sessionRow = this.db.prepare('SELECT id FROM sessions WHERE id = ?');
+    const typedRows = this.db.prepare('SELECT text_hash FROM session_typed_messages WHERE session_id = ?');
+    const keys = new Set<string>();
+    for (const sessionId of sessionIds) {
+      if (!sessionRow.get(sessionId)) return null;
+      for (const row of typedRows.all(sessionId) as Array<{ text_hash: string }>) keys.add(row.text_hash);
+    }
+    return keys;
+  }
 }
