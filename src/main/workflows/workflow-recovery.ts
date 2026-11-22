@@ -801,7 +801,9 @@ async function attempt(context: IpcContext, entry: RecoveryEntry, signal: AbortS
   // Its turn in the workflow's memory gate: one load-making action at a time,
   // and none while memory reads low. A hold for memory spends nothing.
   const gateKey = workflowTaskGateKey(entry.taskId);
-  const gate = workflowMemoryGate.tryAcquire(gateKey);
+  // The session goes in at acquire: the nudged turn goes thinking before a
+  // verified delivery returns, and that thinking moves the queue on.
+  const gate = workflowMemoryGate.tryAcquire(gateKey, sessionId);
   if (!gate.go) {
     if (gate.why === 'memory-low' && !entry.memoryHoldNoted) {
       entry.memoryHoldNoted = true;
@@ -864,8 +866,6 @@ async function attempt(context: IpcContext, entry: RecoveryEntry, signal: AbortS
     armNext(context, entry);
     return;
   }
-  // The queue moves on once this turn is under way (`noteWorkflowSessionActivity`).
-  workflowMemoryGate.begin(gateKey, sessionId);
   // Only now: a working wait that ran out stays run out through every hold
   // above, so the next try nudges instead of waiting another hour.
   endWorkingWait(entry);
