@@ -25,7 +25,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, gotoVite } from './helpers';
+import { focusByKeyboard, waitForViteReady, gotoVite } from './helpers';
 
 // Each describe is isolated per worker (separate process; per-test page launch / goto reset),
 // so the file's tests can fan out across the UI workers safely.
@@ -249,6 +249,41 @@ test.describe('Archived task context menu', () => {
       await confirmButton.click();
 
       // tasks.delete must have been invoked with our task ID.
+      await expect.poll(() => readTaskDeleteCalls(page)).toContain(TASK_ID);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('DoneSwimlane preview: the card holds no button, and Shift+F10 reaches Delete from the keyboard', async () => {
+    const { browser, page } = await launchWithArchivedTask();
+    try {
+      const cardSelector = '[data-swimlane-name="Done"] [data-task-id="' + TASK_ID + '"]';
+      const compactCard = page.locator(cardSelector);
+      await compactCard.waitFor({ state: 'visible', timeout: 10000 });
+
+      // No hover delete (#1158): Delete lives in the card's menu, so the
+      // title row is the board card's row and nothing in it takes a click.
+      await compactCard.hover();
+      await expect(compactCard.locator('button')).toHaveCount(0);
+
+      // Tab-placed focus, the way a keyboard user arrives.
+      await focusByKeyboard(page, cardSelector);
+
+      await page.keyboard.press('Shift+F10');
+      const deleteItem = page.locator('[data-testid="archived-context-delete-task"]');
+      await expect(deleteItem).toBeVisible({ timeout: 3000 });
+
+      // Tab walks the menu to Delete. Bounded: one stop per menu row.
+      const deleteIsFocused = () => deleteItem.evaluate((element) => element === document.activeElement);
+      for (let step = 0; step < 20 && !(await deleteIsFocused()); step++) {
+        await page.keyboard.press('Tab');
+      }
+      expect(await deleteIsFocused()).toBe(true);
+
+      await page.keyboard.press('Enter');
+      await expect(page.getByText('Delete completed task')).toBeVisible({ timeout: 3000 });
+      await page.locator('button:has-text("Delete")').last().click();
       await expect.poll(() => readTaskDeleteCalls(page)).toContain(TASK_ID);
     } finally {
       await browser.close();

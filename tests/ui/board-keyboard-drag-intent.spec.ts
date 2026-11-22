@@ -27,7 +27,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { collectPageErrors, settleDndKitKeyboardSensor, waitForViteReady, gotoVite } from './helpers';
+import { collectPageErrors, focusByKeyboard, settleDndKitKeyboardSensor, waitForViteReady, gotoVite } from './helpers';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -40,16 +40,18 @@ const CARD_TASK_ID = `task-kb-intent-card-${RUN_SUFFIX}`;
 const CARD_TITLE = 'Keyboard Intent Card';
 const LIVE_TASK_ID = `task-kb-intent-live-${RUN_SUFFIX}`;
 const LIVE_SESSION_ID = `sess-kb-intent-${RUN_SUFFIX}`;
-const ARCHIVED_TASK_ID = `task-kb-intent-archived-${RUN_SUFFIX}`;
+const PR_TASK_ID = `task-kb-intent-pr-${RUN_SUFFIX}`;
+const PR_URL = 'https://github.com/example/kangentic/pull/12';
+const PR_PILL = `[data-task-id="${PR_TASK_ID}"] [data-testid="task-card-pr-link"]`;
 
 const LANE_CARD = `[data-testid="swimlane"] [data-task-id="${CARD_TASK_ID}"]`;
 const OVERLAY = '.drag-overlay';
 const TERMINAL_TEXTAREA = '[data-testid="terminal-session-pane"] .xterm-helper-textarea';
 const PLANNING_COLUMN_GRIP = '[data-swimlane-name="Planning"] [data-testid="column-drag-handle"]';
 
-/** The board with one To Do card, one archived task in the Done lane's preview
- *  list (a compact card with a focusable delete button), and, when asked, a
- *  second task whose running session mounts a terminal in the bottom panel. */
+/** The board with one To Do card, a Code Review card with a pull request (its
+ *  PR pill is a focusable button inside the sortable node), and, when asked, a
+ *  task whose running session mounts a terminal in the bottom panel. */
 function buildPreConfig(options: { withLiveSession: boolean }): string {
   return `
     window.__mockPreConfigure(function (state) {
@@ -91,21 +93,22 @@ function buildPreConfig(options: { withLiveSession: boolean }): string {
         updated_at: ts,
       });
 
-      state.archivedTasks.push({
-        id: '${ARCHIVED_TASK_ID}',
+      state.tasks.push({
+        id: '${PR_TASK_ID}',
         display_id: 3,
-        title: 'Archived Intent Card',
+        title: 'Pull Request Intent Card',
         description: '',
-        swimlane_id: laneIds['Done'],
+        swimlane_id: laneIds['Code Review'],
         position: 0,
         agent: null,
         session_id: null,
         worktree_path: null,
         branch_name: null,
-        pr_number: null,
-        pr_url: null,
+        pr_number: 12,
+        pr_url: '${PR_URL}',
+        pr_state: 'open',
         base_branch: null,
-        archived_at: ts,
+        archived_at: null,
         created_at: ts,
         updated_at: ts,
       });
@@ -171,28 +174,8 @@ async function focusedTaskId(page: Page): Promise<string | null> {
   return page.evaluate(() => document.activeElement?.getAttribute('data-task-id') ?? null);
 }
 
-/** Put focus on `selector` the way a keyboard user does: the LAST focus move is
- *  Tab's own default action. A script `focus()` alone is pointer-or-script
- *  placed by the sensor's rule, so Shift+Tab steps off the element and Tab
- *  steps back on. Every element this spec targets has a previous Tab stop (a
- *  column header control, or the card before it).
- *
- *  The placement is retried as ONE unit. A late focus move from elsewhere (a
- *  terminal's arrival focus landing after the spec saw it settle, which a slow
- *  runner stretches) can take focus between the Shift+Tab and the Tab, so the Tab
- *  goes to the terminal and the target never regains focus. Retrying only the
- *  last poll cannot recover from that; redoing the whole sequence does, and a
- *  placement that never works still fails once the budget is spent. */
-async function focusByKeyboard(page: Page, selector: string): Promise<void> {
-  const isFocused = () => page.locator(selector).evaluate((element) => element === document.activeElement);
-  await expect(async () => {
-    await page.locator(selector).evaluate((element) => (element as HTMLElement).focus());
-    await page.keyboard.press('Shift+Tab');
-    await expect.poll(isFocused, { timeout: 2000 }).toBe(false);
-    await page.keyboard.press('Tab');
-    await expect.poll(isFocused, { timeout: 2000 }).toBe(true);
-  }).toPass({ timeout: 15000 });
-}
+// Every element this spec puts focus on with `focusByKeyboard` has a previous
+// Tab stop (a column header control, or the card before it).
 
 async function focusCardByKeyboard(page: Page): Promise<void> {
   await focusByKeyboard(page, LANE_CARD);
@@ -327,18 +310,18 @@ test('focus entering a terminal cancels a keyboard drag, and the terminal keeps 
   }
 });
 
-test('a focusable child of a card keeps its key: Space on the delete button never lifts the card', async () => {
+test('a focusable child of a card keeps its key: Space on the PR pill never lifts the card', async () => {
   const { browser, page } = await launchWithState(buildPreConfig({ withLiveSession: false }));
   try {
-    // The Done lane's preview list renders the archived task as a compact card
-    // whose delete button is a real <button> inside the sortable node. With the
+    // The card's PR pill is a real <button> inside the sortable node. With the
     // stock activator, Space here started a drag and prevented the button.
-    const deleteButton = `[data-swimlane-name="Done"] [data-task-id="${ARCHIVED_TASK_ID}"] button`;
-    await page.locator(deleteButton).waitFor({ state: 'attached', timeout: 10000 });
-    await focusByKeyboard(page, deleteButton);
+    await page.locator(PR_PILL).waitFor({ state: 'visible', timeout: 10000 });
+    await focusByKeyboard(page, PR_PILL);
 
     await page.keyboard.press('Space');
-    await expect(page.getByText('Delete completed task')).toBeVisible({ timeout: 3000 });
+    // The pill's own action ran: a plain activation opens the default browser.
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __openedExternalUrls?: string[] }).__openedExternalUrls ?? []))
+      .toContain(PR_URL);
     await expectNoPickup(page);
   } finally {
     await browser.close();

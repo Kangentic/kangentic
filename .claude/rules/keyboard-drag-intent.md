@@ -97,7 +97,7 @@ field of the same dialog drops it.
   card so the mouse leaves it focused, then presses Space and Enter: no `.drag-overlay`. It also
   pins that Tab-placed focus still picks up, that Escape and Space end that drag, that a pointer
   press anywhere cancels it, that a script focus into a terminal cancels it and the terminal keeps
-  its keys, that Space on a card's delete button opens the delete confirm and lifts nothing, that
+  its keys, that Space on a card's PR pill opens the pull request and lifts nothing, that
   ArrowRight highlights the next column and not the source lane, that a column grip lifts its
   column from Tab-placed focus only, and that Escape cancels a lifted Board Manager row while the
   Board Manager stays open and the next Escape closes it. Four more cases pin what the sensor

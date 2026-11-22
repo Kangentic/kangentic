@@ -759,19 +759,21 @@ function TaskCardFooter({ view, idleFooter, divider }: { view: TaskCardViewModel
 
 /**
  * The Done column's compact card content (the completed list), inside the
- * host's root. `trailing` is the host's own row control (the board's delete).
+ * host's root. Its title row is the full card's row (#1158): the title takes
+ * the width, and the priority and #N sit at the right edge. It holds no
+ * control: Delete is in the card's menu, which Shift+F10 and the Menu key
+ * also open.
  */
-export function TaskCardCompactBody({ task, view, trailing }: { task: Task; view: TaskCardViewModel; trailing?: React.ReactNode }) {
+export function TaskCardCompactBody({ task, view }: { task: Task; view: TaskCardViewModel }) {
   const { shownTrail, trailMode } = view;
   return (
     <>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1.5">
         <Tooltip label={task.title}>
-          <span className="text-sm text-fg-tertiary truncate flex-1" data-testid="compact-title">{task.title}</span>
+          <span className="text-sm text-fg-tertiary truncate flex-1 min-w-0" data-testid="compact-title">{task.title}</span>
         </Tooltip>
         {view.shownPriority !== 0 && <PriorityBadge priority={view.shownPriority} variant="inline" />}
         <DisplayIdBadge task={task} view={view} />
-        {trailing}
       </div>
       {/* This card is dimmer overall, so its trail keeps the `text-fg-faint`
           one step above its `text-fg-disabled` description rather than the
