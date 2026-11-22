@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { EmptyUsageReadError, IdentityReadError } from '../../src/main/accounts/account-support';
+import { EmptyUsageReadError, IdentityReadError, UnreadableUsageError } from '../../src/main/accounts/account-support';
 
 const runClaudeCli = vi.fn<(cliPath: string, args: readonly string[], timeoutMs: number, extraEnv?: Record<string, string>) => Promise<string>>();
 vi.mock('../../src/main/agent/adapters/claude/cli-run', () => ({ runClaudeCli }));
@@ -211,5 +211,22 @@ describe('CLAUDE_ACCOUNT_SUPPORT.readIdleUsage', () => {
   it('names a fresh cache with no window in it, which used to replace good windows with none', async () => {
     writeState(cachedUsage(Date.now(), { seven_day: null, five_hour: null }));
     expect(await emptyReason()).toBe('no-windows');
+  });
+
+  // Sentry DESKTOP-4E on 0.61.0: a `no-windows` that could be a plan with every window null, or a
+  // Claude Code release that renamed the fields. The second is a shape the adapter does not know.
+  it('throws unreadable with the keys it found for a cache that holds none of the known windows', async () => {
+    writeState(cachedUsage(Date.now(), { weekly: SEVEN_DAY, limits: [] }));
+    const failure = await CLAUDE_ACCOUNT_SUPPORT.readIdleUsage!('claude', accountFolder).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(UnreadableUsageError);
+    expect((failure as UnreadableUsageError).keys).toBe('limits,weekly');
+  });
+
+  // Deliberate: an empty record names no window either, so it is a shape the adapter does not know.
+  it('throws unreadable with no keys for an empty utilization record', async () => {
+    writeState(cachedUsage(Date.now(), {}));
+    const failure = await CLAUDE_ACCOUNT_SUPPORT.readIdleUsage!('claude', accountFolder).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(UnreadableUsageError);
+    expect((failure as UnreadableUsageError).keys).toBe('');
   });
 });

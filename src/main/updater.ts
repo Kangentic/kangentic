@@ -11,7 +11,7 @@ import { reportHandledError } from './analytics/error-reporting';
 import { errorCodeOf, errorNameOf, firstFrameOf, markReported } from './analytics/handled-report';
 import { translateText } from './i18n/main-i18n';
 import { normalizeReleaseNotes } from './updater-release-notes';
-import { execFileAsync } from './utility-process/off-main-exec';
+import { execFileAsync, execRunFailureOf, type ExecFailureKind } from './utility-process/off-main-exec';
 import {
   bundlePathFromExecutable,
   readRunningAppSigning,
@@ -403,7 +403,7 @@ async function handleSignatureRequirement(error: Error): Promise<void> {
  * wait on one probe. Cleared once it settles, because a user can add a sudoers
  * rule mid-run, and a later failure deserves a fresh answer.
  */
-let sudoProbeInFlight: Promise<SudoElevation> | null = null;
+let sudoProbeInFlight: Promise<SudoProbeAnswer> | null = null;
 
 /**
  * Tell the user and drop the report when the install's bare-sudo fallback could
@@ -411,18 +411,23 @@ let sudoProbeInFlight: Promise<SudoElevation> | null = null;
  *
  * `reportStructuralFailure` is the handler's own reporting tail, so a host where
  * sudo works, whose exit 1 came from the package manager, keeps the handler's
- * latch and dedupe.
+ * latch and dedupe. The report says what the probe answered (`sudo_probe`) and,
+ * when it got no answer, how it failed (`sudo_probe_failure`).
  */
 async function handleSudoFallbackFailure(
   error: Error,
   errorPreview: string,
-  reportStructuralFailure: (failure: Error) => void,
+  reportStructuralFailure: (failure: Error, extraTags?: Record<string, string>) => void,
 ): Promise<void> {
   sudoProbeInFlight ??= probeSudoElevation().finally(() => {
     sudoProbeInFlight = null;
   });
-  if (await sudoProbeInFlight !== 'cannot-elevate') {
-    reportStructuralFailure(error);
+  const answer = await sudoProbeInFlight;
+  if (answer.elevation !== 'cannot-elevate') {
+    reportStructuralFailure(error, {
+      sudo_probe: answer.elevation,
+      ...(answer.failure ? { sudo_probe_failure: answer.failure } : {}),
+    });
     return;
   }
   console.log('[UPDATER] Counting but not reporting a sudo fallback that cannot prompt:',
@@ -484,6 +489,18 @@ const SUDO_PROBE_TIMEOUT_MS = 5_000;
 /** What `sudo -n true` says about whether the install's sudo could have run. */
 export type SudoElevation = 'cannot-elevate' | 'can-elevate' | 'unknown';
 
+/**
+ * The probe's answer, and for `unknown` how the probe failed, as
+ * `execRunFailureOf` reads it. Both go on the report as tags, because DESKTOP-44
+ * came from a v0.60.0 build with this gate and could not say which answer let
+ * it through.
+ */
+export interface SudoProbeAnswer {
+  elevation: SudoElevation;
+  /** Only for `unknown`. */
+  failure: ExecFailureKind | null;
+}
+
 /** Runs `sudo -n true`. Resolves on exit 0 and rejects as execFile does otherwise. */
 export type SudoProbe = () => Promise<unknown>;
 
@@ -498,19 +515,20 @@ const runSudoNonInteractiveProbe: SudoProbe = () =>
  * InteractionRequired error, so any non-zero exit means the install's sudo could
  * not have prompted either. A passwordless or cached sudo runs `true` and exits
  * 0, and then the install's exit 1 came from the package manager, which is a
- * real failure. A timeout, a kill, or a spawn error answers neither question,
- * and the tie goes to reporting.
+ * real failure. A timeout, a kill, a spawn error or a pty host that gave no
+ * answer says neither, and the tie goes to reporting. The rejection is read
+ * once, by `execRunFailureOf`, and its kind is handed back for the report.
  *
  * Runs through execFileAsync, so the spawn happens in the pty host, not on main.
  */
-export async function probeSudoElevation(probe: SudoProbe = runSudoNonInteractiveProbe): Promise<SudoElevation> {
+export async function probeSudoElevation(probe: SudoProbe = runSudoNonInteractiveProbe): Promise<SudoProbeAnswer> {
   try {
     await probe();
-    return 'can-elevate';
+    return { elevation: 'can-elevate', failure: null };
   } catch (probeError) { // report-ok: a failed `sudo -n` is the answer this probe asks for, not a defect
-    const failure = probeError as { code?: unknown; killed?: unknown } | null | undefined;
-    if (typeof failure?.code === 'number' && failure.code !== 0 && failure.killed !== true) return 'cannot-elevate';
-    return 'unknown';
+    const runFailure = execRunFailureOf(probeError);
+    if (runFailure.kind === 'exit_code' && runFailure.exitCode !== 0) return { elevation: 'cannot-elevate', failure: null };
+    return { elevation: 'unknown', failure: runFailure.kind };
   }
 }
 
@@ -844,15 +862,16 @@ export function initUpdater(mainWindow: BrowserWindow): void {
   // cause is one issue whatever path hit it. A failure with no code has nothing
   // to key on but where it was thrown: it latches on its first frame too, and
   // Sentry groups it by stack, or every code-less failure after the first would
-  // be dropped as a repeat of it.
-  const reportStructuralFailure = (error: Error): void => {
+  // be dropped as a repeat of it. `extraTags` are fixed words a branch adds, such
+  // as the sudo probe's answer; they never change the latch key or fingerprint.
+  const reportStructuralFailure = (error: Error, extraTags: Record<string, string> = {}): void => {
     const code = errorCodeOf(error);
     const name = errorNameOf(error);
     const firstFrame = firstFrameOf(error);
     const latchKey = code ? `${name}:${code}` : `${name}:none:${firstFrame}`;
     if (reportedUpdaterErrors.has(latchKey)) return;
     reportedUpdaterErrors.add(latchKey);
-    reportHandledError(withoutUrlQueries(error), { source: 'updater' }, {}, code ? ['updater', name, code] : undefined);
+    reportHandledError(withoutUrlQueries(error), { source: 'updater', ...extraTags }, {}, code ? ['updater', name, code] : undefined);
     markReported(error);
   };
 
@@ -980,8 +999,9 @@ export function initUpdater(mainWindow: BrowserWindow): void {
     // being asked, which repeats on every click and is not ours to fix: counted,
     // not filed, and the user hears about it. But a passwordless sudo exits 1
     // when the package manager under it fails, which is ours, so `sudo -n true`
-    // decides, off main, and a host where it succeeds reports as below. Same
-    // position as the gates above.
+    // decides, off main, and a host where it succeeds, or where the probe gets
+    // no answer, reports as below with the probe's answer as `sudo_probe` (and
+    // `sudo_probe_failure` for no answer). Same position as the gates above.
     if (isSudoFallbackFailure(error)) {
       handleSudoFallbackFailure(error, errorPreview, reportStructuralFailure).catch((handlingError: unknown) => {
         // The probe never rejects, so this is the toast or the reporting tail

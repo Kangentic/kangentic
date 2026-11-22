@@ -558,7 +558,9 @@ export class AccountService {
    * A usage read that gave no windows: the account keeps its last values, and the local log says
    * why each time the reason changes, so a read that keeps failing is one line, not one per pass.
    * Every reason is reported at once but a failed CLI run, which waits for the next read
-   * (`reportRepeatedRunFailure`).
+   * (`reportRepeatedRunFailure`). A `no-windows` read carries the CLI version as a tag: Sentry
+   * DESKTOP-4E had none, so a plan whose windows are all null could not be told from a CLI
+   * release that changed what it writes.
    */
   private async noteEmptyUsageRead(account: AgentAccount, reason: EmptyUsageReadReason, failure: EmptyUsageReadError | null = null): Promise<void> {
     if (this.emptyUsageReasons.get(account.id) !== reason) {
@@ -571,7 +573,10 @@ export class AccountService {
     }
     // The run itself worked, so a failed run before it is not one of a row.
     this.consecutiveRunFailures.delete(account.id);
-    this.reportProblem('usage-read-empty', account.agent, { kind: account.kind, reason });
+    const tags: AccountProblemTags = reason === 'no-windows'
+      ? { agent_cli_version: cliVersionTag(await this.cliVersionOf(account.agent)) }
+      : {};
+    this.reportProblem('usage-read-empty', account.agent, { kind: account.kind, reason }, undefined, tags);
   }
 
   /**

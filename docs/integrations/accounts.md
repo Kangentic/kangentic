@@ -337,7 +337,11 @@ A read that gives no windows keeps the last values and its read time, and is log
 (`usage-read-empty`) with why: the run failed, the state file or its cache was missing, the cache
 was older than 10 minutes, it held no window, or the adapter returned no answer at all
 (`no-answer`). An empty list counts too, since storing it would wipe the windows and still mark
-the reading fresh. The local log says it again only when the reason changes.
+the reading fresh. The local log says it again only when the reason changes. A Claude cache whose
+windows are all null (Ultra has no 5h window) is `no-windows`. One whose `utilization` names none
+of the windows the reader knows is `usage-read-unreadable` instead, with its keys, and so is one
+with no `utilization` record at all, with the cache's keys. Either is a Claude Code release renaming
+the fields, which would empty every Claude account's reading.
 
 A failed run (`run-failed`) is reported from the second read in a row that fails for the same
 account. One failed run during a network drop is not a defect. A flag the CLI does not know
@@ -672,8 +676,8 @@ run, tagged with the agent and the problem, and grouped as one issue per agent a
 | `session-not-signed-in` | A session on an account read as signed in started signed out. Unproven agents only. |
 | `turn-failed-after-move` | A turn failed within ten minutes of its session being moved to another account. |
 | `conversation-refused` | A turn failed with the adapter's words for a conversation tied to another account (`isConversationRefusal`). |
-| `usage-read-unreadable` | The CLI answered a usage read in a shape the adapter does not know. |
-| `usage-read-empty` | A usage read gave no windows, with the account's kind and a fixed reason (`run-failed`, `cache-missing`, `cache-stale`, `no-windows`, `no-answer`). `run-failed` is sent from the second failed run in a row, with the tags `run_failure`, `run_exit` and `agent_cli_version`. |
+| `usage-read-unreadable` | The CLI answered a usage read in a shape the adapter does not know, with the answer's field names (`keys`). For Claude, a fresh cache whose `utilization` names none of the known windows, or is missing or not a record. |
+| `usage-read-empty` | A usage read gave no windows, with the account's kind and a fixed reason (`run-failed`, `cache-missing`, `cache-stale`, `no-windows`, `no-answer`). `run-failed` is sent from the second failed run in a row, with the tags `run_failure`, `run_exit` and `agent_cli_version`. `no-windows` carries `agent_cli_version`. |
 | `identity-read-failed` | A sign-in read gave no answer, with the account's kind and a fixed reason (`run-failed`, `unreadable`). The account kept its status. |
 | `identity-changed` | A home's login was replaced, with the account's kind and how it was reconciled (`to-listed`, `to-new`, `merged`, `already-listed`, `duplicate`), or `stage: repoint` when its sessions could not be moved. |
 

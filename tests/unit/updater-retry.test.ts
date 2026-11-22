@@ -39,7 +39,9 @@
  *          electron-updater found no graphical elevator and fell back to sudo, probed with
  *          `sudo -n true`. A failing probe (sudo needs a terminal prompt a GUI app cannot
  *          show, DESKTOP-44) is trackEvent YES, reportHandledError NO, PLUS the
- *          updater:blocked push. A passing or inconclusive probe reports as structural.
+ *          updater:blocked push. A passing or inconclusive probe reports as structural,
+ *          tagged `sudo_probe` (`can-elevate`, `unknown`), and an inconclusive one also
+ *          `sudo_probe_failure`, how the probe failed.
  *       7. isResourceUnavailableError - trackEvent YES, reportHandledError NO. EAGAIN
  *          (DESKTOP-1B) reaching us through macOS's NSError rendering rather than
  *          through Node, which is the only reason branch 2's errno list misses it.
@@ -145,9 +147,13 @@ vi.mock('../../src/main/i18n/main-i18n', async () => {
   return { ...actual, translateText: mocks.translateText };
 });
 
-vi.mock('../../src/main/utility-process/off-main-exec', () => ({
-  execFileAsync: mocks.execFileAsync,
-}));
+// The real execRunFailureOf stays: the probe reads its rejection through it.
+vi.mock('../../src/main/utility-process/off-main-exec', async () => {
+  const actual = await vi.importActual<typeof import('../../src/main/utility-process/off-main-exec')>(
+    '../../src/main/utility-process/off-main-exec',
+  );
+  return { ...actual, execFileAsync: mocks.execFileAsync };
+});
 
 vi.mock('fs', async () => {
   const actual = await vi.importActual<typeof import('fs')>('fs');
@@ -172,6 +178,7 @@ Object.defineProperty(process, 'resourcesPath', {
 // Import after mocks are registered.
 import { checkWithRetry, downloadWithRetry, initUpdater, updateUpdaterWindow } from '../../src/main/updater';
 import { BrowserWindow } from 'electron';
+import { PtyHostTimeoutError } from '../../src/main/pty/host/pty-host-request-errors';
 import appleTeamId from '../../src/shared/apple-team-id.json';
 
 // ---------------------------------------------------------------------------
@@ -837,11 +844,16 @@ describe("autoUpdater.on('error') listener", () => {
 
       expect(mocks.trackEvent).toHaveBeenCalledTimes(1);
       expect(mocks.reportHandledError).toHaveBeenCalledTimes(1);
-      expect(mocks.reportHandledError).toHaveBeenCalledWith(installFailure, { source: 'updater' }, {}, undefined);
+      expect(mocks.reportHandledError).toHaveBeenCalledWith(
+        installFailure,
+        { source: 'updater', sudo_probe: 'can-elevate' },
+        {},
+        undefined,
+      );
       expect(mocks.webContentsSend).not.toHaveBeenCalled();
     });
 
-    it('still reports it when the probe was killed, since that answers nothing', async () => {
+    it('still reports it when the probe was killed, since that answers nothing, and says so', async () => {
       mocks.execFileAsync.mockRejectedValue(probeExit(1, true));
 
       const errorListener = getRegisteredListener('error');
@@ -849,7 +861,55 @@ describe("autoUpdater.on('error') listener", () => {
       await vi.advanceTimersByTimeAsync(0);
 
       expect(mocks.reportHandledError).toHaveBeenCalledTimes(1);
+      expect(mocks.reportHandledError.mock.calls[0][1]).toEqual({
+        source: 'updater',
+        sudo_probe: 'unknown',
+        sudo_probe_failure: 'timeout',
+      });
       expect(mocks.webContentsSend).not.toHaveBeenCalled();
+    });
+
+    // DESKTOP-44 on v0.60.0: the gate shipped, the report still came, and it
+    // could not say whether sudo worked or the probe got no answer at all.
+    it('reports a probe the pty host never answered with sudo_probe unknown and host_unavailable', async () => {
+      mocks.execFileAsync.mockRejectedValue(new PtyHostTimeoutError('exec'));
+
+      const errorListener = getRegisteredListener('error');
+      const installFailure = makeError(SUDO_FALLBACK_MESSAGE);
+      errorListener(installFailure);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(mocks.trackEvent).toHaveBeenCalledTimes(1);
+      expect(mocks.reportHandledError).toHaveBeenCalledTimes(1);
+      expect(mocks.reportHandledError).toHaveBeenCalledWith(
+        installFailure,
+        { source: 'updater', sudo_probe: 'unknown', sudo_probe_failure: 'host_unavailable' },
+        {},
+        undefined,
+      );
+      // Unchanged for the user: an inconclusive probe shows no notice.
+      expect(mocks.webContentsSend).not.toHaveBeenCalled();
+    });
+
+    // Chosen shape: two distinct error objects from the same makeError site, so they share a
+    // name and first frame (the latch key) but are not the same object (markReported would
+    // not be what dedupes them). The probe answers differently each time, so the extra
+    // sudo_probe tags differ. If they were part of the latch key, this would report twice.
+    it('latches on the error alone, so a different probe answer does not report it again', async () => {
+      const errorListener = getRegisteredListener('error');
+
+      mocks.execFileAsync.mockResolvedValueOnce({ stdout: '', stderr: '' });
+      errorListener(makeError(SUDO_FALLBACK_MESSAGE));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mocks.reportHandledError).toHaveBeenCalledTimes(1);
+      expect(mocks.reportHandledError.mock.calls[0][1]).toEqual({ source: 'updater', sudo_probe: 'can-elevate' });
+
+      mocks.execFileAsync.mockRejectedValueOnce(probeExit(1, true));
+      errorListener(makeError(SUDO_FALLBACK_MESSAGE));
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(mocks.execFileAsync).toHaveBeenCalledTimes(2);
+      expect(mocks.reportHandledError).toHaveBeenCalledTimes(1);
     });
 
     it('probes once and reports once for two failures in one click on a host whose sudo works', async () => {

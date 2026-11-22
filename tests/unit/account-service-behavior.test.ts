@@ -770,6 +770,41 @@ describe('AccountService.refreshUsage', () => {
       expect(changeCount).toBe(0);
     });
 
+    // Sentry DESKTOP-4E on 0.61.0: a fresh cache with no readable window, reported with no CLI
+    // version, so a plan whose windows are all null could not be told from a renamed field.
+    it('puts the CLI version on a no-windows report', async () => {
+      const accountService = folderService(
+        folderSupport({ readIdleUsage: async () => { throw new EmptyUsageReadError('no-windows'); } }),
+        { resolveCliVersion: async () => '2.1.319 (Claude Code)' },
+      );
+      const own = accountService.ensureDefaultAccount(AGENT)!;
+
+      expect(await accountService.refreshUsage(own.id)).toBe(false);
+      expect(reports).toHaveLength(1);
+      const [problem, agent, facts, , tags] = reports[0];
+      expect([problem, agent, facts]).toEqual(['usage-read-empty', AGENT, { kind: 'default', reason: 'no-windows' }]);
+      expect(tags).toEqual({ agent_cli_version: '2.1.319' });
+    });
+
+    // Only a no-windows read says which CLI wrote it. The other reasons name their own cause, so
+    // they carry no tags and must not pay for a version probe.
+    it.each<[string, () => Promise<RateLimitWindow[] | null>]>([
+      ['cache-stale', async () => { throw new EmptyUsageReadError('cache-stale'); }],
+      ['cache-missing', async () => { throw new EmptyUsageReadError('cache-missing'); }],
+      ['no-answer', async () => null],
+    ])('reports %s with no tags and never resolves the CLI version', async (reason, readIdleUsage) => {
+      const resolveCliVersion = vi.fn(async () => '2.1.319 (Claude Code)');
+      const accountService = folderService(folderSupport({ readIdleUsage }), { resolveCliVersion });
+      const own = accountService.ensureDefaultAccount(AGENT)!;
+
+      expect(await accountService.refreshUsage(own.id)).toBe(false);
+      expect(reports).toHaveLength(1);
+      const [problem, agent, facts, , tags] = reports[0];
+      expect([problem, agent, facts]).toEqual(['usage-read-empty', AGENT, { kind: 'default', reason }]);
+      expect(tags).toEqual({});
+      expect(resolveCliVersion).not.toHaveBeenCalled();
+    });
+
     // Sentry DESKTOP-4E: one failed `claude -p /usage` run was reported with nothing to say why.
     // A timeout, an offline moment and a flag the CLI does not know all looked the same.
     describe('whose CLI run failed', () => {

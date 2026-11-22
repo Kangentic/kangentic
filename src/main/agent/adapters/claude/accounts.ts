@@ -3,6 +3,8 @@ import path from 'node:path';
 import {
   EmptyUsageReadError,
   IdentityReadError,
+  UnreadableUsageError,
+  unreadableUsageKeysOf,
   type AccountIdentity,
   type DeriveContext,
   type EmptyUsageReadReason,
@@ -379,6 +381,12 @@ function spentWindowKeys(utilization: Record<string, unknown>): Set<string> {
  * `/usage` printed "99% used"), and `resets_at` is an ISO time. A window Claude marks spent in
  * `limits[]` reads 100 (`spentWindowKeys`). Otherwise why it gives no current windows: the cache is
  * missing, older than `maxAgeMs`, or holds no window.
+ *
+ * Throws `UnreadableUsageError` with the record's keys when `utilization` names none of the windows
+ * this reader knows, and with the cache's keys when `utilization` is missing or neither a record
+ * nor null. Either is a Claude Code release renaming the fields, which would empty every Claude
+ * account's reading, and Sentry DESKTOP-4E could not tell it from a plan whose windows are all
+ * null, which stays `no-windows`.
  */
 export function readClaudeCachedUsage(
   state: unknown,
@@ -390,7 +398,13 @@ export function readClaudeCachedUsage(
   if (!isPlainRecord(cache) || typeof cache.fetchedAtMs !== 'number') return { empty: 'cache-missing' };
   if (nowMs - cache.fetchedAtMs > maxAgeMs) return { empty: 'cache-stale' };
   const utilization = cache.utilization;
-  if (!isPlainRecord(utilization)) return { empty: 'no-windows' };
+  // Null is how Claude marks what does not apply. A missing field or another type is a renamed or
+  // reshaped one, and the cache's own keys name what took its place.
+  if (utilization === null) return { empty: 'no-windows' };
+  if (!isPlainRecord(utilization)) throw new UnreadableUsageError(unreadableUsageKeysOf(cache));
+  if (!RATE_LIMIT_WINDOWS.some(({ key }) => Object.hasOwn(utilization, key))) {
+    throw new UnreadableUsageError(unreadableUsageKeysOf(utilization));
+  }
   const spent = spentWindowKeys(utilization);
   const windows: RateLimitWindow[] = [];
   for (const { key, ...windowShape } of RATE_LIMIT_WINDOWS) {
@@ -413,7 +427,8 @@ export function readClaudeCachedUsage(
  * terminal added both, and `--safe-mode` there runs no status line, so that route was dropped.
  * The run refreshes the account's cached usage once it is stale, and the cache is what is read:
  * the printed text carries the same numbers as prose in the machine's time zone. Throws
- * `EmptyUsageReadError` naming why when the read gives no current windows. `--safe-mode` was
+ * `EmptyUsageReadError` naming why when the read gives no current windows, and
+ * `UnreadableUsageError` for a cache that names none of the known windows. `--safe-mode` was
  * measured on 2.1.319 only: a CLI too old to know it fails every run, which is why a failed run
  * carries its exit kind and the service reports one that repeats.
  */

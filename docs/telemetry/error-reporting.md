@@ -629,6 +629,11 @@ in one Sentry org, one triage surface.
     is what tells it. The caught error goes as its class and errno in the `cause` context. A
     failed run is sent from the second read in a row that fails for one account: one failed run
     during a network drop is not a defect, and a flag the CLI does not know fails every time.
+    A `no-windows` read carries `agent_cli_version` too. DESKTOP-4E's 0.61.0 event was one with
+    no version, and a plan whose windows are all null looked the same as a Claude Code release
+    that renamed them. The renamed case now has its own problem: a Claude cache whose
+    `utilization` names none of the known windows is `usage-read-unreadable`, with its keys, and
+    so is one whose `utilization` is missing or not a record, with the cache's keys.
   - `preload_callback` (tag `method`, such as `config.onChanged`): a renderer callback that threw
     when the preload called it on a push. That throw is an error of the preload's isolated world,
     which the renderer's SDK cannot see: measured in Electron 45, the main world's `error` and
@@ -1287,10 +1292,15 @@ in one Sentry org, one triage surface.
   exits 1, and sudo-rs parses `-n` the same way with an undocumented code. Then the branch logs,
   pushes `updater:blocked` ("No graphical password prompt, such as pkexec, is installed.") through
   the shared once-per-run latch, and drops the report. An exit 0 means sudo could have run the
-  install, so the failure reports as structural. A killed or timed-out probe, or a spawn error,
-  also reports. If the toast or the reporting tail throws, that is our defect, so the branch
-  reports it straight to `reportHandledError`. sudo's stderr is never read: classic sudo
-  translates it, and the breadcrumbs had it filtered.
+  install, so the failure reports as structural. A killed or timed-out probe, a spawn error, or a
+  pty host that gave no answer also reports, and shows nothing. Both reports carry the probe's
+  answer as `sudo_probe` (`can-elevate`, `unknown`), and an `unknown` also carries how the probe
+  failed as `sudo_probe_failure` (`timeout`, `signal`, `exit_code`, `spawn_error`,
+  `host_unavailable`, `other`, read by `execRunFailureOf`). DESKTOP-44 sent one from v0.60.0, a
+  build with this gate, and could not say which of the two let it through. If the toast or the
+  reporting tail throws, that is our defect, so the branch reports it straight to
+  `reportHandledError`. sudo's stderr is never read: classic sudo translates it, and the
+  breadcrumbs had it filtered.
 - **An EAGAIN install failure is counted, not reported.** `isResourceUnavailableError`
   (`src/main/updater.ts`), the branch below. DESKTOP-1B is the POSIX `EAGAIN` reaching us through
   macOS's `NSError` rendering rather than through Node, which is the only reason
