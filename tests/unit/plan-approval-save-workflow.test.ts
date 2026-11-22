@@ -23,7 +23,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type Database from 'better-sqlite3';
 
-const harness = vi.hoisted(() => ({ dbs: new Map<string, unknown>(), runtime: null as unknown }));
+const harness = vi.hoisted(() => ({
+  dbs: new Map<string, unknown>(),
+  runtime: null as unknown,
+  /** Makes the Save and Start reply clause throw, as a failed read after the write would. */
+  failClause: false,
+  /** Makes the Add reply's plan approval sentence throw. */
+  failSentence: false,
+  report: vi.fn(),
+}));
 vi.mock('../../src/main/db/database', () => ({
   getExistingProjectDb: (projectId: string) => harness.dbs.get(projectId) ?? null,
   getProjectDb: (projectId: string) => {
@@ -41,10 +49,34 @@ vi.mock('../../src/main/workflows/workflow-runtime', async (importOriginal) => (
   requireWorkflowRuntimeContext: () => harness.runtime,
 }));
 
+// The reply clause is read after the write it describes has landed. A throw
+// there must not fail the reply, and is reported with a fixed stage tag.
+vi.mock('../../src/main/agent/mcp-http/tool-reporting', () => ({ mcpCommandReporter: { report: harness.report } }));
+vi.mock('../../src/main/workflows/workflow-format', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/workflows/workflow-format')>();
+  return {
+    ...actual,
+    describePlanApprovalForReply: (view: Parameters<typeof actual.describePlanApprovalForReply>[0]) => {
+      if (harness.failClause) throw new Error('the clause could not be read');
+      return actual.describePlanApprovalForReply(view);
+    },
+  };
+});
+vi.mock('../../src/shared/plan-approval', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/shared/plan-approval')>();
+  return {
+    ...actual,
+    taskPlanApprovalSentence: (view: Parameters<typeof actual.taskPlanApprovalSentence>[0]) => {
+      if (harness.failSentence) throw new Error('the sentence could not be read');
+      return actual.taskPlanApprovalSentence(view);
+    },
+  };
+});
+
 const { runProjectMigrations } = await import('../../src/main/db/migrations/project-schema');
 const { WorkflowRepository } = await import('../../src/main/db/repositories/workflow-repository');
 const { TaskRepository } = await import('../../src/main/db/repositories/task-repository');
-const { handleSaveWorkflow, handleGetWorkflow, handleAddWorkflowTask } = await import('../../src/main/agent/commands/workflow-commands');
+const { handleSaveWorkflow, handleGetWorkflow, handleAddWorkflowTask, handleStartWorkflow } = await import('../../src/main/agent/commands/workflow-commands');
 const { startWorkflow } = await import('../../src/main/workflows/workflow-service');
 
 import { openTestDatabase } from './helpers/test-database';
@@ -57,6 +89,9 @@ describe('kangentic_save_workflow planApproval', () => {
 
   beforeEach(() => {
     harness.dbs.clear();
+    harness.failClause = false;
+    harness.failSentence = false;
+    harness.report.mockClear();
     database = openTestDatabase();
     database.exec('PRAGMA foreign_keys = ON');
     runProjectMigrations(database);
@@ -64,6 +99,7 @@ describe('kangentic_save_workflow planApproval', () => {
     const projects = [{ id: 'home', name: 'kangentic', path: '/projects/home' }];
     harness.runtime = {
       projectRepo: {
+        listHidden: () => [],
         list: () => projects,
         getById: (id: string) => projects.find((project) => project.id === id),
       },
@@ -245,6 +281,19 @@ describe('kangentic_save_workflow planApproval', () => {
       expect(response.error).toBe('"Budgets UI": planApproval must be "automatic", "manual", or null.');
       expect(new TaskRepository(database).listByWorkflow(workflowId)).toHaveLength(before);
     });
+
+    it('says in its reply whether the added task\'s plan will wait for a person, and nothing when its route has no plan column', async () => {
+      // An added task starts on its own, so a Manual plan column stops it like any other.
+      const workflowId = await startedWorkflow();
+
+      const manual = await handleAddWorkflowTask({ workflow: workflowId, title: 'Budgets docs' }, commandContext);
+      const automatic = await handleAddWorkflowTask({ workflow: workflowId, title: 'Budgets UI', planApproval: 'automatic' }, commandContext);
+      const noPlan = await handleAddWorkflowTask({ workflow: workflowId, title: 'Release', routeStart: 'Executing', routeLast: 'Executing' }, commandContext);
+
+      expect(manual.message).toMatch(/an agent slot is free\. Plan approval: Manual, from kangentic's Planning column\.$/);
+      expect(automatic.message).toMatch(/an agent slot is free\. Plan approval: Automatic, set for this task \(its Planning column is Manual\)\.$/);
+      expect(noPlan.message).toMatch(/an agent slot is free\.$/);
+    });
   });
 
   describe('what an agent reads back', () => {
@@ -359,6 +408,107 @@ describe('kangentic_save_workflow planApproval', () => {
       expect(after.plan_approval).toBeNull();
       // What each task gets did not change, so neither does the plan's revision.
       expect(after.revision).toBe(revisionBefore);
+    });
+  });
+
+  /**
+   * A ported board's Manual Planning column stopped a workflow's first card,
+   * and neither reply had said it would. Start is where the setting becomes a
+   * stopped card, and Save is where an agent reports to the user who starts.
+   */
+  describe('the Save and Start replies', () => {
+    it('name the task whose plan waits for a person: by key on Save, by number on Start', async () => {
+      const save = await handleSaveWorkflow({
+        tasks: [
+          { key: 'desktop', title: 'Desktop' },
+          { key: 'bridge', title: 'Bridge', planApproval: 'automatic' },
+        ],
+      }, commandContext);
+      expect(save.success, save.error).toBe(true);
+      expect(save.message).toContain(
+        'Plan approval: set per task. 1 task Manual, 1 Automatic. '
+        + 'Waits for you after its plan: [desktop] (Planning). kangentic_get_workflow says why. '
+        + 'The user starts the workflow when they are ready.',
+      );
+
+      const workflowId = (save.data as { id: string }).id;
+      const start = await handleStartWorkflow({ workflow: workflowId }, commandContext);
+      expect(start.success, start.error).toBe(true);
+      const desktop = new TaskRepository(database).listByWorkflow(workflowId).find((task) => task.title === 'Desktop')!;
+      expect(start.message).toContain(
+        'Tasks with nothing to wait for start as agent slots allow. '
+        + 'Plan approval: set per task. 1 task Manual, 1 Automatic. '
+        + `Waits for you after its plan: #${desktop.display_id} (Planning). kangentic_get_workflow says why.`,
+      );
+    });
+
+    it('give the count and name no task when every plan is approved automatically', async () => {
+      const save = await handleSaveWorkflow({ tasks: [{ key: 'bridge', title: 'Bridge', planApproval: 'automatic' }] }, commandContext);
+      const start = await handleStartWorkflow({ workflow: (save.data as { id: string }).id }, commandContext);
+
+      for (const reply of [save, start]) {
+        expect(reply.message).toContain('Plan approval: set per task. 0 tasks Manual, 1 Automatic.');
+        expect(reply.message).not.toContain('after its plan');
+        // The reply prints no task lines, so it must not point at them.
+        expect(reply.message).not.toContain('each task\'s line');
+      }
+    });
+
+    it('add nothing when no task\'s route has a plan column', async () => {
+      const save = await handleSaveWorkflow({
+        tasks: [{ key: 'release', title: 'Release', routeStart: 'Executing', routeLast: 'Executing' }],
+      }, commandContext);
+      const start = await handleStartWorkflow({ workflow: (save.data as { id: string }).id }, commandContext);
+
+      expect(save.message).toMatch(/is at revision \d+\. The user starts the workflow when they are ready\.$/);
+      expect(start.message).toMatch(/Tasks with nothing to wait for start as agent slots allow\.$/);
+    });
+
+    /**
+     * The clause is read after the write has landed, so a failed read must not
+     * turn a committed write into a failed reply: an agent told "failed" retries
+     * into a second workflow or task.
+     */
+    describe('when the clause cannot be read after the write', () => {
+      const tasks = [{ key: 'desktop', title: 'Desktop' }];
+
+      it('keeps the Save reply and the saved plan, and reports the stage', async () => {
+        harness.failClause = true;
+
+        const save = await handleSaveWorkflow({ tasks }, commandContext);
+
+        expect(save.success, save.error).toBe(true);
+        expect(save.message).toMatch(/is at revision \d+\. The user starts the workflow when they are ready\.$/);
+        expect(workflowCount()).toBe(1);
+        expect(harness.report).toHaveBeenCalledTimes(1);
+        expect(harness.report).toHaveBeenCalledWith(expect.any(Error), { tags: { command: 'save_workflow', stage: 'reply_clause' } });
+      });
+
+      it('keeps the Start reply and the started workflow, and reports the stage', async () => {
+        const workflowId = await createThroughHandler({ tasks });
+        harness.failClause = true;
+
+        const start = await handleStartWorkflow({ workflow: workflowId }, commandContext);
+
+        expect(start.success, start.error).toBe(true);
+        expect(start.message).toMatch(/Tasks with nothing to wait for start as agent slots allow\.$/);
+        expect(new WorkflowRepository(database).getById(workflowId)!.state).not.toBe('draft');
+        expect(harness.report).toHaveBeenCalledWith(expect.any(Error), { tags: { command: 'start_workflow', stage: 'reply_clause' } });
+      });
+
+      it('keeps the Add reply and the added task, and reports the stage', async () => {
+        const workflowId = await createThroughHandler({ tasks });
+        await startWorkflow(harness.runtime as IpcContext, 'home', workflowId);
+        const before = new TaskRepository(database).listByWorkflow(workflowId).length;
+        harness.failSentence = true;
+
+        const added = await handleAddWorkflowTask({ workflow: workflowId, title: 'Budgets docs' }, commandContext);
+
+        expect(added.success, added.error).toBe(true);
+        expect(added.message).toMatch(/an agent slot is free\.$/);
+        expect(new TaskRepository(database).listByWorkflow(workflowId)).toHaveLength(before + 1);
+        expect(harness.report).toHaveBeenCalledWith(expect.any(Error), { tags: { command: 'add_workflow_task', stage: 'reply_clause' } });
+      });
     });
   });
 });

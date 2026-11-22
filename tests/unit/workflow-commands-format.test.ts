@@ -31,7 +31,7 @@ vi.mock('../../src/main/ipc/send-to-renderer', () => ({ sendToRenderer: vi.fn() 
 const { runProjectMigrations } = await import('../../src/main/db/migrations/project-schema');
 const { TaskRepository } = await import('../../src/main/db/repositories/task-repository');
 const service = await import('../../src/main/workflows/workflow-service');
-const { formatWorkflow } = await import('../../src/main/workflows/workflow-format');
+const { formatWorkflow, describePlanApprovalForReply, listOf, boardTaskLabel } = await import('../../src/main/workflows/workflow-format');
 
 import { openTestDatabase } from './helpers/test-database';
 import { planAcrossBoards, taskTitled } from './helpers/workflow-plans';
@@ -107,6 +107,79 @@ describe('formatWorkflow: which board a task is on', () => {
       expect(lineOf(text, ui.title)).toContain(`Waits for #${api.displayId}.`);
       expect(lineOf(text, ui.title)).not.toContain(' on "');
     });
+
+    it('names the tasks whose plans wait for a person in the reply clause, with the board of one on another board', async () => {
+      // Each seeded board's Planning column is Manual, so every task stops
+      // there. The read lists the home board's tasks first.
+      const workflow = planAcrossBoards(service, context);
+      await service.startWorkflow(context, 'home', workflow.id);
+      const view = service.readWorkflow(context, 'home', workflow.id);
+      const api = taskTitled(view, 'Budgets API');
+      const phone = taskTitled(view, 'Budgets on the phone');
+      const ui = taskTitled(view, 'Budgets UI');
+
+      expect(describePlanApprovalForReply(view)).toBe(
+        'Plan approval: set per task. 3 tasks Manual, 0 Automatic. '
+        + `Wait for you after their plans: #${api.displayId} (Planning), #${ui.displayId} (Planning) and "kangentic-mobile" #${phone.displayId} (Planning). `
+        + 'kangentic_get_workflow says why.',
+      );
+    });
+
+    it('names a Manual task with no number by its key, never as #null', async () => {
+      const workflow = planAcrossBoards(service, context);
+      await service.startWorkflow(context, 'home', workflow.id);
+      const view = service.readWorkflow(context, 'home', workflow.id);
+      const numberless = {
+        ...view,
+        tasks: view.tasks.map((task) => (task.title === 'Budgets UI' ? { ...task, displayId: null } : task)),
+      };
+      const uiKey = taskTitled(view, 'Budgets UI').key;
+
+      const clause = describePlanApprovalForReply(numberless);
+
+      expect(clause).toContain(`[${uiKey}] (Planning)`);
+      expect(clause).not.toContain('#null');
+    });
+
+    describe('a task counted Automatic whose route runs an agent Kangentic cannot approve plans for', () => {
+      async function withUiPlanApproval(override: { waitingAgentName: string | null }) {
+        const workflow = planAcrossBoards(service, context);
+        await service.startWorkflow(context, 'home', workflow.id);
+        const view = service.readWorkflow(context, 'home', workflow.id);
+        const ui = taskTitled(view, 'Budgets UI');
+        if (!ui.planApproval) throw new Error('Expected the UI task to have a plan approval');
+        const planApproval = { ...ui.planApproval, value: 'automatic' as const, ...override };
+        const changed = {
+          ...view,
+          tasks: view.tasks.map((task) => (task.title === 'Budgets UI' ? { ...task, planApproval } : task)),
+        };
+        return { clause: describePlanApprovalForReply(changed), ui };
+      }
+
+      it('names it by the agent whose plans it cannot approve, and still counts it Automatic', async () => {
+        const { clause, ui } = await withUiPlanApproval({ waitingAgentName: 'Example Agent' });
+
+        expect(clause).toContain('2 tasks Manual, 1 Automatic');
+        expect(clause).toContain(`#${ui.displayId} (Example Agent's plans)`);
+      });
+
+      it('does not name an Automatic task that has no such agent', async () => {
+        const { clause, ui } = await withUiPlanApproval({ waitingAgentName: null });
+
+        expect(clause).toContain('2 tasks Manual, 1 Automatic');
+        expect(clause).not.toContain(`#${ui.displayId}`);
+        expect(clause).not.toContain("'s plans");
+      });
+    });
+  });
+
+  describe('the reply clause on a draft', () => {
+    it('names a planned task by its key, since it has no number yet', () => {
+      const workflow = planAcrossBoards(service, context);
+      const view = service.readWorkflow(context, 'home', workflow.id);
+
+      expect(describePlanApprovalForReply(view)).toContain('Wait for you after their plans: [api] (Planning), [phone] (Planning) and [ui] (Planning).');
+    });
   });
 
   describe('a workflow held by a board whose host was removed', () => {
@@ -181,5 +254,19 @@ describe('formatWorkflow: which board a task is on', () => {
       expect(lineOf(text, 'Budgets UI')).not.toContain('Stalled');
       expect(lineOf(text, 'Budgets on the phone')).not.toContain('Stalled');
     });
+  });
+});
+
+describe('listOf and boardTaskLabel', () => {
+  it('joins labels as "a", "a and b", "a, b and c", and gives nothing for none', () => {
+    expect(listOf([])).toBe('');
+    expect(listOf(['#1'])).toBe('#1');
+    expect(listOf(['#1', '#2'])).toBe('#1 and #2');
+    expect(listOf(['#1', '#2', '#3'])).toBe('#1, #2 and #3');
+  });
+
+  it('gives a bare number on the home board and a quoted board name on another', () => {
+    expect(boardTaskLabel(null, 12)).toBe('#12');
+    expect(boardTaskLabel('kangentic-mobile', 3)).toBe('"kangentic-mobile" #3');
   });
 });

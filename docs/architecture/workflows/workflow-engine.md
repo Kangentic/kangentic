@@ -57,7 +57,8 @@ src/main/workflows/
   workflow-agent-prompt.ts   # its first message: {{columns}}, {{brief_xml}} and the project's facts, and the
                              #   continue-from-the-saved-plan message for a start with no conversation to resume (a lost
                              #   one, or a plan no agent has seen; `WorkflowAgentContinueReason` names which)
-  workflow-format.ts         # a workflow's plan as text (formatWorkflow), for the MCP tools and the continue message
+  workflow-format.ts         # a workflow's plan as text (formatWorkflow), for the MCP tools and the continue message,
+                             #   and the plan approval clause the Save and Start replies end with
   workflow-agent-effort.ts   # the effort it started at, for its Stats rows when the status line reports none
   workflow-runtime.ts        # the IPC context the operations act through
   workflow-wake.ts           # wake the engine from a write that does not wake it itself (a task or link delete, a project delete, a workflow started, resumed or edited)

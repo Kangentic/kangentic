@@ -36,6 +36,11 @@ export const handleListColumns: CommandHandler = (
       // What the column is for, so an agent that plans a workflow task over MCP
       // routes by purpose from the survey it already makes. Sparse, as above.
       ...(description ? { description } : {}),
+      // Whether a plan-mode column stops each plan for a person, so an agent can
+      // audit a board for that from the survey alone. Only plan-mode columns
+      // carry it: on any other mode the stored value decides nothing
+      // (`resolvePlanApprovalDecision`). Sparse, as above.
+      ...(swimlane.permission_mode === 'plan' ? { planApproval: swimlane.plan_approval } : {}),
     };
   });
 

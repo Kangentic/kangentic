@@ -76,6 +76,8 @@ each task). No task's route has a plan column.`), and each task's line ends with
 - `Plan approval: Automatic, from kangentic's Planning column.` (left alone, it follows the plan
   columns on its route: Automatic only when every one is Automatic and runs an agent that can
   approve plans)
+- `Plan approval: Manual, from kangentic's Planning column.` (left alone, and a plan column on its
+  route holds it to Manual)
 - `Plan approval: Manual, set for this task (its Planning column is Automatic).`
 - `Plan approval: Automatic, set for this task (its Planning column is Manual), but Codex CLI's plans still wait for you.`
   (a route where only some plan columns run an agent Kangentic can approve plans for)
@@ -146,7 +148,14 @@ profile together with a pin, or `runMode: "column_settings"` with a pin. A task 
 is written: a duplicate key, a column a route cannot use, a link to an unknown key, a loop. That
 holds for a new workflow too: a save without `workflow` creates the workflow only with a plan that
 passed, in the same write, so a refused one leaves nothing behind. The answer reads "Saved: 9
-tasks, 13 links."
+tasks, 13 links." When a task's route has a plan column, it goes on with the plan approval counts
+and names, by key, each task whose plan will wait for a person: `Plan approval: set per task. 1 task
+Manual, 4 Automatic. Waits for you after its plan: [desktop] (Planning). kangentic_get_workflow says
+why.` A task counted Automatic is named too when a plan column on its route runs an agent
+Kangentic cannot approve plans for, with that agent in place of the column: `[bridge] (Codex CLI's
+plans)`. When no task's plan waits, the clause is the counts alone: `Plan approval: set per task. 0
+tasks Manual, 3 Automatic.` The agent that saves is usually the one that tells the user before they start, so the
+reply says it without another read.
 
 ## kangentic_start_workflow
 
@@ -154,6 +163,16 @@ Start a planned workflow: its tasks appear in To Do on their boards and each sta
 nothing it waits for is left, up to the free agent slots, in To Do order. A start fetches the base
 first, so a task is cut from its blockers' merged code. The task the workflow was made from moves
 to Done, unless the plan took it in.
+
+The answer gives the task and link counts. When a task's route has a plan column, it ends with the
+same plan approval clause as the save: the counts, then each task whose plan waits for a person,
+named by number, plus the board for a task on another board. A task counted Automatic is named too
+when a plan column on its route runs an agent Kangentic cannot approve plans for, with that agent
+in place of the column. For example: `Plan approval: set per task. 1 task Manual, 4 Automatic. Wait
+for you after their plans: #12 (Planning) and "kangentic-mobile" #3 (Planning).
+kangentic_get_workflow says why.` Start is when a Manual plan column becomes a card that stops in
+its terminal, so this is the reply that has to say so. A workflow with no plan column on any route
+gets no clause.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -223,6 +242,11 @@ The run settings go through the same checks and refusals as a save's: the wrong 
 agent, model, effort or profile (the profile is looked up on the task's own board), a profile
 together with a pin, or `runMode: "column_settings"` with a pin. Each refusal names the task by its
 title, and nothing is written.
+
+The added task starts on its own, so when its route has a plan column the reply ends with the task's
+plan approval sentence, the one [kangentic_get_workflow](#kangentic_get_workflow) prints for it
+(`Plan approval: Manual, from kangentic's Planning column.`). A route with no plan column adds
+nothing.
 
 ## kangentic_link_workflow_tasks
 
