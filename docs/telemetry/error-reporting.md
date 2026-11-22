@@ -368,6 +368,17 @@ in one Sentry org, one triage surface.
     name an organization or hold a secret.
   - Node's `child_process`: the message is path-redacted and `spawnfile` keeps only its file name.
     Electron's `child-process` is kept whole.
+  - `mobile-bridge.relay-dial`: one crumb per mobile relay dial attempt at its outcome, recorded by
+    `addRelayDialBreadcrumb` (`src/main/analytics/error-reporting.ts`). It is rebuilt from three
+    checked fields: `relay_dial_id` (16 lowercase hex characters), `stack` (a lowercase word such
+    as `node` or `chromium`) and `outcome` (`opened`, `failed`, `timed_out`). Anything else on it,
+    and a crumb with any field out of shape, is dropped. A dial id is random per attempt, not
+    derived from the slot, and the relay's own log records the same id for about a week, so an
+    event can be joined to the relay's record of a recent dial ([relay
+    transport](../integrations/mobile-bridge/relay-transport.md)). A parked device recycles once a
+    minute, so each paired device whose phone is away adds about one crumb a minute to the ring.
+    That crumb stays: a returning phone lands on the recycled socket, and its `opened` crumb is
+    the only record on a later event that names that dial.
   - Anything else, `sentry.event` and `navigation` included, is dropped, so a category a new SDK
     version adds stays out until someone decides otherwise.
 
@@ -452,7 +463,7 @@ in one Sentry org, one triage surface.
     `AutomationTimeoutError`) is the user's endpoint or script answering. A Run script row whose
     script exits non-zero throws the permanent one, so it is a failed run in the run log and no
     event (Sentry DESKTOP-49 was every such script reported as a defect).
-  - `mobile_verb` (tag `verb`), `automation_runner` (tag `automation_type`), `turn_end`,
+  - `mobile_verb` (tag `verb`, plus `relay_dial_id`), `automation_runner` (tag `automation_type`), `turn_end`,
     `workflow_engine` (tag `stage`), `pr` (tag `stage`), `browser_driver` (tag `kind`, built-in
     classes and the attach, capture and composite failures only). A `ScreenshotNotComposited`
     report also carries six fixed tags, so it can say why the capture got no frame (Sentry
@@ -480,6 +491,10 @@ in one Sentry org, one triage surface.
     refused, and reports nothing. The error's `detail` is never sent. The latch keys on tags, so
     each combination reports once per run, and those reports count toward the source's 25-key
     cap.
+  - A `mobile_verb` report's `relay_dial_id` is the random id of the relay dial the request
+    arrived on, so the event can be joined to the relay's log of that dial. It goes in as a
+    `correlationTags` entry, which is sent but kept out of the latch key. In the key, one defect
+    would report again on every dial until the cap was spent.
   - `task_move` (a rollback that failed), `exit_message_carry` (an exit message held for a
     restarted agent whose hold or run-detail write threw; tag `stage`: `hold`, `record`), `project_recovery` (tag `pass`: `resource_cleanup`,
     `session_recovery`, `session_reconcile`, `host_connected`, `cold_open`,
@@ -635,7 +650,10 @@ in one Sentry org, one triage surface.
     ships in the GPU process report's `featureStatusOnReport`.
 
   Settings > Privacy names this data: an error's type, a fixed failure code and, for an interface
-  crash, the names of the components it was in.
+  crash, the names of the components it was in. It also names the relay dial id, the one value
+  here that another system keeps too: the relay logs it for about a week, so for that long an
+  event can be matched to the relay's record of that connection. It carries no slot, key or
+  content.
 - **Grouping a defect reached through a dispatcher.** The dispatcher frames (the IPC wrap,
   `runHandler`, the `registerTool` proxy, `capability-router`'s dispatch) are the same for every
   handler, so they cannot split an issue and stay in the stack. If one ever groups unrelated

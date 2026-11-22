@@ -49,11 +49,20 @@ export class CapabilityRouter {
       return { type: 'capability-response', requestId: request.requestId, ok: false, error: `No handler registered for verb: ${request.verb}` };
     }
 
+    // Read before the handler's first await: dispatch runs in the tick the
+    // frame arrived in, so this is the dial the request came in on. A slow
+    // handler can outlast a forced redial, which mints the next dial's id.
+    const arrivalDialId = session.relayDialId;
     try {
       return await handler(request, session);
     } catch (error) {
-      // The phone gets the message; Sentry gets a defect, tagged with the verb.
-      mobileVerbReporter.report(error, { tags: { verb: request.verb } });
+      // The phone gets the message; Sentry gets a defect, tagged with the verb
+      // and with the relay dial it arrived on, so the event can be joined to
+      // the relay's log of that dial. The dial id stays out of the latch key.
+      mobileVerbReporter.report(error, {
+        tags: { verb: request.verb },
+        correlationTags: arrivalDialId ? { relay_dial_id: arrivalDialId } : undefined,
+      });
       return {
         type: 'capability-response',
         requestId: request.requestId,

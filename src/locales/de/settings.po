@@ -232,6 +232,10 @@ msgstr "Eine Voreinstellung wählt das Live- und das Verfeinerungsmodell für Si
 msgid "A private key file; Kangentic keeps a copy in its own folder"
 msgstr "Eine private Schlüsseldatei; Kangentic bewahrt eine Kopie im eigenen Ordner auf"
 
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "A random id for each mobile relay connection attempt, which the relay's own log also keeps for about a week"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
 msgid "A relay you run"

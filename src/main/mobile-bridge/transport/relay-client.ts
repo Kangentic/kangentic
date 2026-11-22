@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import diagnosticsChannel from 'node:diagnostics_channel';
 import { EventEmitter } from 'node:events';
 import type { Transport, TransportState, Unsubscribe } from '@kangentic/protocol';
@@ -29,6 +30,14 @@ import type { Transport, TransportState, Unsubscribe } from '@kangentic/protocol
  * `role` is a metrics hint the relay attributes its waiting-peer gauge by;
  * it is authenticated by nothing, can never cause a rejection, and nothing
  * in pairing or routing reads it (kangentic-relay's guards/peerRole.ts).
+ * `dial` is a fresh random id for each dial attempt, exactly 16 lowercase hex
+ * characters, minted from a CSPRNG in dial(). It lets a desktop Sentry event
+ * (tag `relay_dial_id`) be matched to the relay's own log of the same dial.
+ * It is advisory: unauthenticated, never a reason to reject, and ignored when
+ * malformed. It is minted per attempt and never per install or session, so the
+ * relay's logs cannot link one user's connections over time. It is not
+ * derived from the slot and grants nothing. The desktop defines this
+ * parameter; the relay reads it only from its own release that logs it.
  *
  * Both slots are ROUTING LABELS, never key material. That is a deliberate
  * property to preserve: the slot rides in a URL query string, which is the
@@ -167,6 +176,54 @@ export interface RelayClientOptions {
   webSocketStack?: string;
   /** A second stack for networks the primary cannot cross; see RelayWebSocketFallback. */
   fallbackWebSocket?: RelayWebSocketFallback;
+  /**
+   * Told how a dial attempt ended: it opened, failed before opening (a close
+   * or a constructor throw), or timed out. A dial this client ended itself
+   * (close(), a forced redial) is not an outcome and is not reported. The app
+   * records it as a Sentry breadcrumb (transport-factory.ts), which this file
+   * cannot import. Not called at dial start, so a parked slot's once-a-minute
+   * recycle costs one entry in the breadcrumb ring rather than two.
+   */
+  onDialOutcome?: (outcome: RelayDialOutcome) => void;
+}
+
+/** How one dial attempt ended, keyed by its dial id. Fixed values only. */
+export interface RelayDialOutcome {
+  dialId: string;
+  stack: string;
+  outcome: 'opened' | 'failed' | 'timed_out';
+}
+
+/**
+ * A Transport that names its current dial attempt, so a Sentry report raised
+ * for its session can carry `relay_dial_id`. Local to the desktop for the same
+ * reason as RedialableTransport. Several clients are live at once (one per
+ * paired device, plus a pairing ceremony), so the id rides on each report
+ * rather than on Sentry's global scope, where the last dial would overwrite it.
+ */
+export interface DialIdentifiedTransport extends Transport {
+  /** The most recent attempt's id: the open socket's while connected, the one that just ended while in backoff. Null before the first dial. */
+  readonly currentDialId: string | null;
+}
+
+export function isDialIdentifiedTransport(transport: Transport): transport is DialIdentifiedTransport {
+  return 'currentDialId' in transport;
+}
+
+/**
+ * A dial id: 8 random bytes as lowercase hex, `/^[0-9a-f]{16}$/`. The format is
+ * pinned with the relay and the phone; sentry-breadcrumbs.ts checks it.
+ */
+function mintDialId(): string {
+  return randomBytes(8).toString('hex');
+}
+
+/** Clears every handler a dial installed, so the socket can no longer act on this client. */
+function detachSocketHandlers(socket: WebSocket): void {
+  socket.onopen = null;
+  socket.onmessage = null;
+  socket.onerror = null;
+  socket.onclose = null;
 }
 
 export interface RedialOptions {
@@ -252,7 +309,7 @@ export class RelayDialError extends Error {
   }
 }
 
-export class RelayClient implements RedialableTransport {
+export class RelayClient implements RedialableTransport, DialIdentifiedTransport {
   private readonly relayUrl: string;
   private readonly slotId: string;
   private readonly maxBytesPerSession: number;
@@ -260,7 +317,10 @@ export class RelayClient implements RedialableTransport {
   private readonly webSocketConstructor: RelayWebSocketConstructor | undefined;
   private readonly webSocketStack: string;
   private readonly fallbackWebSocket: RelayWebSocketFallback | undefined;
+  private readonly onDialOutcome: ((outcome: RelayDialOutcome) => void) | undefined;
   private readonly emitter = new EventEmitter();
+  /** The most recent dial attempt's id (see DialIdentifiedTransport). */
+  private lastDialId: string | null = null;
   /** Primary-stack dials that failed in a row since the last open on any stack. */
   private consecutivePrimaryFailures = 0;
   /** Until when dials keep using the fallback after it opened where the primary had failed. */
@@ -298,10 +358,15 @@ export class RelayClient implements RedialableTransport {
     this.webSocketConstructor = options.webSocketConstructor;
     this.webSocketStack = options.webSocketConstructor ? (options.webSocketStack ?? 'injected') : NODE_STACK;
     this.fallbackWebSocket = options.fallbackWebSocket;
+    this.onDialOutcome = options.onDialOutcome;
   }
 
   get state(): TransportState {
     return this.currentState;
+  }
+
+  get currentDialId(): string | null {
+    return this.lastDialId;
   }
 
   /** The open socket's queued-but-unsent bytes (WHATWG `bufferedAmount`), or 0 with no socket. */
@@ -368,8 +433,13 @@ export class RelayClient implements RedialableTransport {
       this.setState('closed');
       return Promise.reject(error instanceof Error ? error : new Error(`Invalid relay URL: ${String(error)}`));
     }
+    // Fresh for every attempt, the fallback stack's turns included, so the
+    // relay's log can never link two of this user's dials (see the header).
+    const dialId = mintDialId();
+    this.lastDialId = dialId;
     url.searchParams.set('slot', this.slotId);
     url.searchParams.set('role', 'desktop');
+    url.searchParams.set('dial', dialId);
 
     return new Promise<void>((resolve, reject) => {
       // Wrap resolve/reject so the pendingDialReject pointer is cleared once
@@ -404,7 +474,8 @@ export class RelayClient implements RedialableTransport {
         // slot and all (undici's never does; a browser-shaped one may), and
         // the slot must not gain a second home in the log.
         const detail = (error instanceof Error ? error.message : String(error)).split(this.slotId).join('<slot>');
-        console.warn(`${this.logPrefix} dial failed: ${detail}; redial in ${delayMs} ms (via ${dialChoice.stack})`);
+        console.warn(`${this.logPrefix} dial failed: ${detail}; redial in ${delayMs} ms, dial ${dialId} (via ${dialChoice.stack})`);
+        this.reportDialOutcome({ dialId, stack: dialChoice.stack, outcome: 'failed' });
         rejectOnce(error instanceof Error ? error : new Error(String(error)));
         return;
       }
@@ -412,14 +483,15 @@ export class RelayClient implements RedialableTransport {
       this.socket = socket;
       this.pendingError = null;
       const dialStartedAtMs = Date.now();
-      this.armDialWatchdog(socket, dialChoice.stack);
+      this.armDialWatchdog(socket, dialChoice.stack, dialId);
 
       socket.onopen = () => {
         this.clearDialWatchdog();
         this.reconnectBackoffMs = INITIAL_BACKOFF_MS;
         this.bytesSentThisSession = 0;
         this.connectedAtMs = Date.now();
-        console.log(`${this.logPrefix} connected after ${this.connectedAtMs - dialStartedAtMs} ms (via ${dialChoice.stack})`);
+        console.log(`${this.logPrefix} connected after ${this.connectedAtMs - dialStartedAtMs} ms, dial ${dialId} (via ${dialChoice.stack})`);
+        this.reportDialOutcome({ dialId, stack: dialChoice.stack, outcome: 'opened' });
         this.noteDialOpened(dialChoice.stack);
         this.setState('connected');
         resolveOnce();
@@ -453,9 +525,10 @@ export class RelayClient implements RedialableTransport {
         const wasConnected = this.currentState === 'connected';
         if (!wasConnected) this.noteDialFailed(dialChoice.stack);
         const delayMs = this.scheduleReconnect();
-        this.logClose(event, wasConnected, delayMs, dialChoice.stack, this.describeRelayPing(socket, dialChoice.stack));
+        this.logClose(event, wasConnected, delayMs, dialChoice.stack, dialId, this.describeRelayPing(socket, dialChoice.stack));
         // Only reject the in-flight connect() promise if we never reached 'open'.
         if (!wasConnected) {
+          this.reportDialOutcome({ dialId, stack: dialChoice.stack, outcome: 'failed' });
           rejectOnce(new RelayDialError({ kind: 'closed', errorFirst, closeCode: event.code, stack: dialChoice.stack }));
         }
       };
@@ -470,7 +543,7 @@ export class RelayClient implements RedialableTransport {
    * third peer on the slot, 1001 the relay draining. A dial that never opened
    * folds the `onerror` text in, since its close code is always 1006.
    */
-  private logClose(event: CloseEvent, wasConnected: boolean, delayMs: number, dialStack: string, relayPing: string): void {
+  private logClose(event: CloseEvent, wasConnected: boolean, delayMs: number, dialStack: string, dialId: string, relayPing: string): void {
     if (!wasConnected) {
       // The error's own text first (undici), then the close reason (Chromium
       // puts the net:: error there), then whatever is left. The slot is
@@ -479,7 +552,7 @@ export class RelayClient implements RedialableTransport {
         this.pendingError?.message ??
         (event.reason || null) ??
         (this.pendingError ? `${this.pendingError.type} event with no message` : `close code ${event.code}`);
-      console.warn(`${this.logPrefix} dial failed: ${detail.split(this.slotId).join('<slot>')}; redial in ${delayMs} ms (via ${dialStack})`);
+      console.warn(`${this.logPrefix} dial failed: ${detail.split(this.slotId).join('<slot>')}; redial in ${delayMs} ms, dial ${dialId} (via ${dialStack})`);
       return;
     }
     const connectedForSeconds = Math.round((Date.now() - this.connectedAtMs) / 1000);
@@ -488,8 +561,21 @@ export class RelayClient implements RedialableTransport {
       return;
     }
     console.warn(
-      `${this.logPrefix} closed: code=${event.code} reason="${event.reason}" clean=${event.wasClean} after ${connectedForSeconds} s connected${relayPing}; redial in ${delayMs} ms`,
+      `${this.logPrefix} closed: code=${event.code} reason="${event.reason}" clean=${event.wasClean} after ${connectedForSeconds} s connected${relayPing}; redial in ${delayMs} ms, dial ${dialId}`,
     );
+  }
+
+  /**
+   * Hands one attempt's outcome to the observer. The observer records telemetry
+   * and must never be able to break a dial, so its throw is swallowed.
+   */
+  private reportDialOutcome(outcome: RelayDialOutcome): void {
+    if (!this.onDialOutcome) return;
+    try {
+      this.onDialOutcome(outcome);
+    } catch {
+      // report-ok: the observer only records a breadcrumb; losing one costs a trail entry, while a throw here would strand the dial's own handler.
+    }
   }
 
   /**
@@ -532,7 +618,7 @@ export class RelayClient implements RedialableTransport {
    * the socket it was armed for, so a watchdog left over from a dial that was
    * abandoned or superseded can never tear down a healthy successor.
    */
-  private armDialWatchdog(socket: WebSocket, dialStack: string): void {
+  private armDialWatchdog(socket: WebSocket, dialStack: string, dialId: string): void {
     this.clearDialWatchdog();
     this.dialWatchdog = setTimeout(() => {
       this.dialWatchdog = null;
@@ -540,7 +626,8 @@ export class RelayClient implements RedialableTransport {
       this.abandonSocket(new RelayDialError({ kind: 'timeout', stack: dialStack }));
       this.noteDialFailed(dialStack);
       const delayMs = this.scheduleReconnect();
-      console.warn(`${this.logPrefix} dial timed out after ${DIAL_TIMEOUT_MS / 1000} s; redial in ${delayMs} ms (via ${dialStack})`);
+      console.warn(`${this.logPrefix} dial timed out after ${DIAL_TIMEOUT_MS / 1000} s; redial in ${delayMs} ms, dial ${dialId} (via ${dialStack})`);
+      this.reportDialOutcome({ dialId, stack: dialStack, outcome: 'timed_out' });
     }, DIAL_TIMEOUT_MS);
     this.dialWatchdog.unref?.();
   }
@@ -602,10 +689,7 @@ export class RelayClient implements RedialableTransport {
     const abandoned = this.socket;
     if (!abandoned) return;
     this.clearDialWatchdog();
-    abandoned.onopen = null;
-    abandoned.onmessage = null;
-    abandoned.onerror = null;
-    abandoned.onclose = null;
+    detachSocketHandlers(abandoned);
     try {
       abandoned.close();
     } catch {
@@ -650,6 +734,10 @@ export class RelayClient implements RedialableTransport {
       this.reconnectTimer = null;
     }
     if (this.socket) {
+      // Detached first, as abandonSocket() does: a late close event from this
+      // socket must never run as a live close after a later connect(), where
+      // it would null that dial's socket and report a dial this client ended.
+      detachSocketHandlers(this.socket);
       try {
         this.socket.close();
       } catch {

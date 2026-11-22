@@ -5,9 +5,10 @@ description: Investigate a Sentry issue - retrieve the issue, latest event, stac
 
 # Sentry
 
-Retrieve and diagnose issues from the `kangentic` Sentry org (`kangentic.sentry.io`). Two
-projects live there: `desktop` (this Electron app, numeric id `4511996066660352`) and `mobile`
-(the React Native app, numeric id `4511808149651456`). Desktop error reporting is wired in
+Retrieve and diagnose issues from the `kangentic` Sentry org (`kangentic.sentry.io`). Three
+projects live there: `desktop` (this Electron app, numeric id `4511996066660352`), `mobile`
+(the React Native app, numeric id `4511808149651456`) and `relay` (kangentic-relay's crash reports,
+Node.js, error monitoring only, created 2026-11-21, numeric id `4512472383488000`). Desktop error reporting is wired in
 `src/main/analytics/error-reporting.ts`; docs/telemetry/error-reporting.md describes what gets
 captured and how.
 
@@ -78,7 +79,7 @@ permissions problem: 0.46.0 sent the CI token from the environment instead of th
 got 403 on every read, while 0.49.0 on the same machine read fine. Every call prints a one-line
 notice about `.sentryclirc`, which is harmless.
 
-A project target is `kangentic/desktop` or `kangentic/mobile`. An issue target is
+A project target is `kangentic/desktop`, `kangentic/mobile` or `kangentic/relay`. An issue target is
 `kangentic/DESKTOP-1N`: the shortId works for every command here, so no numeric id is needed. One
 command per call:
 
@@ -97,7 +98,8 @@ sentry api organizations/kangentic/issues/DESKTOP-1N/ -X PUT -f assignedTo=user:
   --fields '...'` returns the same rows under `data` (checked on 0.49.0, 2026-11-17). An earlier
   note here said it returned empty objects, but that was the unquoted list above. Bare
   `issue list --json` is about 4 KB a row, and the readable table cuts titles off. Run the list
-  once per project; for mobile pass `-f project=4511808149651456`. `--json` wraps the response as
+  once per project; for mobile pass `-f project=4511808149651456`, for the relay
+  `-f project=4512472383488000`. `--json` wraps the response as
   `{status, statusText, body}`, with one row per issue in `body`, 100 at most per call
   (`--cursor next` pages). `query` takes Sentry issue search syntax, and the query above is the
   triage set. Retention is 30 days, so no `statsPeriod` reaches further back. The readable
@@ -273,6 +275,45 @@ handled forwards), release, environment, and the anonymous install id under `use
   (crash JSONs, main console), `kangentic_tail_logs`, and the Aptabase `app_error` /
   `spawn_failed` counts are the volume view of the same signal.
 
+## Joining an event to the relay
+
+A mobile relay connection is one dial on the client and one connection on the relay. Each dial
+carries a random 16-hex id (`&dial=` on the relay URL, minted fresh per attempt), and the client's
+Sentry event carries it as the `relay_dial_id` tag. The tag name is the same on desktop and mobile
+events, so one step covers both projects. On desktop it is on `mobile_verb` reports, and every
+desktop event's breadcrumbs list recent dials under `mobile-bridge.relay-dial` (id, stack,
+outcome). `docs/integrations/mobile-bridge/relay-transport.md` has the contract.
+
+1. Read the id and the event's time:
+   ```
+   sentry issue view kangentic/DESKTOP-1N --json --fields 'event.tags,event.dateCreated'
+   ```
+   The id is the `relay_dial_id` entry in `tags`, the reliable key. With no tag, the
+   `mobile-bridge.relay-dial` breadcrumbs in the readable `sentry issue view` are candidates, not
+   an answer: a crumb names no device, so with several paired devices their dials interleave and
+   the last one before the event may be another device's. Try each recent `opened` id. To find
+   other events on the same dial:
+   `-f "query=relay_dial_id:<id>"` on the org issues endpoint.
+2. Look for the id in the relay's log. Grep the bare id, so the step works whatever field the
+   relay prints it under:
+   ```
+   ssh deploy@<relay host> "docker logs compose-relay-1 2>&1 | grep -F <id>"
+   ```
+3. No match: read the `/admin` Table view (`https://relay.kangentic.com/admin`, behind Cloudflare
+   Access) for the event's minute in UTC. It holds rejections by reason and closes by cause at
+   60-second resolution for 7 days (kangentic-relay's `src/history/rows.ts`). That says what the
+   relay was doing then, not which connection was this one.
+
+Limits, stated plainly:
+
+- **The id join only works for recent events.** The relay's log keeps about a week, and a relay
+  recreate (every relay release) wipes it. For anything older, step 3 is all there is: the `/admin`
+  table drops to 5-minute rows after 7 days and to hourly rows after 30.
+- **No match is expected for an event from before the join existed.** A desktop or mobile build
+  without the dial id sends none, and a relay release that does not log it records none.
+- **A slow connection is not covered here.** The join finds a dial's record, not why it was slow.
+  For latency, see kangentic-relay's `docs/latency.md`.
+
 ## Native minidumps (`platform: native`, mechanism `minidump`)
 
 A native crash's frames arrive as raw addresses with `function: null` for any module Sentry has
@@ -388,7 +429,8 @@ Reading a native event, in order of what trips people up:
 ## Typical requests
 
 **"Any new issues?" (triage scan).** Run the triage list line from Retrieval for the desktop
-project and again for mobile (`-f project=4511808149651456`), unless the user scoped to one. The query
+project, again for mobile (`-f project=4511808149651456`) and again for the relay
+(`-f project=4512472383488000`), unless the user scoped to one. The query
 keeps only unresolved, unassigned production issues, so the result is already most of the report's
 per-issue line: shortId, title, count, userCount (affected installs), first and last seen, and
 `assignedTo`. Add the link (`https://kangentic.sentry.io/issues/<id>/`), and the release breakdown
@@ -442,7 +484,7 @@ of an assigned issue on the newest release.
 diagnose (below), then - when asked for a task - create ONE task via the kangentic MCP tools,
 routed by project: a DESKTOP-* issue goes on the `kangentic` board; a MOBILE-* issue (or a
 REACT-NATIVE-* one - issues created before the 2026-08 slug rename keep their old prefix) on
-`kangentic-mobile`. First search for an existing task carrying the shortId so a re-report never
+`kangentic-mobile`; a RELAY-* issue on `kangentic-relay`. First search for an existing task carrying the shortId so a re-report never
 duplicates. Title: `Fix DESKTOP-N: <issue title, trimmed>`. Description: the Sentry link,
 shortId, level, event/affected-install counts, environment + release, the diagnosis, and the
 few stack frames or tags that carry it. Default to To Do; the user decides when it spawns.

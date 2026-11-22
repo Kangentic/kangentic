@@ -232,6 +232,10 @@ msgstr "프리셋은 라이브 모델과 보정 모델을 자동으로 선택합
 msgid "A private key file; Kangentic keeps a copy in its own folder"
 msgstr "개인 키 파일. Kangentic이 자체 폴더에 사본을 보관합니다"
 
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "A random id for each mobile relay connection attempt, which the relay's own log also keeps for about a week"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
 msgid "A relay you run"

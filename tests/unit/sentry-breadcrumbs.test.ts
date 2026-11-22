@@ -23,6 +23,7 @@ import {
   CONSOLE_BREADCRUMB_TAGS,
   filterBreadcrumb,
   redactPaths,
+  RELAY_DIAL_BREADCRUMB_CATEGORY,
   type BreadcrumbShape,
 } from '../../src/shared/sentry-breadcrumbs';
 
@@ -341,6 +342,56 @@ describe('filterBreadcrumb: request crumbs', () => {
     });
     expect(kept?.data).toEqual({});
     expect(kept?.message).toBeUndefined();
+  });
+});
+
+// The relay dial crumb is what names recent dials on any event, for the join
+// to the relay's log. It may carry only its three fixed fields.
+describe('filterBreadcrumb: relay dial outcomes', () => {
+  const dialCrumb = (data: { [key: string]: unknown }): BreadcrumbShape => ({
+    category: RELAY_DIAL_BREADCRUMB_CATEGORY,
+    message: 'relay dial failed',
+    data,
+  });
+
+  it('keeps the dial id, stack and outcome, and nothing else', () => {
+    const kept = filterBreadcrumb(dialCrumb({
+      relay_dial_id: '0123456789abcdef',
+      stack: 'chromium',
+      outcome: 'failed',
+      slot: 'secret-slot-value',
+      reason: 'net::ERR_CONNECTION_REFUSED to relay.example.com',
+    }));
+    expect(kept?.data).toEqual({ relay_dial_id: '0123456789abcdef', stack: 'chromium', outcome: 'failed' });
+    expect(kept?.message).toBe('relay dial failed');
+  });
+
+  it.each([
+    ['a dial id of the wrong length', { relay_dial_id: '0123456789abcdef00', stack: 'node', outcome: 'opened' }],
+    ['an upper-case dial id', { relay_dial_id: '0123456789ABCDEF', stack: 'node', outcome: 'opened' }],
+    ['a stack that is a URL', { relay_dial_id: '0123456789abcdef', stack: 'wss://relay.example.com', outcome: 'opened' }],
+    ['an unknown outcome', { relay_dial_id: '0123456789abcdef', stack: 'node', outcome: 'closed by peer' }],
+    ['no dial id', { stack: 'node', outcome: 'opened' }],
+    ['a numeric dial id', { relay_dial_id: 123, stack: 'node', outcome: 'opened' }],
+    ['no stack', { relay_dial_id: '0123456789abcdef', outcome: 'opened' }],
+    ['no outcome', { relay_dial_id: '0123456789abcdef', stack: 'node' }],
+    ['a stack with a digit', { relay_dial_id: '0123456789abcdef', stack: 'node2', outcome: 'opened' }],
+    ['an upper-case stack', { relay_dial_id: '0123456789abcdef', stack: 'Node', outcome: 'opened' }],
+    ['a stack longer than 16 letters', { relay_dial_id: '0123456789abcdef', stack: 'abcdefghijklmnopq', outcome: 'opened' }],
+    ['a numeric outcome', { relay_dial_id: '0123456789abcdef', stack: 'node', outcome: 1 }],
+  ])('drops a crumb with %s', (_label, data) => {
+    expect(filterBreadcrumb(dialCrumb(data))).toBeNull();
+  });
+
+  it('drops a crumb with no data at all', () => {
+    expect(filterBreadcrumb({ category: RELAY_DIAL_BREADCRUMB_CATEGORY, message: 'relay dial failed' })).toBeNull();
+  });
+
+  it('keeps every fixed outcome and rewrites the message to name it', () => {
+    for (const outcome of ['opened', 'failed', 'timed_out']) {
+      const kept = filterBreadcrumb(dialCrumb({ relay_dial_id: '0123456789abcdef', stack: 'node', outcome }));
+      expect(kept?.message).toBe(`relay dial ${outcome}`);
+    }
   });
 });
 

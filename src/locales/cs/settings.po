@@ -232,6 +232,10 @@ msgstr "Předvolba za vás vybere živý a zpřesňující model. Ve vlastním r
 msgid "A private key file; Kangentic keeps a copy in its own folder"
 msgstr "Soubor privátního klíče; Kangentic si ponechá kopii ve vlastní složce"
 
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "A random id for each mobile relay connection attempt, which the relay's own log also keeps for about a week"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
 msgid "A relay you run"

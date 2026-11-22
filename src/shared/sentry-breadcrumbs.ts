@@ -273,6 +273,34 @@ function kangenticUrl(value: string): string | null {
   return KANGENTIC_URL_PREFIXES.some((prefix) => lowerCaseUrl.startsWith(prefix)) ? bareUrl : null;
 }
 
+/** The category main's `addRelayDialBreadcrumb` (src/main/analytics/error-reporting.ts) records under. */
+export const RELAY_DIAL_BREADCRUMB_CATEGORY = 'mobile-bridge.relay-dial';
+
+/** The pinned dial id format (relay-client.ts): 16 lowercase hex characters. */
+const RELAY_DIAL_ID = /^[0-9a-f]{16}$/;
+/** A stack label: `node`, `chromium`, `injected`. Never a URL or a host. */
+const RELAY_DIAL_STACK = /^[a-z]{1,16}$/;
+const RELAY_DIAL_OUTCOMES: ReadonlySet<string> = new Set(['opened', 'failed', 'timed_out']);
+
+/**
+ * A relay dial's outcome: its random per-dial id, the stack that dialed and
+ * how it ended. Rebuilt from those three fields, each checked against its
+ * fixed shape, so a crumb carrying anything else (a slot id, a close reason,
+ * the relay URL) cannot pass.
+ */
+function keepRelayDialCrumb(crumb: BreadcrumbShape): boolean {
+  const data = crumb.data;
+  const dialId = data?.relay_dial_id;
+  const stack = data?.stack;
+  const outcome = data?.outcome;
+  if (typeof dialId !== 'string' || !RELAY_DIAL_ID.test(dialId)) return false;
+  if (typeof stack !== 'string' || !RELAY_DIAL_STACK.test(stack)) return false;
+  if (typeof outcome !== 'string' || !RELAY_DIAL_OUTCOMES.has(outcome)) return false;
+  crumb.message = `relay dial ${outcome}`;
+  crumb.data = { relay_dial_id: dialId, stack, outcome };
+  return true;
+}
+
 const KEPT_REQUEST_FIELDS = ['method', 'http.method', 'status_code'];
 
 /**
@@ -327,6 +355,9 @@ export function filterBreadcrumb<T extends BreadcrumbShape>(breadcrumb: T): T | 
       case 'fetch':
       case 'xhr':
         keep = keepRequestCrumb(crumb);
+        break;
+      case RELAY_DIAL_BREADCRUMB_CATEGORY:
+        keep = keepRelayDialCrumb(crumb);
         break;
       // `sentry.event` repeats an earlier event's message and stack, and that
       // event already reached Sentry on its own. `navigation` carries page URLs,

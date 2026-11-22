@@ -14,6 +14,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createTransport } from '../../../src/main/mobile-bridge/transport/transport-factory';
 import { RelayClient } from '../../../src/main/mobile-bridge/transport/relay-client';
 import { resolveRelayChromiumFallback } from '../../../src/main/mobile-bridge/transport/relay-websocket';
+import { addRelayDialBreadcrumb } from '../../../src/main/analytics/error-reporting';
 
 // The real resolver reads Electron's `net` and `session`, which a unit test has
 // no app for. Mocked, it answers undefined (no fallback) unless a test says
@@ -23,10 +24,16 @@ vi.mock('../../../src/main/mobile-bridge/transport/relay-websocket', () => ({
   resolveRelayChromiumFallback: vi.fn(),
 }));
 
+// The Sentry module imports Electron; mocked, it records the factory's wiring.
+vi.mock('../../../src/main/analytics/error-reporting', () => ({
+  addRelayDialBreadcrumb: vi.fn(),
+}));
+
 // File-level so a preferred fallback set by one test can never leak into
 // another test's createTransport() call, whatever order the tests run in.
 beforeEach(() => {
   vi.mocked(resolveRelayChromiumFallback).mockReset();
+  vi.mocked(addRelayDialBreadcrumb).mockReset();
 });
 
 describe('createTransport()', () => {
@@ -70,7 +77,11 @@ describe('createTransport()', () => {
       // `role=desktop` is the relay's metrics hint (kangentic-relay's
       // guards/peerRole.ts): attribution only, never a gate, so the relay's
       // waiting-peer split can tell this desktop from a phone.
-      expect(capturedUrls).toEqual(['ws://relay.example.com/?slot=my-slot-id&role=desktop']);
+      // `dial` is this attempt's random id, the key that joins a Sentry event
+      // to the relay's log of the same dial.
+      const dialId = (transport as RelayClient).currentDialId;
+      expect(dialId).toMatch(/^[0-9a-f]{16}$/);
+      expect(capturedUrls).toEqual([`ws://relay.example.com/?slot=my-slot-id&role=desktop&dial=${dialId}`]);
       transport.close();
     } finally {
       (globalThis as unknown as { WebSocket: unknown }).WebSocket = originalWebSocket;
@@ -113,12 +124,43 @@ describe('createTransport()', () => {
       });
       void transport.connect().catch(() => undefined);
 
-      expect(injectedUrls).toEqual(['ws://relay.example.com/?slot=my-slot-id&role=desktop']);
+      expect(injectedUrls).toEqual([`ws://relay.example.com/?slot=my-slot-id&role=desktop&dial=${(transport as RelayClient).currentDialId}`]);
       expect(globalUrls).toEqual([]);
       transport.close();
     } finally {
       (globalThis as unknown as { WebSocket: unknown }).WebSocket = originalWebSocket;
     }
+  });
+
+  it('records each dial outcome as a Sentry breadcrumb named by the dial id', () => {
+    const sockets: Array<{ onopen: (() => void) | null }> = [];
+    class OpeningWebSocket {
+      binaryType = 'blob';
+      onopen: (() => void) | null = null;
+      onmessage: ((event: { data: unknown }) => void) | null = null;
+      onerror: (() => void) | null = null;
+      onclose: (() => void) | null = null;
+      constructor() {
+        sockets.push(this);
+      }
+      close(): void {
+        // no-op: this test only opens the socket.
+      }
+    }
+    const transport = createTransport({
+      relayUrl: 'ws://relay.example.com',
+      slotId: 'my-slot-id',
+      webSocketConstructor: OpeningWebSocket as unknown as typeof WebSocket,
+    });
+    void transport.connect().catch(() => undefined);
+    sockets[0].onopen?.();
+
+    expect(vi.mocked(addRelayDialBreadcrumb)).toHaveBeenCalledWith({
+      dialId: (transport as RelayClient).currentDialId,
+      stack: 'injected',
+      outcome: 'opened',
+    });
+    transport.close();
   });
 
   it('each call constructs a fresh transport instance (no shared/singleton state across pairing attempts)', () => {

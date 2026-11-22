@@ -1,6 +1,7 @@
 import type { Transport } from '@kangentic/protocol';
 import { RelayClient, type RelayWebSocketConstructor } from './relay-client';
 import { resolveRelayChromiumFallback } from './relay-websocket';
+import { addRelayDialBreadcrumb } from '../../analytics/error-reporting';
 
 /**
  * The swap point named in the research doc's Phase 1 scope: relay is the
@@ -32,5 +33,8 @@ export function createTransport(options: TransportFactoryOptions): Transport {
     webSocketConstructor: options.webSocketConstructor,
     webSocketStack: options.webSocketStack,
     fallbackWebSocket: options.webSocketConstructor ? undefined : resolveRelayChromiumFallback(options.relayUrl),
+    // Each dial's outcome becomes a breadcrumb named by its dial id, so a
+    // later Sentry event can be joined to the relay's log of that dial.
+    onDialOutcome: addRelayDialBreadcrumb,
   });
 }

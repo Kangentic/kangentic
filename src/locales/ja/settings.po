@@ -232,6 +232,10 @@ msgstr "プリセットではライブモデルと補正モデルが自動で選
 msgid "A private key file; Kangentic keeps a copy in its own folder"
 msgstr "秘密キーファイル。Kangentic が専用フォルダーにコピーを保持します"
 
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "A random id for each mobile relay connection attempt, which the relay's own log also keeps for about a week"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
 msgid "A relay you run"
