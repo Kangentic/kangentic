@@ -37,6 +37,7 @@ import {
   signatureRequirementReport,
   stripUrlQueries,
 } from '../../src/main/updater';
+import { PtyHostExitedError, PtyHostTimeoutError } from '../../src/main/pty/host/pty-host-request-errors';
 
 /**
  * The DESKTOP-F message, copied from the real Sentry event payload rather than
@@ -734,27 +735,51 @@ describe('isSudoFallbackFailure', () => {
 describe('probeSudoElevation', () => {
   // Every case injects the probe. The default runs real sudo, which CI runners
   // grant without a password and a Windows host does not have.
-  const probeFailure = (fields: { code?: number | string; killed?: boolean }): (() => Promise<never>) =>
+  const probeFailure = (fields: { code?: number | string | null; killed?: boolean; signal?: string | null }): (() => Promise<never>) =>
     () => Promise.reject(Object.assign(new Error('Command failed: sudo -n true'), fields));
 
   it('says cannot-elevate when sudo -n needs a password (classic sudo exits 1)', async () => {
-    expect(await probeSudoElevation(probeFailure({ code: 1, killed: false }))).toBe('cannot-elevate');
+    expect(await probeSudoElevation(probeFailure({ code: 1, killed: false }))).toEqual({ elevation: 'cannot-elevate', failure: null });
+  });
+
+  it('says cannot-elevate for an exit 1 in the shape the pty host rejects with', async () => {
+    // host-exec.ts sends `signal: null` for a run that exited, and the shared
+    // reader checks a string signal before the code.
+    expect(await probeSudoElevation(probeFailure({ code: 1, killed: false, signal: null })))
+      .toEqual({ elevation: 'cannot-elevate', failure: null });
   });
 
   it('says cannot-elevate for any other non-zero exit, since sudo-rs documents none', async () => {
-    expect(await probeSudoElevation(probeFailure({ code: 2 }))).toBe('cannot-elevate');
+    expect(await probeSudoElevation(probeFailure({ code: 2 }))).toEqual({ elevation: 'cannot-elevate', failure: null });
   });
 
   it('says can-elevate when sudo runs true, so the install exit 1 was the package manager', async () => {
-    expect(await probeSudoElevation(() => Promise.resolve({ stdout: '', stderr: '' }))).toBe('can-elevate');
+    expect(await probeSudoElevation(() => Promise.resolve({ stdout: '', stderr: '' }))).toEqual({ elevation: 'can-elevate', failure: null });
+  });
+
+  // DESKTOP-44 on v0.60.0 reported with no way to say which of these it was.
+  it.each([
+    ['a pty host that timed out', new PtyHostTimeoutError('exec')],
+    ['a pty host that exited', new PtyHostExitedError()],
+  ])('says unknown for %s, with host_unavailable as how it failed', async (_label, rejection) => {
+    expect(await probeSudoElevation(() => Promise.reject(rejection))).toEqual({ elevation: 'unknown', failure: 'host_unavailable' });
   });
 
   it.each([
-    ['a killed probe', { code: 1, killed: true }],
-    ['a spawn error', { code: 'ENOENT' }],
-    ['a failure with no exit code', {}],
-  ])('says unknown for %s, so the failure still reports', async (_label, fields) => {
-    expect(await probeSudoElevation(probeFailure(fields))).toBe('unknown');
+    ['a killed probe', { code: 1, killed: true }, 'timeout'],
+    ['a spawn error', { code: 'ENOENT' }, 'spawn_error'],
+    ['a failure with no exit code', {}, 'other'],
+  ])('says unknown for %s, so the failure still reports, and says how it failed', async (_label, fields, failure) => {
+    expect(await probeSudoElevation(probeFailure(fields))).toEqual({ elevation: 'unknown', failure });
+  });
+
+  it('says unknown for a probe killed by a signal, since that answers nothing', async () => {
+    expect(await probeSudoElevation(probeFailure({ code: null, signal: 'SIGKILL', killed: false })))
+      .toEqual({ elevation: 'unknown', failure: 'signal' });
+  });
+
+  it('says unknown for a rejection with exit code 0, since only a non-zero exit means sudo could not prompt', async () => {
+    expect(await probeSudoElevation(probeFailure({ code: 0 }))).toEqual({ elevation: 'unknown', failure: 'exit_code' });
   });
 
   it.each([
@@ -764,7 +789,7 @@ describe('probeSudoElevation', () => {
   ])('says unknown, without throwing, when the probe rejects with %s', async (_label, rejection) => {
     // The handler's .catch is not a safety net for this: a throw here would
     // turn an inconclusive probe into a lost report.
-    expect(await probeSudoElevation(() => Promise.reject(rejection))).toBe('unknown');
+    expect(await probeSudoElevation(() => Promise.reject(rejection))).toEqual({ elevation: 'unknown', failure: 'other' });
   });
 });
 

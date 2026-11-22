@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { UnreadableUsageError } from '../../src/main/accounts/account-support';
 import { readClaudeCachedUsage } from '../../src/main/agent/adapters/claude/accounts';
 import { claudeStatePathForHome, isDefaultClaudeHome } from '../../src/main/agent/adapters/claude/claude-json-lock';
 import type { RateLimitWindow } from '../../src/shared/types';
@@ -27,6 +28,16 @@ function loadState(): CachedUsageState {
 function windowsOf(state: unknown, nowMs: number): RateLimitWindow[] | null {
   const reading = readClaudeCachedUsage(state, nowMs);
   return 'windows' in reading ? reading.windows : null;
+}
+
+/** What `run` threw, or undefined when it returned. */
+function thrownBy(run: () => unknown): unknown {
+  try {
+    run();
+    return undefined;
+  } catch (error) {
+    return error;
+  }
 }
 
 const TEN_MINUTES_MS = 10 * 60 * 1000;
@@ -107,10 +118,33 @@ describe('readClaudeCachedUsage', () => {
     });
   });
 
-  it('names no-windows when utilization is not an object', () => {
+  it('names no-windows when utilization is null, the way Claude marks a window that does not apply', () => {
     const state = loadState();
-    const broken = { cachedUsageUtilization: { fetchedAtMs: state.cachedUsageUtilization.fetchedAtMs, utilization: 'x' } };
-    expect(readClaudeCachedUsage(broken, state.cachedUsageUtilization.fetchedAtMs)).toEqual({ empty: 'no-windows' });
+    const fetchedAtMs = state.cachedUsageUtilization.fetchedAtMs;
+    expect(readClaudeCachedUsage({ cachedUsageUtilization: { fetchedAtMs, utilization: null } }, fetchedAtMs)).toEqual({ empty: 'no-windows' });
+  });
+
+  // A renamed `utilization` field would empty every Claude account's reading, and Sentry
+  // DESKTOP-4E could not tell that from a plan with no windows. The cache's keys name the new field.
+  it.each([
+    ['missing', { fetchedAtMs: 0, usage: {} }, 'fetchedAtMs,usage'],
+    ['a string', { fetchedAtMs: 0, utilization: 'x' }, 'fetchedAtMs,utilization'],
+    ['a list', { fetchedAtMs: 0, utilization: [] }, 'fetchedAtMs,utilization'],
+  ])('throws unreadable with the cache\'s keys when utilization is %s', (_label, cache, keys) => {
+    const failure = thrownBy(() => readClaudeCachedUsage({ cachedUsageUtilization: cache }, 0));
+    expect(failure).toBeInstanceOf(UnreadableUsageError);
+    expect((failure as UnreadableUsageError).keys).toBe(keys);
+  });
+
+  it('caps the keys on an unreadable report at 120 characters', () => {
+    const unknownKeys = Array.from({ length: 12 }, (_unused, index) => `unknown_fiel_${String(index).padStart(2, '0')}`);
+    expect(unknownKeys[0]).toHaveLength(15);
+    const utilization = Object.fromEntries(unknownKeys.map((key) => [key, { utilization: 1, resets_at: 'x' }]));
+    const failure = thrownBy(() => readClaudeCachedUsage({ cachedUsageUtilization: { fetchedAtMs: 0, utilization } }, 0));
+    expect(failure).toBeInstanceOf(UnreadableUsageError);
+    const keys = (failure as UnreadableUsageError).keys;
+    expect(keys).toHaveLength(120);
+    expect(keys).toBe([...unknownKeys].sort().join(',').slice(0, 120));
   });
 });
 
