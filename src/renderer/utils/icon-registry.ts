@@ -74,9 +74,11 @@ export const CORE_ICONS: ReadonlyMap<string, IconComponent> = new Map<string, Ic
  * Zap. A stored name is never rewritten: this is read at lookup time, so a name stays as saved and
  * an older build sharing a `kangentic.json` still reads it.
  *
- * Eight of these point at a redrawn glyph rather than the same drawing: `bold`, `heading`, `copyright`,
- * `square-m`, and the four parking icons became letter icons. Lucide's own aliases do the same, and a
- * slightly different glyph beats a dot.
+ * Twelve of these point at a redrawn glyph rather than the same drawing: `bold`, `heading`, `copyright`,
+ * `square-m`, and the four parking icons became letter icons, and the four fold and unfold icons became
+ * the axis arrows. Lucide's own aliases do the same, and a slightly different glyph beats a dot. The
+ * centerline square and triangle pairs keep their drawing under an axis name; the square pair's
+ * orientation word flips, as lucide's alias does.
  */
 export const LEGACY_ICON_NAMES: ReadonlyMap<string, string> = new Map<string, string>([
   ['archive-restore', 'archive-arrow-up'],
@@ -94,6 +96,8 @@ export const LEGACY_ICON_NAMES: ReadonlyMap<string, string> = new Map<string, st
   ['clock-alert', 'clock-exclamation-point'],
   ['cloud-alert', 'cloud-exclamation-point'],
   ['copyright', 'circle-letter-c'],
+  ['fold-horizontal', 'arrows-to-axis-dashed-vertical'],
+  ['fold-vertical', 'arrows-to-axis-dashed-horizontal'],
   ['heading', 'letter-h'],
   ['mail-warning', 'mail-exclamation-point'],
   ['message-circle-warning', 'message-circle-exclamation-point'],
@@ -105,10 +109,16 @@ export const LEGACY_ICON_NAMES: ReadonlyMap<string, string> = new Map<string, st
   ['square-arrow-out-down-right', 'square-arrow-down-right-exit'],
   ['square-arrow-out-up-left', 'square-arrow-up-left-exit'],
   ['square-arrow-out-up-right', 'square-arrow-up-right-exit'],
+  ['square-centerline-dashed-horizontal', 'square-axis-dashed-vertical'],
+  ['square-centerline-dashed-vertical', 'square-axis-dashed-horizontal'],
   ['square-m', 'square-letter-m'],
   ['square-parking', 'square-letter-p'],
   ['square-parking-off', 'square-letter-poff'],
   ['triangle-alert', 'triangle-exclamation-point'],
+  ['triangles-centerline-dashed-horizontal', 'carets-to-axis-dashed-horizontal'],
+  ['triangles-centerline-dashed-vertical', 'carets-to-axis-dashed-vertical'],
+  ['unfold-horizontal', 'arrows-from-axis-dashed-vertical'],
+  ['unfold-vertical', 'arrows-from-axis-dashed-horizontal'],
 ]);
 
 /** The name a persisted icon goes by now. Every lookup and comparison against the catalog uses this. */
