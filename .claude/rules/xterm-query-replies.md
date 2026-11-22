@@ -44,6 +44,7 @@ which is the same split.
   existed. From 6.1.0-beta.304 to 6.1.0-beta.336 (headless 6.1.0-beta.334) there were none: both
   bundles hold the same reply sites. From there to 6.1.0-beta.338 (headless 6.1.0-beta.336) there
   were none either: 38 sites in the browser bundle and 17 in the headless one, before and after.
+  From there to 6.1.0-beta.339 (headless 6.1.0-beta.337) the payloads are identical: still 38 and 17.
 - A terminal whose `onData` goes nowhere (main's headless parser, the devtools re-parse, the web
   demo's replay emulator) answers into the void and is exempt.
 
