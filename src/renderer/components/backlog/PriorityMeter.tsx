@@ -67,8 +67,8 @@ interface PriorityMeterProps {
 /**
  * The priority level meter, drawn from spans rather than an inline SVG
  * (ui-conventions.md). Every surface that shows a priority draws this one meter.
- * Decorative: the element around it (`PriorityBadge`, a picker row) carries the level's
- * name.
+ * Decorative: the element around it carries the name, the level's (`PriorityBadge`, a
+ * picker row) or its own (the toolbar's Priorities button, which draws it as an icon).
  */
 export const PriorityMeter = React.memo(function PriorityMeter({ level, levelCount, color }: PriorityMeterProps) {
   const devicePixelRatio = useDevicePixelRatio();
