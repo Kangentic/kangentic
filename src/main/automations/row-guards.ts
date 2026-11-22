@@ -1,4 +1,5 @@
 import type { ColumnAutomation, TextMatchSource } from '../../shared/types';
+import { automationNeedsAgent } from '../../shared/automation-manifest';
 import { textMatchSourceOf } from '../../shared/final-line-match';
 import { hasTaskFilter, matchesTaskFilter, type FilterableTaskFacts } from '../../shared/automation-filter';
 
@@ -7,7 +8,8 @@ import { hasTaskFilter, matchesTaskFilter, type FilterableTaskFacts } from '../.
  * Agent evaluation or Text match), a Frequency limit. The runner is the only
  * place any is applied, so a caller that delivers a row itself
  * (`resolveColumnMessage`'s `guarded`) asks here, and the two can never
- * disagree about which rows are guarded.
+ * disagree about which rows are guarded. It also holds `heldForOwner`, which is
+ * not a guard: it says which rows a `Needs owner:` reply holds back.
  *
  * Its own module, importing only shared code, so the transition engine's
  * column strategy can ask without importing the runner and its adapter registry.
@@ -64,6 +66,22 @@ export function hasUserTextMatch(
   automation: Pick<ColumnAutomation, 'final_line' | 'trigger'> & { text_match_source?: TextMatchSource | null },
 ): boolean {
   return hasFinalLine(automation) && textMatchSourceOf(automation) === 'user';
+}
+
+/**
+ * Whether a turn-end row waits while the agent waits on its owner: a reply
+ * that ends on `Needs owner:` holds it, and the board stops the card instead
+ * (owner's decision, 2026-11-22). Only a row that talks to the agent, asked of
+ * the manifest (`needs`), and only one with no Agent evaluation and no Text
+ * match: either is how the row's author says when it runs, so it runs on its
+ * own terms. Task lines pick which tasks a row is for, not what the reply
+ * says, so they do not count. A move is not a nudge, and Notify, Webhook and
+ * Run script tell no agent anything, so none of them waits.
+ */
+export function heldForOwner(
+  automation: Pick<ColumnAutomation, 'type' | 'condition' | 'final_line' | 'trigger'>,
+): boolean {
+  return automationNeedsAgent(automation.type) && !hasCondition(automation) && !hasFinalLine(automation);
 }
 
 /** Whether a row carries any guard: a Condition line of any kind or a Frequency limit. */

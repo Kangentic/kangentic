@@ -134,6 +134,7 @@ const PINNED_ROWS = new Set([
   'Design/Shelved',
   'Design/On to Planning',
   'Executing/On to Code Review',
+  'Executing/Apply findings',
   'Code Review/Back for revisions',
   'Code Review/On to Testing',
   'Testing/On to Merge',
@@ -279,6 +280,15 @@ describe('board turn-end contracts: Executing', () => {
     expectTextIn(applyFindingsMessage, 'the Apply findings message', 'not as follow-up tasks');
     expectTextIn(applyFindingsMessage, 'the Apply findings message', 'Skip anything already filed as a task on the board, and never delete or move one.');
   });
+
+  // The built-in hold (#1162) covers a task outside a workflow. A workflow task's turn end holds
+  // no row on `Needs owner:`, so the row's own Text match keeps its nudge off that line there.
+  it('keeps the Apply findings nudge off a reply that ends on Needs owner, and lets the agent end on it', () => {
+    const matcher = finalLineOf('Executing', 'Apply findings');
+    expect(matchFinalLine(matcher, 'The publish needs an npm login.\n\nNeeds owner: sign in to npm').met, 'a Needs owner reply must not be nudged').toBe(false);
+    expect(matchFinalLine(matcher, 'Two findings left.').met, 'any other reply is nudged').toBe(true);
+    expectTextIn(turnEndRow('Executing', 'Apply findings').message ?? '', 'the Apply findings message', 'a line that starts "Needs owner:"');
+  });
 });
 
 describe('board turn-end contracts: Merge', () => {
@@ -356,9 +366,12 @@ describe('board turn-end contracts: row shape', () => {
   });
 
   it('never lets one row\'s line match another Text match row in its column', () => {
+    // A row whose patterns are all negations ("!Needs owner*") is met by every line it does not
+    // name, so it is a row for any other line, never one a producer's line is meant to miss.
+    const everyPatternNegated = (finalLine: string): boolean => finalLine.split('\n').every((pattern) => pattern.trim().startsWith('!'));
     for (const { columnName, row, finalLine } of agentLineRows) {
       for (const { columnName: otherColumn, row: otherRow, finalLine: otherFinalLine } of agentLineRows) {
-        if (otherColumn !== columnName || otherRow === row) continue;
+        if (otherColumn !== columnName || otherRow === row || everyPatternNegated(otherFinalLine)) continue;
         expect(matchFinalLine(otherFinalLine, finalLine).met, `${columnName}: "${finalLine}" matches "${otherRow.name}"`).toBe(false);
       }
     }

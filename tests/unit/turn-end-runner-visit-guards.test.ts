@@ -150,6 +150,7 @@ const {
   registerTurnEndAutomations,
   CARRIED_IN_TURN_REASON,
   AGENT_NOT_IDLE_REASON,
+  NEEDS_OWNER_HOLD_REASON,
 } = await import('../../src/main/automations/turn-end/turn-end-runner');
 const { markOwnCallSession } = await import('../../src/main/ipc/handlers/own-call-turn-wait');
 
@@ -1018,6 +1019,132 @@ describe('a turn end and the rows it may run', () => {
       await endTurn();
 
       expect(stopRows()).toEqual([]);
+    });
+  });
+
+  // #1162: a Send message row with no guard always messaged the agent, so the
+  // stop check never ran, and the nudge's own line moved the card on past the
+  // agent's question (#1160). The hold is built in now.
+  describe('a reply that ends on Needs owner', () => {
+    const NEEDS_OWNER_REPLY = 'The publish needs an npm login.\n\nNeeds owner: sign in to npm';
+
+    function replySays(text: string): void {
+      hoisted.findSession.mockImplementation(() => ({ session_type: 'claude_agent', agent_session_id: 'agent-session-1', cwd: '/mock/worktree' }));
+      hoisted.retrievalCall.mockImplementation(async () => ({ text, uuid: 'reply-1', ts: Date.now() }));
+    }
+
+    const nudge = (overrides: Partial<ColumnAutomation> = {}): ColumnAutomation => row({
+      id: 'row-apply-findings',
+      name: 'Apply findings',
+      type: 'send_message',
+      config: { message: 'Apply your findings, then end on "Findings: applied".' },
+      ...overrides,
+    });
+    const notify = (): ColumnAutomation => row({ id: 'row-notify', name: 'Tell me', type: 'notify', config: { title: '{{title}}', body: 'Done' } });
+    const ranIds = (): string[] => hoisted.executeTransition.mock.calls
+      .flatMap((call) => [...(call[3] as ExecuteOptions).onlyIds]);
+
+    beforeEach(() => {
+      hoisted.workflowStepApplies.mockImplementation(() => false);
+      hoisted.task.workflow_id = null;
+      hoisted.conditionCheckInput.mockImplementation(() => ({ rows: [] }));
+      hoisted.checkConditions.mockImplementation(async () => ({
+        ok: true,
+        answers: new Map([[NEEDS_A_PERSON_CHECK_ID, { met: false, reason: 'It can go on.' }]]),
+      }));
+      replySays(NEEDS_OWNER_REPLY);
+      enterColumnAt(secondsAgo(60));
+    });
+
+    it('holds a Send message row with no guard, says why, and stops the card with no model call', async () => {
+      hoisted.rows = [nudge()];
+
+      await endTurn();
+
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
+      expect(skipPairs()).toEqual([['row-apply-findings', NEEDS_OWNER_HOLD_REASON]]);
+      expect(hoisted.checkConditions).not.toHaveBeenCalled();
+      expect(runs.columnStop(taskId, laneId, null)).toEqual({ cause: 'reply', reason: 'sign in to npm' });
+    });
+
+    it('still runs the column\'s other rows', async () => {
+      hoisted.rows = [nudge(), notify()];
+
+      await endTurn();
+
+      expect(ranIds()).toEqual(['row-notify']);
+      expect(runs.countRuns('row-notify', taskId)).toBe(1);
+      expect(skipPairs()).toEqual([['row-apply-findings', NEEDS_OWNER_HOLD_REASON]]);
+      expect(runs.columnStop(taskId, laneId, null)).toMatchObject({ cause: 'reply' });
+    });
+
+    it('runs a Send message row with a Text match or an Agent evaluation on its own terms', async () => {
+      const onTextMatch = nudge({ id: 'row-text-match', final_line: 'Needs owner*' });
+      const onCondition = nudge({ id: 'row-condition', condition: 'The agent is waiting on its owner.' });
+      hoisted.rows = [onTextMatch, onCondition];
+
+      await endTurn();
+
+      expect(ranIds().sort()).toEqual(['row-condition', 'row-text-match']);
+      expect(skippedRows().map((run) => run.detail)).not.toContain(NEEDS_OWNER_HOLD_REASON);
+      // The Agent evaluation row was judged by its own check, the Text match row was not.
+      expect(hoisted.checkConditions).toHaveBeenCalledTimes(1);
+      const [, , , conditional] = hoisted.conditionCheckInput.mock.calls[0] as [unknown, unknown, string, ColumnAutomation[]];
+      expect(conditional.map((candidate) => candidate.id)).toEqual(['row-condition']);
+    });
+
+    it('still runs an unguarded Move to column row on that reply, since a move is not a nudge', async () => {
+      hoisted.rows = [nudge(), row({ id: 'row-move' })];
+
+      await endTurn();
+
+      expect(ranIds()).toContain('row-move');
+      expect(ranIds()).not.toContain('row-apply-findings');
+      expect(skipPairs()).toEqual([['row-apply-findings', NEEDS_OWNER_HOLD_REASON]]);
+    });
+
+    it('holds nothing for a workflow task, whose agent classifies itself', async () => {
+      hoisted.workflowStepApplies.mockImplementation(() => true);
+      hoisted.task.workflow_id = 'workflow-1';
+      hoisted.rows = [nudge()];
+
+      await endTurn();
+
+      expect(ranIds()).toEqual(['row-apply-findings']);
+      expect(skippedRows()).toEqual([]);
+    });
+
+    it('holds nothing for a reply that does not end on the line', async () => {
+      replySays('Two findings applied.\n\nFindings: applied');
+      hoisted.rows = [nudge()];
+
+      await endTurn();
+
+      expect(ranIds()).toEqual(['row-apply-findings']);
+      expect(skippedRows()).toEqual([]);
+    });
+
+    it('judges the next turn from scratch, so the row runs and the stop clears', async () => {
+      hoisted.rows = [nudge()];
+      await endTurn();
+      expect(runs.columnStop(taskId, laneId, null)).toMatchObject({ cause: 'reply' });
+
+      replySays('Signed in and published.');
+      await endTurn();
+
+      expect(ranIds()).toEqual(['row-apply-findings']);
+      expect(runs.countRuns('row-apply-findings', taskId)).toBe(1);
+      expect(runs.columnStop(taskId, laneId, null)).toBeNull();
+    });
+
+    it('writes the skip once a visit, however many turns end on the line', async () => {
+      hoisted.rows = [nudge()];
+
+      await endTurn();
+      await endTurn();
+
+      expect(skipPairs()).toEqual([['row-apply-findings', NEEDS_OWNER_HOLD_REASON]]);
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
     });
   });
 
