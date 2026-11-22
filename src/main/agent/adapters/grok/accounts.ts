@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { UnreadableUsageError, type AccountIdentity, type FolderAccountSupport } from '../../../accounts/account-support';
+import { UnreadableUsageError, unreadableUsageKeysOf, type AccountIdentity, type FolderAccountSupport } from '../../../accounts/account-support';
 import type { RateLimitWindow } from '../../../../shared/types';
 import { spawnCli, stopCli } from '../../shared/cli-print';
 import { isPlainRecord } from '../../shared/plain-record';
@@ -168,7 +168,7 @@ async function readGrokIdleUsage(cliPath: string, home: string | null): Promise<
   if (result === null) return null;
   const windows = parseGrokBilling(result);
   // Grok answered, in a shape this reader does not know: the guess above needs correcting.
-  if (!windows) throw new UnreadableUsageError(isPlainRecord(result) ? Object.keys(result).sort().join(',').slice(0, 120) : typeof result);
+  if (!windows) throw new UnreadableUsageError(isPlainRecord(result) ? unreadableUsageKeysOf(result) : typeof result);
   return windows;
 }
 

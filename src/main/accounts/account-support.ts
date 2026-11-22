@@ -138,6 +138,14 @@ export class UnreadableUsageError extends Error {
   }
 }
 
+/** How long `UnreadableUsageError.keys` may be. A report's facts stay small. */
+const UNREADABLE_KEYS_MAX_LENGTH = 120;
+
+/** A record's field names for `UnreadableUsageError`: sorted, comma-joined, and capped. */
+export function unreadableUsageKeysOf(record: Record<string, unknown>): string {
+  return Object.keys(record).sort().join(',').slice(0, UNREADABLE_KEYS_MAX_LENGTH);
+}
+
 /** Why a usage read gave no windows. A fixed word: the account service logs and reports it. */
 export type EmptyUsageReadReason = 'run-failed' | 'cache-missing' | 'cache-stale' | 'no-windows' | 'no-answer';
 
