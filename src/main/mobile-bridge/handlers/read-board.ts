@@ -175,6 +175,9 @@ export async function handleReadBoard(
   const laneRoleById = new Map(swimlaneRows.map((swimlane) => [swimlane.id, swimlane.role]));
   const registrySessions = context.sessionManager.listSessions();
   const { liveTaskIds, pausedSessionIdByTaskId } = taskSessionStatesOf(registrySessions);
+  // `paused_by` reads the paused row `paused_session_id` names, the row the
+  // desktop card reads its words from, so the two cannot disagree.
+  const registrySessionById = new Map(registrySessions.map((registrySession) => [registrySession.id, registrySession]));
   const startBlockedReasonByTaskId = startBlockedReasonsOf(registrySessions, liveTaskIds);
   const effectiveConfig = context.configManager.getEffectiveConfig(project.projectPath || undefined);
   // The line is read once per response, like the registry, and every place in
@@ -189,6 +192,7 @@ export async function handleReadBoard(
     const queued = queuePlaceByTaskId.get(task.id);
     return toBoardTaskWire(task, spawnProgressByTaskId[task.id] ?? null, {
       pausedSessionId,
+      pausedBy: pausedSessionId === null ? null : registrySessionById.get(pausedSessionId)?.suspendedBy ?? null,
       resumable: isResumeOffered({ hasPausedSession: pausedSessionId !== null, task, laneRole }),
       pausable: isPauseOffered({ hasLiveSession: liveTaskIds.has(task.id), laneRole }),
       queuePlace: queued ? toQueuePlaceWire(queued.place, globalMaxAgents) : null,
@@ -254,6 +258,11 @@ export async function handleReadBoard(
     // The Layout "Ticket Numbers" setting travels with the snapshot so the
     // phone's cards match the desktop's (protocol 0.6.0 additive field).
     showTicketNumbers: effectiveConfig.showTaskNumbers ?? true,
+    // Settings > Task > Cards' Priority and Labels switches (protocol 0.29.0),
+    // the same way. Settings raise no board event, so a change reaches the
+    // phone with its next snapshot.
+    showTaskPriority: effectiveConfig.showTaskPriority ?? true,
+    showTaskLabels: effectiveConfig.showTaskLabels ?? true,
     ...(view !== undefined ? { view } : {}),
     // Only the filtered projection needs these: a phone appending a card to a
     // column has to know the column's real length, which it cannot get from a

@@ -387,6 +387,25 @@ export interface ReadBoardSnapshotResponsePayload {
    */
   showTicketNumbers?: boolean;
   /**
+   * The desktop's Settings > Task > Cards "Priority" switch (protocol 0.29.0):
+   * whether cards draw the task's priority meter. Off hides it on board cards,
+   * the Done list, workflow canvas cards and Agent Monitor cards; the task
+   * window and the Backlog list keep it. Absent from an older desktop: treat
+   * as true, the desktop default.
+   *
+   * The desktop's settings raise no board event, so a change reaches the phone
+   * with the next snapshot it reads, as `showTicketNumbers` does.
+   */
+  showTaskPriority?: boolean;
+  /**
+   * The desktop's Settings > Task > Cards "Labels" switch (protocol 0.29.0):
+   * whether cards draw the task's label row. Off hides it on the same cards
+   * `showTaskPriority` names, and the task window and the Backlog list keep
+   * the labels. Absent from an older desktop: treat as true. A change reaches
+   * the phone with the next snapshot, as `showTaskPriority`'s does.
+   */
+  showTaskLabels?: boolean;
+  /**
    * The projection actually applied, echoed back. Absent from a pre-0.9.0
    * desktop, which always sends a full board - so treat an absent `view` as
    * 'full', never as "filtered, unknown how".
@@ -563,6 +582,12 @@ export function parseReadBoardResponsePayload(payload: JsonValue): ReadBoardResp
   if (payload.showTicketNumbers !== undefined && typeof payload.showTicketNumbers !== 'boolean') {
     throw new Error('read-board response has a non-boolean "showTicketNumbers"');
   }
+  if (payload.showTaskPriority !== undefined && typeof payload.showTaskPriority !== 'boolean') {
+    throw new Error('read-board response has a non-boolean "showTaskPriority"');
+  }
+  if (payload.showTaskLabels !== undefined && typeof payload.showTaskLabels !== 'boolean') {
+    throw new Error('read-board response has a non-boolean "showTaskLabels"');
+  }
   if (payload.view !== undefined && payload.view !== 'full' && payload.view !== 'sessions') {
     throw new Error('read-board response has an invalid "view"');
   }
@@ -588,6 +613,8 @@ export function parseReadBoardResponsePayload(payload: JsonValue): ReadBoardResp
       : {}),
     ...(payload.projectColor !== undefined ? { projectColor: parseAccentColor(payload.projectColor, 'read-board snapshot') } : {}),
     ...(payload.showTicketNumbers !== undefined ? { showTicketNumbers: payload.showTicketNumbers } : {}),
+    ...(payload.showTaskPriority !== undefined ? { showTaskPriority: payload.showTaskPriority } : {}),
+    ...(payload.showTaskLabels !== undefined ? { showTaskLabels: payload.showTaskLabels } : {}),
     ...(payload.view !== undefined ? { view: payload.view } : {}),
     ...(payload.taskCountsByColumnId !== undefined
       ? { taskCountsByColumnId: parseTaskCountsByColumnId(payload.taskCountsByColumnId) }

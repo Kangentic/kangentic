@@ -19,6 +19,7 @@ import {
   parseBacklogItemWire,
   parseBoardColumnWire,
   parseBoardTaskWire,
+  PAUSED_BY_WIRE_VALUES,
   parseDiffFileContentWire,
   parseDiffFileListWire,
   parseSessionEventWire,
@@ -72,6 +73,7 @@ const boardTaskFixture: JsonValue = {
   resumable: false,
   paused: false,
   paused_session_id: null,
+  paused_by: null,
   pausable: true,
   automations_disabled: false,
   workflow: null,
@@ -510,6 +512,19 @@ describe('board row guards', () => {
     expect(parseBoardTaskWire({ ...(boardTaskFixture as Record<string, JsonValue>), paused_session_id: 7 }).paused_session_id).toBeNull();
   });
 
+  it('passes paused_by through, an unknown value included, and reads an absent or non-string one as null (pre-0.29.0 desktop)', () => {
+    const pausedRow = { ...(boardTaskFixture as Record<string, JsonValue>), session_id: null, paused: true, paused_session_id: 'sess-paused' };
+    for (const pausedBy of PAUSED_BY_WIRE_VALUES) {
+      expect(parseBoardTaskWire({ ...pausedRow, paused_by: pausedBy }).paused_by).toBe(pausedBy);
+    }
+    // A value a newer desktop sends passes through; the client draws plain Paused for it.
+    expect(parseBoardTaskWire({ ...pausedRow, paused_by: 'battery' }).paused_by).toBe('battery');
+    const withoutPausedBy = { ...pausedRow };
+    delete withoutPausedBy.paused_by;
+    expect(parseBoardTaskWire(withoutPausedBy).paused_by).toBeNull();
+    expect(parseBoardTaskWire({ ...pausedRow, paused_by: 3 }).paused_by).toBeNull();
+  });
+
   it('passes pausable through as true or false, and reads an absent or non-boolean one as null (pre-0.18.0 desktop)', () => {
     expect(parseBoardTaskWire({ ...(boardTaskFixture as Record<string, JsonValue>), pausable: true }).pausable).toBe(true);
     expect(parseBoardTaskWire({ ...(boardTaskFixture as Record<string, JsonValue>), pausable: false }).pausable).toBe(false);
@@ -844,6 +859,16 @@ describe('read-* response parsers', () => {
     expect(() =>
       parseReadBoardResponsePayload({ projectId: 'p-1', columns: [], tasks: [], backlog: [], showTicketNumbers: 'yes' }),
     ).toThrow(/showTicketNumbers/);
+  });
+
+  it('carries the card Priority and Labels switches when present, tolerating absence (pre-0.29.0 desktop)', () => {
+    const snapshot = parseReadBoardResponsePayload({ projectId: 'p-1', columns: [], tasks: [], showTaskPriority: false, showTaskLabels: false });
+    expect(snapshot).toEqual({ projectId: 'p-1', columns: [], tasks: [], showTaskPriority: false, showTaskLabels: false });
+    const bareSnapshot = parseReadBoardResponsePayload({ projectId: 'p-1', columns: [], tasks: [] });
+    expect('showTaskPriority' in bareSnapshot).toBe(false);
+    expect('showTaskLabels' in bareSnapshot).toBe(false);
+    expect(() => parseReadBoardResponsePayload({ projectId: 'p-1', columns: [], tasks: [], showTaskPriority: 'no' })).toThrow(/showTaskPriority/);
+    expect(() => parseReadBoardResponsePayload({ projectId: 'p-1', columns: [], tasks: [], showTaskLabels: 0 })).toThrow(/showTaskLabels/);
   });
 
   it('rejects a malformed accent color on either read-board shape', () => {

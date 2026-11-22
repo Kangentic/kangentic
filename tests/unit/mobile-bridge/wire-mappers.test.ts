@@ -19,7 +19,7 @@ import {
 import { BOARD_TASK_ARTIFACT_URL_WIRE_MAX_LENGTH, BOARD_TASK_ARTIFACTS_WIRE_MAX, parseBoardColumnWire, parseBoardTaskWire } from '@kangentic/protocol';
 import type { JsonValue } from '@kangentic/protocol';
 import { artifactDisplayName } from '../../../src/shared/task-artifacts';
-import type { Swimlane, Task, TaskArtifact } from '../../../src/shared/types';
+import type { SuspendedBy, Swimlane, Task, TaskArtifact } from '../../../src/shared/types';
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -56,7 +56,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
 
 describe('toBoardTaskWire', () => {
   /** A task with no paused, live or queued session, for the tests that are not about those. */
-  const notPaused: BoardTaskSessionFacts = { pausedSessionId: null, resumable: false, pausable: false, queuePlace: null, startBlockedReason: null };
+  const notPaused: BoardTaskSessionFacts = { pausedSessionId: null, pausedBy: null, resumable: false, pausable: false, queuePlace: null, startBlockedReason: null };
 
   it('carries a judged pr_merge_readiness value through to the wire shape', () => {
     const task = makeTask({ pr_merge_readiness: 'ready' });
@@ -105,6 +105,28 @@ describe('toBoardTaskWire', () => {
     expect(notPausedParsed.paused_session_id).toBeNull();
     expect(notPausedParsed.paused).toBe(false);
     expect(notPausedParsed.session_id).toBe('session-live');
+  });
+
+  it('says who paused a paused task in the words the desktop draws, through the phone-side parse', () => {
+    const pausedBy = (suspendedBy: SuspendedBy | null): string | null | undefined => parseBoardTaskWire(
+      toBoardTaskWire(makeTask(), null, { ...notPaused, pausedSessionId: 'session-paused', pausedBy: suspendedBy }) as unknown as JsonValue,
+    ).paused_by;
+    // "Paused while idle" on the card and the task view.
+    expect(pausedBy('auto')).toBe('idle');
+    // "Paused", with "Stays paused until resumed." in the task view; a
+    // low-memory pause holds the same way.
+    expect(pausedBy('user')).toBe('held');
+    expect(pausedBy('low_memory')).toBe('held');
+    // "Paused" and no note. A row a move or quit suspended names nobody.
+    expect(pausedBy('system')).toBe('system');
+    expect(pausedBy(null)).toBe('system');
+  });
+
+  it('sends paused_by as a real null whenever the task is not paused, whatever pausedBy says', () => {
+    const wire = toBoardTaskWire(makeTask(), null, { ...notPaused, pausedBy: 'auto' });
+    expect(wire.paused).toBe(false);
+    expect(wire.paused_by).toBeNull();
+    expect('paused_by' in wire).toBe(true);
   });
 
   it('carries pausable as given, true and false, through the phone-side parse', () => {

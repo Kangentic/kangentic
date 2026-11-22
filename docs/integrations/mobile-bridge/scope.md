@@ -1,7 +1,7 @@
 ---
 type: Design
 title: Scope and protocol history
-description: What shipped in each bridge phase and protocol release from 0.2.0 to 0.28.0 with the reason for each change, including the derived pairing slot in 0.12.0 and the start, pause and command-terminal verbs, the workflow fields, the task report read, the paused session id, the resume on open and card fields in 0.28.0, and what stays out of scope.
+description: What shipped in each bridge phase and protocol release from 0.2.0 to 0.29.0 with the reason for each change, including the derived pairing slot in 0.12.0 and the start, pause and command-terminal verbs, the workflow fields, the task report read, the paused session id, the resume on open and card fields in 0.28.0, who paused a task and the card switches in 0.29.0, and what stays out of scope.
 tags: [mobile, protocol, history, roadmap]
 sources:
   - resource: packages/protocol/CHANGELOG.md
@@ -173,6 +173,14 @@ One section per bridge phase and protocol release, oldest first, each saying wha
 - Grants: none. The offer flag is the device's `start-session` grant, which every pairing already holds.
 - Why: since 0b9005758 the desktop resumes a task the idle timeout paused as soon as it is opened, and the same change turned that pause on by default, so most push taps landed on an idle-paused task behind a Resume button. The phone's only way back was `start-session`, the Resume button's path, which can deliver the column's message or a launch's owed prompt, a paid turn nobody asked for. A queued Merge card read no place in line, because the place lived only in desktop IPC. The stopped mark, the priority scale, task links and the start-blocked reason were desktop card facts the wire did not carry.
 - The phone-side adoption (an open on push tap and card tap, the queued card's words, the stopped pennant, the priority pill, the links, the start-blocked footer) is the mobile app's own change, gated on this package publishing.
+
+## Protocol 0.29.0: who paused a task, and the card switches
+
+- Protocol: `BoardTaskWire.paused_by?: string | null`, parsed with `nullableString`, with `PausedByWire` (`idle`, `held`, `system`) and `PAUSED_BY_WIRE_VALUES` exported. It is set exactly while `paused` is true. `showTaskPriority?: boolean` and `showTaskLabels?: boolean` on the board snapshot, refused when not a boolean. Additive; `PROTOCOL_VERSION` stays '3'. Null or absent means a pre-0.29.0 desktop: draw plain "Paused", and show priority and labels.
+- Desktop: `read-board` reads `suspendedBy` off the paused registry row `paused_session_id` names, and `toPausedByWire` narrows it. It sends the two Settings > Task > Cards switches beside `showTicketNumbers`. Settings raise no board event, so a switch change reaches the phone with its next snapshot, as `showTicketNumbers` always has.
+- Grants: none.
+- Why: 4fe1dfbdb (with 724b55b22) made the desktop card read "Paused while idle" for the idle timeout's pause and gave the task window's Resume button a line saying whether the pause holds, and 18f351747 added switches that hide the priority meter and the label row on cards. The phone draws the desktop card 1:1 and had neither fact.
+- The phone-side adoption is the mobile app's own change, gated on this package publishing.
 
 ## Out of scope: later phases
 
