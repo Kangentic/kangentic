@@ -228,6 +228,26 @@ describe('handleListColumns session isolation', () => {
     expect(columns.find((column) => column.name === 'Merge')?.description).toBe('Merges the green PR. Then pulls main. Done');
   });
 
+  it('carries a plan-mode column\'s plan approval, and nothing on a column in any other mode', () => {
+    // The ported Planning column that stopped a workflow card: without this an
+    // agent could learn a column's value only by writing to it.
+    mockSwimlaneRepoList.mockReturnValue([
+      TODO_LANE,
+      { id: 'lane-planning', name: 'Planning', role: null, is_archived: false, permission_mode: 'plan', plan_approval: 'manual' },
+      { id: 'lane-design', name: 'Design', role: null, is_archived: false, permission_mode: 'plan', plan_approval: 'automatic' },
+      // A stored Automatic on a column that does not plan decides nothing.
+      { id: 'lane-executing', name: 'Executing', role: null, is_archived: false, permission_mode: 'acceptEdits', plan_approval: 'automatic' },
+    ]);
+
+    const response = handleListColumns({}, makeContext());
+
+    const columns = response.data as Array<ListedColumn & { planApproval?: string }>;
+    expect(columns.find((column) => column.name === 'Planning')?.planApproval).toBe('manual');
+    expect(columns.find((column) => column.name === 'Design')?.planApproval).toBe('automatic');
+    expect(columns.find((column) => column.name === 'Executing')).not.toHaveProperty('planApproval');
+    expect(columns.find((column) => column.name === 'To Do')).not.toHaveProperty('planApproval');
+  });
+
   it('leaves a board with no isolated column byte-for-byte unchanged', () => {
     mockSwimlaneRepoList.mockReturnValue([TODO_LANE, MERGE_LANE]);
 

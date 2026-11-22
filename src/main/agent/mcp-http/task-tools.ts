@@ -16,7 +16,14 @@ import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { resolveTask } from '../commands/task-resolver';
 import type { ToolArgumentNotices } from './tool-call-logging';
 import type { CommandContext } from '../commands';
+import type { PlanApproval } from '../../../shared/types';
 import { LABEL_ENTRY_GUIDE, LABEL_ENTRY_SCHEMA, PRIORITY_GUIDE, PRIORITY_SCHEMA } from './label-priority-schema';
+
+/** A plan-mode column's tag in kangentic_list_columns, one per stored value. */
+const PLAN_APPROVAL_TAGS: Record<PlanApproval, string> = {
+  manual: ' [plan approval: Manual]',
+  automatic: ' [plan approval: Automatic]',
+};
 
 /** Says how far over, so an agent can shorten a description in one more call instead of guessing. */
 function descriptionOverLimit(issue: { input?: unknown }): string {
@@ -403,7 +410,7 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_list_columns',
     {
-      description: 'List every column (swimlane) on the Kangentic board, in board order, with names, roles, and task counts. The `(done)` column is included and is where finished work goes - it reports a completed count rather than a live task count, because moving a task there archives it off the board. Never treat the last column in this list as the finish line; read the roles. A column marked `[isolated session]` runs tasks on its own conversation rather than the task\'s main one. A column with a description shows it on a `Purpose:` line below: what the column does and which work needs it, so a workflow task\'s route can skip a column its work does not need. Pass `project` to list columns from a different project.',
+      description: 'List every column (swimlane) on the Kangentic board, in board order, with names, roles, and task counts. The `(done)` column is included and is where finished work goes - it reports a completed count rather than a live task count, because moving a task there archives it off the board. Never treat the last column in this list as the finish line; read the roles. A column marked `[isolated session]` runs tasks on its own conversation rather than the task\'s main one. A plan-mode column is marked with its plan approval: `[plan approval: Manual]` stops each plan for a person in the task\'s terminal, and `[plan approval: Automatic]` approves it and moves on, where the task\'s agent can approve plans. A column with a description shows it on a `Purpose:` line below: what the column does and which work needs it, so a workflow task\'s route can skip a column its work does not need. Pass `project` to list columns from a different project.',
       inputSchema: z.object({
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
@@ -414,7 +421,7 @@ export function registerTaskTools(
       if (!response.success) {
         return { content: [{ type: 'text' as const, text: `Failed to list columns: ${response.error}` }], isError: true };
       }
-      const columns = response.data as Array<{ name: string; role: string | null; taskCount: number; completedCount?: number; sessionTarget?: 'isolated'; description?: string }>;
+      const columns = response.data as Array<{ name: string; role: string | null; taskCount: number; completedCount?: number; sessionTarget?: 'isolated'; description?: string; planApproval?: PlanApproval }>;
       const lines = columns.map((column) => {
         const roleTag = column.role ? ` (${column.role})` : '';
         // The done column breaks the "N task(s)" shape deliberately: its live
@@ -425,9 +432,12 @@ export function registerTaskTools(
         // Only isolated columns are marked. A main-session column is the norm
         // and tagging every one of them would bury the distinction.
         const isolationTag = column.sessionTarget === 'isolated' ? ' [isolated session]' : '';
+        // Only plan-mode columns carry it. The column's setting, not a promise:
+        // a task whose agent cannot approve plans still waits in an Automatic one.
+        const planTag = column.planApproval === undefined ? '' : PLAN_APPROVAL_TAGS[column.planApproval];
         // The column's purpose, on the line below so the counts stay scannable.
         const purpose = column.description ? `\n  Purpose: ${column.description}` : '';
-        return `- ${column.name}${roleTag}: ${count}${isolationTag}${purpose}`;
+        return `- ${column.name}${roleTag}: ${count}${isolationTag}${planTag}${purpose}`;
       });
       return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
     }),

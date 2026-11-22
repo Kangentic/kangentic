@@ -33,6 +33,15 @@ A column that runs tasks on its own conversation is tagged `[isolated session]`.
 marked: a main-session column is the norm, and tagging every one would bury the distinction. See
 [kangentic_update_column](#kangentic_update_column) for what the tag means.
 
+A column in plan mode is tagged with its plan approval. `[plan approval: Manual]`, the default,
+stops each plan for a person in the task's terminal. `[plan approval: Automatic]` approves the plan
+and moves the task on, but only where the task's agent can approve plans. A task whose agent cannot
+still waits there, so the tag names the column's setting, not what every task will do. Only
+plan-mode columns carry the tag, because on any other permission mode the stored value decides
+nothing. This is the one read that answers "which of my columns will stop for a person" for a
+whole board. It matters most for a board ported from another board's `kangentic.json`, which
+omits `planApproval` when it is Manual, so a missing key there reads the same as a default.
+
 A column with a description prints it on an indented `Purpose:` line below its own. The
 description says what the column does and which work needs it, so an agent adding a workflow task
 over MCP can pick a route that skips the columns its work does not need without a

@@ -457,7 +457,10 @@ in one Sentry org, one triage surface.
     `ipcMain.on` listener is not wrapped: it has no caller to reject to, so its throw is uncaught
     and Sentry's own handler reports it.
   - `mcp_tool`, `mcp_command`, `mcp_request`: a tool callback (tag `tool`), a command handler and
-    the HTTP request layer of the MCP server (`src/main/agent/mcp-http/tool-reporting.ts`).
+    the HTTP request layer of the MCP server (`src/main/agent/mcp-http/tool-reporting.ts`). A
+    `mcp_command` report from a workflow reply carries `command` (`save_workflow`,
+    `add_workflow_task` or `start_workflow`) and `stage` `reply_clause`: the plan approval clause read
+    after a committed write threw, so the write stands and the reply omits the clause.
   - `automation_runner` reports a row's error once its retries are spent, and only a defect: an
     adapter's classified outcome (`AutomationRetryableError`, `AutomationPermanentError`,
     `AutomationTimeoutError`) is the user's endpoint or script answering. A Run script row whose

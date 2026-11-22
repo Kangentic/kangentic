@@ -1,14 +1,15 @@
 import type { PermissionMode, PlanApproval, TaskRunMode, Workflow, WorkflowAgentFailure } from '../../../shared/types';
 import { resolveEffortSelector, resolveSpacedModelName } from '../../../shared/model-id';
 import { PERMISSION_MODES, RUN_MODES, isPermissionMode, isRunMode } from '../../../shared/workflow-run-settings';
-import { isPlanApproval } from '../../../shared/plan-approval';
+import { isPlanApproval, taskPlanApprovalSentence } from '../../../shared/plan-approval';
 import { WORKFLOW_REFUSALS } from '../../../shared/workflow-refusals';
 import { WorkflowRepository } from '../../db/repositories/workflow-repository';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { requireWorkflowRuntimeContext } from '../../workflows/workflow-runtime';
 import { requestWorkflowAgentProjectAccess } from '../../workflows/workflow-agent';
 import { agentPathsOf } from '../../remote/host-paths';
-import { describeState, formatWorkflow } from '../../workflows/workflow-format';
+import { boardTaskLabel, describePlanApprovalForReply, describeState, formatWorkflow, listOf } from '../../workflows/workflow-format';
+import { mcpCommandReporter } from '../mcp-http/tool-reporting';
 import {
   WorkflowRequestError,
   addWorkflowTask,
@@ -50,6 +51,20 @@ function fail(error: unknown): CommandResponse {
   if (error instanceof WorkflowRequestError) return { success: false, error: error.message };
   const message = error instanceof Error ? error.message : String(error);
   return { success: false, error: `The workflow could not be changed: ${message}` };
+}
+
+/**
+ * A reply clause read after the write it describes has landed. A failed read
+ * drops the clause and is reported, rather than turn a committed write into a
+ * failed reply that an agent would retry into a second workflow or task.
+ */
+function clauseAfterWrite(command: string, build: () => string): string {
+  try {
+    return build();
+  } catch (error) {
+    mcpCommandReporter.report(error, { tags: { command, stage: 'reply_clause' } });
+    return '';
+  }
 }
 
 function stringParam(params: Record<string, unknown>, key: string, required: true): string;
@@ -328,9 +343,12 @@ export const handleSaveWorkflow: CommandHandler = async (params, context) => {
     if (Object.keys(labelColors).length > 0) context.onLabelColorsChanged(labelColors);
     const taskCount = saved.draft?.tasks.length ?? 0;
     const linkCount = saved.draft?.links.length ?? 0;
+    // Which tasks will stop for a person after planning, said here because the
+    // agent that saves usually reports to the user who starts.
+    const planApproval = clauseAfterWrite('save_workflow', () => describePlanApprovalForReply(readWorkflow(runtime, context.projectId, saved.id)));
     return {
       success: true,
-      message: `Saved: ${taskCount} ${taskCount === 1 ? 'task' : 'tasks'}, ${linkCount} ${linkCount === 1 ? 'link' : 'links'}. "${saved.title}" (id ${saved.id}) is at revision ${saved.revision}. The user starts the workflow when they are ready.`,
+      message: `Saved: ${taskCount} ${taskCount === 1 ? 'task' : 'tasks'}, ${linkCount} ${linkCount === 1 ? 'link' : 'links'}. "${saved.title}" (id ${saved.id}) is at revision ${saved.revision}.${planApproval ? ` ${planApproval}` : ''} The user starts the workflow when they are ready.`,
       data: { id: saved.id, revision: saved.revision },
     };
   } catch (error) {
@@ -343,11 +361,15 @@ export const handleStartWorkflow: CommandHandler = async (params, context) => {
     const workflow = workflowParam(params, context);
     const runtime = requireWorkflowRuntimeContext();
     const result = await startWorkflow(runtime, context.projectId, workflow.id);
-    const total = readWorkflow(runtime, context.projectId, workflow.id).tasks.length;
+    const view = readWorkflow(runtime, context.projectId, workflow.id);
+    const total = view.tasks.length;
     const superseded = result.supersededSource ? ` #${result.supersededSource} moved to Done.` : '';
+    // Start is where a Manual plan column becomes a card that stops for a
+    // person, so the reply names those tasks rather than leave it to a read.
+    const planApproval = clauseAfterWrite('start_workflow', () => describePlanApprovalForReply(view));
     return {
       success: true,
-      message: `Started "${result.workflow.title}": ${total} ${total === 1 ? 'task' : 'tasks'}, ${result.linkCount} ${result.linkCount === 1 ? 'link' : 'links'}. Tasks with nothing to wait for start as agent slots allow.${superseded}`,
+      message: `Started "${result.workflow.title}": ${total} ${total === 1 ? 'task' : 'tasks'}, ${result.linkCount} ${result.linkCount === 1 ? 'link' : 'links'}. Tasks with nothing to wait for start as agent slots allow.${superseded}${planApproval ? ` ${planApproval}` : ''}`,
       data: { id: result.workflow.id },
     };
   } catch (error) {
@@ -373,9 +395,7 @@ function controlSource(context: CommandContext): string {
 /** " #917 and #918 could not be paused." for the reply, or nothing. */
 function failedClause(failed: WorkflowAgentFailure[], verb: string): string {
   if (failed.length === 0) return '';
-  const labels = failed.map((failure) => `#${failure.displayId}`);
-  const list = labels.length === 1 ? labels[0] : `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`;
-  return ` ${list} could not be ${verb}.`;
+  return ` ${listOf(failed.map((failure) => `#${failure.displayId}`))} could not be ${verb}.`;
 }
 
 export const handlePauseWorkflow: CommandHandler = async (params, context) => {
@@ -436,9 +456,17 @@ export const handleAddWorkflowTask: CommandHandler = async (params, context) => 
     // everything else is checked by addWorkflowTask, before it writes.
     await checkPlannedModel(runtime, context.projectId, input, label);
     const created = addWorkflowTask(runtime, context.projectId, workflow.id, input);
+    // An added task starts on its own, so a Manual plan column on its route
+    // stops it as it would a task the plan started with: say so here. The
+    // whole read resolves the task's board and the workflow's legacy value the
+    // way kangentic_get_workflow does, so the two never disagree.
+    const planApproval = clauseAfterWrite('add_workflow_task', () => {
+      const addedTask = readWorkflow(runtime, context.projectId, workflow.id).tasks.find((task) => task.taskId === created.id);
+      return addedTask?.planApproval ? ` ${taskPlanApprovalSentence(addedTask.planApproval)}` : '';
+    });
     return {
       success: true,
-      message: `Added #${created.display_id} "${created.title}" to "${workflow.title}" in To Do. It starts when nothing it waits for is left and an agent slot is free.`,
+      message: `Added #${created.display_id} "${created.title}" to "${workflow.title}" in To Do. It starts when nothing it waits for is left and an agent slot is free.${planApproval}`,
       data: { id: created.id, displayId: created.display_id },
     };
   } catch (error) {
@@ -541,11 +569,7 @@ export const handleRequestProjectAccess: CommandHandler = (params, context) => {
  * that one task and not the numbers before it.
  */
 function releasedLabel(task: ReleasedWorkflowTask): string {
-  return task.board === null ? `#${task.displayId}` : `"${task.board}" #${task.displayId}`;
-}
-
-function listOf(labels: string[]): string {
-  return labels.length === 1 ? labels[0] : `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`;
+  return boardTaskLabel(task.board, task.displayId);
 }
 
 function releasedRef(task: ReleasedWorkflowTask): { taskId: string; displayId: number; projectId: string; board: string | null } {

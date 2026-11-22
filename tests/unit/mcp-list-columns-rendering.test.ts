@@ -173,3 +173,31 @@ describe('kangentic_list_columns isolation tag', () => {
     expect(config.description).toMatch(/isolated/i);
   });
 });
+
+describe('kangentic_list_columns plan approval tag', () => {
+  it('says which plan columns stop for a person and which move on by themselves', async () => {
+    // A board ported without planApproval stopped its first card in Planning,
+    // and no read short of writing the column said it would.
+    const text = await render([
+      { name: 'To Do', role: 'todo', taskCount: 7 },
+      { name: 'Planning', role: null, taskCount: 1, planApproval: 'manual', description: 'Plans the task.' },
+      { name: 'Design', role: null, taskCount: 0, sessionTarget: 'isolated', planApproval: 'automatic' },
+      { name: 'Executing', role: null, taskCount: 2 },
+    ]);
+
+    expect(text).toBe([
+      '- To Do (todo): 7 task(s)',
+      '- Planning: 1 task(s) [plan approval: Manual]',
+      '  Purpose: Plans the task.',
+      '- Design: 0 task(s) [isolated session] [plan approval: Automatic]',
+      '- Executing: 2 task(s)',
+    ].join('\n'));
+  });
+
+  it('tells an agent in its description what the tag means', async () => {
+    mockRunHandler.mockResolvedValue({ success: true, data: [] });
+    const { config } = captureTools();
+
+    expect(config.description).toContain('[plan approval: Manual]');
+  });
+});
