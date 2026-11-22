@@ -572,10 +572,25 @@ in one Sentry org, one triage surface.
     of its own. That one takes prompts and writes its store, so its miss still reports, with
     `login` saying what the CLI answered. The screen's own text is not what decides it: ConPTY
     draws that screen as cursor moves, which read as one run-on line, so
-    `identifyUserSetupFailure`'s whole-line patterns cannot match it. A session with a login
-    that misses its id stays in this report and gets no
-    launch stage, because every launch stage means no sign the agent ran, and the retry reads the
-    same test. Each kind reports once per agent per run, as its own issue. Both carry
+    `identifyUserSetupFailure`'s whole-line patterns cannot match it. A never-captured session
+    whose agent died at start goes to the launch report instead, as stage `agent_exited` with
+    cause `no_conversation`, carrying every tag below. All four must hold: it settled at the
+    ceiling with its PTY exited on its own (`settled_by` `ceiling`, `session_status` `exited`),
+    not by a removal and not by a `kill()` that kept its row (`intentionalExit`, such as the
+    `cleanup_worktree` action's or a user's stop). The agent-absence sweep's retirement still
+    counts: it ends a shell whose agent had already exited, and marks it with `overrideExitCode`
+    0. Its agent ran and ended under 60 s later, counted in milliseconds; no prompt was seen;
+    and its store is not `present`. Such a run had no conversation to capture.
+    The DESKTOP-36 events after the signed-out drop were one install's Codex 0.163.0 that ran
+    with a command-line prompt, exited seconds in and wrote no rollout, on three days. As a
+    missed id it hid among the real misses, and dropping it would lose the only sign that a
+    launch dies at start. It is the session's one launch report, so a CLI that already named its
+    startup failure sends nothing more, the launch report's key keeps it to one per agent per
+    attempt each run (a retry that also dies at start sends its own), and it spends no capture
+    report. Known gap: once an agent has spent both kinds this run,
+    the window holds none of its sessions, so a later death at start sends nothing. Any other
+    session with a login that misses its id stays in this report. Each kind reports once per
+    agent per run, as its own issue. Both carry
     `agent_cli_version`, `start_path`, `shell`, `opening_prompt` (`command_line`, `typed`, `none`,
     or `unknown` where the spawn did not say), `create_chat` (how a fresh start got the id before
     launch: `ok`, or the CLI's miss, `failed`, `timeout` or `no_id`, from the adapter's
@@ -770,7 +785,7 @@ in one Sentry org, one triage surface.
   | `pty_spawn` | The shell did not spawn. Its `source` stays `pty_spawn` | `PtyOutputNotConnectedError`, or the plain `Error` every earlier issue was grouped on |
   | `shell_exit` | The shell exited on its own with no sign the agent ran | `AgentLaunchShellExitError` |
   | `never_started` | The sweep, or a timer where the sweep cannot judge, found no agent and no sign one ran | `AgentLaunchNeverStartedError` |
-  | `agent_exited` | A CLI named its own startup failure (`describeStartupFailure`) | `AgentLaunchAgentExitedError` |
+  | `agent_exited` | A CLI named its own startup failure (`describeStartupFailure`), or a never-captured session's agent ran, then ended on its own under a minute later with no prompt, no session store and no deliberate kill (cause `no_conversation`, sent from the `agent_session_id` report with its tags) | `AgentLaunchAgentExitedError` |
   | `abandoned` | A person ended a launch that had shown nothing for 15 s | `AgentLaunchAbandonedError` |
   | `pty_port` | A renderer that stays open never got its terminal port | `PtyPortDeliveryError` |
 
@@ -797,7 +812,9 @@ in one Sentry org, one triage surface.
   and dash's `Killed` or zsh's `killed`), `crashed` (a segmentation fault, bus error, abort or illegal instruction), `unknown_option`, `line_too_long`,
   `conversation_missing`, `login_required`, `bad_configuration`, `other`, `not_read`, `unreadable`), and an ending adds `exit_code`, `exit_signal` and, for `abandoned`, `ended_by`
   (`pause`, `kill`, `quit`) and `agent_process` (`present`, `absent`, `unknown`).
-  `never_started` adds `judge` (`sweep`, `timer`). A preflight report
+  `never_started` adds `judge` (`sweep`, `timer`). An `agent_exited` report with cause
+  `no_conversation` is the exception to this list: it carries `stage`, `cause`, `platform`,
+  `attempt`, `source` (`agent_launch`) and the `agent_session_id` report's tags, not these. A preflight report
   adds `error_type` and `errno` when the error has them, and `start_refused_reason` for a start
   refused before it had a PTY (`AgentStartRefusedError`): `worktree-missing` or `folder-missing`
   for a gone folder. The folder's path is redacted, so this tag is what tells a gone worktree from

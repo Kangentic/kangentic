@@ -713,7 +713,8 @@ describe('reportPtyPortFailure', () => {
 
 describe('the session id capture reports', () => {
   const never = { kind: 'never', settledBy: 'removed', settledAt: STARTED_AT_MS + 90_000, filesystemScan: 'empty' } as const;
-  const late = { kind: 'late', capturedAfterMs: 42_000, capturedAt: STARTED_AT_MS + 42_000, capturedBy: 'scrollback', filesystemScan: 'pending' } as const;
+  const atCeiling = { kind: 'never', settledBy: 'ceiling', settledAt: STARTED_AT_MS + 300_000, filesystemScan: 'empty' } as const;
+  const late ={ kind: 'late', capturedAfterMs: 42_000, capturedAt: STARTED_AT_MS + 42_000, capturedBy: 'scrollback', filesystemScan: 'pending' } as const;
 
   /** A session past the capture window, then its outcome, and what was sent. */
   async function settle(
@@ -781,7 +782,6 @@ describe('the session id capture reports', () => {
   // Measured on Codex 0.163.0, and the shape of Sentry DESKTOP-36's recurrence:
   // the user's setup, which no capture path could fix.
   describe('a session whose CLI holds no login', () => {
-    const atCeiling = { kind: 'never', settledBy: 'ceiling', settledAt: STARTED_AT_MS + 300_000, filesystemScan: 'empty' } as const;
     const signedOut = async (): Promise<SessionIdLoginEvidence> => 'signed_out';
 
     /** A session past the window with both checks, then its outcome. Resolves once the report chain has run. */
@@ -1065,32 +1065,163 @@ describe('the session id capture reports', () => {
     });
   });
 
-  // Sentry DESKTOP-36 recurred for a Codex that ran with its prompt on the
-  // command line and exited about four seconds later, having written no session.
-  // The report could not tell that from a live conversation whose id was missed.
-  describe('a never-captured session says how long its agent ran', () => {
-    const atCeiling = { kind: 'never', settledBy: 'ceiling', settledAt: STARTED_AT_MS + 300_000, filesystemScan: 'empty' } as const;
+  // Sentry DESKTOP-36 recurred on three days for one install's Codex 0.163.0: it
+  // ran with its prompt on the command line, exited seconds later on its own, took
+  // no prompt and wrote no rollout. That run had no conversation to capture, so it
+  // is a launch that died at start and goes to the launch report, not a missed id.
+  describe('an agent that exited at start with no conversation', () => {
+    /** What a case changes past the session. A store of `unknown` is a store check that could not run. */
+    type SettleOptions = {
+      outcome?: Parameters<typeof reportSessionIdCaptureOutcome>[1];
+      store?: SessionIdStoreEvidence | 'unknown';
+      sessionStatus?: string;
+    };
 
-    it('reports an agent that exited seconds after it ran, exactly once', async () => {
+    /** The DESKTOP-36 shape, with one thing changed per case. Resolves once the report chain has run. */
+    async function settleAtCeiling(overrides: Partial<ManagedSession> = {}, options: SettleOptions = {}): Promise<ManagedSession> {
       const diedAtStart = session({
+        agentName: 'codex',
+        agentCliVersion: '0.163.0 (Codex CLI)',
+        resuming: false,
+        status: 'exited',
+        shell: 'pwsh',
+        openingPrompt: 'command_line',
+        sessionIdCreation: 'not_asked',
+        firstOutputAt: STARTED_AT_MS + 900,
+        agentRanAt: STARTED_AT_MS + 5_000,
+        exitedAt: STARTED_AT_MS + 34_000,
+        ...overrides,
+      });
+      const store = options.store ?? 'absent';
+      noteSessionIdCaptureWindowPassed(diedAtStart, store === 'unknown' ? null : async () => store, async () => 'signed_in');
+      reportSessionIdCaptureOutcome(diedAtStart.id, options.outcome ?? atCeiling, options.sessionStatus ?? 'exited');
+      await flushReportChain();
+      return diedAtStart;
+    }
+
+    function sentNames(): string[] {
+      return reportHandledError.mock.calls.map((call) => (call[0] as Error).name);
+    }
+
+    it('sends one launch report under agent_exited, with the session-id tags, and no capture report', async () => {
+      await settleAtCeiling();
+
+      expect(sentNames()).toEqual(['AgentLaunchAgentExitedError']);
+      const [error, eventTags, contexts, fingerprint] = reportHandledError.mock.calls[0];
+      expect((error as Error).message).toBe('Agent launch failed: agent_exited (no_conversation)');
+      expect(eventTags).toEqual({
+        source: 'agent_launch',
+        stage: 'agent_exited',
+        cause: 'no_conversation',
+        platform: process.platform,
+        agent: 'codex',
+        attempt: '1',
+        agent_cli_version: '0.163.0',
+        start_path: 'board',
+        shell: 'pwsh',
+        opening_prompt: 'command_line',
+        create_chat: 'not_asked',
+        hook_seen: 'no',
+        agent_started: 'no',
+        first_output: 'yes',
+        prompt_seen: 'no',
+        settled_by: 'ceiling',
+        session_status: 'exited',
+        agent_ran_for_s: '15-30',
+        fs_scan: 'empty',
+        id_store: 'absent',
+        login: 'signed_in',
+        node_on_path: 'yes',
+      });
+      expect(contexts).toEqual({});
+      expect(fingerprint).toEqual(['agent-launch', 'agent_exited', 'no_conversation']);
+    });
+
+    it('sends it with a store check that could not answer', async () => {
+      await settleAtCeiling({}, { store: 'unknown' });
+      expect(sentNames()).toEqual(['AgentLaunchAgentExitedError']);
+    });
+
+    // A shell outlives the CLI it ran, so the agent-absence sweep is often what
+    // ends the PTY. It kills through kill(), and its exit code override is its mark.
+    it('sends it for a session the agent-absence sweep retired', async () => {
+      await settleAtCeiling({ intentionalExit: true, overrideExitCode: 0 });
+      expect(sentNames()).toEqual(['AgentLaunchAgentExitedError']);
+    });
+
+    it.each<[string, Partial<ManagedSession>, SettleOptions]>([
+      // A person who moved the task away 20 s in did not watch it die at start.
+      ['settled by a removal', {}, { outcome: { ...atCeiling, settledBy: 'removed' } }],
+      // Nor did one whose move ran cleanup_worktree, which kills and keeps the row.
+      ['was stopped by a kill that kept its row', { intentionalExit: true }, {}],
+      ['settled at the ceiling still running', { status: 'running', exitedAt: undefined }, { sessionStatus: 'running' }],
+      ['ran a full minute', { exitedAt: STARTED_AT_MS + 65_000 }, {}],
+      ['never showed it ran', { agentRanAt: undefined }, {}],
+      ['ended with no exit recorded', { exitedAt: undefined }, {}],
+      ['took a prompt', { promptObservedAt: STARTED_AT_MS + 6_000 }, {}],
+      ['wrote its store', {}, { store: 'present' }],
+    ])('keeps the capture report for one that %s', async (_label, overrides, options) => {
+      await settleAtCeiling(overrides, options);
+      expect(sentNames()).toEqual(['AgentSessionIdNotCapturedError']);
+    });
+
+    it('sends nothing more for a session whose launch already reported, so one run never sends both', async () => {
+      await settleAtCeiling({ launchFailureNoted: true });
+      expect(reportHandledError).not.toHaveBeenCalled();
+    });
+
+    it('marks the session reported, so no later launch report for it goes', async () => {
+      const diedAtStart = await settleAtCeiling();
+      expect(diedAtStart.launchFailureNoted).toBe(true);
+    });
+
+    it('sends one launch report per agent per run, and leaves the agent\'s capture report for a real miss', async () => {
+      await settleAtCeiling();
+      await settleAtCeiling({ id: 'session-2-long-id' });
+      expect(sentNames()).toEqual(['AgentLaunchAgentExitedError']);
+
+      await settleAtCeiling({ id: 'session-3-long-id' }, { store: 'present' });
+      expect(sentNames()).toEqual(['AgentLaunchAgentExitedError', 'AgentSessionIdNotCapturedError']);
+
+      // Another agent's death at start is its own report.
+      await settleAtCeiling({ id: 'session-4-long-id', agentName: 'gemini' });
+      expect(reportHandledError.mock.calls.map((call) => [(call[0] as Error).name, call[1].agent])).toEqual([
+        ['AgentLaunchAgentExitedError', 'codex'],
+        ['AgentSessionIdNotCapturedError', 'codex'],
+        ['AgentLaunchAgentExitedError', 'gemini'],
+      ]);
+    });
+
+    it('still sends the launch report after the agent spent its capture report', async () => {
+      await settleAtCeiling({ id: 'session-2-long-id' }, { store: 'present' });
+      await settleAtCeiling();
+      expect(sentNames()).toEqual(['AgentSessionIdNotCapturedError', 'AgentLaunchAgentExitedError']);
+    });
+
+    // The shape lets the session past the early latch check, so only the check
+    // after the store read keeps a second capture report from going.
+    it('sends the agent one capture report when two of its sessions have the shape and a store', async () => {
+      await settleAtCeiling({}, { store: 'present' });
+      await settleAtCeiling({ id: 'session-2-long-id' }, { store: 'present' });
+      expect(sentNames()).toEqual(['AgentSessionIdNotCapturedError']);
+    });
+
+    it('keeps the signed-out drop ahead of it', async () => {
+      const pastWindow = session({
         agentName: 'codex',
         resuming: false,
         status: 'exited',
-        openingPrompt: 'command_line',
-        agentRanAt: STARTED_AT_MS + 26_000,
-        exitedAt: STARTED_AT_MS + 30_000,
+        agentRanAt: STARTED_AT_MS + 5_000,
+        exitedAt: STARTED_AT_MS + 10_000,
       });
-      noteSessionIdCaptureWindowPassed(diedAtStart, async () => 'absent');
-      reportSessionIdCaptureOutcome(diedAtStart.id, atCeiling, 'exited');
-      await vi.waitFor(() => expect(reportHandledError).toHaveBeenCalled());
+      noteSessionIdCaptureWindowPassed(pastWindow, async () => 'absent', async () => 'signed_out');
+      reportSessionIdCaptureOutcome(pastWindow.id, atCeiling, 'exited');
       await flushReportChain();
-
-      expect(reportHandledError).toHaveBeenCalledTimes(1);
-      const [error, eventTags] = reportHandledError.mock.calls[0];
-      expect((error as Error).name).toBe('AgentSessionIdNotCapturedError');
-      expect(eventTags).toMatchObject({ agent_ran_for_s: '1-5', session_status: 'exited', settled_by: 'ceiling', id_store: 'absent' });
+      expect(reportHandledError).not.toHaveBeenCalled();
     });
+  });
 
+  describe('a never-captured session says how long its agent ran', () => {
     // A removal settles the report and then ends the PTY, so the exit lands a moment after it and
     // before or after the tag is read. The end is the earlier of the two, whichever order they land in.
     it('counts an exit that landed after the removal to the removal', async () => {

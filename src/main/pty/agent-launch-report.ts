@@ -59,7 +59,11 @@ export type LaunchStage =
   | 'shell_exit'
   /** The sweep or the timer found no agent and no sign it ever ran. */
   | 'never_started'
-  /** The CLI ran and named its own startup failure. */
+  /**
+   * The CLI ran and named its own startup failure, or ran under a minute, exited
+   * on its own and left no conversation (`no_conversation`, from the session-id
+   * report: `exitedWithNoConversation`).
+   */
   | 'agent_exited'
   /** A person stopped a launch that had shown nothing for `LAUNCH_ABANDON_MS`. */
   | 'abandoned'
@@ -872,7 +876,9 @@ function afterPromptTag(session: ManagedSession, capturedAt: number): string {
  * bound on the agent's own life: a shell outlives the CLI it ran. The end is the
  * PTY's exit, or the removal when that came first. A removal settles the report
  * and then ends the session, and that exit lands before or after this is read,
- * so a removal never counts an exit later than itself.
+ * so a removal never counts an exit later than itself. An agent that exited on
+ * its own this soon, with nothing to show for it, goes to the launch report
+ * instead (`exitedWithNoConversation`).
  */
 function agentRanForTag(session: ManagedSession, outcome: Extract<SessionIdCaptureOutcome, { kind: 'never' }>): string {
   if (typeof session.agentRanAt !== 'number') return 'not_run';
@@ -880,6 +886,54 @@ function agentRanForTag(session: ManagedSession, outcome: Extract<SessionIdCaptu
   const endedAt = outcome.settledBy === 'removed' ? Math.min(exitedAt ?? outcome.settledAt, outcome.settledAt) : exitedAt;
   if (endedAt !== null) return secondsBucket(Math.max(0, endedAt - session.agentRanAt));
   return session.status === 'running' ? 'running' : 'unknown';
+}
+
+/** How soon after it ran an agent that exits on its own counts as having died at start. */
+const AGENT_EXITED_AT_START_MS = 60_000;
+
+/**
+ * Whether the PTY ended without a person or Kangentic stopping the agent. A
+ * `kill()` that keeps the row (the `cleanup_worktree` action, a user's stop)
+ * leaves it `exited` with `intentionalExit` set. The agent-absence sweep kills
+ * through `kill()` too, but only a shell whose agent had already exited, and
+ * `retireAgentlessSession` is the one writer of `overrideExitCode`, always 0.
+ * That retirement is the CLI's own end, seen late, so it still counts.
+ */
+function endedOnItsOwn(session: ManagedSession): boolean {
+  return session.intentionalExit !== true || session.overrideExitCode === 0;
+}
+
+/**
+ * True for a never-captured session whose agent ran, ended on its own under a
+ * minute later, took no prompt and left no store: settled at the ceiling with
+ * its PTY exited, not by a removal or a deliberate kill (`endedOnItsOwn`), since a
+ * person who moved the task away 20 s in did not watch it die. Read only from what
+ * is known at the outcome, so the latch check ahead of the wait can ask it too.
+ * Such a run had no conversation to capture (Sentry DESKTOP-36: a Codex 0.163.0
+ * with its prompt on the command line that exited seconds in, on three days), and
+ * calling it a missed id buried it beside the real misses. The store is the
+ * caller's to check.
+ */
+function mayHaveExitedWithNoConversation(
+  session: ManagedSession,
+  outcome: SessionIdCaptureOutcome,
+  sessionStatus: string | null,
+): boolean {
+  if (outcome.kind !== 'never' || outcome.settledBy !== 'ceiling' || sessionStatus !== 'exited') return false;
+  if (!endedOnItsOwn(session)) return false;
+  if (typeof session.agentRanAt !== 'number' || typeof session.exitedAt !== 'number') return false;
+  if (session.exitedAt - session.agentRanAt >= AGENT_EXITED_AT_START_MS) return false;
+  return typeof session.promptObservedAt !== 'number';
+}
+
+/** `mayHaveExitedWithNoConversation`, with the store read: one that is `present` had a conversation. */
+function exitedWithNoConversation(
+  session: ManagedSession,
+  outcome: SessionIdCaptureOutcome,
+  sessionStatus: string | null,
+  idStore: SessionIdStoreEvidence | 'unknown',
+): boolean {
+  return idStore !== 'present' && mayHaveExitedWithNoConversation(session, outcome, sessionStatus);
 }
 
 /**
@@ -894,6 +948,13 @@ function agentRanForTag(session: ManagedSession, outcome: Extract<SessionIdCaptu
  * (`explainedBySignedOutCli`). The agent's one report of a kind is spent only
  * when one is sent, so either of those, or a quit during the wait, leaves it for
  * a real one.
+ *
+ * A session whose agent died at start with no conversation
+ * (`exitedWithNoConversation`) goes to the launch report as `agent_exited`,
+ * cause `no_conversation`, with the same tags, and spends no capture report. It
+ * is the session's one launch report (`launchFailureNoted`), so a CLI that
+ * already named its startup failure sends nothing here, and the launch report's
+ * own key keeps it to one per agent per run.
  */
 export function reportSessionIdCaptureOutcome(
   sessionId: string,
@@ -904,9 +965,10 @@ export function reportSessionIdCaptureOutcome(
   pendingSessionIdReports.delete(sessionId);
   if (!pending || isShuttingDown()) return;
   const outcomeReport = SESSION_ID_OUTCOME_REPORTS[outcome.kind];
-  // Asked here too, so an agent that already sent this kind waits on nothing.
-  if (outcomeReport.latch.has(pending.agent)) return;
   const session = pending.session;
+  // Asked here too, so an agent that already sent this kind waits on nothing,
+  // unless the session may still be a death at start, which is not that kind.
+  if (outcomeReport.latch.has(pending.agent) && !mayHaveExitedWithNoConversation(session, outcome, sessionStatus)) return;
   const promptSettled = outcome.kind === 'late' ? firstPromptSettled(session) : Promise.resolve();
   void Promise.all([pending.storeEvidence, pending.loginEvidence, pending.nodeEvidence, promptSettled]).then(([idStore, login, nodeOnPath]) => {
     if (isShuttingDown()) return;
@@ -916,8 +978,6 @@ export function reportSessionIdCaptureOutcome(
       console.warn(`[session-manager] ${pending.agent} gave no session ID for session ${sessionId.slice(0, 8)}: its CLI holds no login, so nothing is reported.`);
       return;
     }
-    if (outcomeReport.latch.has(pending.agent)) return;
-    outcomeReport.latch.add(pending.agent);
     const outcomeTags: Record<string, string> = outcome.kind === 'late'
       ? {
         captured_after_s: secondsBucket(outcome.capturedAfterMs),
@@ -925,27 +985,54 @@ export function reportSessionIdCaptureOutcome(
         captured_by: captureSourceTag(outcome.capturedBy),
       }
       : { settled_by: outcome.settledBy, session_status: sessionStatus ?? 'removed', agent_ran_for_s: agentRanForTag(session, outcome) };
+    const captureTags: Record<string, string> = {
+      agent: pending.agent,
+      ...pending.tags,
+      // Read now, not at the window: a prompt typed after it is the case that
+      // tells a conversation that never existed from one the capture missed.
+      // And after the wait above, so the prompt of the id's own turn counts.
+      prompt_seen: observedTag(session.promptObservedAt),
+      ...outcomeTags,
+      fs_scan: outcome.filesystemScan,
+      id_store: idStore,
+      login,
+      node_on_path: nodeOnPath,
+    };
+    if (exitedWithNoConversation(session, outcome, sessionStatus, idStore)) {
+      reportExitedWithNoConversation(session, captureTags);
+      return;
+    }
+    if (outcomeReport.latch.has(pending.agent)) return;
+    outcomeReport.latch.add(pending.agent);
     const error = new Error(`${outcomeReport.message} (${pending.agent})`);
     error.name = outcomeReport.errorName;
     reportHandledError(
       error,
-      {
-        source: 'agent_session_id',
-        agent: pending.agent,
-        ...pending.tags,
-        // Read now, not at the window: a prompt typed after it is the case that
-        // tells a conversation that never existed from one the capture missed.
-        // And after the wait above, so the prompt of the id's own turn counts.
-        prompt_seen: observedTag(session.promptObservedAt),
-        ...outcomeTags,
-        fs_scan: outcome.filesystemScan,
-        id_store: idStore,
-        login,
-        node_on_path: nodeOnPath,
-      },
+      { source: 'agent_session_id', ...captureTags },
       {},
       [outcomeReport.fingerprintHead, pending.agent],
     );
+  });
+}
+
+/**
+ * Send a death at start as the session's one launch report. A session that
+ * already made one (a CLI that named its startup failure) sends nothing more.
+ * `claimLaunchReport` keys on the agent and attempt, so both go in the tags.
+ */
+function reportExitedWithNoConversation(session: ManagedSession, captureTags: Record<string, string>): void {
+  const sessionLabel = session.id.slice(0, 8);
+  if (session.launchFailureNoted === true) {
+    // breadcrumb-ok: a session id, a fixed stage and an agent from a fixed list.
+    console.warn(`[AGENT-LAUNCH] session=${sessionLabel} stage=agent_exited cause=no_conversation agent=${captureTags.agent} already_reported=yes`);
+    return;
+  }
+  session.launchFailureNoted = true;
+  reportLaunchFailure({
+    stage: 'agent_exited',
+    cause: 'no_conversation',
+    tags: { attempt: attemptOf(session.startPath), ...captureTags },
+    sessionLabel,
   });
 }
 
