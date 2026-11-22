@@ -39,6 +39,8 @@ const hoisted = vi.hoisted(() => ({
 
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
   SessionRepository: class {
+    // No recovery resume carried a cut-off turn in (carried-owner-turn.ts).
+    takeCarriedOwnerTurn = () => null;
     findByAnyId = vi.fn(() => ({ session_type: 'claude_agent', agent_session_id: 'agent-session-1', cwd: '/mock/worktree' }));
   },
 }));
