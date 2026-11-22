@@ -25,6 +25,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { Bell, Columns3Cog } from 'lucide-react';
+import * as lucide from 'lucide-react';
 import { AutomationIcon } from '../../src/renderer/components/dialogs/board-manager/automation-icons';
 
 type RegistryModule = typeof import('../../src/renderer/utils/icon-registry');
@@ -364,7 +365,7 @@ describe('the icon registry', () => {
     // quietly loses its glyph. This fails the next time lucide renames one of these targets.
     it('sends every legacy name to a real catalog entry', async () => {
       const catalog = await import('../../src/renderer/utils/icon-catalog');
-      expect(registry.LEGACY_ICON_NAMES.size).toBe(38);
+      expect(registry.LEGACY_ICON_NAMES.size).toBe(40);
       for (const [legacyName, currentName] of registry.LEGACY_ICON_NAMES) {
         expect(catalog.CATALOG.has(currentName), `"${legacyName}" points at "${currentName}"`).toBe(true);
         expect(catalog.CATALOG.has(legacyName), `"${legacyName}" is back in the catalog`).toBe(false);
@@ -378,6 +379,40 @@ describe('the icon registry', () => {
         expect(resolved, `"${legacyName}"`).toBeDefined();
         expect(resolved).toBe(registry.resolveIcon(currentName));
       }
+    });
+
+    // Lucide keeps each old PascalCase name as an alias of the replacement, so the alias is the glyph
+    // lucide itself treats as the successor. A swapped orientation resolves, but to the wrong glyph.
+    it('sends every legacy name to the glyph lucide aliases it to', async () => {
+      await registry.loadIconCatalog();
+      const lucideExports = lucide as unknown as Record<string, unknown>;
+      const toPascalCase = (kebabName: string): string =>
+        kebabName.split('-').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+      const checked: string[] = [];
+      const skipped: string[] = [];
+      for (const legacyName of registry.LEGACY_ICON_NAMES.keys()) {
+        const lucideAlias = lucideExports[toPascalCase(legacyName)];
+        if (lucideAlias === undefined) {
+          skipped.push(legacyName);
+          continue;
+        }
+        expect(registry.resolveIcon(legacyName), `"${legacyName}"`).toBe(lucideAlias);
+        checked.push(legacyName);
+      }
+      // Not vacuous: the orientation-sensitive renames are the ones this exists for.
+      expect(checked).toEqual(expect.arrayContaining([
+        'flip-horizontal2',
+        'flip-vertical2',
+        'fold-horizontal',
+        'fold-vertical',
+        'unfold-horizontal',
+        'unfold-vertical',
+        'square-centerline-dashed-horizontal',
+        'square-centerline-dashed-vertical',
+        'triangles-centerline-dashed-horizontal',
+        'triangles-centerline-dashed-vertical',
+      ]));
+      expect(checked.length, `skipped: ${skipped.join(', ')}`).toBeGreaterThanOrEqual(30);
     });
 
     it('leaves a name that was not renamed as it is', () => {
