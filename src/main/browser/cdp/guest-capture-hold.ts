@@ -16,8 +16,8 @@ import { BrowserWindow, type WebContents } from 'electron';
  * Measured on Electron 45.1.0, Windows, from a live agent on a parked pane, with
  * Kangentic's renderer reporting `visibilityState` hidden. On Linux a born-parked
  * pane captured in under 40 ms on X11 (xvfb) and Wayland (headless Weston). macOS
- * is unmeasured. What `readHostState` reads differs on Wayland: a window the user
- * minimized reads visible there (decision 44). The Windows table:
+ * is unmeasured. What `readHostState` reads differs on Wayland, where a window the
+ * user minimized reads visible (decision 44). The Windows table:
  *
  *   hold                          result      renderer
  *   guest only                    5 s bound   hidden

@@ -8,11 +8,11 @@ import { app } from 'electron';
  * "minimized" is not a supported state on Wayland, so a minimized app there reads
  * as `host_window: visible`.
  *
- * Read from Electron's own command line, never from an env value: the
- * `--ozone-platform` switch, which names the backend Chromium chose. With no switch
- * passed, Chromium writes its choice back: measured on Electron 45 on CI, it read
- * `x11` under xvfb and `wayland` under Weston. `other` off Linux and for anything
- * that is neither, such as `headless`.
+ * It reads Electron's own `--ozone-platform` switch, which names the backend
+ * Chromium chose, and never an env value. With no switch passed, Chromium writes
+ * its choice back. Measured on Electron 45 on CI, it read `x11` under xvfb and
+ * `wayland` under Weston. It returns `other` off Linux and for anything that is
+ * neither, such as `headless`.
  */
 export type DisplayServer = 'x11' | 'wayland' | 'other';
 

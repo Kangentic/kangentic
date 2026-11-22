@@ -486,7 +486,7 @@ in one Sentry org, one triage surface.
     display server Chromium draws to, read from Electron's own `--ozone-platform` switch and never
     from an env value (`src/main/browser/display-server.ts`). It is `other` off Linux and for any
     other backend. It came after two 0.61.0 events from one Debian install timed out on a parked
-    pane: on Wayland a minimized app still reads `host_window: visible`, so `host_window` alone
+    pane. On Wayland a minimized app still reads `host_window: visible`, so `host_window` alone
     cannot say whether the app was on screen. None is a new data class: the `electron` breadcrumbs
     already carry power events and window focus with their timestamps, the two hold tags describe
     Kangentic's own calls, and the display server is a three-value fact about the machine, the
