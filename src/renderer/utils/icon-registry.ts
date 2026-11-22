@@ -78,7 +78,8 @@ export const CORE_ICONS: ReadonlyMap<string, IconComponent> = new Map<string, Ic
  * `square-m`, and the four parking icons became letter icons, and the four fold and unfold icons became
  * the axis arrows. Lucide's own aliases do the same, and a slightly different glyph beats a dot. The
  * centerline square and triangle pairs keep their drawing under an axis name; the square pair's
- * orientation word flips, as lucide's alias does.
+ * orientation word flips, as lucide's alias does. The two `flip-*2` names are the triangle pair's
+ * name before lucide called it centerline, a catalog name as late as lucide 1.17.
  */
 export const LEGACY_ICON_NAMES: ReadonlyMap<string, string> = new Map<string, string>([
   ['archive-restore', 'archive-arrow-up'],
@@ -96,6 +97,8 @@ export const LEGACY_ICON_NAMES: ReadonlyMap<string, string> = new Map<string, st
   ['clock-alert', 'clock-exclamation-point'],
   ['cloud-alert', 'cloud-exclamation-point'],
   ['copyright', 'circle-letter-c'],
+  ['flip-horizontal2', 'carets-to-axis-dashed-horizontal'],
+  ['flip-vertical2', 'carets-to-axis-dashed-vertical'],
   ['fold-horizontal', 'arrows-to-axis-dashed-vertical'],
   ['fold-vertical', 'arrows-to-axis-dashed-horizontal'],
   ['heading', 'letter-h'],
