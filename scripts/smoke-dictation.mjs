@@ -362,7 +362,7 @@ async function smokeRefreshedModels(root, wavPath) {
   const nemotron = onlineTransducer(nemotronDir);
   process.stdout.write(`nemotron streaming en (${nemotronMb.toFixed(0)} MiB) loaded\n`);
   // Each clip's last spoken word, from its known text. Not another model's transcript: Parakeet v3
-  // on sherpa-onnx 2.0.1 hears the first clip's last word as "brothers", and a check against it
+  // on sherpa-onnx 2.0.1 and 2.0.3 hears the first clip's last word as "brothers", and a check against it
   // failed Nemotron for hearing it right.
   for (const [clip, spokenLastWord] of [[wavPath, 'brothels'], [path.join(nemotronDir, '1.wav'), 'heaven']]) {
     const streamed = streamTranscribe(nemotron, sherpa.readWave(clip), 'en');
