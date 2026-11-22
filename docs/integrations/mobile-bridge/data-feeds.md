@@ -24,6 +24,7 @@ sources:
   - resource: src/main/transition-engine/spawn-progress.ts
   - resource: packages/protocol/src/events/event.ts
   - resource: packages/protocol/src/events/payloads.ts
+  - resource: packages/protocol/src/wire/payloads.ts
 ---
 # Data feeds
 

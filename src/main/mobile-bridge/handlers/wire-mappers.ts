@@ -400,16 +400,18 @@ export function toSpawnProgressLabelWire(label: string | null): string | null {
  *
  * `sessionFacts` holds `pausedSessionId`, the registry id of the task's paused
  * session when it has one and no live one (`taskSessionStatesOf`), else null;
- * `pausedBy`, that paused row's `suspendedBy` (`toPausedByWire`); `resumable`, `isResumeOffered` for that same answer; `pausable`,
+ * `pausedBy`, that paused row's `suspendedBy` (`toPausedByWire`);
+ * `resumable`, `isResumeOffered` for that same answer; `pausable`,
  * `isPauseOffered` for the task's live session; `queuePlace`, the queued
  * session's place in line (`toQueuePlaceWire`); and `startBlockedReason`, why
  * the task's paused or ended session never reached an agent. The caller
  * resolves them because they need the session registry, the queue and the
- * column; see `BoardTaskWire.paused_session_id`, `BoardTaskWire.resumable`,
- * `BoardTaskWire.pausable`, `BoardTaskWire.queue_place` and
- * `BoardTaskWire.start_blocked_reason`. `paused` and `paused_by` are derived
- * from the id here, so the three fields can never disagree. One object rather than positional
- * values, so a call site cannot swap them.
+ * column; see `BoardTaskWire.paused_session_id`, `BoardTaskWire.paused_by`,
+ * `BoardTaskWire.resumable`, `BoardTaskWire.pausable`,
+ * `BoardTaskWire.queue_place` and `BoardTaskWire.start_blocked_reason`.
+ * `paused` and `paused_by` are derived from the id here, so the three fields
+ * can never disagree. One object rather than positional values, so a call
+ * site cannot swap them.
  *
  * `artifacts` is read off the task itself (`toTaskArtifactsWire`).
  *

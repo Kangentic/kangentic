@@ -697,20 +697,39 @@ describe('handleReadBoard', () => {
         .find((task) => task.id === 't-idle');
       expect(idle).toMatchObject({ paused_session_id: 'sess-placeholder-after-restart', paused_by: 'idle' });
     });
+
+    it('reads who paused from the later paused row when a task holds two, the row paused_session_id names', async () => {
+      tasksList.mockReturnValue([
+        { id: 't-two', swimlane_id: 'lane-review', session_id: null, archived_at: null },
+      ]);
+      registryRows = [
+        { id: 'sess-a', taskId: 't-two', status: 'suspended', suspendedBy: 'user' },
+        { id: 'sess-b', taskId: 't-two', status: 'suspended', suspendedBy: 'auto' },
+      ];
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'full' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
+
+      const two = (response.payload as { tasks: Array<{ id: string; paused_session_id: string | null; paused_by: string | null }> }).tasks
+        .find((task) => task.id === 't-two');
+      // taskSessionStatesOf maps a task holding two paused rows to the later one.
+      expect(two).toMatchObject({ paused_session_id: 'sess-b', paused_by: 'idle' });
+    });
   });
 
-  it('carries the card Priority and Labels switches on the snapshot (protocol 0.29.0)', async () => {
-    const context = boardContext();
-    (context.configManager as unknown as { getEffectiveConfig: unknown }).getEffectiveConfig = vi.fn(() => ({
-      showTaskNumbers: true,
-      showTaskPriority: false,
-      showTaskLabels: true,
-    }));
-    const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'sessions' }), fakeSession(), context, new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
+  it('carries the card Priority and Labels switches on the snapshot, each key on its own (protocol 0.29.0)', async () => {
+    const readSwitches = async (showTaskPriority: boolean, showTaskLabels: boolean) => {
+      const context = boardContext();
+      (context.configManager as unknown as { getEffectiveConfig: unknown }).getEffectiveConfig = vi.fn(() => ({
+        showTaskNumbers: true,
+        showTaskPriority,
+        showTaskLabels,
+      }));
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'sessions' }), fakeSession(), context, new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
+      const snapshot = response.payload as { showTaskPriority?: boolean; showTaskLabels?: boolean };
+      return { showTaskPriority: snapshot.showTaskPriority, showTaskLabels: snapshot.showTaskLabels };
+    };
 
-    const snapshot = response.payload as { showTaskPriority?: boolean; showTaskLabels?: boolean };
-    expect(snapshot.showTaskPriority).toBe(false);
-    expect(snapshot.showTaskLabels).toBe(true);
+    expect(await readSwitches(false, true)).toEqual({ showTaskPriority: false, showTaskLabels: true });
+    expect(await readSwitches(true, false)).toEqual({ showTaskPriority: true, showTaskLabels: false });
   });
 
   describe('pausable on the board row (protocol 0.18.0)', () => {
