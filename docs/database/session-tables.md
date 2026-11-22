@@ -63,6 +63,10 @@ sources:
 | launch_failed_at | TEXT | | NULL |
 | start_blocked_reason | TEXT | | NULL |
 | account_id | TEXT | | NULL |
+| open_turn | TEXT | | NULL |
+| carried_owner_turn | TEXT | | NULL |
+
+`open_turn` and `carried_owner_turn` keep the owner's message alive across a restart that cuts a turn off before its Stop (`src/main/automations/turn-end/carried-owner-turn.ts`, kangentic-mobile #160). `open_turn` is JSON `StoredTurnPosition` (`agentSessionId`, `byteOffset`, `startedAt` as UTC ISO): where the session's open turn began in its transcript. The turn-end runner writes it from the session manager's `'turn-anchor'` event when a turn starts or its anchor moves, and clears it when the turn end takes the anchor. A quit, kill or exit leaves it set. `carried_owner_turn` is JSON `CarriedOwnerTurn` (the same three fields plus `recordIds`, the earlier records the read spans, oldest first). A recovery resume writes it on the record it starts (`SessionRepository.carryOpenTurn`): the old record's own `carried_owner_turn` when it still holds one, else its `open_turn`. It clears both on the old record once the new record holds the carry; a new record with no row leaves the old one as it was. The session's first turn-end pass takes it (`takeCarriedOwnerTurn`), and reads the owner's messages from there when its own turn holds none. Positions only, never the owner's words. A value that does not parse reads as none. NULL on every row from before the columns (migration 114).
 
 `transcript_path` is the transcript file the agent reported. Its status line writes it whenever it changes, and its SessionStart hook fills it when the row has none. A new row for a conversation that already has one inherits the newest reported path of the same `agent_session_id` at insert (`SessionRepository.insert`), because a resumed Claude conversation keeps writing the file it started in. A path the row's own agent had already reported when the row is written comes ahead of the inherited one.
 

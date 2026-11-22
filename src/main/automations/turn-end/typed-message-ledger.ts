@@ -79,15 +79,25 @@ export function recordKangenticTypedInProject(projectId: string, sessionId: stri
  * `userMessages` is null when the transcript read failed or the agent has no
  * reader: unreadable. A session whose record is incomplete is unreadable too.
  * Fails closed on any error.
+ *
+ * `earlierRecordIds` are the records a read reaching back across a recovery
+ * resume spans (`carried-owner-turn.ts`): what Kangentic typed under any of
+ * them is left out too, and one whose row is gone or whose record is
+ * incomplete makes the read unreadable.
  */
 export function personMessagesInTurn(
   projectDb: Database.Database | null,
   sessionId: string,
   userMessages: readonly string[] | null,
+  earlierRecordIds: readonly string[] = [],
 ): UserMessageRead {
-  if (userMessages === null || projectDb === null || unreliableSessions.has(sessionId)) return { readable: false };
+  if (userMessages === null || projectDb === null) return { readable: false };
+  const recordIds = [...earlierRecordIds, sessionId];
+  if (recordIds.some((recordId) => unreliableSessions.has(recordId))) return { readable: false };
   try {
-    const typedKeys = new SessionTypedMessageRepository(projectDb).keysForSession(sessionId);
+    const repository = new SessionTypedMessageRepository(projectDb);
+    const typedKeys = earlierRecordIds.length === 0 ? repository.keysForSession(sessionId) : repository.keysForSessions(recordIds);
+    if (typedKeys === null) return { readable: false };
     const messages = userMessages.filter((message) => {
       const key = typedMessageKey(message);
       return key !== null && !typedKeys.has(key);

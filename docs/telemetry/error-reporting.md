@@ -508,6 +508,8 @@ in one Sentry org, one triage surface.
     `timed_out`, `holders`, `refused`, `platform`, `caller`, `path_class` and `syscall`, below), `preload` (our own windows only),
     `pop_out_load` (tags `kind`, `error_code`), `dictation`, `owner_turn` (the read of whether an
     agent's move came in a turn the owner started; the move still runs, as the agent's),
+    `carried_owner_turn` (a write, carry or take of a turn a restart cut off, kept as a transcript
+    position on its session row; the turn end then reads only its own turn, as before),
     `idle_pause_lift` (a workflow that could not be read while deciding whether an open or an
     owner's move lifts an idle pause, and the pause stays held; or the enter rows that run with the
     agent paused after `spawnAgent` declined that lift, which could not run at all).

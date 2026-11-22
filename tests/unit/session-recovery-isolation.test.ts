@@ -76,6 +76,8 @@ vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
 // overridden by individual tests.
 vi.mock('../../src/main/db/repositories/session-repository', () => {
   class FakeSessionRepository {
+    // No turn to carry across the restart (carried-owner-turn.ts).
+    carryOpenTurn = () => null;
     getResumable = () => sessionRepoGetResumable();
     getOrphaned = () => sessionRepoGetOrphaned();
     // OS-killed gather: no interrupted-exited records in these tests.

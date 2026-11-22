@@ -237,7 +237,15 @@ Text match on the user's message the reason says whether it matched and never qu
 `No message from you in this turn.`, or the unreadable reason. With several messages it names the
 one that decided by its place: `Your message 1 of 2 in this turn matched.`,
 `Your message 2 of 2 in this turn matched a ! pattern.`, or
-`None of your 2 messages in this turn matched a pattern.` The log denormalizes the automation's
+`None of your 2 messages in this turn matched a pattern.` When a restart cut the owner's turn off
+before its Stop, the next turn end can read from that turn, and the reason says so:
+`Your message in the turn a restart cut off matched.`,
+`Your message in the turn a restart cut off matched a ! pattern.`,
+`Your message in the turn a restart cut off matched no pattern.`, or
+`No message from you in this turn or the one a restart cut off.` With several messages:
+`Your message 1 of 2 since the turn a restart cut off matched.`,
+`Your message 2 of 2 since the turn a restart cut off matched a ! pattern.`, or
+`None of your 2 messages since the turn a restart cut off matched a pattern.` The log denormalizes the automation's
 name and type and takes no foreign key to the automation, so renaming or deleting one does not
 empty its history.
 

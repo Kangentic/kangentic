@@ -86,8 +86,16 @@ describe('readUserMessagesInTurn', () => {
       }),
       expect.anything(),
     );
-    // Keyed on the record's id, not the id the caller passed (the agent's, here).
-    expect(hoisted.personMessagesInTurn).toHaveBeenCalledWith(PROJECT_DB, 'record-id-1', ['signed off']);
+    // Keyed on the record's id, not the id the caller passed (the agent's, here),
+    // and on no earlier record: only a read carried across a restart spans one.
+    expect(hoisted.personMessagesInTurn).toHaveBeenCalledWith(PROJECT_DB, 'record-id-1', ['signed off'], []);
+  });
+
+  it('hands the ledger the earlier records a read carried across a restart spans', async () => {
+    await readUserMessagesInTurn(
+      { sessionId: 'agent-1', transcriptAnchor: ANCHOR }, repositoryWith(RECORD), PROJECT_DB, undefined, ['record-before-restart'],
+    );
+    expect(hoisted.personMessagesInTurn).toHaveBeenCalledWith(PROJECT_DB, 'record-id-1', ['signed off'], ['record-before-restart']);
   });
 
   it('is unreadable when the worker answers null, and hands the ledger the null', async () => {
@@ -97,7 +105,7 @@ describe('readUserMessagesInTurn', () => {
     ));
     const read = await readUserMessagesInTurn({ sessionId: 'session-1', transcriptAnchor: ANCHOR }, repositoryWith(RECORD), PROJECT_DB);
     expect(read).toEqual({ readable: false });
-    expect(hoisted.personMessagesInTurn).toHaveBeenCalledWith(PROJECT_DB, 'record-id-1', null);
+    expect(hoisted.personMessagesInTurn).toHaveBeenCalledWith(PROJECT_DB, 'record-id-1', null, []);
   });
 
   it('does not retry a worker error that is not an unavailable worker, and is unreadable', async () => {

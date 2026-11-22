@@ -155,6 +155,29 @@ export function userTextMatchNoneOfReason(count: number): string {
   return `None of your ${count} messages in this turn matched a pattern.`;
 }
 
+/**
+ * The reasons for a read that reached back to a turn a restart cut off before
+ * its Stop (`carried-owner-turn.ts`): the owner's message there, and any after
+ * it, decided at this turn end. Worded apart so the run log says why a turn
+ * with no message of the owner's ran the row.
+ */
+export const CARRIED_USER_TEXT_MATCH_MET_REASON = 'Your message in the turn a restart cut off matched.';
+export const CARRIED_USER_TEXT_MATCH_NOT_MET_REASON = 'Your message in the turn a restart cut off matched no pattern.';
+export const CARRIED_USER_TEXT_MATCH_RULED_OUT_REASON = 'Your message in the turn a restart cut off matched a ! pattern.';
+export const CARRIED_USER_TEXT_MATCH_NO_MESSAGE_REASON = 'No message from you in this turn or the one a restart cut off.';
+
+export function carriedUserTextMatchMetAtReason(position: number, count: number): string {
+  return `Your message ${position} of ${count} since the turn a restart cut off matched.`;
+}
+
+export function carriedUserTextMatchRuledOutAtReason(position: number, count: number): string {
+  return `Your message ${position} of ${count} since the turn a restart cut off matched a ! pattern.`;
+}
+
+export function carriedUserTextMatchNoneOfReason(count: number): string {
+  return `None of your ${count} messages since the turn a restart cut off matched a pattern.`;
+}
+
 /** How much of the final line a reason quotes. */
 const REASON_LINE_MAX = 120;
 
@@ -429,9 +452,12 @@ export function matchFinalLine(value: string, reply: string | null | undefined):
  * What the turn-end read found of the user's messages: every message they sent
  * in the turn, oldest first, less what Kangentic typed itself (empty when
  * they sent none), or `unreadable` when the read failed or the agent cannot
- * report them.
+ * report them. `carriedAcrossRestart` marks a read that began at a turn a
+ * restart cut off before its Stop, so the reasons say so.
  */
-export type UserMessageRead = { readable: true; messages: readonly string[] } | { readable: false };
+export type UserMessageRead =
+  | { readable: true; messages: readonly string[]; carriedAcrossRestart?: boolean }
+  | { readable: false };
 
 /**
  * Match a Text match against the user's messages in the turn, each one WHOLE,
@@ -457,20 +483,52 @@ export function matchUserMessage(value: string, read: UserMessageRead): FinalLin
   // is null exactly when this is empty). The same rule runs here for a read
   // built without it, so the positions a reason names count the same messages.
   const messages = read.messages.filter((message) => normalizeForMatch(message) !== '');
-  if (messages.length === 0) return { met: false, reason: USER_TEXT_MATCH_NO_MESSAGE_REASON };
+  const reasons = read.carriedAcrossRestart === true ? CARRIED_REASONS : TURN_REASONS;
+  if (messages.length === 0) return { met: false, reason: reasons.noMessage };
   const count = messages.length;
   for (let index = count - 1; index >= 0; index -= 1) {
     const verdict = textMatchVerdict(value, messages[index]);
     if (verdict === 'silent') continue;
     const met = verdict === 'matched';
-    if (count === 1) return { met, reason: met ? USER_TEXT_MATCH_MET_REASON : USER_TEXT_MATCH_RULED_OUT_REASON };
+    if (count === 1) return { met, reason: met ? reasons.met : reasons.ruledOut };
     return {
       met,
-      reason: met ? userTextMatchMetAtReason(index + 1, count) : userTextMatchRuledOutAtReason(index + 1, count),
+      reason: met ? reasons.metAt(index + 1, count) : reasons.ruledOutAt(index + 1, count),
     };
   }
-  return { met: false, reason: count === 1 ? USER_TEXT_MATCH_NOT_MET_REASON : userTextMatchNoneOfReason(count) };
+  return { met: false, reason: count === 1 ? reasons.notMet : reasons.noneOf(count) };
 }
+
+/** One set of the user's-message reasons: this turn's, or a read carried across a restart. */
+interface UserMessageReasons {
+  met: string;
+  notMet: string;
+  ruledOut: string;
+  noMessage: string;
+  metAt(position: number, count: number): string;
+  ruledOutAt(position: number, count: number): string;
+  noneOf(count: number): string;
+}
+
+const TURN_REASONS: UserMessageReasons = {
+  met: USER_TEXT_MATCH_MET_REASON,
+  notMet: USER_TEXT_MATCH_NOT_MET_REASON,
+  ruledOut: USER_TEXT_MATCH_RULED_OUT_REASON,
+  noMessage: USER_TEXT_MATCH_NO_MESSAGE_REASON,
+  metAt: userTextMatchMetAtReason,
+  ruledOutAt: userTextMatchRuledOutAtReason,
+  noneOf: userTextMatchNoneOfReason,
+};
+
+const CARRIED_REASONS: UserMessageReasons = {
+  met: CARRIED_USER_TEXT_MATCH_MET_REASON,
+  notMet: CARRIED_USER_TEXT_MATCH_NOT_MET_REASON,
+  ruledOut: CARRIED_USER_TEXT_MATCH_RULED_OUT_REASON,
+  noMessage: CARRIED_USER_TEXT_MATCH_NO_MESSAGE_REASON,
+  metAt: carriedUserTextMatchMetAtReason,
+  ruledOutAt: carriedUserTextMatchRuledOutAtReason,
+  noneOf: carriedUserTextMatchNoneOfReason,
+};
 
 /** A final line as a reason quotes it: cut after `REASON_LINE_MAX` characters. */
 export function shownFinalLine(line: string): string {

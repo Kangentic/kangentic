@@ -219,6 +219,32 @@ describe('fails closed', () => {
   });
 });
 
+// A read carried across a restart spans the records before the resume
+// (`carried-owner-turn.ts`): Kangentic's texts under any of them are dropped.
+describe('a read across a recovery resume', () => {
+  const EARLIER_RECORD = 'session-before-restart';
+
+  it('drops what Kangentic typed under the earlier record and under this one, and keeps the owner\'s message', () => {
+    insertSession(hoisted.database!, EARLIER_RECORD);
+    recordKangenticTypedInProject(PROJECT_ID, EARLIER_RECORD, designContract);
+    recordKangenticTyped(lookup, SESSION_ID, 'The Design step is not done yet.');
+    const read = personMessagesInTurn(
+      hoisted.database, SESSION_ID, ['signed off', designContract, 'The Design step is not done yet.'], [EARLIER_RECORD],
+    );
+    expect(read).toEqual({ readable: true, messages: ['signed off'] });
+  });
+
+  it('is unreadable when an earlier record\'s row is gone', () => {
+    expect(personMessagesInTurn(hoisted.database, SESSION_ID, ['signed off'], ['session-deleted'])).toEqual({ readable: false });
+  });
+
+  it('is unreadable when an earlier record is marked unreliable', () => {
+    recordKangenticTyped({ getSession: () => undefined }, EARLIER_RECORD, 'anything');
+    insertSession(hoisted.database!, EARLIER_RECORD);
+    expect(personMessagesInTurn(hoisted.database, SESSION_ID, ['signed off'], [EARLIER_RECORD])).toEqual({ readable: false });
+  });
+});
+
 describe('the record', () => {
   it('keeps only a session\'s newest records', () => {
     const repository = new SessionTypedMessageRepository(hoisted.database!);

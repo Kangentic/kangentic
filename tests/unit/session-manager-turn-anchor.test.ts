@@ -46,7 +46,7 @@ vi.mock('../../src/main/analytics/analytics', () => ({
   sanitizeErrorMessage: (message: string) => message,
 }));
 
-import { SessionManager, type TurnEndedPayload } from '../../src/main/pty/session-manager';
+import { SessionManager, type TurnAnchorPayload, type TurnEndedPayload } from '../../src/main/pty/session-manager';
 import type { ManagedSession, SessionRegistry } from '../../src/main/pty/session-registry';
 import type { SessionTelemetry } from '../../src/main/activity-engine/session-telemetry';
 import type { TurnStartCause } from '../../src/main/activity-engine/engine';
@@ -655,6 +655,126 @@ describe('SessionManager turn-end transcript anchor', () => {
       manager.kill(sessionId);
 
       expect(manager.workTurnStartedAt(sessionId)).toBeNull();
+    });
+  });
+
+  // The open turn's start, which the turn-end runner keeps on the session row so
+  // a restart that cuts the turn off can hand it to the recovery resume
+  // (`carried-owner-turn.ts`, kangentic-mobile #160).
+  describe('the open turn it announces for a restart to carry', () => {
+    let announced: TurnAnchorPayload[];
+
+    beforeEach(() => {
+      announced = [];
+      manager.on('turn-anchor', (payload: TurnAnchorPayload) => announced.push(payload));
+    });
+
+    it('announces where a turn began when it starts, and nothing open once its turn end takes it', () => {
+      position = at(100);
+      getTelemetry(manager).initSession(sessionId);
+      send(EventType.Prompt);
+      expect(announced).toEqual([
+        { sessionId, taskId: 'task-anchor', projectId: 'project-anchor', anchor: at(100), turnStartedAt: expect.any(Number) },
+      ]);
+
+      send(EventType.Idle);
+      expect(announced.at(-1)).toEqual({ sessionId, taskId: 'task-anchor', projectId: 'project-anchor', anchor: null, turnStartedAt: null });
+    });
+
+    it('announces the anchor again when the read it follows moves it, and not when a later read lands', () => {
+      position = at(100);
+      pending = true;
+      readInFlight = true;
+      getTelemetry(manager).initSession(sessionId);
+      send(EventType.Prompt);
+
+      position = at(250);
+      pending = false;
+      readInFlight = false;
+      manager.transcriptReadLanded(sessionId);
+      position = at(600);
+      manager.transcriptReadLanded(sessionId);
+
+      expect(announced.map((payload) => payload.anchor)).toEqual([at(100), at(250)]);
+      expect(announced[1].turnStartedAt).toBe(announced[0].turnStartedAt);
+    });
+
+    it('announces nothing when the session is killed mid-turn, so the open turn outlives the quit', () => {
+      position = at(100);
+      getTelemetry(manager).initSession(sessionId);
+      send(EventType.Prompt);
+      const beforeKill = announced.length;
+
+      manager.kill(sessionId);
+
+      expect(announced).toHaveLength(beforeKill);
+      expect(announced.at(-1)?.anchor).toEqual(at(100));
+    });
+
+    it('announces no open turn for a seed start, which has no anchor', () => {
+      position = at(300);
+
+      getTurnEdgeCallbacks(manager).onTurnStarted(sessionId, 1000, 'seed');
+
+      expect(announced).toEqual([
+        { sessionId, taskId: 'task-anchor', projectId: 'project-anchor', anchor: null, turnStartedAt: null },
+      ]);
+    });
+
+    /** A registry row of another kind than a task session, which no turn-end row runs for. */
+    function registerRow(id: string, fields: { transient: boolean; taskId: string | null }): void {
+      const registry = (manager as unknown as { registry: SessionRegistry }).registry;
+      registry.set(id, {
+        id,
+        taskId: fields.taskId,
+        projectId: 'project-anchor',
+        pty: null,
+        status: 'running',
+        shell: '',
+        cwd: '/mock/cwd',
+        startedAt: new Date().toISOString(),
+        exitCode: null,
+        resuming: false,
+        transient: fields.transient,
+        exitSequence: ['\x03'],
+      } as unknown as ManagedSession);
+    }
+
+    it('announces nothing for a transient session (a Command Terminal)', () => {
+      registerRow('sess-transient-anchor', { transient: true, taskId: 'task-transient' });
+      position = at(100);
+
+      getTurnEdgeCallbacks(manager).onTurnStarted('sess-transient-anchor', 1000, 'idle');
+      getTurnEdgeCallbacks(manager).onTurnStarted('sess-transient-anchor', 2000, 'seed');
+
+      expect(announced).toEqual([]);
+    });
+
+    it('announces nothing for a session with no task', () => {
+      registerRow('sess-taskless-anchor', { transient: false, taskId: null });
+      position = at(100);
+
+      getTurnEdgeCallbacks(manager).onTurnStarted('sess-taskless-anchor', 1000, 'idle');
+
+      expect(announced).toEqual([]);
+    });
+
+    it('starts the turn anyway when a turn-anchor listener throws', () => {
+      manager.on('turn-anchor', () => {
+        throw new Error('listener failed');
+      });
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      try {
+        position = at(100);
+
+        expect(() => getTurnEdgeCallbacks(manager).onTurnStarted(sessionId, 1000, 'idle')).not.toThrow();
+
+        expect(manager.workTurnStartedAt(sessionId)).toBe(1000);
+        expect(getAnchorMaps(manager).turnTranscriptAnchors.get(sessionId)).toMatchObject({ turnStartedAt: 1000, anchor: at(100) });
+        expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('turn-anchor listener threw'), expect.any(Error));
+      } finally {
+        consoleError.mockRestore();
+      }
     });
   });
 

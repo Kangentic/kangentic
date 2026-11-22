@@ -19,8 +19,68 @@ import { writeTransaction } from '../transaction';
  * fillTranscriptPath the SessionStart hook's.
  */
 type SessionInsertInput = Omit<SessionRecord,
-  'total_cost_usd' | 'total_input_tokens' | 'total_output_tokens' | 'model_id' | 'model_display_name' | 'used_percentage' | 'applied_model' | 'applied_effort' | 'total_duration_ms' | 'tool_call_count' | 'lines_added' | 'lines_removed' | 'files_changed' | 'tool_breakdown' | 'compaction_count' | 'last_pty_cols' | 'last_pty_rows' | 'result_tokens_read_at' | 'transcript_path' | 'cli_target' | 'start_head_sha' | 'launch_failed_at' | 'start_blocked_reason'
+  'total_cost_usd' | 'total_input_tokens' | 'total_output_tokens' | 'model_id' | 'model_display_name' | 'used_percentage' | 'applied_model' | 'applied_effort' | 'total_duration_ms' | 'tool_call_count' | 'lines_added' | 'lines_removed' | 'files_changed' | 'tool_breakdown' | 'compaction_count' | 'last_pty_cols' | 'last_pty_rows' | 'result_tokens_read_at' | 'transcript_path' | 'cli_target' | 'start_head_sha' | 'launch_failed_at' | 'start_blocked_reason' | 'open_turn' | 'carried_owner_turn'
 > & { cli_target?: string | null; start_head_sha?: string | null; transcript_path?: string | null };
+
+/**
+ * Where a turn began in a session's transcript (`TranscriptAnchor`) and when
+ * (UTC ISO), as `sessions.open_turn` stores it. A position, never the words.
+ */
+export interface StoredTurnPosition {
+  agentSessionId: string;
+  byteOffset: number;
+  startedAt: string;
+}
+
+/**
+ * A turn a restart cut off before its Stop, carried into the record a
+ * recovery resume started (`sessions.carried_owner_turn`). `recordIds` are the
+ * records the read spans before this one, oldest first: Kangentic's own texts
+ * typed under any of them are left out of the owner's messages.
+ */
+export interface CarriedOwnerTurn extends StoredTurnPosition {
+  recordIds: string[];
+}
+
+/** A stored column's JSON as a plain object, or null for none, a value that does not parse, or a non-object. */
+function parseStoredObject(raw: string | null | undefined): Record<string, unknown> | null {
+  if (!raw) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    // report-ok: a column only this repository writes; a value that does not parse reads as none, the closed direction.
+    return null;
+  }
+  return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+}
+
+function storedTurnPositionFrom(candidate: Record<string, unknown>): StoredTurnPosition | null {
+  const { agentSessionId, byteOffset, startedAt } = candidate;
+  if (typeof agentSessionId !== 'string' || agentSessionId === '') return null;
+  if (typeof byteOffset !== 'number' || !Number.isInteger(byteOffset) || byteOffset < 0) return null;
+  if (typeof startedAt !== 'string' || Number.isNaN(Date.parse(startedAt))) return null;
+  return { agentSessionId, byteOffset, startedAt };
+}
+
+function isNonEmptyStringList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.length > 0 && value.every((entry) => typeof entry === 'string' && entry !== '');
+}
+
+/** A stored turn position, or null for none or a value that does not parse. */
+export function parseStoredTurnPosition(raw: string | null | undefined): StoredTurnPosition | null {
+  const candidate = parseStoredObject(raw);
+  return candidate ? storedTurnPositionFrom(candidate) : null;
+}
+
+/** A carried turn, or null for none or a value that does not parse. */
+export function parseCarriedOwnerTurn(raw: string | null | undefined): CarriedOwnerTurn | null {
+  const candidate = parseStoredObject(raw);
+  if (!candidate) return null;
+  const position = storedTurnPositionFrom(candidate);
+  if (!position || !isNonEmptyStringList(candidate.recordIds)) return null;
+  return { ...position, recordIds: [...candidate.recordIds] };
+}
 
 export interface SessionMetricsInput {
   totalCostUsd: number | null;
@@ -308,6 +368,63 @@ export class SessionRepository {
   fillTranscriptPath(id: string, transcriptPath: string): boolean {
     return this.db.prepare('UPDATE sessions SET transcript_path = ? WHERE id = ? AND transcript_path IS NULL')
       .run(transcriptPath, id).changes > 0;
+  }
+
+  /**
+   * Record where the session's open turn began, or clear it (null) when its
+   * turn end took it. A no-op for an id with no row (a Command Terminal), and
+   * for a value the row already holds (a turn end after a seeded turn clears
+   * a column that is already NULL).
+   */
+  setOpenTurn(id: string, position: StoredTurnPosition | null): void {
+    const value = position ? JSON.stringify(position) : null;
+    this.db.prepare('UPDATE sessions SET open_turn = ? WHERE id = ? AND open_turn IS NOT ?').run(value, id, value);
+  }
+
+  /**
+   * Hand a recovery resume's new record the turn the restart cut off: the old
+   * record's own carried turn when it still holds one (it began earlier, so a
+   * read from it covers the later turn too), else its open turn. The old
+   * record keeps neither, so nothing carries it twice. Returns what was
+   * carried, or null when the old record had no turn to carry or the new
+   * record has no row, in which case the old record is left as it was.
+   */
+  carryOpenTurn(fromRecordId: string, toRecordId: string): CarriedOwnerTurn | null {
+    return writeTransaction(this.db, (): CarriedOwnerTurn | null => {
+      const fromRow = this.db.prepare('SELECT open_turn, carried_owner_turn FROM sessions WHERE id = ?')
+        .get(fromRecordId) as { open_turn: string | null; carried_owner_turn: string | null } | undefined;
+      if (!fromRow) return null;
+      const earlierCarriedTurn = parseCarriedOwnerTurn(fromRow.carried_owner_turn);
+      const openTurn = parseStoredTurnPosition(fromRow.open_turn);
+      const carried: CarriedOwnerTurn | null = earlierCarriedTurn
+        ? { ...earlierCarriedTurn, recordIds: [...earlierCarriedTurn.recordIds, fromRecordId] }
+        : openTurn ? { ...openTurn, recordIds: [fromRecordId] } : null;
+      if (carried) {
+        const written = this.db.prepare('UPDATE sessions SET carried_owner_turn = ? WHERE id = ?')
+          .run(JSON.stringify(carried), toRecordId).changes;
+        if (written === 0) return null;
+      }
+      this.db.prepare('UPDATE sessions SET open_turn = NULL, carried_owner_turn = NULL WHERE id = ?').run(fromRecordId);
+      return carried;
+    })();
+  }
+
+  /**
+   * The turn a recovery resume carried into this record, read and cleared at
+   * once. Every settled turn end asks, and the column is almost always NULL,
+   * so a plain read answers that case without taking the write lock.
+   */
+  takeCarriedOwnerTurn(id: string): CarriedOwnerTurn | null {
+    const unlockedPeek = this.db.prepare('SELECT carried_owner_turn FROM sessions WHERE id = ?')
+      .get(id) as { carried_owner_turn: string | null } | undefined;
+    if (!unlockedPeek?.carried_owner_turn) return null;
+    return writeTransaction(this.db, (): CarriedOwnerTurn | null => {
+      const row = this.db.prepare('SELECT carried_owner_turn FROM sessions WHERE id = ?')
+        .get(id) as { carried_owner_turn: string | null } | undefined;
+      if (!row?.carried_owner_turn) return null;
+      this.db.prepare('UPDATE sessions SET carried_owner_turn = NULL WHERE id = ?').run(id);
+      return parseCarriedOwnerTurn(row.carried_owner_turn);
+    })();
   }
 
   /** Get suspended agent sessions that can be resumed */
