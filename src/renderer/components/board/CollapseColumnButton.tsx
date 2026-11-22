@@ -1,5 +1,5 @@
 import React from 'react';
-import { FoldHorizontal } from 'lucide-react';
+import { ArrowsToAxisDashedVertical } from 'lucide-react';
 import { useLingui } from '@lingui/react/macro';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
@@ -28,7 +28,7 @@ export function CollapseColumnButton({ swimlaneId, columnName }: { swimlaneId: s
         }}
         className="flex-shrink-0 p-0.5 text-fg-disabled hover:text-fg-muted transition-colors"
       >
-        <FoldHorizontal size={12} />
+        <ArrowsToAxisDashedVertical size={12} />
       </button>
     </Tooltip>
   );

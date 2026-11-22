@@ -364,7 +364,7 @@ describe('the icon registry', () => {
     // quietly loses its glyph. This fails the next time lucide renames one of these targets.
     it('sends every legacy name to a real catalog entry', async () => {
       const catalog = await import('../../src/renderer/utils/icon-catalog');
-      expect(registry.LEGACY_ICON_NAMES.size).toBe(30);
+      expect(registry.LEGACY_ICON_NAMES.size).toBe(38);
       for (const [legacyName, currentName] of registry.LEGACY_ICON_NAMES) {
         expect(catalog.CATALOG.has(currentName), `"${legacyName}" points at "${currentName}"`).toBe(true);
         expect(catalog.CATALOG.has(legacyName), `"${legacyName}" is back in the catalog`).toBe(false);

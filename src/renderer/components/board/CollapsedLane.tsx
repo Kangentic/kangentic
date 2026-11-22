@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { useDroppable } from '@dnd-kit/core';
-import { UnfoldHorizontal } from 'lucide-react';
+import { ArrowsFromAxisDashedVertical } from 'lucide-react';
 import { plural } from '@lingui/core/macro';
 import { SwimlaneIcon } from '../../utils/swimlane-icons';
 import { useConfigStore } from '../../stores/config-store';
@@ -85,7 +85,7 @@ export const CollapsedLane = React.memo(function CollapsedLane({ swimlane, count
           className="flex min-h-0 flex-1 flex-col items-center gap-2 pt-2 pb-2"
           style={{ width: COLLAPSED_LANE_WIDTH_PX }}
         >
-          <UnfoldHorizontal size={14} className="flex-shrink-0 text-fg-disabled" />
+          <ArrowsFromAxisDashedVertical size={14} className="flex-shrink-0 text-fg-disabled" />
           <SwimlaneIcon swimlane={swimlane} size={16} dotClassName="w-2.5 h-2.5 rounded-full flex-shrink-0" />
           <span
             className={`min-h-0 overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium [writing-mode:vertical-rl] ${

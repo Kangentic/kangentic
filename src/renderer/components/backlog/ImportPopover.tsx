@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Download, Plus, Trash2, ChevronRight, ArrowLeft, X, MoreHorizontal, Pencil } from 'lucide-react';
+import { Download, Plus, Trash2, ChevronRight, ArrowLeft, X, Ellipsis, Pencil } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { translateText } from '../../i18n/translate';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
@@ -488,7 +488,7 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
                       out of the portal too, must not. */}
                   <span className="flex" onClick={(event) => event.stopPropagation()}>
                     <KebabMenu
-                      icon={<MoreHorizontal size={14} />}
+                      icon={<Ellipsis size={14} />}
                       label={t`Source actions`}
                       triggerClassName="p-1 rounded text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover transition-colors"
                       triggerTestId={`${SOURCE_MENU_TRIGGER_PREFIX}${source.id}`}

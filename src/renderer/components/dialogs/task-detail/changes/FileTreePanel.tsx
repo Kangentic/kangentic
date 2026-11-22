@@ -1,5 +1,5 @@
 import { useMemo, useState, useRef, useCallback, useEffect, memo, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
-import { Search, Copy, ChevronRight, ChevronDown, GitBranch, ArrowUp, ArrowDown, ArrowDownUp, ListTree, List, FoldVertical, UnfoldVertical, FolderOpen, ExternalLink, Check, History, LoaderCircle, AppWindow } from 'lucide-react';
+import { Search, Copy, ChevronRight, ChevronDown, GitBranch, ArrowUp, ArrowDown, ArrowDownUp, ListTree, List, ArrowsToAxisDashedHorizontal, ArrowsFromAxisDashedHorizontal, FolderOpen, ExternalLink, Check, History, LoaderCircle, AppWindow } from 'lucide-react';
 import { useConfigStore } from '../../../../stores/config-store';
 import { BaseKindIcon } from './BaseKindIcon';
 import type { AppConfig, GitBranchSummaryResult, GitDiffFileEntry, GitDiffScope, GitDiffStatus, GitFileHistoryCommit } from '../../../../../shared/types';
@@ -1166,7 +1166,7 @@ export function FileTreePanel({
                 data-testid="changes-collapse-all"
                 className="flex-shrink-0 p-1 rounded text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors disabled:opacity-30 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-fg-muted"
               >
-                {expansion.expand ? <FoldVertical size={14} /> : <UnfoldVertical size={14} />}
+                {expansion.expand ? <ArrowsToAxisDashedHorizontal size={14} /> : <ArrowsFromAxisDashedHorizontal size={14} />}
               </button>
             </Tooltip>
           </div>
