@@ -94,7 +94,7 @@
     "@sentry/vite-plugin": "^11.16.0",
     "@tailwindcss/postcss": "^4.3.5",
     "@tailwindcss/vite": "^4.3.5",
-    "@tanstack/react-virtual": "^3.14.26",
+    "@tanstack/react-virtual": "^3.14.28",
     "@types/better-sqlite3": "^9.6.0",
     "@types/pngjs": "6.0.5",
     "@types/qrcode": "^1.5.6",
