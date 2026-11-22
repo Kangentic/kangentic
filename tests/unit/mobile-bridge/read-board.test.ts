@@ -78,6 +78,7 @@ let registryRows: Array<{
   commandTerminalSlot?: string | null;
   commandTerminalLabel?: string | null;
   startBlockedReason?: string | null;
+  suspendedBy?: string | null;
 }> = [];
 /** The fake activity engine's state and reason per session id. */
 let activityStates: Record<string, string> = {};
@@ -245,12 +246,15 @@ describe('handleReadBoard', () => {
       // automations_disabled is a real false even though the row left the
       // column out. An absent key would read on the phone as an older desktop.
       tasks: [{
-        id: 't-1', session_id: 'sess-1', spawn_progress: null, resumable: false, paused: false, paused_session_id: null, pausable: false, automations_disabled: false, workflow: null,
+        id: 't-1', session_id: 'sess-1', spawn_progress: null, resumable: false, paused: false, paused_session_id: null, paused_by: null, pausable: false, automations_disabled: false, workflow: null,
         queue_place: null, artifacts: [], start_blocked_reason: null,
       }],
       backlog: [{ id: 'b-1' }],
       projectColor: deriveProjectAccentColor('proj-1'),
       showTicketNumbers: false,
+      // The config names neither card switch: both read on, their default.
+      showTaskPriority: true,
+      showTaskLabels: true,
       commandTerminals: [],
       commandTerminalsOffered: true,
       earlierConversationsOffered: true,
@@ -642,6 +646,71 @@ describe('handleReadBoard', () => {
 
       expect(await readPausedSessionId()).toBe('sess-placeholder-after-restart');
     });
+  });
+
+  describe('paused_by on the board row (protocol 0.29.0)', () => {
+    beforeEach(() => {
+      swimlanesList.mockReturnValue([{ id: 'lane-review', role: null, auto_spawn: false }]);
+      tasksList.mockReturnValue([
+        { id: 't-idle', swimlane_id: 'lane-review', session_id: null, archived_at: null },
+        { id: 't-held', swimlane_id: 'lane-review', session_id: null, archived_at: null },
+        { id: 't-system', swimlane_id: 'lane-review', session_id: null, archived_at: null },
+        { id: 't-unnamed', swimlane_id: 'lane-review', session_id: null, archived_at: null },
+        { id: 't-paused-queued-successor', swimlane_id: 'lane-review', session_id: 'sess-next', archived_at: null },
+        { id: 't-running', swimlane_id: 'lane-review', session_id: 'sess-run', archived_at: null },
+      ]);
+      registryRows = [
+        { id: 'sess-idle', taskId: 't-idle', status: 'suspended', suspendedBy: 'auto' },
+        { id: 'sess-held', taskId: 't-held', status: 'suspended', suspendedBy: 'user' },
+        { id: 'sess-system', taskId: 't-system', status: 'suspended', suspendedBy: 'system' },
+        // A move or a quit suspends the live row naming nobody.
+        { id: 'sess-unnamed', taskId: 't-unnamed', status: 'suspended' },
+        // The queued successor makes the task live, so its idle pause is not reported.
+        { id: 'sess-old', taskId: 't-paused-queued-successor', status: 'suspended', suspendedBy: 'auto' },
+        { id: 'sess-next', taskId: 't-paused-queued-successor', status: 'queued' },
+        { id: 'sess-run', taskId: 't-running', status: 'running' },
+      ];
+    });
+
+    it('says who paused each paused task from its paused row, and null exactly when the task is not paused', async () => {
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'full' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
+
+      const tasks = (response.payload as { tasks: Array<{ id: string; paused: boolean | null; paused_by: string | null }> }).tasks;
+      expect(Object.fromEntries(tasks.map((task) => [task.id, task.paused_by]))).toEqual({
+        't-idle': 'idle',
+        't-held': 'held',
+        't-system': 'system',
+        't-unnamed': 'system',
+        't-paused-queued-successor': null,
+        't-running': null,
+      });
+      for (const task of tasks) {
+        expect(task.paused_by !== null).toBe(task.paused === true);
+      }
+    });
+
+    it('keeps who paused across a restart, which re-registers the paused row under a new id', async () => {
+      registryRows = registryRows.map((row) => (row.id === 'sess-idle' ? { ...row, id: 'sess-placeholder-after-restart' } : row));
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'full' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
+
+      const idle = (response.payload as { tasks: Array<{ id: string; paused_session_id: string | null; paused_by: string | null }> }).tasks
+        .find((task) => task.id === 't-idle');
+      expect(idle).toMatchObject({ paused_session_id: 'sess-placeholder-after-restart', paused_by: 'idle' });
+    });
+  });
+
+  it('carries the card Priority and Labels switches on the snapshot (protocol 0.29.0)', async () => {
+    const context = boardContext();
+    (context.configManager as unknown as { getEffectiveConfig: unknown }).getEffectiveConfig = vi.fn(() => ({
+      showTaskNumbers: true,
+      showTaskPriority: false,
+      showTaskLabels: true,
+    }));
+    const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'sessions' }), fakeSession(), context, new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
+
+    const snapshot = response.payload as { showTaskPriority?: boolean; showTaskLabels?: boolean };
+    expect(snapshot.showTaskPriority).toBe(false);
+    expect(snapshot.showTaskLabels).toBe(true);
   });
 
   describe('pausable on the board row (protocol 0.18.0)', () => {

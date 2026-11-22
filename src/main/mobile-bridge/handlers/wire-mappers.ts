@@ -22,6 +22,7 @@ import {
   type BoardTaskWire,
   type BoardTaskWorkflowWire,
   type JsonValue,
+  type PausedByWire,
   type ReadStreamSessionStatusWire,
   type SessionEventWire,
   type SessionSummaryWire,
@@ -43,6 +44,7 @@ import type {
   SessionSummary,
   SessionUsage,
   StartBlockedReason,
+  SuspendedBy,
   Swimlane,
   Task,
   TaskArtifact,
@@ -398,15 +400,15 @@ export function toSpawnProgressLabelWire(label: string | null): string | null {
  *
  * `sessionFacts` holds `pausedSessionId`, the registry id of the task's paused
  * session when it has one and no live one (`taskSessionStatesOf`), else null;
- * `resumable`, `isResumeOffered` for that same answer; `pausable`,
+ * `pausedBy`, that paused row's `suspendedBy` (`toPausedByWire`); `resumable`, `isResumeOffered` for that same answer; `pausable`,
  * `isPauseOffered` for the task's live session; `queuePlace`, the queued
  * session's place in line (`toQueuePlaceWire`); and `startBlockedReason`, why
  * the task's paused or ended session never reached an agent. The caller
  * resolves them because they need the session registry, the queue and the
  * column; see `BoardTaskWire.paused_session_id`, `BoardTaskWire.resumable`,
  * `BoardTaskWire.pausable`, `BoardTaskWire.queue_place` and
- * `BoardTaskWire.start_blocked_reason`. `paused` is derived from the id here,
- * so the two fields can never disagree. One object rather than positional
+ * `BoardTaskWire.start_blocked_reason`. `paused` and `paused_by` are derived
+ * from the id here, so the three fields can never disagree. One object rather than positional
  * values, so a call site cannot swap them.
  *
  * `artifacts` is read off the task itself (`toTaskArtifactsWire`).
@@ -451,6 +453,7 @@ export function toBoardTaskWire(
     resumable: sessionFacts.resumable,
     paused: sessionFacts.pausedSessionId !== null,
     paused_session_id: sessionFacts.pausedSessionId,
+    paused_by: sessionFacts.pausedSessionId === null ? null : toPausedByWire(sessionFacts.pausedBy),
     pausable: sessionFacts.pausable,
     automations_disabled: task.automations_disabled === true,
     workflow,
@@ -463,10 +466,32 @@ export function toBoardTaskWire(
 /** What `toBoardTaskWire` needs from the session registry and the queue, resolved by the caller. */
 export interface BoardTaskSessionFacts {
   pausedSessionId: string | null;
+  pausedBy: SuspendedBy | null;
   resumable: boolean;
   pausable: boolean;
   queuePlace: BoardTaskQueuePlaceWire | null;
   startBlockedReason: StartBlockedReason | null;
+}
+
+/**
+ * Who paused a paused row, in the words the desktop draws for it
+ * (`PendingFooter`, `TaskDetailBody`'s Resume line). The idle timeout's pause
+ * is `idle`; the user's own, and the legacy low-memory pause that holds the
+ * same way, are `held`; a pause the desktop made on its own is `system`, as
+ * is a suspended row that names nobody (a move or quit suspends naming no
+ * one, and the card reads that the same as `'system'`).
+ */
+export function toPausedByWire(suspendedBy: SuspendedBy | null): PausedByWire {
+  switch (suspendedBy) {
+    case 'auto':
+      return 'idle';
+    case 'user':
+    case 'low_memory':
+      return 'held';
+    case 'system':
+    case null:
+      return 'system';
+  }
 }
 
 /**

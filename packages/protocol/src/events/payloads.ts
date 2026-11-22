@@ -320,6 +320,12 @@ export interface BoardColumnWire {
   spawns_session?: boolean | null;
 }
 
+/** Who paused a task, as `BoardTaskWire.paused_by` says it (protocol 0.29.0). */
+export type PausedByWire = 'idle' | 'held' | 'system';
+
+/** Every `PausedByWire` this package knows. A client matches against these and draws plain "Paused" for any other. */
+export const PAUSED_BY_WIRE_VALUES: readonly PausedByWire[] = ['idle', 'held', 'system'];
+
 /** Phone-needed subset of the desktop's Task row. A non-null `session_id` is the live-session signal the phone's triage view keys on. */
 export interface BoardTaskWire {
   id: string;
@@ -489,6 +495,39 @@ export interface BoardTaskWire {
    * key from every real wire response.
    */
   paused_session_id?: string | null;
+  /**
+   * Who paused the task, while `paused` is true (protocol 0.29.0). It follows
+   * `paused` exactly: one of the values below whenever `paused` is true, and
+   * null whenever it is false. The desktop draws it in two places, the card's
+   * footer (board, Done list, workflow canvas and Agent Monitor cards) and a
+   * line under the task window's Resume button:
+   *
+   * - `idle`: the idle timeout paused an agent that was waiting on the person.
+   *   Footer "Paused while idle"; Resume line "Paused while idle."
+   * - `held`: the person paused it (the desktop's Pause, or the phone's
+   *   `pause-session`). Footer "Paused"; Resume line "Stays paused until
+   *   resumed."
+   * - `system`: the desktop paused it on its own (a quit, a column move, a
+   *   hidden or moved project, a settings restart). Footer "Paused"; no
+   *   Resume line.
+   *
+   * `start_blocked_reason`, when set, replaces all of these words: the footer
+   * draws the blocked start and the Resume line is left out.
+   *
+   * A second pause keeps who paused first: pausing a task the idle timeout
+   * already paused still reads `idle`. A restart keeps it too, on the
+   * re-registered paused session `paused_session_id` then names. Words only:
+   * whether opening the task resumes it is the desktop's call (see
+   * `StartSessionRequestPayload.trigger`), never this field's.
+   *
+   * A value a client does not know draws plain "Paused" and no Resume line, as
+   * does null or absent from a desktop that predates the field (pre-0.29.0).
+   * `PAUSED_BY_WIRE_VALUES` lists the values this package knows.
+   *
+   * Declared OPTIONAL (`?`) like `paused`; `parseBoardTaskWire` populates the
+   * key from every real wire response, reading a non-string as null.
+   */
+  paused_by?: string | null;
   /**
    * True when the task has a live session (`running` or `queued`) and is not
    * in To Do. It is the desktop's promise that `pause-session` for this task
@@ -1062,6 +1101,7 @@ export function parseBoardTaskWire(value: JsonValue): BoardTaskWire {
     resumable: nullableBoolean(value, 'resumable'),
     paused: nullableBoolean(value, 'paused'),
     paused_session_id: nullableString(value, 'paused_session_id'),
+    paused_by: nullableString(value, 'paused_by'),
     pausable: nullableBoolean(value, 'pausable'),
     automations_disabled: nullableBoolean(value, 'automations_disabled'),
     workflow: parseBoardTaskWorkflowWire(value.workflow),
