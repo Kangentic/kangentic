@@ -146,8 +146,8 @@ keep.
 Because a terminal is ended rather than kept, being judged too early costs it everything. The
 start bound above is what protects it: with no evidence its agent ran (its first SessionStart,
 `agentStartObservedAt`, sticky across `/clear`, or its first alt-screen entry, which no shell
-emits) and no cause named, the sweep judges the terminal only once `AGENT_START_CEILING_MS` has
-passed. The first-output latch is not evidence, because a pwsh preamble trips it. The bound began as
+emits) and no cause named, the sweep judges a tree-judged terminal only once
+`AGENT_START_CEILING_MS` has passed. The first-output latch is not evidence, because a pwsh preamble trips it. The bound began as
 the Command Terminal's alone and now covers every launch, a task's and a workflow's own agent
 included. A workflow agent's retirement keeps an exited row, which the Workflows pane reads to
 start it over.
@@ -385,13 +385,15 @@ pid). That gives a host Command Terminal the end settle above, and a host launch
 the unjudged-launch timer below, which also skips its report while the host's link is down (its
 hooks are held on the host, so a healthy agent looks evidence-less).
 
-A host launch of an adapter that reports its start is also judged on its output alone, at the
-grace. The start bound still reads its output (`judgesByIdentifiedOutput`), and when that output
+A host launch of an adapter that reports its start is also judged on its output alone, from the
+grace on and up to the start ceiling, at the first read that finds a cause. The start bound still
+reads its output (`judgesByIdentifiedOutput`), and when that output
 names a cause (`launchFailureIdentifiedAt`), `checkPendingLaunchOutput` calls
 `retireAgentlessSession` itself instead of asking the sweep. The sweep's own path runs from there:
 the `never_started` report, the `agent-never-started` pause, `markResumeMiss`, and the retry
 decision. The report keeps `judge: sweep` though no sweep ran, since the path is the sweep's
-retirement; its `agent_process=unknown` and `typed_line_bytes=0` tags tell it apart. The candidate
+retirement. It carries no `agent_process` tag, which only a launch ended by a pause or kill reads,
+and its `typed_line_bytes` is 0 because a host launch builds no typed line. The candidate
 arm for a host (`isHostLaunchFailureIdentified`) needs the session running, past the grace, with
 its link up, an adapter that reports its start and no evidence its agent ran, and that stamp. An
 adapter with no start signal is never judged this way: a line the classifier names can be its live
@@ -403,8 +405,9 @@ A link that drops while that output is read leaves the stamp in place and the re
 and the stamp stops any further read. `noteLinkRestored` retires such a session when its link
 returns, through the same candidate check.
 
-**Known gaps.** A host launch whose output names no cause is reported at the ceiling and left
-running. A host agent that exits after it ran keeps a `running` row, since only the sweep notices
+**Known gaps.** A host launch from an adapter that reports its start, whose output names no cause,
+is reported at the ceiling and left running. An adapter with no start signal is neither judged nor
+reported there. A host agent that exits after it ran keeps a `running` row, since only the sweep notices
 that. A host resume that found no conversation is not marked (`markResumeMiss` leaves a host
 record unmarked: only the host shows whether the conversation had turns), so the next Resume runs
 the same `--resume` and pauses again with the notice. The host's own pty core can list its
@@ -496,7 +499,8 @@ way still pauses, so it keeps its Resume for after the user signs in.
 
 **A shell the sweep cannot judge gets a timer.** Where `canTreeJudgeAgent` is false (a WSL shell, a
 session on an SSH host, or the watcher off), a one-shot timer at the start ceiling, 120 s, reports
-`never_started` with `judge: timer` for a launch with no evidence. It only reports. Nothing here saw
+`never_started` with `judge: timer` for a launch with no evidence, from an adapter that reports its
+start. It only reports. Nothing here saw
 the agent gone, so it pauses nothing. It reports nothing for a host session whose link is down.
 
 **A launch that ended early reports from the PTY's exit.** The spawn flow's exit listener is the one
