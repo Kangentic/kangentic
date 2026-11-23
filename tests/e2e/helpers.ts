@@ -70,6 +70,16 @@ export function codexHomeForDataDir(dataDir: string): string {
 }
 
 /**
+ * The `CLAUDE_CONFIG_DIR` `launchApp` gives a run with this data dir, unless the
+ * caller passes its own. Kangentic's trust writes and the mock's transcripts land
+ * there, never in the developer's ~/.claude.json, which local runs had filled with
+ * thousands of `tests/.tmp` entries.
+ */
+export function claudeHomeForDataDir(dataDir: string): string {
+  return path.join(dataDir, 'claude-home');
+}
+
+/**
  * Remove the test data directory for a specific suite.
  */
 export function cleanupTestDataDir(suiteName: string): void {
@@ -346,10 +356,13 @@ export async function launchApp(options?: {
     attemptsMade = attempt;
     let pendingApp: ElectronApplication | undefined;
     try {
+      fs.mkdirSync(claudeHomeForDataDir(dataDir), { recursive: true });
       pendingApp = await electron.launch({
         args,
         env: {
           ...process.env,
+          // Before the caller's env, so a spec that tests Claude accounts can name its own home.
+          CLAUDE_CONFIG_DIR: claudeHomeForDataDir(dataDir),
           ...(options?.extraEnv ?? {}),
           // Test-essential keys go LAST so callers cannot accidentally
           // override them via extraEnv.

@@ -27,7 +27,7 @@ import { resolveBackgroundTaskOutputFile } from './background-task-output';
 import { reportTerminatedBackgroundShells } from './background-shell-transcript';
 import { reportRejectedPromptTools } from './permission-rejection-transcript';
 import { CLAUDE_HISTORY_VIEW } from './history-view';
-import { declineExternalClaudeMdImports, ensureClaudeSpawnConfig, removeWorktreeEntry, sweepRemovedFolderEntries } from './trust-manager';
+import { declineExternalClaudeMdImports, ensureClaudeSpawnConfig } from './trust-manager';
 import { ensureRemoteClaudeSpawnConfig } from './remote-trust';
 import { cliPathForTarget, parseWslCliPath, peekCliTarget, placeFromStored, resolveCliTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
 import { resolveRunTranscriptPath, type RunTranscriptInput } from '../../shared/run-transcript-path';
@@ -1164,18 +1164,5 @@ export class ClaudeAdapter implements AgentAdapter {
    */
   async onProjectRelocated(oldPath: string, newPath: string): Promise<void> {
     await migrateClaudeProjectData(oldPath, newPath);
-  }
-
-  /**
-   * Drop the removed worktree's ~/.claude.json entry, which `ensureTrust` wrote
-   * at its first spawn. Its transcripts stay: they live under ~/.claude/projects,
-   * and a resume into a recreated worktree trusts the folder again.
-   */
-  async onWorktreeRemoved(worktreePath: string, place?: CliPlace | null): Promise<void> {
-    await removeWorktreeEntry(worktreePath, place ?? null);
-  }
-
-  async sweepRemovedFolderTrust(): Promise<number> {
-    return sweepRemovedFolderEntries();
   }
 }

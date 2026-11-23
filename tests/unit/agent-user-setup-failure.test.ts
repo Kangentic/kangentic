@@ -143,6 +143,25 @@ describe('a settings file the CLI refuses', () => {
   });
 });
 
+// Codex 0.171.0 refusing a repository's own `.codex/config.toml`, the words it
+// printed before it exited at launch. Kangentic writes nothing in a project's
+// `.codex` folder, so the file is the user's. The home `config.toml` is not
+// matched: Kangentic writes its trust tables there.
+describe('a Codex project config the CLI refuses', () => {
+  const refused = (file: string): string => shellRun(`Error: Error parsing project config file ${file}: TOML parse error at line 1, column 6`);
+
+  it('is the user\'s own configuration', () => {
+    expect(identify('codex', refused('C:\\Users\\dev\\repo\\.codex\\config.toml'))).toBe('bad_configuration');
+    expect(identify('codex', refused('/home/dev/repo/.codex/config.toml'))).toBe('bad_configuration');
+  });
+
+  it('stays a report for any other file, or the sentence quoted in a prompt', () => {
+    expect(identify('codex', shellRun('Error loading config.toml: invalid type: string, expected a boolean'))).toBeNull();
+    expect(identify('codex', refused('C:\\Users\\dev\\repo\\settings.toml'))).toBeNull();
+    expect(identify('codex', '$ agent --print \'Error: Error parsing project config file /repo/.codex/config.toml: TOML parse error at line 1, column 6\'\r\n$ ')).toBeNull();
+  });
+});
+
 describe('what stays a report, because it may be our bug', () => {
   it.each(LOGIN_SENTENCES)('%s, quoted in a typed prompt: %s', (agent, sentence) => {
     // A shell echoes the line it is typed, and a task can be about this very text.

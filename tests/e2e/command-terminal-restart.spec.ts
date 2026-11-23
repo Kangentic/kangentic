@@ -47,6 +47,9 @@ import {
 const TEST_NAME = 'command-terminal-restart';
 const runId = Date.now();
 
+/** The Claude home this run was started with, as the real CLI would read it. */
+const REAL_CLAUDE_HOME = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+
 function writeTestConfig(dataDir: string): void {
   fs.mkdirSync(dataDir, { recursive: true });
   fs.writeFileSync(
@@ -126,6 +129,11 @@ test.describe('Command Terminal restart', () => {
     transcriptFolder = projectPath.replace(/[^a-zA-Z0-9]/g, '-');
     survivorFile = path.join(dataDir, 'survivor.json');
     launchEnv = {
+      // This spec keeps the Claude home it was given rather than the run's own
+      // (claudeHomeForDataDir): on a fresh home Claude's model-picker probe holds the
+      // relaunch for about 30 s, past this spec's restore waits. Its transcripts go in
+      // a folder of its own there, which afterAll deletes.
+      CLAUDE_CONFIG_DIR: REAL_CLAUDE_HOME,
       MOCK_CLAUDE_TRANSCRIPT_FOLDER: transcriptFolder,
       MOCK_CLAUDE_FAST_DETACH_RESULT_FILE: survivorFile,
       MOCK_CLAUDE_FAST_DETACH_COMMAND_TERMINAL: '1',
@@ -136,7 +144,7 @@ test.describe('Command Terminal restart', () => {
     if (survivorPid !== null && isProcessAlive(survivorPid)) process.kill(survivorPid);
     cleanupTempProject(TEST_NAME);
     cleanupTestDataDir(TEST_NAME);
-    fs.rmSync(path.join(os.homedir(), '.claude', 'projects', transcriptFolder), { recursive: true, force: true });
+    fs.rmSync(path.join(REAL_CLAUDE_HOME, 'projects', transcriptFolder), { recursive: true, force: true });
   });
 
   test('a relaunch brings back the task, its window, and the running terminals in their slots', async () => {

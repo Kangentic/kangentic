@@ -29,11 +29,10 @@
  * appears and asserts its snippet carries the distinctive seeded phrase.
  *
  * Cross-platform notes (`.claude/rules/cross-platform-parity.md`):
- *   - The only write outside os.tmpdir() is the seeded transcript, whose path
- *     is DERIVED from os.homedir() via the production path helper (never a
- *     hardcoded literal) - the same pattern mock-droid uses for
- *     ~/.factory. It is cleaned up with
- *     { force: true, recursive: true }.
+ *   - The seeded transcript's path is DERIVED by the production path helper
+ *     from the run's own CLAUDE_CONFIG_DIR (claudeHomeForDataDir), never a
+ *     hardcoded literal, so it lands in the run's data dir. It is cleaned up
+ *     with { force: true, recursive: true }.
  *   - Every wait is a condition poll (expect.poll / helper poll loops); there
  *     is no bare waitForTimeout used as the wait mechanism.
  */
@@ -55,6 +54,7 @@ import {
   waitForScrollback,
   mockAgentPath,
   closeApp,
+  claudeHomeForDataDir,
 } from './helpers';
 import type { ElectronApplication, Page } from '@playwright/test';
 import type { Session, SearchHit } from '../../src/shared/types';
@@ -164,7 +164,17 @@ test.describe('Conversation memory search', () => {
     // 3. Seed a fixture transcript at the exact path the Claude adapter reads.
     //    The path is computed by the production helper from the SAME
     //    agentSessionId + cwd the indexer will use, so it matches byte-for-byte.
-    const transcriptPath = locateClaudeTranscriptFile(agentSessionId, liveSession.cwd);
+    // The app reads Claude's home from the CLAUDE_CONFIG_DIR launchApp gave it, so the
+    // helper here is pointed at the same folder for the one call.
+    const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = claudeHomeForDataDir(dataDir);
+    let transcriptPath: string;
+    try {
+      transcriptPath = locateClaudeTranscriptFile(agentSessionId, liveSession.cwd);
+    } finally {
+      if (previousConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = previousConfigDir;
+    }
     seededTranscriptDir = path.dirname(transcriptPath);
     const nowIso = new Date().toISOString();
     const transcriptLines = [
