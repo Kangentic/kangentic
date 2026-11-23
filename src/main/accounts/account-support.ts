@@ -146,8 +146,21 @@ export function unreadableUsageKeysOf(record: Record<string, unknown>): string {
   return Object.keys(record).sort().join(',').slice(0, UNREADABLE_KEYS_MAX_LENGTH);
 }
 
-/** Why a usage read gave no windows. A fixed word: the account service logs and reports it. */
-export type EmptyUsageReadReason = 'run-failed' | 'cache-missing' | 'cache-stale' | 'no-windows' | 'no-answer';
+/**
+ * Why a usage read gave no windows. A fixed word: the account service logs and reports it.
+ * - `state-unreadable`: the file the CLI keeps its usage in is missing, unreadable or mid-write.
+ * - `state-not-record`: that file parsed, but not to a record.
+ * - `no-cache`: the file holds no usage reading, as before the CLI's first usage fetch in that
+ *   home. Not reported for an account that never stored a reading (Sentry DESKTOP-4E).
+ */
+export type EmptyUsageReadReason =
+  | 'run-failed'
+  | 'state-unreadable'
+  | 'state-not-record'
+  | 'no-cache'
+  | 'cache-stale'
+  | 'no-windows'
+  | 'no-answer';
 
 /** What an adapter knows about a `run-failed` read: the error it caught, and how the run ended. */
 export interface EmptyUsageReadDetail {
@@ -228,10 +241,24 @@ export interface FolderAccountSupport extends AccountSupportBase {
    */
   accountEnv(accountFolder: string, defaultHome: string): Record<string, string>;
   /**
+   * The variables of `accountEnv` that name a place inside the account folder. A shell's rc file
+   * can export one over the value a session's terminal was given, so the typed command sets them
+   * again, and an inherited one that names a Kangentic account folder is dropped at boot
+   * (`inherited-home-env.ts`). `tests/unit/inherited-home-env.test.ts` holds each adapter to its
+   * `accountEnv`.
+   */
+  homeEnvVars: readonly string[];
+  /**
    * The agent's own home: what account #1 uses. Honours an inherited home variable, so a user who
    * already runs the CLI with one keeps that folder as account #1.
    */
   defaultHome(): string;
+  /**
+   * The home the CLI uses when no home variable is set (`~/.claude`). A link into it in an account
+   * folder is one Kangentic made under a launch with no inherited home, so it is relinked rather
+   * than blocking the account. Absent: only the accounts folder and the recorded home count.
+   */
+  builtinHome?(): string;
   /**
    * Where the CLI keeps its data inside an account folder, when its home variable names the
    * parent of that data. Gemini's replaces the user's home folder, so its data is `<folder>/.gemini`

@@ -10,6 +10,9 @@ sources:
   - resource: src/main/accounts/account-continuation.ts
   - resource: src/main/accounts/account-identity.ts
   - resource: src/main/accounts/account-login-watch.ts
+  - resource: src/main/accounts/inherited-home-env.ts
+  - resource: src/main/pty/spawn/account-home-env.ts
+  - resource: src/main/shell-env.ts
   - resource: src/main/agent/adapters/claude/accounts.ts
   - resource: src/main/agent/adapters/claude/plan-carry.ts
   - resource: src/main/agent/adapters/claude/auto-memory-folder.ts
@@ -77,6 +80,15 @@ account. The rules it holds:
   A folder an agent keeps beside its home (`~/.agents`, which Gemini reads) is made the same way.
 - A conversation folder it cannot link sets the account `link-failed`, and the account takes no
   session until the link is made. A conversation never lands where Kangentic cannot read it.
+- A link Kangentic made under another default home is made again to this one, never blocked. The
+  link must point at the same entry in the CLI's built-in home (`~/.claude`), at the same entry
+  of another account folder (`<configDir>/accounts/<agent>/<id>/projects` for `projects`, and
+  nothing deeper), or at the same entry in the home the folder's links were last made to. That
+  home is recorded as `linkedHome` in the folder's `.kangentic-home-record.json`, a local path
+  that is never sent. Only the link is replaced, and what it pointed at stays where it is. A link
+  anywhere else is the user's, and still blocks the account. This is Sentry DESKTOP-4S. Kangentic
+  started once with an inherited `CLAUDE_CONFIG_DIR` and once without sees two default homes, and
+  each run's links point at its own.
 - A `history.jsonl` it cannot hard link (another drive) leaves that account's prompt history its
   own, and the row says so.
 - Nothing made from an account session is copied back into the home. See the next section.
@@ -225,6 +237,43 @@ Kangentic's own writes follow it: trust, the diff-panel key and project relocati
 They used to go to `~/.claude.json` whatever the variable said, a file that user's Claude never
 read.
 
+An inherited home variable that names one of Kangentic's own account folders is not the agent's
+home. A session on a folder account runs with the CLI's home variable naming that folder, and its
+terminal keeps it, so Kangentic started from that terminal (`npx kangentic`, `npm start`) inherited
+it. Account #1 then read the folder account's login, and its Sign in, its sessions and every CLI run
+with no env of its own went to that folder (Sentry DESKTOP-4R). So at boot, before anything starts a
+child, `dropInheritedAccountHomes` (`inherited-home-env.ts`) removes each folder adapter's
+`homeEnvVars` whose absolute value is inside `<configDir>/accounts/`, by real path or as written,
+and logs the variable's name. Codex's `CODEX_HOME` is covered the same way. Only the instance's own
+`configDir` is checked, so a `/preview` started from an account session's terminal, whose data
+folder is elsewhere, keeps the variable as before.
+
+The two shapes of an inherited home send different reports, so the reports say which one a user
+hit. One that names an account folder sends `identity-changed` for account #1 and no folder
+problem: each folder's `projects` link and that account's own link both resolve to the built-in
+home. One that names any other folder (an XDG-style `~/.config/claude`) moves the default home
+between launches. Each launch then finds the links the other made, which the relink rule above
+now remakes, and sends `identity-changed` too when that home holds a listed login. This was read
+from the code and run in temp-folder unit tests, not by relaunching a real account in WSL.
+
+A shell's startup files can replace the variable a session's terminal was given. Measured on Ubuntu
+24.04 in WSL2: a login shell started with `CLAUDE_CONFIG_DIR` set, and a `~/.bashrc`, `~/.zshrc` or
+`config.fish` that exports another value, ran its command with the file's value in bash, zsh and
+fish alike. An account session would then run in that folder, and a `/login` there could land a
+folder account's login in another home. So the typed line sets each of the adapter's `homeEnvVars`
+again after the clear (`buildEnvReassertPrelude` in `typed-launch.ts`): `export` for bash, zsh, sh,
+dash and ksh, `set -gx` for fish, and nothing on Windows or for any other shell, none of which was
+measured.
+
+Account #1's sessions set no home variable, so an rc file that exports `CLAUDE_CONFIG_DIR` moves
+them to its folder. Kangentic started from a desktop launcher used to read `~/.claude` all the
+same, so their conversations landed where it did not look, and a launch from a terminal saw the
+other home. So on macOS and Linux the login shell probe that restores `PATH` (`restoreShellEnv`)
+also reads the folder adapters' `homeEnvVars`, and `adoptShellHomeVariables` sets one Kangentic
+was not started with, unless it is relative or names a Kangentic account folder. The agent's own
+home is then the folder its sessions use, however Kangentic was started. A value Kangentic was
+started with still wins.
+
 A CLI installed in a WSL distro keeps the one login it has. A Windows junction cannot point into a
 distro, so its card says so and a spawn there sets no account.
 
@@ -235,8 +284,10 @@ reads only that. Nothing outside `adapters/` branches on an agent's name. An ada
 nothing gets no card.
 
 - **Folder** (`FolderAccountSupport`): `accountEnv(accountFolder, defaultHome)` (the variables
-  that put a run on the folder), `defaultHome()`, `loginArgs` (the arguments that run the CLI's own sign-in), the shared entries,
-  `identify(cliPath, home)`, and optionally `readHomeIdentity` and `loginFiles` (the cheap reads
+  that put a run on the folder), `homeEnvVars` (those of them that name a place inside the folder,
+  held to `accountEnv` by `inherited-home-env.test.ts`), `defaultHome()`, `loginArgs` (the arguments that run the CLI's own sign-in), the shared entries,
+  `identify(cliPath, home)`, and optionally `builtinHome()` (the home with no variable set, whose
+  links an account folder may hold), `readHomeIdentity` and `loginFiles` (the cheap reads
   that notice a replaced login), `loginEmailArgs`, `readIdleUsage`, `isUsageLimitFailure`,
   `carryConversation` (copies a resumed conversation's own files into the home it runs on),
   `accountDataSubfolder`, `loginIsInteractive`, `conversationsStayOnAccount`, `unproven` (built
@@ -337,10 +388,18 @@ window's reset passes, every 15 minutes, before a switch, and before a spawn ran
 whose reading ran out. Nothing is read on a schedule for an agent with one account.
 
 A read that gives no windows keeps the last values and its read time, and is logged and reported
-(`usage-read-empty`) with why: the run failed, the state file or its cache was missing, the cache
-was older than 10 minutes, it held no window, or the adapter returned no answer at all
-(`no-answer`). An empty list counts too, since storing it would wipe the windows and still mark
-the reading fresh. The local log says it again only when the reason changes. A Claude cache whose
+(`usage-read-empty`) with why: the run failed, the state file was missing or unreadable
+(`state-unreadable`), it was not a record (`state-not-record`), it held no usage cache
+(`no-cache`), the cache was older than 10 minutes, it held no window, or the adapter returned no
+answer at all (`no-answer`). An empty list counts too, since storing it would wipe the windows and
+still mark the reading fresh. The local log says it again only when the reason changes.
+
+`no-cache` is also how a home looks before the CLI's first usage fetch there, as with an API-key
+login or a Claude that has not shown its usage yet. So an account that never stored a reading
+logs it and sends nothing. Once an account has had a reading, losing the cache is reported (Sentry
+DESKTOP-4E: one install sent the earlier word `cache-missing`, now `no-cache`, on every launch). An account whose sign-in read says
+it has no subscription (`no-subscription`) is not read for idle usage at all, because such a login
+has no plan windows. A Claude cache whose
 windows are all null (Ultra has no 5h window) is `no-windows`. One whose `utilization` names none
 of the windows the reader knows is `usage-read-unreadable` instead, with its keys, and so is one
 with no `utilization` record at all, with the cache's keys. Either is a Claude Code release renaming
@@ -672,7 +731,7 @@ run, tagged with the agent and the problem, and grouped as one issue per agent a
 
 | Problem | When |
 |---|---|
-| `folder-link-failed`, `folder-entry-user-owned`, `folder-entries-kept-aside` | An account folder's link or copy could not be made, an entry there was not Kangentic's to replace, or what the folder held was the account's own and was kept aside (a clashing entry, a `CLAUDE.md` a person wrote). |
+| `folder-link-failed`, `folder-entry-user-owned`, `folder-entries-kept-aside` | An account folder's link or copy could not be made, an entry there was not Kangentic's to replace, or what the folder held was the account's own and was kept aside (a clashing entry, a `CLAUDE.md` a person wrote). With the entry's name, `blocksAccount` and `default_home`. A `folder-entry-user-owned` also carries `shape` (`link-elsewhere`, `file`, `link` or `not-a-file`, sent as its `reason` too) and, for a link, `link_target`: where the link points by the path it names, as `builtin-home`, `kangentic-account`, `recorded-home` or `other`. |
 | `folder-change-replaced` | A setting, server or approval changed from a session on an account was replaced by the home's at that account's next spawn. With the entry's name (`settings.json`, `.claude.json`), never what changed. |
 | `spawn-account-unresolved` | An agent had accounts and none could be prepared, so the spawn ran on the agent's own login. |
 | `sign-in-not-recognized` | A sign-in's terminal ended by itself and no login read back. Unproven agents only. |
@@ -680,12 +739,23 @@ run, tagged with the agent and the problem, and grouped as one issue per agent a
 | `turn-failed-after-move` | A turn failed within ten minutes of its session being moved to another account. |
 | `conversation-refused` | A turn failed with the adapter's words for a conversation tied to another account (`isConversationRefusal`). |
 | `usage-read-unreadable` | The CLI answered a usage read in a shape the adapter does not know, with the answer's field names (`keys`). For Claude, a fresh cache whose `utilization` names none of the known windows, or is missing or not a record. |
-| `usage-read-empty` | A usage read gave no windows, with the account's kind and a fixed reason (`run-failed`, `cache-missing`, `cache-stale`, `no-windows`, `no-answer`). `run-failed` is sent from the second failed run in a row, with the tags `run_failure`, `run_exit` and `agent_cli_version`. `no-windows` carries `agent_cli_version`. |
+| `usage-read-empty` | A usage read gave no windows, with the account's kind and a fixed reason (`run-failed`, `state-unreadable`, `state-not-record`, `no-cache`, `cache-stale`, `no-windows`, `no-answer`). `no-cache` is not sent for an account that never stored a reading. `run-failed` is sent from the second failed run in a row, with the tags `run_failure`, `run_exit` and `agent_cli_version`. `no-windows` carries `agent_cli_version`. |
 | `identity-read-failed` | A sign-in read gave no answer, with the account's kind and a fixed reason (`run-failed`, `unreadable`). The account kept its status. |
-| `identity-changed` | A home's login was replaced, with the account's kind and how it was reconciled (`to-listed`, `to-new`, `merged`, `already-listed`, `duplicate`), or `stage: repoint` when its sessions could not be moved. |
+| `identity-changed` | A home's login was replaced, with the account's kind, how it was reconciled (`to-listed`, `to-new`, `merged`, `already-listed`, `duplicate`) and `default_home`, or `stage: repoint` when its sessions could not be moved. |
 
 Only fixed facts are sent: the agent, the problem, an entry's name, a count. Never a folder path,
-an email or a key. A provider's own error text is never sent, because its words can name the
+an email or a key. `default_home` says where the agent's own home came from, never the home
+itself. It is one of four words:
+
+- `builtin`: no home variable was set.
+- `inherited`: a home variable the app was started with.
+- `login-shell`: one the login shell exports, taken at startup.
+- `inherited-ignored`: one that named a Kangentic account folder and was dropped at boot.
+
+`shape` and `link_target` are fixed words of the same kind. None of the three adds a data class,
+so Settings > Privacy is unchanged.
+
+A provider's own error text is never sent, because its words can name the
 user's organization: a `detail` fact goes as its class (`classifyFailureDetail`: `usage_limit`,
 `auth`, `network`, `server`, `refused`, `empty` or `other`) and its length. A caller's error goes
 as its class and errno only. A caller's tag is kept only when its value is one short token (a

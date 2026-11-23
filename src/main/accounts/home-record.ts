@@ -21,7 +21,8 @@ import { safeWriteJson } from '../safe-write';
  * account's own parts, so a server added on the account would read as unchanged on the day the
  * home adds one under the same name, and be replaced unnoticed.
  *
- * The file holds part names and hashes, never a value, and stays in the account folder.
+ * The file holds part names and hashes, never a value, and stays in the account folder. It also
+ * holds the one path the folder's links were made to (`linkedHome`), read only on this computer.
  */
 export const HOME_RECORD_FILE = '.kangentic-home-record.json';
 
@@ -50,7 +51,14 @@ export interface HomeRecord {
   /** What the home held for `entry`, or undefined when nothing was recorded for it yet. */
   get(entry: string): EntryRecord | undefined;
   set(entry: string, held: EntryRecord): void;
-  /** Writes the record when it holds an entry and differs from what was read. */
+  /**
+   * The default home this folder's links were last made to, or null when none was recorded (a
+   * folder from before it was kept). A link to it is Kangentic's own, so a launch under another
+   * default home relinks it instead of blocking the account. A local path, never sent.
+   */
+  linkedHome(): string | null;
+  setLinkedHome(home: string): void;
+  /** Writes the record when it holds an entry or a home and differs from what was read. */
   save(): void;
 }
 
@@ -111,7 +119,7 @@ export function countReplaced(recorded: EntryRecord | undefined, current: EntryP
   return replaced;
 }
 
-function readEntries(filePath: string): Map<string, EntryRecord> {
+function readRecord(filePath: string): { entries: Map<string, EntryRecord>; linkedHome: string | null } {
   const entries = new Map<string, EntryRecord>();
   let parsed: unknown;
   try {
@@ -119,9 +127,11 @@ function readEntries(filePath: string): Map<string, EntryRecord> {
   } catch {
     // report-ok: a missing or unreadable record is no record. This refresh judges nothing and
     // writes a new one.
-    return entries;
+    return { entries, linkedHome: null };
   }
-  if (!isPlainRecord(parsed) || parsed.version !== RECORD_VERSION || !isPlainRecord(parsed.entries)) return entries;
+  if (!isPlainRecord(parsed) || parsed.version !== RECORD_VERSION) return { entries, linkedHome: null };
+  const linkedHome = typeof parsed.linkedHome === 'string' && path.isAbsolute(parsed.linkedHome) ? parsed.linkedHome : null;
+  if (!isPlainRecord(parsed.entries)) return { entries, linkedHome };
   for (const [entry, held] of Object.entries(parsed.entries)) {
     if (held === null) {
       entries.set(entry, null);
@@ -129,24 +139,35 @@ function readEntries(filePath: string): Map<string, EntryRecord> {
       entries.set(entry, held as Record<string, string>);
     }
   }
-  return entries;
+  return { entries, linkedHome };
 }
 
 /** The record kept in `accountFolder`. A folder with none starts with nothing recorded. */
 export function loadHomeRecord(accountFolder: string): HomeRecord {
   const filePath = path.join(accountFolder, HOME_RECORD_FILE);
-  const entries = readEntries(filePath);
-  const loaded = sortedJson(Object.fromEntries(entries));
+  const record = readRecord(filePath);
+  const entries = record.entries;
+  let linkedHome = record.linkedHome;
+  const loaded = sortedJson({ entries: Object.fromEntries(entries), linkedHome });
   return {
     get: (entry) => entries.get(entry),
     set: (entry, held) => {
       entries.set(entry, held);
     },
+    linkedHome: () => linkedHome,
+    setLinkedHome: (home) => {
+      linkedHome = home;
+    },
     save: () => {
-      if (entries.size === 0) return;
+      if (entries.size === 0 && linkedHome === null) return;
       const held = Object.fromEntries(entries);
-      if (sortedJson(held) === loaded) return;
-      safeWriteJson(filePath, { version: RECORD_VERSION, entries: held }, RECORD_WRITE_SOURCE, { mode: 0o600 });
+      if (sortedJson({ entries: held, linkedHome }) === loaded) return;
+      safeWriteJson(
+        filePath,
+        { version: RECORD_VERSION, entries: held, ...(linkedHome ? { linkedHome } : {}) },
+        RECORD_WRITE_SOURCE,
+        { mode: 0o600 },
+      );
     },
   };
 }

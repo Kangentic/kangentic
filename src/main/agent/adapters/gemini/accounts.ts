@@ -190,6 +190,7 @@ export const GEMINI_ACCOUNT_SUPPORT: FolderAccountSupport = {
     // account folder always uses the file.
     GEMINI_FORCE_ENCRYPTED_FILE_STORAGE: 'false',
   }),
+  homeEnvVars: ['GEMINI_CLI_HOME'],
   // Gemini has no sign-in command. Started with no method chosen, it opens its own sign-in
   // screen; the user picks Sign in with Google, restarts when asked, and leaves with /quit.
   loginArgs: [],

@@ -27,6 +27,7 @@ function folderSupport(overrides: Partial<FolderAccountSupport> = {}): FolderAcc
   return {
     kind: 'folder',
     accountEnv: (accountFolder) => ({ TEST_AGENT_HOME: accountFolder }),
+    homeEnvVars: ['TEST_AGENT_HOME'],
     defaultHome: () => home,
     loginArgs: ['login'],
     sharedEntries: [{ name: 'projects', how: 'link-dir', conversationBearing: true }],
@@ -70,7 +71,11 @@ describe('what the account service reports', () => {
     fs.writeFileSync(path.join(folder, 'projects'), 'a file where the link goes');
     const account = repository.insert({ agent: 'test-agent', kind: 'folder', folderPath: folder });
     expect(await accountService.refreshFolder(account)).toBe(false);
-    expect(reports).toEqual([{ problem: 'folder-entry-user-owned', agent: 'test-agent', facts: { entry: 'projects', blocksAccount: true } }]);
+    expect(reports).toEqual([{
+      problem: 'folder-entry-user-owned',
+      agent: 'test-agent',
+      facts: { entry: 'projects', blocksAccount: true, reason: 'file', shape: 'file', default_home: 'builtin' },
+    }]);
     expect(JSON.stringify(reports)).not.toContain(root);
   });
 
@@ -87,7 +92,11 @@ describe('what the account service reports', () => {
 
     expect(await accountService.refreshFolder(account)).toBe(true);
 
-    expect(reports).toEqual([{ problem: 'folder-change-replaced', agent: 'test-agent', facts: { entry: 'settings.json', blocksAccount: false } }]);
+    expect(reports).toEqual([{
+      problem: 'folder-change-replaced',
+      agent: 'test-agent',
+      facts: { entry: 'settings.json', blocksAccount: false, default_home: 'builtin' },
+    }]);
     expect(JSON.stringify(reports)).not.toContain(root);
   });
 

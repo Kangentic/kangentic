@@ -61,59 +61,61 @@ type PathParseResult = string | null;
  *      Sorhus's canonical packages that ship in VSCode, GitHub
  *      Desktop, Slack, Discord, and most major Electron apps).
  *
- * The fix is scoped to PATH only - we do not import arbitrary
- * environment variables from the user's shell. Any failure (timeout,
- * shell rc error, parse error) is logged and ignored; the app
- * continues with whatever PATH it had, relying on fallback paths
- * wired into each AgentDetector.
+ * PATH is merged into process.env here. Beyond it, only the variables a
+ * caller names are read, and returned rather than set: the agents' home
+ * variables (`CLAUDE_CONFIG_DIR`), which the caller decides on
+ * (`adoptShellHomeVariables`). Any failure (timeout, shell rc error, parse
+ * error) is logged and ignored; the app continues with whatever PATH it
+ * had, relying on fallback paths wired into each AgentDetector.
  *
  * Set KANGENTIC_SHELL_ENV=off to skip this step entirely (escape
  * hatch for users whose rc files hang or error).
  */
-export async function restoreShellEnv(): Promise<void> {
-  if (process.platform === 'win32') return;
-  if (process.env.KANGENTIC_SHELL_ENV === 'off') return;
+export async function restoreShellEnv(variables: readonly string[] = []): Promise<Record<string, string>> {
+  if (process.platform === 'win32') return {};
+  if (process.env.KANGENTIC_SHELL_ENV === 'off') return {};
 
   const shell = process.env.SHELL || DEFAULT_SHELL_BY_PLATFORM[process.platform];
-  if (!shell) return;
+  if (!shell) return {};
 
-  let parsed: PathParseResult;
+  let stdout: string;
   try {
-    parsed = await readShellPath(shell);
+    stdout = await readShellEnvDump(shell);
   } catch (error) {
     console.warn(
       `[shell-env] Failed to spawn ${shell} -ilc. Agent detection will rely on fallback paths; ` +
       'configure an explicit cliPath in Settings if your CLI is installed in a non-standard location. Error:',
       (error as Error).message,
     );
-    return;
+    return {};
   }
 
+  const parsed = parsePathFromEnvDump(stdout);
   if (parsed === null) {
     console.warn(
       `[shell-env] ${shell} ran but stdout did not contain our delimiter markers. ` +
       'Likely cause: an rc file errored before the probe command ran, or stdout was redirected. ' +
       'Falling back to pre-existing PATH.',
     );
-    return;
+    return {};
   }
 
   if (parsed === '') {
     console.warn(`[shell-env] ${shell} env dump had no PATH entry; leaving process.env.PATH unchanged`);
-    return;
+  } else {
+    const before = process.env.PATH ?? '';
+    const merged = mergePathSegments(before, parsed);
+    if (merged !== before) {
+      process.env.PATH = merged;
+      console.log(`[shell-env] PATH restored from ${shell} (added ${countAddedSegments(before, merged)} segments)`);
+    }
   }
-
-  const before = process.env.PATH ?? '';
-  const merged = mergePathSegments(before, parsed);
-  if (merged !== before) {
-    process.env.PATH = merged;
-    console.log(`[shell-env] PATH restored from ${shell} (added ${countAddedSegments(before, merged)} segments)`);
-  }
+  return parseVariablesFromEnvDump(stdout, variables) ?? {};
 }
 
 /**
  * Spawn `<shell> -ilc 'printf MARKER; /usr/bin/env; printf MARKER'` and
- * extract the PATH= line from the env dump.
+ * return its stdout, the env dump between the markers.
  *
  * Flags:
  *   -i   interactive (so zsh sources .zshrc, bash sources .bashrc, etc.)
@@ -136,7 +138,7 @@ export async function restoreShellEnv(): Promise<void> {
  * shell path is absolute, so the helper finds it without the PATH this
  * minimal env leaves out.
  */
-async function readShellPath(shell: string): Promise<PathParseResult> {
+async function readShellEnvDump(shell: string): Promise<string> {
   const command = buildShellCommand();
   const launch = resolveShellLaunch({ file: shell, args: ['-ilc', command] });
 
@@ -154,7 +156,7 @@ async function readShellPath(shell: string): Promise<PathParseResult> {
     },
   );
 
-  return parsePathFromEnvDump(stdout);
+  return stdout;
 }
 
 /**
@@ -188,12 +190,8 @@ function buildShellCommand(): string {
  *   - string   the PATH value when successfully extracted.
  */
 export function parsePathFromEnvDump(stdout: string): PathParseResult {
-  const startIndex = stdout.indexOf(START_MARKER);
-  if (startIndex < 0) return null;
-  const endIndex = stdout.indexOf(END_MARKER, startIndex + START_MARKER.length);
-  if (endIndex < 0) return null;
-
-  const envBlock = stdout.slice(startIndex + START_MARKER.length, endIndex);
+  const envBlock = envBlockOf(stdout);
+  if (envBlock === null) return null;
 
   // env output is one KEY=VALUE per line. PATH values cannot contain
   // newlines, so the first newline after `PATH=` ends the value.
@@ -203,6 +201,35 @@ export function parsePathFromEnvDump(stdout: string): PathParseResult {
     }
   }
   return '';
+}
+
+/** The env dump between the START/END markers, or null when either is missing. */
+function envBlockOf(stdout: string): string | null {
+  const startIndex = stdout.indexOf(START_MARKER);
+  if (startIndex < 0) return null;
+  const endIndex = stdout.indexOf(END_MARKER, startIndex + START_MARKER.length);
+  if (endIndex < 0) return null;
+  return stdout.slice(startIndex + START_MARKER.length, endIndex);
+}
+
+/**
+ * The named variables' values from the env dump, the ones it sets to
+ * something. Null when the markers are not found, as for PATH. Only the
+ * first line of a value is read: a home path holds no newline.
+ */
+export function parseVariablesFromEnvDump(stdout: string, names: readonly string[]): Record<string, string> | null {
+  const envBlock = envBlockOf(stdout);
+  if (envBlock === null) return null;
+  const wanted = new Set(names);
+  const values: Record<string, string> = {};
+  for (const line of envBlock.split('\n')) {
+    const separator = line.indexOf('=');
+    if (separator <= 0) continue;
+    const name = line.slice(0, separator);
+    const value = line.slice(separator + 1).trim();
+    if (wanted.has(name) && value !== '' && values[name] === undefined) values[name] = value;
+  }
+  return values;
 }
 
 /**

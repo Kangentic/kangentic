@@ -183,6 +183,7 @@ export const CODEX_ACCOUNT_SUPPORT: FolderAccountSupport = {
   kind: 'folder',
   defaultHome: () => codexHomeDir(),
   accountEnv: (accountFolder) => ({ CODEX_HOME: accountFolder, CODEX_SQLITE_HOME: accountFolder }),
+  homeEnvVars: ['CODEX_HOME', 'CODEX_SQLITE_HOME'],
   // The browser sign-in. It replaces only the login already in that home.
   loginArgs: ['login'],
   sharedEntries: SHARED_ENTRIES,

@@ -27,6 +27,7 @@ function folderSupport(home: string): FolderAccountSupport {
     loginArgs: ['login'],
     sharedEntries: [],
     accountEnv: (folder) => ({ TEST_AGENT_HOME: folder }),
+    homeEnvVars: ['TEST_AGENT_HOME'],
     identify: async () => ({ signedIn: true, email: 'dev@example.com', plan: null }),
   };
 }

@@ -597,3 +597,75 @@ describe.skipIf(!controlShell)('the same long line typed whole (the control)', (
     expect(report?.argv).toEqual(args);
   }, 30_000);
 });
+
+/** Each shell's startup file exporting the probe variable, as a user's own rc file can. */
+const RC_EXPORTS: Readonly<Record<string, (root: string) => void>> = {
+  bash: (root) => fs.appendFileSync(path.join(root, '.bash_profile'), 'export KANGENTIC_PROBE_HOME=/from-rc\n'),
+  zsh: (root) => fs.appendFileSync(path.join(root, '.zshrc'), 'export KANGENTIC_PROBE_HOME=/from-rc\n'),
+  fish: (root) => fs.appendFileSync(path.join(root, '.config', 'fish', 'config.fish'), 'set -gx KANGENTIC_PROBE_HOME /from-rc\n'),
+};
+
+const rcExportShells = shellsUnderTest.filter((shell) => RC_EXPORTS[shell.program] !== undefined);
+
+/**
+ * Sentry DESKTOP-4R. An account session's home variable is set on the PTY, and a startup file
+ * that exports it again replaced it before the agent ran (measured in bash, zsh and fish), so the
+ * session ran in the rc file's folder. The typed line sets it again after the startup files.
+ */
+describe.skipIf(rcExportShells.length === 0)('an account home variable and the shell\'s startup files', () => {
+  describe.each(rcExportShells.map((shell) => ({ program: shell.program, shell })))('$program', ({ shell }) => {
+    /** Runs a stub that writes the variable it sees, from a line typed at the prompt. */
+    async function variableTheAgentSees(reassert: boolean): Promise<string | null> {
+      const rig = makeRig(shell, 0);
+      RC_EXPORTS[shell.program](rig.root);
+      const accountHome = path.join(rig.root, 'accounts', 'claude', 'account two');
+      const seenPath = path.join(rig.root, 'seen-home.txt');
+      const stubPath = path.join(rig.root, 'agent dir', 'env-stub.cjs');
+      fs.writeFileSync(stubPath, `require('node:fs').writeFileSync(${JSON.stringify(seenPath)}, process.env.KANGENTIC_PROBE_HOME ?? '');\n`);
+      const agentPath = path.join(rig.root, 'agent dir', 'env-agent');
+      fs.writeFileSync(agentPath, `#!/bin/sh\nexec "${process.execPath}" "${stubPath}" "$@"\n`);
+      fs.chmodSync(agentPath, 0o755);
+      const launch = buildTypedLaunch({
+        command: commandFor(shell, rig, [], agentPath),
+        shell: shell.program,
+        sessionDirectory: rig.sessionDirectory,
+        platform: process.platform,
+        batchShimLaunch: () => null,
+        ...(reassert ? { reassertEnv: { KANGENTIC_PROBE_HOME: accountHome } } : {}),
+      });
+      const pty = ptySpawn(shell.program, [...shell.args], {
+        cols: 120,
+        rows: 30,
+        cwd: rig.root,
+        env: {
+          PATH: process.env.PATH ?? '',
+          TERM: 'xterm-256color',
+          LANG: 'en_US.UTF-8',
+          HOME: rig.root,
+          ZDOTDIR: rig.root,
+          XDG_CONFIG_HOME: path.join(rig.root, '.config'),
+          KANGENTIC_PROBE_HOME: accountHome,
+        },
+      });
+      pty.onData(() => undefined);
+      cleanups.push(() => {
+        try { pty.kill(); } catch { /* already gone */ }
+      });
+      setTimeout(() => pty.write(`${launch.typedLine}\r`), STARTUP_DELAY_MS);
+      const deadline = Date.now() + STUB_DEADLINE_MS;
+      while (Date.now() < deadline && !fs.existsSync(seenPath)) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      return fs.existsSync(seenPath) ? fs.readFileSync(seenPath, 'utf8') : null;
+    }
+
+    it('loses the PTY\'s value to the startup file without the reassert (the control)', async () => {
+      expect(await variableTheAgentSees(false)).toBe('/from-rc');
+    }, 30_000);
+
+    it('keeps the account\'s value, a space in it included, with the reassert', async () => {
+      const seen = await variableTheAgentSees(true);
+      expect(seen).toMatch(/accounts[\\/]claude[\\/]account two$/);
+    }, 30_000);
+  });
+});

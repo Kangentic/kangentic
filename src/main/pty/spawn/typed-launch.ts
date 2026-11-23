@@ -11,7 +11,7 @@ import {
   quoteArg,
   toWslPath,
 } from '../../../shared/paths';
-import { quoteCmdExecutable } from '../../../shared/shell-quote';
+import { quoteCmdExecutable, shellProgramName } from '../../../shared/shell-quote';
 import { isWindowsBatchShim, type BatchShimGiveUp, type BatchShimLaunch } from '../../agent/shared/npm-shim-target';
 import {
   AgentBatchShimUnresolvedError,
@@ -142,6 +142,47 @@ export interface TypedLaunchInput {
   platform: NodeJS.Platform;
   /** What a `.cmd` head would start, or null when that cannot be known (`directLaunchOfBatchShim`). */
   batchShimLaunch: (shimPath: string) => BatchShimLaunch | null;
+  /**
+   * Variables set on the PTY that the shell's own startup files must not replace: an account's
+   * home variable (`CLAUDE_CONFIG_DIR`). Set again on the typed line (`buildEnvReassertPrelude`).
+   */
+  reassertEnv?: Readonly<Record<string, string>>;
+}
+
+/** A name a POSIX shell and fish both take as a variable. */
+const SHELL_VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** The shells that take `export NAME=value;`. Any other (tcsh, xonsh, elvish) gets no line. */
+const EXPORT_SHELLS = new Set(['bash', 'zsh', 'sh', 'dash', 'ksh']);
+
+/**
+ * Sets `env` again on the typed line, after the shell's startup files have run. Measured on
+ * Ubuntu 24.04 in WSL2: a login shell started with `CLAUDE_CONFIG_DIR` on its environment and a
+ * `~/.bashrc`, `~/.zshrc` or `config.fish` that exports another value runs its command with the
+ * file's value, in bash, zsh and fish alike, so an account session would run in that folder and
+ * a `/login` there would reach it (Sentry DESKTOP-4R). Typed after the rc file, the value holds.
+ *
+ * bash, zsh, sh, dash and ksh take `export`, fish `set -gx`. Every other shell is left as it is,
+ * Windows shells, nushell and PowerShell included: nothing was measured there. A name that is not
+ * a plain variable name is skipped, and so is a value with a line break, which would end the
+ * typed line. Every value goes through `quoteArg` with `multiline`, which keeps it exact: the
+ * default form collapses a run of spaces, which a folder name may hold.
+ */
+export function buildEnvReassertPrelude(
+  env: Readonly<Record<string, string>> | undefined,
+  shellName: string,
+  platform: NodeJS.Platform,
+): string {
+  if (!env || platform === 'win32') return '';
+  const fish = isFishShell(shellName);
+  if (!fish && !EXPORT_SHELLS.has(shellProgramName(shellName))) return '';
+  return Object.entries(env)
+    .filter(([name, value]) => SHELL_VARIABLE_NAME.test(name) && !/[\r\n]/.test(value))
+    .map(([name, value]) => {
+      const quoted = quoteArg(value, shellName, { multiline: true });
+      return fish ? `set -gx ${name} ${quoted}; ` : `export ${name}=${quoted}; `;
+    })
+    .join('');
 }
 
 export interface TypedLaunch {
@@ -398,7 +439,7 @@ function typedPastBatchShim(input: TypedLaunchInput, shellName: string, prelude:
  */
 export function buildTypedLaunch(input: TypedLaunchInput): TypedLaunch {
   const shellName = input.shell.toLowerCase();
-  const prelude = buildSpawnClearPrelude(shellName);
+  const prelude = buildSpawnClearPrelude(shellName) + buildEnvReassertPrelude(input.reassertEnv, shellName, input.platform);
   const adapted = adaptCommandForShell(input.command, shellName, input.platform);
   const fullLaunch = typedLaunchOf(prelude + adapted, null);
   if (input.platform === 'win32' && isCmdShell(shellName)) {

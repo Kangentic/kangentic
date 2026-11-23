@@ -73,7 +73,12 @@ Bridge paths in hook and status-line commands follow a separate rule: see
 Every spawn that types a command (a task's agent, a Command Terminal, a workflow's agent) additionally prefixes the typed line with the
 shell's own clear via `buildSpawnClearPrelude()` (same module): `Clear-Host; ` for the
 PowerShell family, `cls & ` for cmd, and `clear; ` for every other shell (bash, zsh, fish, nu,
-dash, ksh, sh, WSL, Git Bash - the default arm, not a closed list). The shell then erases its
+dash, ksh, sh, WSL, Git Bash - the default arm, not a closed list). On a POSIX shell, a spawn that
+has an account's home variables also sets them again after the clear, `export NAME=value; `
+(bash, zsh, sh, dash, ksh) or `set -gx NAME value; ` (fish), through `buildEnvReassertPrelude` in
+the same module, because a shell's startup file can export another value over the one the PTY was
+given (see [Agent accounts](../integrations/accounts.md)). Windows and any other shell get no such
+line. The shell then erases its
 startup preamble and command echo the instant the command
 executes - a real clear in the real byte stream that every consumer (live terminal, scrollback
 ring, headless parser, replays, phone) honors natively. This is the source-level guard against
@@ -98,8 +103,8 @@ in WSL, and ran when typed after the prompt.
 tty: on macOS and Linux, and in WSL. cmd on Windows has its own budget, and PowerShell and Git Bash
 on Windows type the whole line (both below). Past that budget, `performSpawn` writes
 the output of `adaptCommandForShell` to a launcher file in the session's
-`.kangentic/sessions/<id>/` folder, owner-only since it holds the prompt, and types the clear
-prelude plus a statement that runs the file. The file runs in the same shell the typed line
+`.kangentic/sessions/<id>/` folder, owner-only since it holds the prompt, and types the prelude
+(the clear, then any home re-export) plus a statement that runs the file. The file runs in the same shell the typed line
 would have, so a shell's own functions, aliases and environment apply as before.
 
 | Shell | Typed after the prelude | File |
