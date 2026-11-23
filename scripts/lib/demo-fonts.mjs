@@ -27,9 +27,11 @@
  * DirectWrite reads the win ones where FreeType and CoreText read hhea, so on Windows every line of
  * Roboto was 0.4 px taller at 14 px and a table's rows sat up to 2.25 px lower than on the
  * Linux-shot posters (v0.62.0's poster gate). The overrides are the metrics Linux already reads, so
- * every OS lays a line out from the same numbers. A face not awaited (the latin-ext and Cyrillic subsets) loads when a text first
- * needs it, as a stylesheet face would. The trade-off is on record in .claude/rules/web-demo-parity.md:
- * a Windows visitor sees Roboto in the demo and Segoe UI in the installed app.
+ * every OS lays a line out from the same numbers.
+ *
+ * A face not awaited (the latin-ext and Cyrillic subsets) loads when a text first needs it, as a
+ * stylesheet face would. The trade-off is on record in .claude/rules/web-demo-parity.md: a Windows
+ * visitor sees Roboto in the demo and Segoe UI in the installed app.
  */
 import fs from 'node:fs';
 import path from 'node:path';

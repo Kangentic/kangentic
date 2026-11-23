@@ -24,12 +24,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+const QUADRANT_LOGO_REASON = 'Claude Code\'s logo, in a session\'s opening Monitor peek; Fontsource cuts every face it carries by language, and no subset of any OFL face there carries the quadrant blocks, so a peek showing it falls back to the visitor\'s own face. No poster shows one (the poster gate passed every Monitor and Command Terminal scene on 2026-11-23)';
+
 /** Codepoints the demo carries and no shipped face covers, each with why it is left. */
 export const DEMO_GLYPH_GAPS = {
   0x2139: 'Gemini prints it in one recording (spring-petclinic-gemini-owner-search), and no OFL face on Fontsource carries U+2139, so it falls back to the visitor\'s own face',
   0x257f: 'only in a source comment in terminal-links/buffer-line-text.ts; xterm draws it in the terminal',
-  0x259c: 'Claude Code\'s logo, in a session\'s opening Monitor peek; Fontsource cuts every face it carries by language, and no subset of any OFL face there carries the quadrant blocks, so a peek showing it falls back to the visitor\'s own face. No poster shows one (the poster gate passed every Monitor and Command Terminal scene on 2026-11-23)',
-  0x259d: 'Claude Code\'s logo, in a session\'s opening Monitor peek; Fontsource cuts every face it carries by language, and no subset of any OFL face there carries the quadrant blocks, so a peek showing it falls back to the visitor\'s own face. No poster shows one (the poster gate passed every Monitor and Command Terminal scene on 2026-11-23)',
+  0x259c: QUADRANT_LOGO_REASON,
+  0x259d: QUADRANT_LOGO_REASON,
 };
 
 /** What xterm's WebGL renderer draws itself rather than from a face. */
@@ -89,21 +91,27 @@ export function collectDemoCodepoints(repoRoot) {
     }
   };
   const relative = (file) => path.relative(repoRoot, file).split(path.sep).join('/');
-  const read = (sources, skip) => {
-    const seen = new Map();
-    for (const source of sources) {
-      for (const file of filesUnder(path.join(repoRoot, source.dir), source.pattern)) note(seen, fs.readFileSync(file, 'utf8'), relative(file), skip);
-    }
-    return seen;
-  };
-  const ui = read(UI_SOURCES, () => false);
+  const ui = new Map();
+  for (const source of UI_SOURCES) {
+    for (const file of filesUnder(path.join(repoRoot, source.dir), source.pattern)) note(ui, fs.readFileSync(file, 'utf8'), relative(file), () => false);
+  }
+  // Each recording is read once: its whole text for the terminal, and its HTML fields for the UI.
+  const terminal = new Map();
   for (const source of TERMINAL_SOURCES) {
     for (const file of filesUnder(path.join(repoRoot, source.dir), source.pattern)) {
-      const recording = JSON.parse(fs.readFileSync(file, 'utf8'));
+      const text = fs.readFileSync(file, 'utf8');
+      note(terminal, text, relative(file), isDrawnByXterm);
+      let recording;
+      try {
+        recording = JSON.parse(text);
+      } catch (error) {
+        throw new Error(`${relative(file)} is not valid JSON`, { cause: error });
+      }
+      if (recording === null || typeof recording !== 'object') continue;
       for (const field of RECORDING_HTML_FIELDS) {
         if (recording[field] !== undefined) note(ui, JSON.stringify(recording[field]), `${relative(file)} (${field})`, () => false);
       }
     }
   }
-  return { terminal: read(TERMINAL_SOURCES, isDrawnByXterm), ui };
+  return { terminal, ui };
 }

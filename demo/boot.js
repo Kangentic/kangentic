@@ -575,12 +575,12 @@
       lineGapOverride: spec.metrics.lineGapOverride,
     };
   }
-  var fontsReady = Promise.resolve();
-  if (demoFonts) {
-    injectStyle(':root { --font-sans: ' + demoFonts.stacks.sans + '; --font-mono: ' + demoFonts.stacks.mono + '; font-synthesis: none; }');
-    fontsReady = Promise.all(demoFonts.faces.map(function (spec) {
-      var face = new FontFace(spec.family, 'url("' + spec.url + '") format("woff2")', fontFaceDescriptors(spec));
-      document.fonts.add(face);
+  // Every face into one document's font set, built from that document's own window's FontFace (a
+  // FontFaceSet takes only its own realm's faces). Resolves once the awaited faces are in.
+  function registerFaces(FontFaceConstructor, fontSet) {
+    return Promise.all(demoFonts.faces.map(function (spec) {
+      var face = new FontFaceConstructor(spec.family, 'url("' + spec.url + '") format("woff2")', fontFaceDescriptors(spec));
+      fontSet.add(face);
       if (!spec.awaited) return null;
       return face.load().then(null, function (error) {
         var failure = new Error('The font ' + spec.family + ' ' + spec.weight + ' (' + spec.url + ') did not load: ' + (error && error.message ? error.message : String(error)));
@@ -588,6 +588,11 @@
         throw failure;
       });
     })).then(function () { return undefined; });
+  }
+  var fontsReady = Promise.resolve();
+  if (demoFonts) {
+    injectStyle(':root { --font-sans: ' + demoFonts.stacks.sans + '; --font-mono: ' + demoFonts.stacks.mono + '; font-synthesis: none; }');
+    fontsReady = registerFaces(FontFace, document.fonts);
     // The boot chain and the seed both read the outcome; this keeps a frame that errors before
     // either reaches it from logging an unhandled rejection on top of its error card.
     fontsReady.then(null, function () {});
@@ -793,12 +798,7 @@
   function dressGuestFonts(guestDocument) {
     var guestWindow = guestDocument && guestDocument.defaultView;
     if (!demoFonts || !guestWindow || !guestDocument.fonts) return Promise.resolve();
-    var GuestFontFace = guestWindow.FontFace;
-    return Promise.all(demoFonts.faces.map(function (spec) {
-      var face = new GuestFontFace(spec.family, 'url("' + spec.url + '") format("woff2")', fontFaceDescriptors(spec));
-      guestDocument.fonts.add(face);
-      return spec.awaited ? face.load() : null;
-    })).then(function () { return undefined; });
+    return registerFaces(guestWindow.FontFace, guestDocument.fonts);
   }
 
   // The microphone is never requested: dictation's capture (src/renderer/audio/audio-capture.ts)
@@ -952,25 +952,32 @@
     });
   }
 
-  /**
-   * Resolves once every mounted terminal's grid has held still for TERMINAL_HOLD_MS, or at the
-   * TERMINAL_HOLD_CAP_MS cap, whichever comes first; it never rejects. A terminal that mounts or
-   * switches session just before ready fits its grid over a few frames (the board's panel at
-   * 125 percent on a Windows runner: 201 columns at ready, then 216), and the frame a host lifts its
-   * poster onto must be the final one. Read from each canvas's CSS size, which is the grid times
-   * the cell. The cap keeps a terminal that keeps resizing from holding ready for good.
-   */
+  /** How long every terminal's grid must hold still before ready, and the most ready waits for it. */
   var TERMINAL_HOLD_MS = 250;
   var TERMINAL_HOLD_CAP_MS = 2000;
+  /** Each mounted terminal's grid, read from its canvas's CSS size, which is the grid times the cell. */
   function terminalGridSignature() {
     var canvases = document.querySelectorAll('.xterm .xterm-screen canvas');
     var parts = [];
     for (var index = 0; index < canvases.length; index++) parts.push(canvases[index].style.width + 'x' + canvases[index].style.height);
     return parts.join('|');
   }
+  /**
+   * Resolves once every mounted terminal's grid has held still for TERMINAL_HOLD_MS, or at the
+   * TERMINAL_HOLD_CAP_MS cap, whichever comes first; it never rejects. A terminal that mounts or
+   * switches session just before ready fits its grid over a few frames (the board's panel at
+   * 125 percent on a Windows runner: 201 columns at ready, then 216), and the frame a host lifts its
+   * poster onto must be the final one. The cap keeps a terminal that keeps resizing from holding
+   * ready for good.
+   *
+   * A frame with no terminal pane (`data-terminal-host`, which every terminal's host stamps) is
+   * ready at once. A pane with no canvas yet is held like any other: its terminal may still be in
+   * its deferred init, and its first grid lands inside the hold.
+   */
   function waitForTerminalGridsToHold() {
+    if (!document.querySelector('[data-terminal-host]')) return Promise.resolve();
     return new Promise(function (resolve) {
-      var cap = Date.now() + TERMINAL_HOLD_CAP_MS;
+      var capDeadline = Date.now() + TERMINAL_HOLD_CAP_MS;
       var signature = terminalGridSignature();
       var stableSince = Date.now();
       (function poll() {
@@ -980,7 +987,7 @@
           signature = next;
           stableSince = now;
         }
-        if (now - stableSince >= TERMINAL_HOLD_MS || now >= cap) return resolve();
+        if (now - stableSince >= TERMINAL_HOLD_MS || now >= capDeadline) return resolve();
         window.requestAnimationFrame(poll);
       })();
     });

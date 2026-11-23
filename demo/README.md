@@ -1184,8 +1184,9 @@ is held to three things (`tests/captures/helpers/poster-gate.ts`):
   around. Each OS rasterizes glyphs its own way, and no budget tells that from a real change. In
   v0.62.0 every 2x frame differed on both, `welcome clay` by 7212 pixels on Windows and 4459 on
   macOS with the same text in the same places, and leaving the text out took them to 0 and 2. The
-  layout above still holds that text on every OS. A differing pixel with no differing neighbour is
-  not counted on any OS. Icons still shade their edges a step apart in clusters of 1 to 3 pixels,
+  layout above still holds that text on every OS. On Windows and macOS a differing pixel with no
+  differing neighbour is not counted, and on Linux it is (`countsLonePixels`). Icons still shade
+  their edges a step apart in clusters of 1 to 3 pixels,
   so Windows and macOS carry a budget measured from run 45118082966 (largest 41 and 66; budgets 60
   and 100). Linux measured 0 and holds at 0. A budget is raised only from a measured run, with the
   number beside the value.
@@ -1306,8 +1307,8 @@ set, `board rust 2x` on Windows passed the set as shot, failed it with a 24 by 2
 painted into an empty lane (2,304 pixels, the block exactly, against a budget of 60), and failed
 it with one card title changed in the layout sidecar (text node 62 read "Extract auth middleware"
 where the edited poster read "Extract session middleware"). Repeat that check after a change
-to the comparison: a gate made green by comparing less passes the first case and the other two
-as well.
+to the comparison. A gate made green by comparing less passes the two edited cases too, and they
+must fail.
 
 ### One viewport, one scale
 

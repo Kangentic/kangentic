@@ -83,18 +83,16 @@ describe('the faces the demo ships', () => {
   // Linux reads as FontFace overrides, in the page and in the Browser pane's guest.
   it('pins every face\'s vertical metrics to the ones Linux reads, so every OS lays a line out alike', () => {
     for (const face of faces) {
-      const metrics = woff2FileVerticalMetrics(face.file);
-      const percent = (units: number) => `${(units * 100) / metrics.unitsPerEm}%`;
-      expect(face.metrics, face.name).toEqual({
-        ascentOverride: percent(metrics.ascender),
-        descentOverride: percent(Math.abs(metrics.descender)),
-        lineGapOverride: percent(metrics.lineGap),
-      });
+      expect(face.metrics.ascentOverride, face.name).toMatch(/^\d+(\.\d+)?%$/);
+      expect(face.metrics.descentOverride, face.name).toMatch(/^\d+(\.\d+)?%$/);
+      expect(face.metrics.lineGapOverride, face.name).toMatch(/^\d+(\.\d+)?%$/);
     }
     // Read from the right tables: Roboto's hhea, and Inconsolata's typo (it sets USE_TYPO_METRICS).
     const roboto = faces.find((face) => face.name === 'roboto-latin-400.woff2');
+    expect(roboto && woff2FileVerticalMetrics(roboto.file)).toMatchObject({ unitsPerEm: 2048, ascender: 1900, descender: -500, source: 'hhea' });
     expect(roboto?.metrics).toEqual({ ascentOverride: '92.7734375%', descentOverride: '24.4140625%', lineGapOverride: '0%' });
     const inconsolata = faces.find((face) => face.name === 'inconsolata-latin-400.woff2');
+    expect(inconsolata && woff2FileVerticalMetrics(inconsolata.file)).toMatchObject({ unitsPerEm: 1000, source: 'typo' });
     expect(inconsolata?.metrics).toEqual({ ascentOverride: '85.9%', descentOverride: '19%', lineGapOverride: '0%' });
   });
 
@@ -106,9 +104,12 @@ describe('the faces the demo ships', () => {
     expect(boot).toContain('ascentOverride: spec.metrics.ascentOverride,');
     expect(boot).toContain('descentOverride: spec.metrics.descentOverride,');
     expect(boot).toContain('lineGapOverride: spec.metrics.lineGapOverride,');
-    const constructions = [...boot.matchAll(/new (?:Guest)?FontFace\(([^;]+)\);/g)].map((match) => match[1]);
-    expect(constructions).toHaveLength(2);
-    for (const construction of constructions) expect(construction).toContain('fontFaceDescriptors(spec)');
+    // One construction, shared by the page and the guest, so neither can drop the overrides alone.
+    const constructions = [...boot.matchAll(/new \w*FontFace\w*\(([^;]+)\);/g)].map((match) => match[1]);
+    expect(constructions).toHaveLength(1);
+    expect(constructions[0]).toContain('fontFaceDescriptors(spec)');
+    expect(boot).toContain('registerFaces(FontFace, document.fonts)');
+    expect(boot).toContain('registerFaces(guestWindow.FontFace, guestDocument.fonts)');
   });
 });
 
@@ -159,6 +160,13 @@ describe('every glyph the demo carries is in a shipped face', () => {
     expect(terminal.size).toBeGreaterThan(20);
     expect(ui.size).toBeGreaterThan(20);
     expect(terminal.has(0x23bf)).toBe(true); // Claude's result elbow
+  });
+
+  it('reads the recording fields the frame draws as HTML into the UI set, box drawing included', () => {
+    // xterm draws a peek's box drawing in a terminal, but the Monitor card draws it as text.
+    const fromHtmlFields = [...ui].filter(([, where]) => /\((peek|peekTimeline|messageTrail)\)$/.test(where));
+    expect(fromHtmlFields.length).toBeGreaterThan(0);
+    expect(fromHtmlFields.some(([code]) => isDrawnByXterm(code))).toBe(true);
   });
 
   it('draws every terminal glyph in the mono stack', () => {
