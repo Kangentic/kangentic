@@ -46,13 +46,13 @@ import {
   getSwimlaneIds,
   moveTaskIpc,
   closeApp,
+  codexHomeForDataDir,
   type AgentName,
 } from './helpers';
 import type { ElectronApplication, Page } from '@playwright/test';
 import type { Session } from '../../src/shared/types';
 import path from 'node:path';
 import fs from 'node:fs';
-import os from 'node:os';
 
 // The two describe blocks each launch an isolated Electron app with unique
 // TEST_NAMEs ('agent-session-id-capture', 'kimi-fs-capture'). Describe 1
@@ -73,13 +73,14 @@ const MOCK_OPENCODE_SESSION_ID = 'ses_2349b5c91ffeKd6qajuUTR4clq';
 
 // --- Per-agent helpers (file/hook plant routines) --------------------------
 
-function codexSessionsDirForToday(): string {
+// Under the run's own CODEX_HOME (launchApp sets it), never the developer's ~/.codex.
+function codexSessionsDirForToday(dataDir: string): string {
   const iso = new Date().toISOString();
-  return path.join(os.homedir(), '.codex', 'sessions', iso.slice(0, 4), iso.slice(5, 7), iso.slice(8, 10));
+  return path.join(codexHomeForDataDir(dataDir), 'sessions', iso.slice(0, 4), iso.slice(5, 7), iso.slice(8, 10));
 }
 
-function writeCodexRolloutFile(cwd: string): string {
-  const directory = codexSessionsDirForToday();
+function writeCodexRolloutFile(dataDir: string, cwd: string): string {
+  const directory = codexSessionsDirForToday(dataDir);
   fs.mkdirSync(directory, { recursive: true });
   const isoTimestamp = new Date().toISOString();
   const fileName = `rollout-${isoTimestamp.replace(/[:.]/g, '-').replace('Z', '')}-${KNOWN_CODEX_UUID}.jsonl`;
@@ -252,7 +253,7 @@ test.describe('Agent session-ID capture pipeline', () => {
       resumeMarker: 'MOCK_CODEX_RESUMED:',
       uuidPattern: /MOCK_CODEX_RESUMED:([a-f0-9-]+)/,
       resolveExpectedUuid: ({ tmpDir }) => {
-        plantedPath = writeCodexRolloutFile(tmpDir);
+        plantedPath = writeCodexRolloutFile(dataDir, tmpDir);
         return KNOWN_CODEX_UUID;
       },
       cleanup: () => {

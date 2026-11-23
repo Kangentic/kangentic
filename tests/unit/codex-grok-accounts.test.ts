@@ -79,6 +79,8 @@ describe('identifyCodexAuthFile', () => {
 
   it('reads an API key login as signed in with no person, and anything else as no login', () => {
     expect(identifyCodexAuthFile(JSON.stringify({ OPENAI_API_KEY: 'present', tokens: null }))).toEqual({ signedIn: true, email: null, plan: null, hasSubscription: null });
+    // The file `codex login --with-api-key` writes on 0.171.0: no `tokens` key at all.
+    expect(identifyCodexAuthFile(JSON.stringify({ auth_mode: 'apikey', OPENAI_API_KEY: 'present' }))).toEqual({ signedIn: true, email: null, plan: null, hasSubscription: null });
     expect(identifyCodexAuthFile('{}')).toBeNull();
     expect(identifyCodexAuthFile('not json')).toBeNull();
   });

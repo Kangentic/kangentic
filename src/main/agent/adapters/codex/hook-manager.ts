@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { EventType } from '../../../../shared/types';
 import { isKangenticHookCommand, safelyUpdateSettingsFile, EVENTS_PATH_FROM_ENVIRONMENT } from '../../shared/hook-utils';
-import { appendPermissionWaitForTool, extractTool, extractToolId, extractDetail, setDetail, setWaitKind } from '../../shared/directive-builders';
+import { appendPermissionWaitForTool, captureHookContextFields, extractTool, extractToolId, extractDetail, setDetail, setWaitKind } from '../../shared/directive-builders';
 
 /**
  * The workspace copy of the event bridge Codex's hooks run, relative to the
@@ -65,12 +65,19 @@ export const CODEX_QUESTION_TOOL = 'request_user_input';
  * tool start and then the question wait. Codex runs one event's hook entries
  * concurrently, so a second entry for the wait could land before the start,
  * which clears it; the tool's PostToolUse (the answer) ends the wait.
+ *
+ * The id: SessionStart is the one hook whose whole payload rides the event, so
+ * a SessionStart lost to its timeout left a session with hooks and a prompt
+ * seen and no id (Sentry DESKTOP-36 on 0.171.0). UserPromptSubmit and Stop name
+ * the session too, so each keeps its `session_id`, and nothing else: the
+ * prompt's text stays out of the event.
  */
 function codexHookCommands(runner: CodexHookRunner): ReadonlyArray<readonly [event: string, command: string]> {
   const command = (eventType: string, ...directives: string[]): string => codexHookCommand(runner, eventType, ...directives);
+  const sessionIdOnly = captureHookContextFields(['session_id']);
   return [
     ['SessionStart', command(EventType.SessionStart)],
-    ['UserPromptSubmit', command(EventType.Prompt)],
+    ['UserPromptSubmit', command(EventType.Prompt, sessionIdOnly)],
     ['PreToolUse', command(EventType.ToolStart,
       extractTool('tool_name'),
       extractToolId(['tool_use_id']),
@@ -83,7 +90,7 @@ function codexHookCommands(runner: CodexHookRunner): ReadonlyArray<readonly [eve
       setDetail('permission'),
       extractTool('tool_name'),
       setWaitKind('approval'))],
-    ['Stop', command(EventType.Idle)],
+    ['Stop', command(EventType.Idle, sessionIdOnly)],
     ['PreCompact', command(EventType.Compact)],
   ];
 }

@@ -103,11 +103,13 @@ describe('Codex hook payloads, replayed through the real event bridge', () => {
     expect((JSON.parse(events[0].hookContext ?? '{}') as CodexHookPayload).session_id).toBe(sessionId);
   });
 
-  it('UserPromptSubmit writes prompt, without copying the prompt text into the event', () => {
-    const { events } = replay('codex-0.154.0-user-prompt-submit.json');
+  it('UserPromptSubmit writes prompt carrying only the session id, never the prompt text', () => {
+    const { payload, events } = replay('codex-0.154.0-user-prompt-submit.json');
     expect(events).toHaveLength(1);
     expect(events[0].type).toBe('prompt');
-    expect(events[0]).not.toHaveProperty('hookContext');
+    // A lost SessionStart (its hook timed out or failed) must not cost the id:
+    // the turn's own hook names it too (Sentry DESKTOP-36, hook and prompt seen, no id).
+    expect(JSON.parse(events[0].hookContext ?? '{}')).toEqual({ session_id: presentString(payload.session_id, 'session_id') });
   });
 
   it('PreToolUse writes tool_start with the tool, the tool use id and the command as the detail', () => {
@@ -127,11 +129,12 @@ describe('Codex hook payloads, replayed through the real event bridge', () => {
     expect(events[0].toolId).toBe(presentString(payload.tool_use_id, 'tool_use_id'));
   });
 
-  it('Stop writes a plain idle, with no permission detail', () => {
-    const { events } = replay('codex-0.154.0-stop.json');
+  it('Stop writes a plain idle, with no permission detail, carrying only the session id', () => {
+    const { payload, events } = replay('codex-0.154.0-stop.json');
     expect(events).toHaveLength(1);
     expect(events[0].type).toBe('idle');
     // A permission prompt is the idle that carries a detail; a turn end is not.
     expect(events[0]).not.toHaveProperty('detail');
+    expect(JSON.parse(events[0].hookContext ?? '{}')).toEqual({ session_id: presentString(payload.session_id, 'session_id') });
   });
 });
