@@ -861,6 +861,10 @@ describe('the session id capture reports', () => {
     it('sends nothing when it also wrote no store and took no prompt, and keeps the agent\'s one report', async () => {
       await settleWithLogin({ agentRanAt: STARTED_AT_MS + 2_700, exitedAt: STARTED_AT_MS + 180_000 }, atCeiling, 'absent', signedOut);
       expect(reportHandledError).not.toHaveBeenCalled();
+      // The local log is the only trace of the drop, so it says a session ID never came.
+      expect(vi.mocked(console.warn).mock.calls.map((call) => String(call[0]))).toEqual([
+        expect.stringContaining('gave no session ID for session'),
+      ]);
 
       // Not spent on it: a signed-in session of the same agent that misses its id still reports.
       await settleWithLogin({ id: 'session-2-long-id' }, atCeiling, 'absent', async () => 'signed_in');
@@ -871,6 +875,10 @@ describe('the session id capture reports', () => {
     it('sends nothing for the late id of a session that was signed out at the window', async () => {
       await settleWithLogin({}, late, 'absent', signedOut);
       expect(reportHandledError).not.toHaveBeenCalled();
+      // The id did arrive, so the local log must not say none was given (task #1182).
+      const warnings = vi.mocked(console.warn).mock.calls.map((call) => String(call[0]));
+      expect(warnings).toEqual([expect.stringContaining('gave its session ID late for session')]);
+      expect(warnings[0]).not.toContain('gave no session ID');
     });
 
     // Sentry DESKTOP-4C on 0.62.0: Codex sat on its sign-in screen with its prompt
@@ -1141,7 +1149,7 @@ describe('the session id capture reports', () => {
       reportHandledError.mockClear();
       vi.mocked(console.warn).mockClear();
 
-      // A signed-out answer would log its "holds no login" line if the second outcome waited for it.
+      // A signed-out answer would log its "held no login at launch" line if the second outcome waited for it.
       const loginCheck = vi.fn(async (): Promise<SessionIdLoginEvidence> => 'signed_out');
       const second = session({ agentName: 'codex', resuming: false, id: 'session-2-long-id' });
       noteSessionIdCaptureWindowPassed(second, null, loginCheck);
