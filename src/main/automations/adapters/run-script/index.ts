@@ -73,7 +73,7 @@ export const runScriptAdapter: AutomationAdapter = {
  */
 async function runOnHost(run: HostScriptRunner, script: string, context: AutomationContext, timeoutMs: number): Promise<AutomationOutcome> {
   const superseded = new Promise<never>((_resolve, reject) => {
-    const onAbort = (): void => reject(new Error('The move was superseded before the script finished.'));
+    const onAbort = (): void => reject(supersededError(context.signal));
     if (context.signal.aborted) onAbort();
     else context.signal.addEventListener('abort', onAbort, { once: true });
   });
@@ -83,6 +83,21 @@ async function runOnHost(run: HostScriptRunner, script: string, context: Automat
   if (result.code !== 0) throw new AutomationPermanentError(`Script exited with code ${String(result.code)}.`);
   const omitted = result.omittedVariables.length > 0 ? ` (too long to pass to the host: ${result.omittedVariables.join(', ')})` : '';
   return { detail: `exit 0 on the host${omitted}` };
+}
+
+/**
+ * The move's abort, as the rejection of a script it stopped. Named `AbortError`
+ * so every reporter's `isExpectedFailure` skips it: the user's own move stopped
+ * the script, which is no defect. A plain Error here reached Sentry from the
+ * turn-end pass the move superseded (DESKTOP-4X). The message stays for the
+ * local log, and the move's reason rides along as the cause. A plain Error, not
+ * a DOMException: `EXPECTED_FAILURE_NAMES` matches it by name, and `isAbortError`
+ * callers keep the handling they gave the plain Error this replaced.
+ */
+function supersededError(signal: AbortSignal): Error {
+  const error = new Error('The move was superseded before the script finished.', { cause: signal.reason });
+  error.name = 'AbortError';
+  return error;
 }
 
 function resolveTimeoutMs(config: AutomationConfig): number {
@@ -133,6 +148,13 @@ function runToCompletion(options: {
   const { exe, args, context, timeoutMs } = options;
 
   return new Promise<number>((resolve, reject) => {
+    // The move may have been superseded while `execute` asked for the shell,
+    // before the abort listener below exists. Start nothing then: a listener
+    // added to an aborted signal never fires, and the script would run to its end.
+    if (context.signal.aborted) {
+      reject(supersededError(context.signal));
+      return;
+    }
     // On macOS this runs the shell through the spawn-helper, so nothing the
     // script starts holds Crashpad's exception port. The pid stays the shell's,
     // which the group kill below relies on.
@@ -177,7 +199,7 @@ function runToCompletion(options: {
 
     const onAbort = (): void => {
       killTree();
-      finish(() => reject(new Error('The move was superseded before the script finished.')));
+      finish(() => reject(supersededError(context.signal)));
     };
 
     const timer = setTimeout(() => {

@@ -33,7 +33,12 @@ import { isAbortError } from '../../shared/abort-utils';
 import { AgentUserSetupError, isUserConfigurationError, type UserSetupFailure } from '../../shared/user-configuration-error';
 import { shellProgramName } from '../../shared/shell-quote';
 import type { LaunchStartPath, OpeningPromptDelivery, SessionIdCreationOutcome, SessionIdLoginEvidence, SessionIdStoreEvidence } from '../../shared/types';
-import { SESSION_ID_CAPTURE_SOURCES, SESSION_ID_CAPTURE_WINDOW_MS, type SessionIdCaptureOutcome } from './lifecycle/session-id-manager';
+import {
+  SESSION_ID_CAPTURE_SOURCES,
+  SESSION_ID_CAPTURE_WINDOW_MS,
+  type SessionIdCaptureOutcome,
+  type SessionIdCaptureSource,
+} from './lifecycle/session-id-manager';
 import { cliIdentitySinceDetection, type CliIdentitySinceDetection } from '../agent/shared/cli-identity';
 import { cliVersionTag } from '../agent/shared/cli-version-tag';
 import { WorktreeSetupScriptError } from '../git/worktree-errors';
@@ -895,19 +900,27 @@ function explainedByUntouchedTerminal(session: ManagedSession, outcomeKind: Sess
 }
 
 /**
- * How long a late capture waits for the prompt that started it. An agent that
- * makes its conversation at the first prompt gives the id in its SessionStart
- * hook, and main reads a batch's ids ahead of its events (`onEventsParsed`), so
- * at the capture the prompt of the same turn is not on the row yet, and may sit
- * in the next batch.
+ * How long a late capture waits for the prompt that started it, or for the
+ * first output that carried it. An agent that makes its conversation at the
+ * first prompt gives the id in its SessionStart hook, and main reads a batch's
+ * ids ahead of its events (`onEventsParsed`), so at the capture the prompt of
+ * the same turn is not on the row yet, and may sit in the next batch. An id
+ * read from the output and the host's `agentOutput` event come from the same
+ * chunk, and either can reach main first.
  */
-const FIRST_PROMPT_SETTLE_MS = 2_000;
+const LATE_EVIDENCE_SETTLE_MS = 2_000;
 
-/** Resolves once the first prompt of a session started with none has had its chance to land. */
-function firstPromptSettled(session: ManagedSession): Promise<void> {
-  if (session.openingPrompt !== 'none' || typeof session.promptObservedAt === 'number') return Promise.resolve();
+/**
+ * Resolves once what can still land for a late capture has had its chance: the
+ * first prompt of a session started with none, and the first output of a
+ * session whose id the output gave.
+ */
+function lateEvidenceSettled(session: ManagedSession, capturedBy: SessionIdCaptureSource): Promise<void> {
+  const promptPending = session.openingPrompt === 'none' && typeof session.promptObservedAt !== 'number';
+  const outputPending = capturedBy === 'output' && typeof session.agentOutputAt !== 'number';
+  if (!promptPending && !outputPending) return Promise.resolve();
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, FIRST_PROMPT_SETTLE_MS);
+    const timer = setTimeout(resolve, LATE_EVIDENCE_SETTLE_MS);
     timer.unref?.();
   });
 }
@@ -926,10 +939,40 @@ function capturedOnTime(session: ManagedSession, capturedAt: number): boolean {
   return capturedAt - session.promptObservedAt <= SESSION_ID_CAPTURE_WINDOW_MS;
 }
 
+/** From `startedAt` to the capture, as a bucket, or `none` when there is no start. */
+function bucketSince(startedAt: number | null | undefined, capturedAt: number): string {
+  return typeof startedAt === 'number' ? secondsBucket(Math.max(0, capturedAt - startedAt)) : 'none';
+}
+
 /** From the first prompt to the capture, as a bucket, or `none` when no prompt was seen. */
 function afterPromptTag(session: ManagedSession, capturedAt: number): string {
-  const promptAt = session.promptObservedAt;
-  return typeof promptAt === 'number' ? secondsBucket(Math.max(0, capturedAt - promptAt)) : 'none';
+  return bucketSince(session.promptObservedAt, capturedAt);
+}
+
+/**
+ * True for a late capture that is on time once it is counted from the agent's
+ * first visible output (`agentOutputAt`, the first text after the shell's
+ * handoff): the id came no more than the capture window after that output, or
+ * with it. An agent that prints nothing has no id to give, and no capture path
+ * is faster than its first line (Sentry DESKTOP-4W: a Cursor print run that was
+ * silent for a minute and gave its id with its first stream line). An agent
+ * that drew early and gave its id late, output at 4 s and the id at 64 s, is
+ * still late. Output that lands more than the settle after the id is not the
+ * output that carried it. `AgentOutputTracker` scans to `AGENT_START_CEILING_MS`
+ * (two minutes), past the overlay's ready ceiling, so output a minute in is
+ * still noted; an agent silent past two minutes has no `agentOutputAt` and
+ * reports.
+ */
+function capturedOnTimeByOutput(session: ManagedSession, capturedAt: number): boolean {
+  const outputAt = session.agentOutputAt;
+  if (typeof outputAt !== 'number') return false;
+  const afterOutputMs = capturedAt - outputAt;
+  return afterOutputMs >= -LATE_EVIDENCE_SETTLE_MS && afterOutputMs <= SESSION_ID_CAPTURE_WINDOW_MS;
+}
+
+/** From the agent's first visible output to the capture, as a bucket, or `none` when no output was seen. */
+function afterOutputTag(session: ManagedSession, capturedAt: number): string {
+  return bucketSince(session.agentOutputAt, capturedAt);
 }
 
 /**
@@ -1007,8 +1050,9 @@ function exitedWithNoConversation(
  * would have counted as never. Two issues, so one cannot hide the other. Fixed
  * words only.
  *
- * A late capture that is on time by its first prompt (`capturedOnTime`) sends
- * nothing, and neither does a session a signed-out CLI explains
+ * A late capture that is on time by its first prompt (`capturedOnTime`) or by
+ * the agent's first output (`capturedOnTimeByOutput`) sends nothing, and
+ * neither does a session a signed-out CLI explains
  * (`explainedBySignedOutCli`, which for a late id ignores the store). The
  * agent's one report of a kind is spent only when one is sent, so either of
  * those, or a quit during the wait, leaves it for a real one.
@@ -1033,11 +1077,17 @@ export function reportSessionIdCaptureOutcome(
   // Asked here too, so an agent that already sent this kind waits on nothing,
   // unless the session may still be a death at start, which is not that kind.
   if (outcomeReport.latch.has(pending.agent) && !mayHaveExitedWithNoConversation(session, outcome, sessionStatus)) return;
-  const promptSettled = outcome.kind === 'late' ? firstPromptSettled(session) : Promise.resolve();
+  const lateEvidence = outcome.kind === 'late' ? lateEvidenceSettled(session, outcome.capturedBy) : Promise.resolve();
   const storeEvidence = outcome.kind === 'never' ? settleTimeStoreEvidence(pending) : pending.storeEvidence;
-  void Promise.all([storeEvidence, pending.loginEvidence, pending.nodeEvidence, promptSettled]).then(([idStore, login, nodeOnPath]) => {
+  void Promise.all([storeEvidence, pending.loginEvidence, pending.nodeEvidence, lateEvidence]).then(([idStore, login, nodeOnPath]) => {
     if (isShuttingDown()) return;
     if (outcome.kind === 'late' && capturedOnTime(session, outcome.capturedAt)) return;
+    if (outcome.kind === 'late' && capturedOnTimeByOutput(session, outcome.capturedAt)) {
+      // The local log still says so: the agent printed nothing until it gave its id, and no event will.
+      const capturedAfterSeconds = Math.round(outcome.capturedAfterMs / 1000);
+      console.warn(`[session-manager] ${pending.agent} gave its session ID with its first output for session ${sessionId.slice(0, 8)}, ${capturedAfterSeconds}s after spawn: on time by that output, so nothing is reported.`);
+      return;
+    }
     if (explainedBySignedOutCli(session, outcome.kind, login, idStore)) {
       // The local log still says so: the user's CLI needs a sign-in, and no event will.
       console.warn(`[session-manager] ${pending.agent} gave no session ID for session ${sessionId.slice(0, 8)}: its CLI holds no login, so nothing is reported.`);
@@ -1047,6 +1097,7 @@ export function reportSessionIdCaptureOutcome(
       ? {
         captured_after_s: secondsBucket(outcome.capturedAfterMs),
         after_prompt_s: afterPromptTag(session, outcome.capturedAt),
+        after_output_s: afterOutputTag(session, outcome.capturedAt),
         captured_by: captureSourceTag(outcome.capturedBy),
       }
       : { settled_by: outcome.settledBy, session_status: sessionStatus ?? 'removed', agent_ran_for_s: agentRanForTag(session, outcome) };

@@ -469,7 +469,12 @@ in one Sentry org, one triage surface.
     adapter's classified outcome (`AutomationRetryableError`, `AutomationPermanentError`,
     `AutomationTimeoutError`) is the user's endpoint or script answering. A Run script row whose
     script exits non-zero throws the permanent one, so it is a failed run in the run log and no
-    event (Sentry DESKTOP-49 was every such script reported as a defect).
+    event (Sentry DESKTOP-49 was every such script reported as a defect). A row a move stopped
+    rejects an error named `AbortError` whose cause is the move's reason. The runner closes the run
+    `interrupted` and rethrows it. The `turn_end` pass catches the rethrow and skips it. Sentry
+    DESKTOP-4X was a Run script a move stopped, rejected as a plain `Error` and reported as a
+    defect. The runner rethrows whatever the row threw, so a `TypeError` that lands during the
+    move still reports.
   - `mobile_verb` (tag `verb`, plus `relay_dial_id`), `automation_runner` (tag `automation_type`), `turn_end`,
     `workflow_engine` (tag `stage`), `pr` (tag `stage`), `browser_driver` (tag `kind`, built-in
     classes and the attach, capture and composite failures only), `browser_passkey_guard` (tag
@@ -576,7 +581,9 @@ in one Sentry org, one triage surface.
     `AgentSessionIdCapturedLateError` with `captured_after_s` (a seconds bucket, counted to when
     Kangentic noticed the id, so an upper bound: an id the suspend-time scrollback scan finds
     counts at the suspend), `after_prompt_s` (the same buckets from the agent's first prompt
-    to the capture, or `none` when no prompt was seen) and `captured_by` (the path that finally
+    to the capture, or `none` when no prompt was seen), `after_output_s` (the same buckets from the
+    agent's first visible output, the first text after the shell's handoff, to the capture, or
+    `none` when the agent showed none) and `captured_by` (the path that finally
     delivered the id: `hook`, `status`, `output` for the live PTY stream, `scrollback` for the
     suspend-time scan, `filesystem`, `index` for a host's session index, or `unknown`). Sentry
     DESKTOP-4J, an Antigravity id minutes late, could not say whether the id came from a hook
@@ -585,8 +592,14 @@ in one Sentry org, one triage surface.
     30 s before the id, or within 2 s after it. Such an agent may have no conversation, and so no
     id, until someone types, so the capture window is counted from the prompt (Sentry DESKTOP-4C
     was a Codex terminal whose first prompt came minutes in). The id lands first because main
-    reads a batch's ids ahead of its events, which is what the 2 s wait is for. An on-time capture
-    does not spend the agent's one late report. A session removed
+    reads a batch's ids ahead of its events, which is what the 2 s wait is for. A late id that came
+    no more than 30 s after the agent's first visible output, or with it, sends nothing either, at
+    any `opening_prompt`. An agent that prints nothing has no id to give, and no capture path is
+    faster than its first line (Sentry DESKTOP-4W was a Cursor print run silent for a minute whose
+    id came with its first stream line). An agent that drew early and gave its id late still
+    reports. An id read from the output waits the same 2 s for that output to be noted, since the
+    two come from one chunk in either order. The output skip logs a local `console.warn`, and an
+    on-time capture does not spend the agent's one late report. A session removed
     with no id, or still without one five minutes after its spawn (a paused row is never removed),
     sends `AgentSessionIdNotCapturedError` with `settled_by` (`removed`, `ceiling`),
     `session_status` and `agent_ran_for_s`: a seconds bucket from the first sign the agent ran to
