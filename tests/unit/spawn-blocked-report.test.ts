@@ -180,6 +180,40 @@ describe('a refused agent start', () => {
     expect(reportHandledError.mock.calls[0][1]).toMatchObject({ cause: 'resume', agent: 'opencode', error_type: 'Error' });
   });
 
+  // Sentry DESKTOP-4V: a Command Terminal start ran after an update's install began
+  // the quit, and the spawn's own refusal went out as a preflight defect.
+  it('counts and sends nothing for a start the quit refused, and spends no key', () => {
+    shuttingDown.value = true;
+    try {
+      const error = new Error('Cannot spawn session during shutdown');
+      reportPreflightFailure({ cause: 'command_terminal', error, agent: 'claude', startPath: 'command_terminal' });
+
+      expect(reportHandledError).not.toHaveBeenCalled();
+      expect(trackEvent).not.toHaveBeenCalled();
+      expect(isReported(error)).toBe(true);
+    } finally {
+      shuttingDown.value = false;
+    }
+    reportPreflightFailure({ cause: 'command_terminal', error: new Error('spawn failed'), agent: 'claude', startPath: 'command_terminal' });
+    expect(reportHandledError).toHaveBeenCalledTimes(1);
+  });
+
+  // The quit outranks every other classification: a too-long refusal that lands
+  // during shutdown is the quit's own noise, so it is not counted as a failed start.
+  it('counts nothing for a too-long refusal that lands during the quit', () => {
+    shuttingDown.value = true;
+    try {
+      const error = new AgentCommandTooLongError();
+      reportPreflightFailure({ cause: 'resume', error, agent: 'opencode', startPath: 'board' });
+
+      expect(trackEvent).not.toHaveBeenCalled();
+      expect(reportHandledError).not.toHaveBeenCalled();
+      expect(isReported(error)).toBe(true);
+    } finally {
+      shuttingDown.value = false;
+    }
+  });
+
   // Sentry DESKTOP-4N: an open in the first seconds after launch asked a host whose
   // link did not exist yet, and the refusal went out renamed as a preflight defect.
   describe('a host whose link is not up', () => {

@@ -506,6 +506,11 @@ export interface PreflightFailure {
  * whose folder is gone is reported here on purpose, since the folder can be our
  * own leak (DESKTOP-2P).
  *
+ * A start that fails once the quit has begun is the quit, not a failed start:
+ * a local line, no event, no `spawn_failed` count and no key. The spawn refuses
+ * itself then, and a quit takes a host's links down under starts still running
+ * (Sentry DESKTOP-4V: a Command Terminal start an update's install overtook).
+ *
  * The event carries the error's name, errno and frames under a fixed message,
  * never the error's text (`fixedMessageCopyOf`).
  *
@@ -518,6 +523,12 @@ export function reportPreflightFailure(failure: PreflightFailure): void {
     const cause = preflightCauseOf(failure.cause, error);
     if (isAbortError(error)) return;
     if (isReported(error)) return;
+    if (isShuttingDown()) {
+      if (error instanceof Error) markReported(error);
+      // breadcrumb-ok: a fixed cause, an agent from a fixed list and a start path.
+      console.warn(`[AGENT-LAUNCH] stage=preflight cause=${cause} agent=${agentTag(agent)} start_path=${startPath} shutdown=yes`);
+      return;
+    }
     if (error instanceof AgentCommandTooLongError) {
       markReported(error);
       if (alreadyCounted !== true) trackEvent('spawn_failed', { agent: agentTag(agent), reason: cause });
@@ -527,9 +538,7 @@ export function reportPreflightFailure(failure: PreflightFailure): void {
       markReported(error);
       // breadcrumb-ok: a fixed cause, an agent from a fixed list and a start path.
       console.warn(`[AGENT-LAUNCH] stage=preflight cause=${cause} agent=${agentTag(agent)} start_path=${startPath} expected=yes`);
-      // Unlike a command too long, which fails the same way at any time, a quit takes the links down
-      // under starts still running, and those refusals are the quit, not a failed start.
-      if (alreadyCounted !== true && !isShuttingDown()) trackEvent('spawn_failed', { agent: agentTag(agent), reason: cause });
+      if (alreadyCounted !== true) trackEvent('spawn_failed', { agent: agentTag(agent), reason: cause });
       return;
     }
     const tags = {
@@ -816,18 +825,35 @@ export function noteSessionIdCaptureWindowPassed(
 }
 
 /**
- * True when a session's missing id is the user's own setup and nothing a
- * capture path could fix: its CLI holds no login, it wrote no session store,
- * and no one's prompt reached it. A signed-out CLI can open on its sign-in
- * screen, which draws a frame (so the agent reads as having run) and never
- * makes a conversation. Measured on Codex 0.163.0, and the shape of Sentry
- * DESKTOP-36's recurrence. All three facts, because a CLI can answer "not
- * logged in" and still work, on a key in its environment or a model provider of
- * its own: that one takes prompts and writes its store, and its miss still
- * reports, with `login` saying what the CLI answered.
+ * True when a session's missing or late id is the user's own setup and
+ * nothing a capture path could fix: its CLI holds no login and no one's prompt
+ * reached it. A signed-out CLI can open on its sign-in screen, which draws a
+ * frame (so the agent reads as having run) and never makes a conversation.
+ * Measured on Codex 0.163.0, and the shape of Sentry DESKTOP-36's recurrence.
+ *
+ * A never-captured session also needs a store that is not `present`, because
+ * a CLI can answer "not logged in" and still work, on a key in its environment
+ * or a model provider of its own. That one takes prompts and writes its store,
+ * and its miss still reports, with `login` saying what the CLI answered.
+ *
+ * A late id needs no store fact. The id itself proves the conversation came
+ * after the window, where the login check found the CLI signed out, so the
+ * delay is the sign-in. And the store is no evidence there: Codex answers
+ * `present` whenever a rollout folder for today or yesterday exists, so any
+ * earlier run that day says so (Sentry DESKTOP-4C on 0.62.0: a Codex with its
+ * prompt on the command line, signed out at the window, whose id came by the
+ * hook one to five minutes later). That has a known cost. A CLI that works
+ * signed out, sees no prompt and captures its id late goes unreported, since
+ * nothing on record tells it apart from a sign-in.
  */
-function explainedBySignedOutCli(session: ManagedSession, login: SessionIdLoginEvidence, idStore: SessionIdStoreEvidence): boolean {
-  return login === 'signed_out' && idStore !== 'present' && typeof session.promptObservedAt !== 'number';
+function explainedBySignedOutCli(
+  session: ManagedSession,
+  outcomeKind: SessionIdCaptureOutcome['kind'],
+  login: SessionIdLoginEvidence,
+  idStore: SessionIdStoreEvidence,
+): boolean {
+  if (login !== 'signed_out' || typeof session.promptObservedAt === 'number') return false;
+  return outcomeKind === 'late' || idStore !== 'present';
 }
 
 /**
@@ -945,9 +971,9 @@ function exitedWithNoConversation(
  *
  * A late capture that is on time by its first prompt (`capturedOnTime`) sends
  * nothing, and neither does a session a signed-out CLI explains
- * (`explainedBySignedOutCli`). The agent's one report of a kind is spent only
- * when one is sent, so either of those, or a quit during the wait, leaves it for
- * a real one.
+ * (`explainedBySignedOutCli`, which for a late id ignores the store). The
+ * agent's one report of a kind is spent only when one is sent, so either of
+ * those, or a quit during the wait, leaves it for a real one.
  *
  * A session whose agent died at start with no conversation
  * (`exitedWithNoConversation`) goes to the launch report as `agent_exited`,
@@ -973,7 +999,7 @@ export function reportSessionIdCaptureOutcome(
   void Promise.all([pending.storeEvidence, pending.loginEvidence, pending.nodeEvidence, promptSettled]).then(([idStore, login, nodeOnPath]) => {
     if (isShuttingDown()) return;
     if (outcome.kind === 'late' && capturedOnTime(session, outcome.capturedAt)) return;
-    if (explainedBySignedOutCli(session, login, idStore)) {
+    if (explainedBySignedOutCli(session, outcome.kind, login, idStore)) {
       // The local log still says so: the user's CLI needs a sign-in, and no event will.
       console.warn(`[session-manager] ${pending.agent} gave no session ID for session ${sessionId.slice(0, 8)}: its CLI holds no login, so nothing is reported.`);
       return;

@@ -142,7 +142,8 @@ What ships now, on every platform:
   Electron 41 a launch-failure ladder left nothing else, and on 44 the launch failure that ends in
   the fatal still leaves nothing else (see above), so the next launch's near-end check reads the latest
   FAULT, a fault death or a fallback, and counts it as what ended the run. A fallback does not
-  count when a non-fault death (a kill, a session-teardown exit) came within 5 s before it, since
+  count when a non-fault death (a kill, a session-teardown exit, a death after the quit began)
+  came within 5 s before it, since
   that death is what Chromium was falling back from. A machine
   that never had GPU compositing normally writes nothing: our own software mode reads exactly like
   `DISPLAY_COMPOSITOR` from its first update, and a blocklisted driver churns its status at every
@@ -172,13 +173,17 @@ What ships now, on every platform:
   path exists for came from Windows and Linux installs, and a platform gate would only weaken the
   recovery somewhere it has not been measured.
 - Only GPU FAULTS engage it: a death with a fault reason and an exit code that does not mean the
-  session was ending, or a fallback no non-fault death explains (`isGpuFaultDeath` and
+  session was ending, and not after the quit began (`quitBegun`, below), or a fallback no
+  non-fault death explains (`isGpuFaultDeath` and
   `gpuEndedPreviousRun` in `gpu-health.ts`). The session-teardown codes are Windows ones:
   `0xC000026B` (STATUS_DLL_INIT_FAILED_LOGOFF, which Chromium reports as `crashed`),
   `0x40010004` and `0xC000013A`. Without that filter, a Windows shutdown with the dev instance open
   read as a crash loop that killed the run, because Windows refuses to start a graphics process
   while the session ends and Chromium kept relaunching one. Kills and OOMs never count on any
-  platform.
+  platform, and neither does a death after the quit began, which the record marks `quitBegun`
+  and keeps for triage. At a Linux quit the GPU's zygote can already be gone, so each relaunch
+  fails `launch-failed` with exit code 1002, and Sentry DESKTOP-4T reported five of those inside
+  10 ms as a crash loop.
 - The downgrade is a real user-visible setting (`graphicsAccelerationEnabled`, Settings > Performance),
   set to `off` once and never back on by us. A one-line callout says Kangentic did it. Nothing
   watches the driver version: we never established what killed the GPU process, so the app claims

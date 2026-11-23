@@ -812,6 +812,40 @@ describe('the session id capture reports', () => {
       expect(reportHandledError).not.toHaveBeenCalled();
     });
 
+    // Sentry DESKTOP-4C on 0.62.0: Codex sat on its sign-in screen with its prompt
+    // on the command line, and the id came by the hook minutes later, once someone
+    // signed in. Codex's store reads `present` whenever any rollout of today or
+    // yesterday exists, so an earlier run that day said nothing about this session.
+    it('sends nothing for a late id whose CLI was signed out at the window, whatever the store says', async () => {
+      const signInThenPrompt = {
+        kind: 'late', capturedAfterMs: 90_000, capturedAt: STARTED_AT_MS + 90_000, capturedBy: 'hook', filesystemScan: 'pending',
+      } as const;
+      await settleWithLogin({ openingPrompt: 'command_line' }, signInThenPrompt, 'present', signedOut);
+      expect(reportHandledError).not.toHaveBeenCalled();
+
+      await settleWithLogin({ id: 'session-2-long-id', openingPrompt: 'command_line' }, signInThenPrompt, 'present', async () => 'signed_in');
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({ login: 'signed_in', id_store: 'present', captured_by: 'hook' });
+    });
+
+    // A CLI that took a prompt is working, whatever its login check answered, so
+    // its late id is a real delay. The opening prompt came on the command line,
+    // so the capture is not on time by its first prompt (`capturedOnTime`), and
+    // the report can only be skipped by the signed-out reading this pins.
+    it('still reports a late id of a signed-out CLI that took a prompt', async () => {
+      const lateAfterPrompt = {
+        kind: 'late', capturedAfterMs: 90_000, capturedAt: STARTED_AT_MS + 90_000, capturedBy: 'hook', filesystemScan: 'pending',
+      } as const;
+      await settleWithLogin(
+        { openingPrompt: 'command_line', promptObservedAt: STARTED_AT_MS + 60_000 },
+        lateAfterPrompt,
+        'present',
+        signedOut,
+      );
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({ login: 'signed_out', id_store: 'present', captured_by: 'hook' });
+    });
+
     // A CLI can answer "not logged in" and still work, on a key in its
     // environment or a model provider of its own. That one takes prompts and
     // writes its store, so its miss is a miss.

@@ -11,6 +11,7 @@ import { getLastHostMemorySample } from './host-memory';
 import { PATHS } from '../config/paths';
 import { createChokepointReporter } from '../analytics/handled-report';
 import { reportPushCallbackRecord } from './push-callback-report';
+import { isShuttingDown } from '../shutdown-state';
 
 /**
  * Captures fatal-error events from main, preload, and renderer and persists
@@ -128,10 +129,12 @@ export function startCrashCapture(options: CrashCaptureOptions): void {
     // breadcrumb-ok: Electron's child-process-gone reason is a fixed enum, not error text
     console.warn(`[gpu] GPU process gone: ${details.reason} (exit code ${details.exitCode})`);
     // Marked so a triage reading these records (kangentic_get_recent_crashes)
-    // does not take a kill or a Windows session-teardown exit for a GPU
-    // crash. Chromium reports STATUS_DLL_INIT_FAILED_LOGOFF as `crashed`, so
-    // the reason alone says nothing (gpu-health.ts's isGpuFaultDeath).
-    const gpuFault = isGpuFaultDeath({ reason: details.reason, exitCode: details.exitCode ?? null });
+    // does not take a kill, a Windows session-teardown exit or a death after
+    // the quit began for a GPU crash. Chromium reports
+    // STATUS_DLL_INIT_FAILED_LOGOFF as `crashed`, so the reason alone says
+    // nothing (gpu-health.ts's isGpuFaultDeath).
+    const quitBegun = isShuttingDown();
+    const gpuFault = isGpuFaultDeath({ reason: details.reason, exitCode: details.exitCode ?? null, quitBegun });
     writeRecord(options.getProjectRoot(), {
       ts: new Date().toISOString(),
       kind: 'gpu-process-gone',
@@ -141,7 +144,7 @@ export function startCrashCapture(options: CrashCaptureOptions): void {
         : `GPU process gone: ${details.reason} (not a GPU fault)`,
       stack: null,
       origin: null,
-      context: { reason: details.reason, exitCode: details.exitCode, gpuFault },
+      context: { reason: details.reason, exitCode: details.exitCode, gpuFault, quitBegun },
       versions: getVersions(),
     });
     // Counts repeated deaths across the whole run (not gated on a project
@@ -151,6 +154,7 @@ export function startCrashCapture(options: CrashCaptureOptions): void {
       // gpu-health.ts stays Electron-free (matches run-uptime.ts), so it
       // takes a plain record rather than Electron's GPUFeatureStatus type.
       getFeatureStatus: () => ({ ...app.getGPUFeatureStatus() }),
+      quitBegun,
     });
   });
 

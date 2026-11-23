@@ -118,6 +118,13 @@ import type { GpuGraphicsStatus } from '../../shared/types';
  * abrupt end turned a healthy GPU's acceleration off and blamed it on
  * "repeated failures". Counting faults only, that record holds none.
  *
+ * A death after the quit began is never a fault either, whatever its reason
+ * and code, and the record marks it (`quitBegun`). At a quit the GPU's Linux
+ * zygote can be gone first, so each relaunch fails `launch-failed` with exit
+ * code 1002, five inside 10 ms, and the next launch reported that teardown as
+ * a crash loop (Sentry DESKTOP-4T, whose runs each ended in DESKTOP-W's
+ * quit-time fatal with `quit_begun` true).
+ *
  * Telemetry still follows the restart-policy precedent: `gpu_process_gone`
  * ticks Aptabase on the FIRST fault death and again when the fault count
  * crosses the threshold (never once per death, and never for a kill or a
@@ -143,6 +150,10 @@ export interface GpuDeathRecord {
   at: string;
   compositing: string;
   webgl: string;
+  /** True when the app had begun quitting at this death. Absent otherwise,
+   *  and on a record an older version wrote. Such a death is the quit's
+   *  teardown, never a GPU fault (`isGpuFaultDeath`). */
+  quitBegun?: boolean;
 }
 
 /** One observed step down Chromium's GPU ladder: the moment
@@ -175,6 +186,10 @@ export interface GpuHealthOptions {
   /** Linux only (`linux-gpu-zygote.ts`). Read by `recordGpuModeObservation`
    *  on a degraded status only, so a healthy update never touches `/proc`. */
   readLinuxProcessSnapshot?: () => LinuxProcessSnapshot;
+  /** `recordGpuProcessGone` only: whether the app had begun quitting when this
+   *  GPU process died (the caller's `isShuttingDown()`, so this module stays
+   *  free of main's state). */
+  quitBegun?: boolean;
 }
 
 /** Matches Chromium's own 3-crashes-in-5-minutes judgment. Now the REPORT
@@ -376,31 +391,30 @@ export function recordGpuProcessGone(
   if (firstCrashAt === null) firstCrashAt = nowMs;
   lastCrashAt = nowMs;
 
-  // Aptabase counts GPU FAULTS only. A kill or a session-teardown exit is
-  // still written to the record below for triage, but ticking it would make
-  // every Windows shutdown with the app open read as a GPU death on the
-  // dashboard.
-  if (isGpuFaultDeath({ reason, exitCode: normalizedExitCode })) {
+  // A throwing getFeatureStatus must not lose the write or escape into the
+  // child-process-gone emit (see GpuHealthOptions).
+  const featureStatus = readFeatureStatus(options) ?? {};
+
+  const death: GpuDeathRecord = {
+    reason,
+    exitCode: normalizedExitCode,
+    at: new Date(nowMs).toISOString(),
+    compositing: featureStatus.gpu_compositing ?? 'unknown',
+    webgl: featureStatus.webgl ?? 'unknown',
+  };
+  if (options.quitBegun === true) death.quitBegun = true;
+
+  // Aptabase counts GPU FAULTS only. A kill, a session-teardown exit or a
+  // death after the quit began is still written to the record below for
+  // triage, but ticking it would make every Windows shutdown with the app
+  // open read as a GPU death on the dashboard.
+  if (isGpuFaultDeath(death)) {
     faultCrashCount += 1;
     trackPhaseOnce('first', reason, normalizedExitCode);
     if (faultCrashCount >= maxCrashes) trackPhaseOnce('latched', reason, normalizedExitCode);
   }
 
-  // A throwing getFeatureStatus must not lose the write or escape into the
-  // child-process-gone emit (see GpuHealthOptions).
-  const featureStatus = readFeatureStatus(options) ?? {};
-
-  appendKeepingEnds(
-    deaths,
-    {
-      reason,
-      exitCode: normalizedExitCode,
-      at: new Date(nowMs).toISOString(),
-      compositing: featureStatus.gpu_compositing ?? 'unknown',
-      webgl: featureStatus.webgl ?? 'unknown',
-    },
-    MAX_DEATHS,
-  );
+  appendKeepingEnds(deaths, death, MAX_DEATHS);
 
   persistRecord(filePath, appVersion, featureStatus);
 }
@@ -543,15 +557,15 @@ export function readPendingGpuEscalation(filePath: string): GpuEscalationRecord 
       // do, and 'unknown' is exactly what the writer records when Chromium
       // reports no value for a mode.
       if (typeof death.reason !== 'string' || typeof death.at !== 'string') return [];
-      return [
-        {
-          reason: death.reason,
-          exitCode: typeof death.exitCode === 'number' ? death.exitCode : null,
-          at: death.at,
-          compositing: typeof death.compositing === 'string' ? death.compositing : 'unknown',
-          webgl: typeof death.webgl === 'string' ? death.webgl : 'unknown',
-        },
-      ];
+      const normalized: GpuDeathRecord = {
+        reason: death.reason,
+        exitCode: typeof death.exitCode === 'number' ? death.exitCode : null,
+        at: death.at,
+        compositing: typeof death.compositing === 'string' ? death.compositing : 'unknown',
+        webgl: typeof death.webgl === 'string' ? death.webgl : 'unknown',
+      };
+      if (death.quitBegun === true) normalized.quitBegun = true;
+      return [normalized];
     });
     // Same normalization as `deaths`, for the same reason. `at` is the one
     // identifying field.
@@ -631,11 +645,13 @@ const GPU_SESSION_TEARDOWN_EXIT_CODES: ReadonlySet<number> = new Set([
 ]);
 
 /** A death that says the GPU process itself failed: an allow-listed reason
- *  AND an exit code outside the session-teardown set. Never the reason alone,
- *  because Chromium reports an unrecognized exit code as `crashed` (see the
- *  module doc's WHICH EXITS COUNT). A null exit code with a fault reason still
- *  counts: nothing says it was teardown. */
-export function isGpuFaultDeath(death: Pick<GpuDeathRecord, 'reason' | 'exitCode'>): boolean {
+ *  AND an exit code outside the session-teardown set, in a run that had not
+ *  begun quitting. Never the reason alone, because Chromium reports an
+ *  unrecognized exit code as `crashed` (see the module doc's WHICH EXITS
+ *  COUNT). A null exit code with a fault reason still counts: nothing says it
+ *  was teardown. */
+export function isGpuFaultDeath(death: Pick<GpuDeathRecord, 'reason' | 'exitCode' | 'quitBegun'>): boolean {
+  if (death.quitBegun === true) return false;
   if (!GPU_FAULT_REASONS.has(death.reason)) return false;
   if (death.exitCode === null) return true;
   return !GPU_SESSION_TEARDOWN_EXIT_CODES.has(death.exitCode >>> 0);
@@ -800,7 +816,8 @@ function describeGpuDevice(entry: unknown): string {
 /** One death on one line. See buildGpuProcessContext for why it is a string. */
 function describeGpuDeath(death: GpuDeathRecord): string {
   return `${death.reason} code=${death.exitCode ?? 'none'} at=${death.at}`
-    + ` compositing=${death.compositing} webgl=${death.webgl}`;
+    + ` compositing=${death.compositing} webgl=${death.webgl}`
+    + (death.quitBegun === true ? ' quit=begun' : '');
 }
 
 /** One step down the ladder on one line, with the Linux reading when there is

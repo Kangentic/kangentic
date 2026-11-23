@@ -208,8 +208,8 @@ describe('crash-capture', () => {
       expect(records.map((record) => record.kind)).toEqual(['gpu-process-gone', 'gpu-process-gone']);
       expect(records.map((record) => record.source)).toEqual(['gpu', 'gpu']);
       expect(records.map((record) => record.context)).toEqual([
-        { reason: 'crashed', exitCode: 5, gpuFault: true },
-        { reason: 'killed', exitCode: 1, gpuFault: false },
+        { reason: 'crashed', exitCode: 5, gpuFault: true, quitBegun: false },
+        { reason: 'killed', exitCode: 1, gpuFault: false, quitBegun: false },
       ]);
       expect(records[0]!.message).toBe('GPU process gone: crashed');
       // A kill is recorded too, but marked, so triage does not read it as a
@@ -226,10 +226,10 @@ describe('crash-capture', () => {
       // escalation report at boot depends on.
       expect(recordGpuProcessGoneMock).toHaveBeenCalledTimes(2);
       expect(recordGpuProcessGoneMock).toHaveBeenNthCalledWith(
-        1, gpuHealthFilePath, 'crashed', 5, '1.2.3', { getFeatureStatus: expect.any(Function) },
+        1, gpuHealthFilePath, 'crashed', 5, '1.2.3', { getFeatureStatus: expect.any(Function), quitBegun: false },
       );
       expect(recordGpuProcessGoneMock).toHaveBeenNthCalledWith(
-        2, gpuHealthFilePath, 'killed', 1, '1.2.3', { getFeatureStatus: expect.any(Function) },
+        2, gpuHealthFilePath, 'killed', 1, '1.2.3', { getFeatureStatus: expect.any(Function), quitBegun: false },
       );
       // The reader is a live closure over app.getGPUFeatureStatus(), not a
       // value snapshotted at call time - gpu-health.ts relies on this to read
@@ -260,11 +260,37 @@ describe('crash-capture', () => {
       expect(files).toHaveLength(1);
       const record = JSON.parse(fs.readFileSync(path.join(directory, files[0]!), 'utf-8')) as CrashRecord;
       // A GPU process that could not even start is a GPU fault.
-      expect(record.context).toEqual({ reason: 'launch-failed', exitCode: null, gpuFault: true });
+      expect(record.context).toEqual({ reason: 'launch-failed', exitCode: null, gpuFault: true, quitBegun: false });
 
       expect(recordGpuProcessGoneMock).toHaveBeenCalledTimes(1);
       expect(recordGpuProcessGoneMock).toHaveBeenCalledWith(
-        gpuHealthFilePath, 'launch-failed', null, '1.2.3', { getFeatureStatus: expect.any(Function) },
+        gpuHealthFilePath, 'launch-failed', null, '1.2.3', { getFeatureStatus: expect.any(Function), quitBegun: false },
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  // Sentry DESKTOP-4T: once the quit has begun, a GPU relaunch that fails is the
+  // quit's teardown. The death is still recorded, marked, so neither the local
+  // record nor the next launch's report reads it as a GPU fault.
+  it('marks a GPU death after the quit began, in the local record and for gpu-health.ts', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const { startCrashCapture } = await import('../../src/main/diagnostics/crash-capture');
+      const { setShuttingDown } = await import('../../src/main/shutdown-state');
+      startCrashCapture({ getProjectRoot: () => tempDirectory, gpuHealthFilePath });
+      setShuttingDown();
+
+      appListeners.get('child-process-gone')!({}, { type: 'GPU', reason: 'launch-failed', exitCode: 1002 });
+
+      const directory = path.join(tempDirectory, '.kangentic', 'logs', 'crashes');
+      const [file] = fs.readdirSync(directory);
+      const record = JSON.parse(fs.readFileSync(path.join(directory, file!), 'utf-8')) as CrashRecord;
+      expect(record.context).toEqual({ reason: 'launch-failed', exitCode: 1002, gpuFault: false, quitBegun: true });
+      expect(record.message).toBe('GPU process gone: launch-failed (not a GPU fault)');
+      expect(recordGpuProcessGoneMock).toHaveBeenCalledWith(
+        gpuHealthFilePath, 'launch-failed', 1002, '1.2.3', { getFeatureStatus: expect.any(Function), quitBegun: true },
       );
     } finally {
       warnSpy.mockRestore();
