@@ -1496,6 +1496,54 @@ describe('SessionManager agent-absence wiring', () => {
       });
     });
 
+    describe('when a host link comes back', () => {
+      const neverStarted = vi.fn();
+
+      function linkConnected(hostId: string): void {
+        (manager as unknown as { handleHostEvent(event: { type: 'remoteLink'; hostId: string; state: 'connected' }): void })
+          .handleHostEvent({ type: 'remoteLink', hostId, state: 'connected' });
+      }
+
+      beforeEach(() => {
+        neverStarted.mockClear();
+        manager.on('agent-never-started', neverStarted);
+      });
+
+      it('leaves a host launch alone that no output ever named a cause for', () => {
+        const session = seedHostResume();
+        setLinkDown('host-1');
+        linkConnected('host-1');
+
+        expect(session.launchFailureIdentifiedAt).toBeUndefined();
+        expect(neverStarted).not.toHaveBeenCalled();
+        expect(session.status).toBe('running');
+        expect(hostKills).toBe(0);
+      });
+
+      it('leaves a stamped launch on another host alone', () => {
+        const session = seedHostResume({ launchFailureIdentifiedAt: Date.now() });
+        // Only host-2's link dropped and returned; host-1's launch is no business of that restore.
+        setLinkDown('host-2');
+        linkConnected('host-2');
+
+        expect(neverStarted).not.toHaveBeenCalled();
+        expect(session.status).toBe('running');
+        expect(hostKills).toBe(0);
+      });
+
+      it('does not retire a stamped launch whose agent showed it ran while the link was down', () => {
+        const session = seedHostResume({ launchFailureIdentifiedAt: Date.now() });
+        setLinkDown('host-1');
+        session.agentStartObservedAt = Date.now();
+
+        linkConnected('host-1');
+
+        expect(neverStarted).not.toHaveBeenCalled();
+        expect(session.status).toBe('running');
+        expect(hostKills).toBe(0);
+      });
+    });
+
     it('never judges an adapter that reports no start on its output, which could be the live agent\'s own', async () => {
       const neverStarted = vi.fn();
       manager.on('agent-never-started', neverStarted);
