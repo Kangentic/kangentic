@@ -118,20 +118,33 @@ export async function measureFrame(page: Page): Promise<FrameMeasure> {
     };
 
     // The region of the page an element's content can paint in: its document's viewport, cut by
-    // every ancestor whose overflow clips (a scroller, an overflow-hidden panel). A fixed element
-    // escapes its ancestors' clips. A virtualized list renders overscan rows its scroller hides,
-    // and how many it renders changes with the display scale, so text that paints nowhere is not
-    // measured (the Activity tab rendered one row more at 150 percent, out of sight).
+    // every ancestor whose overflow clips (a scroller, an overflow-hidden panel). A virtualized list
+    // renders overscan rows its scroller hides, and how many it renders changes with the display
+    // scale, so text that paints nowhere is not measured (the Activity tab rendered one row more at
+    // 150 percent, out of sight). An ancestor's overflow clips only what its box contains, as CSS
+    // does: a fixed element escapes every ancestor (a transformed ancestor that would contain it is
+    // not followed), and an absolute element escapes each static ancestor below its containing
+    // block. Clipping a popover by a static wrapper it escapes would drop its text from the measure
+    // and, on Windows and macOS, leave its glyphs out of the pixel mask.
     interface ClipRect { left: number; top: number; right: number; bottom: number }
     const clipCache = new Map<Element, ClipRect>();
+    const containsAbsolute = (style: CSSStyleDeclaration): boolean =>
+      style.position !== 'static' || style.transform !== 'none' || style.filter !== 'none' || style.contain.includes('paint') || style.contain.includes('layout');
     const clipOf = (element: Element): ClipRect => {
       const cached = clipCache.get(element);
       if (cached) return cached;
       const style = styleOf(element);
       const view = element.ownerDocument.defaultView ?? window;
-      let clip: ClipRect = style.position === 'fixed' || !element.parentElement
-        ? { left: 0, top: 0, right: view.innerWidth, bottom: view.innerHeight }
-        : clipOf(element.parentElement);
+      let clip: ClipRect;
+      if (style.position === 'fixed' || !element.parentElement) {
+        clip = { left: 0, top: 0, right: view.innerWidth, bottom: view.innerHeight };
+      } else if (style.position === 'absolute') {
+        let containingBlock: Element = element.parentElement;
+        while (containingBlock.parentElement && !containsAbsolute(styleOf(containingBlock))) containingBlock = containingBlock.parentElement;
+        clip = clipOf(containingBlock);
+      } else {
+        clip = clipOf(element.parentElement);
+      }
       if (style.overflowX !== 'visible' || style.overflowY !== 'visible') {
         const rect = element.getBoundingClientRect();
         clip = { left: Math.max(clip.left, rect.left), top: Math.max(clip.top, rect.top), right: Math.min(clip.right, rect.right), bottom: Math.min(clip.bottom, rect.bottom) };
@@ -147,7 +160,7 @@ export async function measureFrame(page: Page): Promise<FrameMeasure> {
     const unmeasuredText: MeasuredBox[] = [];
     // `holdText` false keeps a document's text as boxes only (unmeasuredText), for the pixel mask.
     const measureDocument = (root: Document, origin: DocumentOrigin, holdText: boolean): void => {
-      const measured: Array<{ entry: MeasuredTextNode; parent: Element }> = [];
+      const measured: Array<{ entry: MeasuredTextNode; row: { container: Element; top: number } | null }> = [];
       const ordered: MeasuredTextNode[] = [];
       const walker = root.createTreeWalker(root.body, NodeFilter.SHOW_TEXT, {
         acceptNode(node) {
@@ -199,7 +212,7 @@ export async function measureFrame(page: Page): Promise<FrameMeasure> {
           }
         }
         measured.push({
-          parent,
+          row: rowOf(parent),
           entry: {
             path: `${origin.prefix}${pathOf(parent)}`,
             text,
@@ -213,7 +226,7 @@ export async function measureFrame(page: Page): Promise<FrameMeasure> {
       // sorted in place, top to bottom, keeping document order within a row.
       let index = 0;
       while (index < measured.length) {
-        const first = rowOf(measured[index].parent);
+        const first = measured[index].row;
         if (!first) {
           ordered.push(measured[index].entry);
           index += 1;
@@ -221,7 +234,7 @@ export async function measureFrame(page: Page): Promise<FrameMeasure> {
         }
         const run: Array<{ entry: MeasuredTextNode; top: number; order: number }> = [];
         while (index < measured.length) {
-          const row = rowOf(measured[index].parent);
+          const row = measured[index].row;
           if (!row || row.container !== first.container) break;
           run.push({ entry: measured[index].entry, top: row.top, order: run.length });
           index += 1;
@@ -332,14 +345,26 @@ export function differsOnlyInDigits(expected: string, found: string): boolean {
   return expected !== found && expected.replace(/[0-9]/g, '0') === found.replace(/[0-9]/g, '0');
 }
 
-/** How many text nodes on the frame are the poster's with other digits: clocks and counters. */
-export function countClockTexts(reference: FrameMeasure, actual: FrameMeasure): number {
-  let count = 0;
+/**
+ * The text nodes on the frame that are the poster's with other digits (clocks and counters), each
+ * beside the poster's node, paired by index. At a poster's scale that is the pairing
+ * compareFrameMeasures makes, and it is the only scale a pixel mask is built at; off it the
+ * comparison passes over a clipped node, so a count there may pair a node or two apart.
+ */
+export function clockTextPairs(reference: FrameMeasure, actual: FrameMeasure): Array<{ expected: MeasuredTextNode; found: MeasuredTextNode }> {
+  const pairs: Array<{ expected: MeasuredTextNode; found: MeasuredTextNode }> = [];
   const nodeCount = Math.min(reference.textNodes.length, actual.textNodes.length);
   for (let index = 0; index < nodeCount; index++) {
-    if (differsOnlyInDigits(reference.textNodes[index].text, actual.textNodes[index].text)) count += 1;
+    const expected = reference.textNodes[index];
+    const found = actual.textNodes[index];
+    if (differsOnlyInDigits(expected.text, found.text)) pairs.push({ expected, found });
   }
-  return count;
+  return pairs;
+}
+
+/** How many text nodes on the frame are the poster's with other digits: clocks and counters. */
+export function countClockTexts(reference: FrameMeasure, actual: FrameMeasure): number {
+  return clockTextPairs(reference, actual).length;
 }
 
 const MAX_PROBLEMS = 20;
@@ -383,7 +408,7 @@ export function compareFrameMeasures(reference: FrameMeasure, actual: FrameMeasu
   while (referenceIndex < reference.textNodes.length || actualIndex < actual.textNodes.length) {
     const expected = reference.textNodes[referenceIndex];
     const found = actual.textNodes[actualIndex];
-    const index = actualIndex;
+    const foundIndex = actualIndex;
     if (expected && found && expected.text !== found.text && !differsOnlyInDigits(expected.text, found.text) && edgeMayDiffer) {
       if (expected.clipped) { referenceIndex += 1; continue; }
       if (found.clipped) { actualIndex += 1; continue; }
@@ -401,7 +426,7 @@ export function compareFrameMeasures(reference: FrameMeasure, actual: FrameMeasu
     actualIndex += 1;
     const clock = differsOnlyInDigits(expected.text, found.text);
     if (expected.text !== found.text && !clock) {
-      report(`text node ${index} reads ${JSON.stringify(found.text)} where the poster reads ${JSON.stringify(expected.text)} (${expected.path})`);
+      report(`text node ${foundIndex} reads ${JSON.stringify(found.text)} where the poster reads ${JSON.stringify(expected.text)} (${expected.path})`);
       break;
     }
     const label = `${JSON.stringify(expected.text.length > 60 ? `${expected.text.slice(0, 57)}...` : expected.text)} (${expected.path})`;

@@ -421,6 +421,10 @@ export function DiffViewer({
     [monacoTheme],
   );
 
+  // Read once per mount: nothing sets `--font-mono` after the stylesheet (and the web demo's boot)
+  // has, and reading a computed style on every render is a style recalculation.
+  const editorFontFamily = useMemo(() => monoFontFamily(), []);
+
   const documentOptions = useMemo<MarkdownDocumentOptions>(() => ({
     baseFilePath: filePath,
     colorScheme: monacoTheme === 'vs' ? 'light' : 'dark',
@@ -1640,7 +1644,7 @@ export function DiffViewer({
                 // hunk (VS Code's editor.stickyScroll).
                 stickyScroll: { enabled: true },
                 // The app's monospace stack, not Monaco's per-OS default.
-                fontFamily: monoFontFamily(),
+                fontFamily: editorFontFamily,
                 fontSize: 12,
                 lineHeight: 18,
                 // Monaco's default context menu also surfaces "Command Palette",

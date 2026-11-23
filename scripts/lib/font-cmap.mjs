@@ -10,8 +10,9 @@
  * declares the dingbats and maps none of them).
  *
  * WOFF2 (https://www.w3.org/TR/WOFF2/) compresses every table as one Brotli stream after a table
- * directory of variable-length entries. `cmap` is never transformed, so its bytes sit in the
- * decompressed stream at the sum of the lengths before it. Formats 4 and 12 are the two a
+ * directory of variable-length entries. WOFF2 never transforms `cmap`, `head`, `hhea` or `OS/2`,
+ * so each one's bytes sit in the decompressed stream at the sum of the lengths before it. Formats
+ * 4 and 12 are the two a
  * Unicode cmap uses; the others map nothing past the BMP basics and are skipped.
  */
 import fs from 'node:fs';

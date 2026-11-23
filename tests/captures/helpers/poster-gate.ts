@@ -21,7 +21,7 @@
 import fs from 'node:fs';
 import { PNG } from 'pngjs';
 import pixelmatch from 'pixelmatch';
-import { differsOnlyInDigits, type FrameMeasure, type MeasuredBox } from './frame-measure';
+import { clockTextPairs, type FrameMeasure, type MeasuredBox } from './frame-measure';
 import { HERO_POSTER, POSTER_SCALE, POSTER_THEMES, heroFileName, heroLayoutFileName, posterFileName, posterLayoutFileName } from '../../../scripts/lib/demo-posters.mjs';
 
 /** The display scales a visitor's browser runs at that the gate boots every scene in. */
@@ -120,11 +120,11 @@ export function knownDifferenceSkips(known: GateKnownDifference | undefined, gat
 
 /** A measure with what `skips` leaves out removed, applied the same way to the poster's and the frame's. */
 export function stripKnownDifference(measure: FrameMeasure, skips: GateSkips): FrameMeasure {
-  return {
-    ...measure,
-    textNodes: skips.text ? [] : skips.graphLabels ? measure.textNodes.filter((node) => !node.path.includes(GRAPH_CANVAS_PATH)) : measure.textNodes,
-    terminals: skips.terminals ? [] : measure.terminals,
-  };
+  // `text` leaves out every text node, so it wins over `graphLabels`, which leaves out some.
+  let textNodes = measure.textNodes;
+  if (skips.text) textNodes = [];
+  else if (skips.graphLabels) textNodes = measure.textNodes.filter((node) => !node.path.includes(GRAPH_CANVAS_PATH));
+  return { ...measure, textNodes, terminals: skips.terminals ? [] : measure.terminals };
 }
 
 export interface GateSet {
@@ -212,23 +212,37 @@ export function gateCases(set: GateSet): GateCase[] {
  *
  * The budget is how many counted pixels may differ. Raise one only from a measured run of
  * demo-poster-gate.yml (demo/README.md, The poster gate), with its number and run beside it.
+ * `countsLonePixels` says whether a differing pixel with no differing neighbour (PixelComparison's
+ * `isolated`) counts against it: on Linux every pixel does, and on Windows and macOS a lone pixel is
+ * an icon's edge their rasterizer shaded one step apart.
  */
 export type PixelComparisonMode = 'full' | 'outside-text';
 
-export const PIXEL_COMPARISON: Record<'linux' | 'win32' | 'darwin', { mode: PixelComparisonMode; budget: number }> = {
+export interface PixelComparisonRule {
+  mode: PixelComparisonMode;
+  budget: number;
+  countsLonePixels: boolean;
+}
+
+export const PIXEL_COMPARISON: Record<'linux' | 'win32' | 'darwin', PixelComparisonRule> = {
   // Run 45118082966: 0 on every case, with no lone pixels either.
-  linux: { mode: 'full', budget: 0 },
+  linux: { mode: 'full', budget: 0, countsLonePixels: true },
   // Run 45118082966: once the text in fields was left out, the largest residue was 41 pixels
   // (column-automation clay), the edges of lucide icons shaded a step apart in small clusters.
-  win32: { mode: 'outside-text', budget: 60 },
+  win32: { mode: 'outside-text', budget: 60, countsLonePixels: false },
   // Run 45118082966: the same, largest 66 (completed-task-usage clay: the wrench and sidebar icons'
   // edges, 1 to 3 pixels a cluster). A swapped or recolored icon changes far more than this.
-  darwin: { mode: 'outside-text', budget: 100 },
+  darwin: { mode: 'outside-text', budget: 100, countsLonePixels: false },
 };
 
 /** The comparison for the OS running the gate; one the table does not name is held to Linux's. */
-export function pixelComparisonFor(platform: string): { mode: PixelComparisonMode; budget: number } {
+export function pixelComparisonFor(platform: string): PixelComparisonRule {
   return platform === 'win32' || platform === 'darwin' || platform === 'linux' ? PIXEL_COMPARISON[platform] : PIXEL_COMPARISON.linux;
+}
+
+/** The pixels a comparison counts against its OS's budget. */
+export function countedPixels(comparison: Pick<PixelComparison, 'differing' | 'isolated'>, rule: PixelComparisonRule): number {
+  return comparison.differing + (rule.countsLonePixels ? comparison.isolated : 0);
 }
 
 /**
@@ -251,14 +265,7 @@ export function textMaskBoxes(measure: FrameMeasure): MeasuredBox[] {
  * from both measures, so its pixels can be left out while the rest of the frame is compared.
  */
 export function clockMaskBoxes(reference: FrameMeasure, actual: FrameMeasure): MeasuredBox[] {
-  const boxes: MeasuredBox[] = [];
-  const nodeCount = Math.min(reference.textNodes.length, actual.textNodes.length);
-  for (let index = 0; index < nodeCount; index++) {
-    if (differsOnlyInDigits(reference.textNodes[index].text, actual.textNodes[index].text)) {
-      boxes.push(...reference.textNodes[index].lines, ...actual.textNodes[index].lines);
-    }
-  }
-  return boxes;
+  return clockTextPairs(reference, actual).flatMap(({ expected, found }) => [...expected.lines, ...found.lines]);
 }
 
 /** Regions left out of a pixel comparison, in CSS px, and the device scale the images were shot at. */

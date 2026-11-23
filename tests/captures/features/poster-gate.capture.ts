@@ -25,7 +25,7 @@ import { hideDevOnlyChrome, launchCaptureBrowser } from '../helpers/capture-page
 import { openScene, shootWhenStill, type SceneTheme } from '../helpers/scene-page';
 import { compareFrameMeasures, countClockTexts, measureFrame, type FrameMeasure } from '../helpers/frame-measure';
 import {
-  GATE_KNOWN_DIFFERENCES, comparePixels, gateCases, knownDifferenceSkips, pixelComparisonFor, pixelMaskFor, posterGateSet, stripKnownDifference,
+  GATE_KNOWN_DIFFERENCES, comparePixels, countedPixels, gateCases, knownDifferenceSkips, pixelComparisonFor, pixelMaskFor, posterGateSet, stripKnownDifference,
 } from '../helpers/poster-gate';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
@@ -110,12 +110,14 @@ test.describe('Poster gate', () => {
             diffPath: path.join(OUTPUT_DIR, `${stem}.diff.png`),
             mask: pixelMaskFor(pixelComparison.mode, reference, shot.measure, gateCase.scale),
           });
+          const counted = countedPixels(comparison, pixelComparison);
           if (comparison.sizeMismatch) problems.push(comparison.sizeMismatch);
-          else if (comparison.differing > pixelComparison.budget) {
-            problems.push(`${comparison.differing} of ${comparison.total - comparison.masked} compared pixels differ beyond antialiasing (${pixelComparison.mode} on ${process.platform}, budget ${pixelComparison.budget})`);
+          else if (counted > pixelComparison.budget) {
+            problems.push(`${counted} of ${comparison.total - comparison.masked} compared pixels differ beyond antialiasing (${pixelComparison.mode} on ${process.platform}, budget ${pixelComparison.budget})`);
           }
           const share = comparison.total > 0 ? Math.round((comparison.masked / comparison.total) * 100) : 0;
-          console.log(`[poster-gate] ${gateCase.title}: ${comparison.differing} pixels beyond antialiasing (${comparison.isolated} lone edge pixels not counted), ${pixelComparison.mode} on ${process.platform}, ${share}% of the frame left out`);
+          const lonePixels = `${comparison.isolated} lone edge pixels ${pixelComparison.countsLonePixels ? 'among them' : 'not counted'}`;
+          console.log(`[poster-gate] ${gateCase.title}: ${counted} pixels beyond antialiasing (${lonePixels}), ${pixelComparison.mode} on ${process.platform}, ${share}% of the frame left out`);
         }
         if (problems.length > 0) {
           fs.writeFileSync(path.join(OUTPUT_DIR, `${stem}.png`), (await takeShot()).bytes);

@@ -11,10 +11,28 @@ import { describe, expect, it } from 'vitest';
 import { PNG } from 'pngjs';
 import { FRAME_TOLERANCES, compareFrameMeasures, countClockTexts, differsOnlyInDigits, type FrameMeasure } from '../captures/helpers/frame-measure';
 import {
-  GATE_KNOWN_DIFFERENCES, GATE_SCALES, PIXEL_COMPARISON, clockMaskBoxes, comparePixels, gateCases, knownDifferenceSkips, pixelComparisonFor, pixelMaskFor,
-  posterGateSet, stripKnownDifference, textMaskBoxes, type PixelComparisonMode,
+  GATE_KNOWN_DIFFERENCES, GATE_SCALES, PIXEL_COMPARISON, clockMaskBoxes, comparePixels, countedPixels, gateCases, knownDifferenceSkips, pixelComparisonFor,
+  pixelMaskFor, posterGateSet, stripKnownDifference, textMaskBoxes, type PixelComparisonMode,
 } from '../captures/helpers/poster-gate';
 import { SCENES } from '../captures/scenes';
+
+type Paint = (x: number, y: number) => [number, number, number];
+const background: [number, number, number] = [40, 40, 40];
+
+function png(width: number, height: number, paint: Paint): Buffer {
+  const image = new PNG({ width, height });
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const [red, green, blue] = paint(x, y);
+      const index = (y * width + x) * 4;
+      image.data[index] = red;
+      image.data[index + 1] = green;
+      image.data[index + 2] = blue;
+      image.data[index + 3] = 255;
+    }
+  }
+  return PNG.sync.write(image);
+}
 
 function poster(): FrameMeasure {
   return {
@@ -117,6 +135,9 @@ describe('compareFrameMeasures', () => {
     trailing.textNodes.push({ ...frame.textNodes[1] });
     expect(compareFrameMeasures(poster(), trailing, { comparePositions: false })).toEqual([]);
     expect(compareFrameMeasures(trailing, poster(), { comparePositions: false })).toEqual([]);
+    // Cut on the poster's side, between two nodes both sides hold.
+    expect(compareFrameMeasures(frame, poster(), { comparePositions: false })).toEqual([]);
+    expect(compareFrameMeasures(frame, poster())[0]).toMatch(/text node 1 reads "Now let me get a review/);
   });
 
   it('still fails a node that paints whole and is not the poster\'s, at every scale', () => {
@@ -225,25 +246,21 @@ describe('stripKnownDifference', () => {
     const page = graphPage(['Remove unused imports']);
     expect(stripKnownDifference(page, knownDifferenceSkips(undefined, { scale: 2, comparePositions: true })).textNodes).toHaveLength(3);
   });
+
+  it('drops every text node for a fractional wrap at a fractional scale, and keeps the terminals', () => {
+    const stripped = stripKnownDifference(poster(), knownDifferenceSkips('fractional-wraps', { scale: 1.25, comparePositions: false }));
+    expect(stripped.textNodes).toEqual([]);
+    expect(stripped.terminals).toHaveLength(1);
+  });
+
+  it('drops the terminals for a held terminal off the poster\'s scale, and keeps the text', () => {
+    const stripped = stripKnownDifference(poster(), knownDifferenceSkips('held-terminals', { scale: 1, comparePositions: false }));
+    expect(stripped.terminals).toEqual([]);
+    expect(stripped.textNodes).toHaveLength(2);
+  });
 });
 
 describe('comparePixels', () => {
-  type Paint = (x: number, y: number) => [number, number, number];
-  function png(width: number, height: number, paint: Paint): Buffer {
-    const image = new PNG({ width, height });
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const [red, green, blue] = paint(x, y);
-        const index = (y * width + x) * 4;
-        image.data[index] = red;
-        image.data[index + 1] = green;
-        image.data[index + 2] = blue;
-        image.data[index + 3] = 255;
-      }
-    }
-    return PNG.sync.write(image);
-  }
-  const background: [number, number, number] = [40, 40, 40];
   const block = (left: number, top: number, size: number, color: [number, number, number]): Paint => (x, y) => (x >= left && x < left + size && y >= top && y < top + size ? color : background);
   const flat = png(32, 32, () => background);
 
@@ -294,36 +311,34 @@ describe('the pixel comparison on each OS', () => {
       terminals: [],
     };
   }
-  function png(paint: (x: number, y: number) => [number, number, number]): Buffer {
-    const image = new PNG({ width: 32, height: 32 });
-    for (let y = 0; y < 32; y++) {
-      for (let x = 0; x < 32; x++) {
-        const index = (y * 32 + x) * 4;
-        [image.data[index], image.data[index + 1], image.data[index + 2]] = paint(x, y);
-        image.data[index + 3] = 255;
-      }
-    }
-    return PNG.sync.write(image);
-  }
+  const square = (paint: Paint): Buffer => png(32, 32, paint);
   const inText = (x: number, y: number) => x >= 4 && x < 10 && y >= 4 && y < 8;
   const inIcon = (x: number, y: number, left = 20) => x >= left && x < left + 6 && y >= 20 && y < 26;
-  const background: [number, number, number] = [40, 40, 40];
   const ink: [number, number, number] = [230, 230, 230];
-  const poster = png((x, y) => (inText(x, y) || inIcon(x, y) ? ink : background));
+  const posterImage = square((x, y) => (inText(x, y) || inIcon(x, y) ? ink : background));
   // The same frame with its glyphs drawn in another color, as another OS's scaler draws them.
-  const otherGlyphs = png((x, y) => (inText(x, y) ? [200, 120, 60] : inIcon(x, y) ? ink : background));
-  const iconMoved = png((x, y) => (inText(x, y) || inIcon(x, y, 1) ? ink : background));
-  const iconChanged = png((x, y) => (inText(x, y) ? ink : inIcon(x, y) ? [200, 40, 40] : background));
+  const otherGlyphs = square((x, y) => (inText(x, y) ? [200, 120, 60] : inIcon(x, y) ? ink : background));
+  const iconMoved = square((x, y) => (inText(x, y) || inIcon(x, y, 1) ? ink : background));
+  const iconChanged = square((x, y) => (inText(x, y) ? ink : inIcon(x, y) ? [200, 40, 40] : background));
   const compare = (mode: PixelComparisonMode, frame: Buffer, reference = measure('Board'), shot = measure('Board')) =>
-    comparePixels(poster, frame, { mask: pixelMaskFor(mode, reference, shot, 1) }).differing;
+    comparePixels(posterImage, frame, { mask: pixelMaskFor(mode, reference, shot, 1) }).differing;
 
   it('compares every pixel on Linux to none, and only what is not text on Windows and macOS to their measured budgets', () => {
     expect(PIXEL_COMPARISON).toEqual({
-      linux: { mode: 'full', budget: 0 },
-      win32: { mode: 'outside-text', budget: 60 },
-      darwin: { mode: 'outside-text', budget: 100 },
+      linux: { mode: 'full', budget: 0, countsLonePixels: true },
+      win32: { mode: 'outside-text', budget: 60, countsLonePixels: false },
+      darwin: { mode: 'outside-text', budget: 100, countsLonePixels: false },
     });
     expect(pixelComparisonFor('freebsd')).toEqual(PIXEL_COMPARISON.linux);
+  });
+
+  it('fails a lone differing pixel on Linux, where every pixel counts, and lets it pass on Windows and macOS', () => {
+    const lone = square((x, y) => (x === 28 && y === 2 ? ink : inText(x, y) || inIcon(x, y) ? ink : background));
+    const comparison = comparePixels(posterImage, lone);
+    expect(comparison).toMatchObject({ differing: 0, isolated: 1 });
+    expect(countedPixels(comparison, PIXEL_COMPARISON.linux)).toBeGreaterThan(PIXEL_COMPARISON.linux.budget);
+    expect(countedPixels(comparison, PIXEL_COMPARISON.win32)).toBe(0);
+    expect(countedPixels(comparison, PIXEL_COMPARISON.darwin)).toBe(0);
   });
 
   it('fails a change inside a text box on Linux, which is the leg that holds how text is drawn', () => {

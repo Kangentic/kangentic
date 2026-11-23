@@ -184,6 +184,18 @@ for (const collapseUnchanged of [false, true]) {
         }
       });
 
+      await test.step('the editor draws in the app\'s --font-mono stack, not Monaco\'s per-OS default', async () => {
+        const fonts = await page.evaluate(() => {
+          const monaco = (window as unknown as { __monaco?: { editor: { getDiffEditors(): Array<{ getModifiedEditor(): { getRawOptions(): { fontFamily?: string } } }> } } }).__monaco;
+          return {
+            editor: monaco?.editor.getDiffEditors()[0]?.getModifiedEditor().getRawOptions().fontFamily ?? null,
+            cssVariable: getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim(),
+          };
+        });
+        expect(fonts.cssVariable.length).toBeGreaterThan(0);
+        expect(fonts.editor).toBe(fonts.cssVariable);
+      });
+
       await test.step('switching files goes back to pending and reaches laid-out on the new file, never stale', async () => {
         const logLengthBeforeSwap = (await readLog()).length;
 

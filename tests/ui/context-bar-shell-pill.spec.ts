@@ -6,8 +6,9 @@
  * the bar reads the session's project, finds it lives on a host, and tells the label so.
  * `tests/unit/shell-display-name.test.ts` holds the label's own cases.
  *
- * The desktop's platform is forced to Windows before the app loads, since the label reads
- * `navigator.platform` and CI's runner is Linux, where a bash reads `bash` either way. The task
+ * The desktop's platform is pinned to Windows before the app loads (the mock bridge's `platform`,
+ * through `__mockPlatform`), since the label reads `window.electronAPI.platform` and on Linux a
+ * bash reads `bash` either way. The task
  * and session are seeded through `__mockPreConfigure`, with usage pushed through
  * `session-store.updateUsage` so the bar renders past its "Starting agent..." line, the pattern
  * of `tests/ui/context-bar-version-pill.spec.ts`.
@@ -37,7 +38,7 @@ async function launchWithRemoteSession(
   const page = await context.newPage();
 
   await page.addInitScript(() => {
-    Object.defineProperty(Navigator.prototype, 'platform', { get: () => 'Win32', configurable: true });
+    (window as unknown as { __mockPlatform?: string }).__mockPlatform = 'win32';
   });
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.addInitScript(`
@@ -124,7 +125,7 @@ async function launchWithRemoteSession(
 async function expectShellNamedEverywhere(page: Page, expectedName: string): Promise<void> {
   await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
   // Vacuity guard: the desktop reads as Windows, where a local bash is named Git Bash.
-  expect(await page.evaluate(() => navigator.platform)).toBe('Win32');
+  expect(await page.evaluate(() => (window as unknown as { electronAPI: { platform: string } }).electronAPI.platform)).toBe('win32');
 
   await test.step('the session tab\'s tip names the shell', async () => {
     const sessionTab = page.locator(`[data-testid="terminal-session-tab"][data-session-id="${SESSION_ID}"]`);
@@ -186,8 +187,8 @@ test.describe('Shell naming on a Windows desktop', () => {
     }
   });
 
-  // The control. It needs its own boot because the project is the seed: it proves the forced
-  // Win32 platform really turns a local bash into Git Bash at all three sites, so the test
+  // The control. It needs its own boot because the project is the seed: it proves the pinned
+  // win32 platform really turns a local bash into Git Bash at all three sites, so the test
   // above cannot pass only because nothing ever said Git Bash.
   test('a local project\'s bash still reads Git Bash on every surface', async () => {
     const { browser, page } = await launchWithRemoteSession({ remote: false });
