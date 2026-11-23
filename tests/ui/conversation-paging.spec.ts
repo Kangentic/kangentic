@@ -219,6 +219,45 @@ async function takeOver(page: Page): Promise<void> {
   });
 }
 
+/**
+ * Where to press and where to drag the scrollbar thumb, read from the live layout. The rail and
+ * thumb rects are read until they have held still for three frames (the window animates in, rows
+ * measure, and the thumb follows the scroll a frame later), so a drag is never aimed at geometry
+ * that is about to move. `hitTestId` names what the browser would hit at the press point, so a
+ * caller can tell a press that lands on the rail from one that lands on something over it.
+ */
+async function readRailGrip(page: Page): Promise<{ pressX: number; pressY: number; targetY: number; hitTestId: string | null }> {
+  return page.evaluate(async () => {
+    const read = () => {
+      const rail = document.querySelector('[data-testid="conversation-scrollbar-rail"]');
+      const thumb = document.querySelector('[data-testid="conversation-scrollbar-thumb"]');
+      if (!rail || !thumb) throw new Error('The scrollbar rail is not mounted');
+      const railRect = rail.getBoundingClientRect();
+      const thumbRect = thumb.getBoundingClientRect();
+      return [railRect.x, railRect.y, railRect.width, railRect.height, thumbRect.x, thumbRect.y, thumbRect.width, thumbRect.height];
+    };
+    let previous = read();
+    let framesStill = 0;
+    const deadline = performance.now() + 3000;
+    while (framesStill < 3 && performance.now() < deadline) {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      const current = read();
+      framesStill = current.every((value, index) => value === previous[index]) ? framesStill + 1 : 0;
+      previous = current;
+    }
+    const [, railY, , railHeight, thumbX, thumbY, thumbWidth, thumbHeight] = previous;
+    const pressX = thumbX + thumbWidth / 2;
+    const pressY = thumbY + thumbHeight / 2;
+    const hit = document.elementFromPoint(pressX, pressY)?.closest('[data-testid]');
+    return {
+      pressX,
+      pressY,
+      targetY: railY + railHeight * 0.25,
+      hitTestId: hit ? hit.getAttribute('data-testid') : null,
+    };
+  });
+}
+
 /** The recorded page reads in one direction. */
 async function pageCallsIn(page: Page, direction: PageCall['direction']): Promise<PageCall[]> {
   return (await pageCalls(page)).filter((call) => call.direction === direction);
@@ -820,25 +859,26 @@ test.describe('Conversation Viewer - history paging', () => {
       await expect(page.getByText('PAGED_TURN_199', { exact: false })).toBeVisible();
       await takeOver(page);
       await holdPages(page);
-      const rail = page.getByTestId('conversation-scrollbar-rail');
-      const thumbBox = await page.getByTestId('conversation-scrollbar-thumb').boundingBox();
-      const railBox = await rail.boundingBox();
-      expect(thumbBox && railBox).toBeTruthy();
-      const startX = thumbBox!.x + thumbBox!.width / 2;
-      await page.mouse.move(startX, thumbBox!.y + thumbBox!.height / 2);
-      await page.mouse.down();
-      // Moved in steps, then nudged until the placeholders show. On a loaded CI runner one move
-      // sent straight after the press reached the page before the drag was listening, the thumb
-      // never left, and no placeholder was drawn for the whole 5 s (it passed on the retry). A
-      // longer wait cannot help a move that has already been lost; another move can.
-      const dragTargetY = railBox!.y + railBox!.height * 0.25;
-      await page.mouse.move(startX, dragTargetY, { steps: 8 });
       const skeleton = page.getByTestId('conversation-skeleton');
+      // A drag is a press plus moves, and a move cannot recover a press that never became a drag:
+      // the target is measured from where the press landed. On CI a run pressed, then nudged the
+      // mouse for 10 s and drew no placeholder, so each attempt starts over from the live
+      // geometry: read the rail once it holds still, check the point is on the rail, press, move,
+      // and let go before the next attempt if no placeholder showed. A release over loaded rows
+      // reads no page, so an attempt that missed leaves nothing behind.
       await expect(async () => {
-        await page.mouse.move(startX + 1, dragTargetY);
-        await page.mouse.move(startX, dragTargetY);
-        await expect(skeleton).toBeVisible({ timeout: 1000 });
-      }).toPass({ timeout: 10000 });
+        const grip = await readRailGrip(page);
+        expect(['conversation-scrollbar-rail', 'conversation-scrollbar-thumb']).toContain(grip.hitTestId);
+        await page.mouse.move(grip.pressX, grip.pressY);
+        await page.mouse.down();
+        try {
+          await page.mouse.move(grip.pressX, grip.targetY, { steps: 8 });
+          await expect(skeleton).toBeVisible({ timeout: 1500 });
+        } catch (error) {
+          await page.mouse.up();
+          throw error;
+        }
+      }).toPass({ timeout: 15000 });
       const fill = await skeleton.evaluate((element) => {
         const box = element.getBoundingClientRect();
         const last = element.lastElementChild!.getBoundingClientRect();
