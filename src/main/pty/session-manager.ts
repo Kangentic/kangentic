@@ -841,9 +841,13 @@ export class SessionManager extends EventEmitter {
         // sibling of: that sibling does not start outside its shell.
         const launchedCliPath = session.hostId || accountHome === undefined ? null : session.agentCliPath ?? null;
         const cliPath = launchedCliPath === null || cliTarget ? launchedCliPath : headlessCliPath(launchedCliPath);
+        // The store check is asked about this session, so it takes the spawn time. It runs again when a
+        // never-captured session settles, so a conversation made after the window is still found.
+        const startedAtMs = Date.parse(session.startedAt);
+        const spawnedAt = Number.isFinite(startedAtMs) ? new Date(startedAtMs) : undefined;
         noteSessionIdCaptureWindowPassed(
           session,
-          storeEvidence ? () => storeEvidence({ cwd: session.commandCwd, cliTarget }) : null,
+          storeEvidence ? () => storeEvidence({ cwd: session.commandCwd, cliTarget, spawnedAt }) : null,
           loginEvidence ? () => loginEvidence({ cliPath, cliTarget, accountHome: accountHome ?? null }) : null,
         );
       },

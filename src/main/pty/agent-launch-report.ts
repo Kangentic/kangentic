@@ -693,6 +693,8 @@ interface PendingSessionIdReport {
   agent: string;
   tags: Record<string, string>;
   storeEvidence: Promise<SessionIdStoreEvidence>;
+  /** Asked again when a never-captured session settles: a conversation made after the window is no miss of ours. */
+  storeCheck: (() => Promise<SessionIdStoreEvidence>) | null;
   loginEvidence: Promise<SessionIdLoginEvidence>;
   nodeEvidence: Promise<NodeOnPathEvidence>;
   /** Kept past a removal from the registry: the prompt, run and exit times are read off it at the outcome. */
@@ -818,6 +820,7 @@ export function noteSessionIdCaptureWindowPassed(
       first_output: observedTag(session.firstOutputAt),
     },
     storeEvidence: boundedEvidence(storeCheck, STORE_EVIDENCE_ANSWERS, STORE_EVIDENCE_WAIT_MS),
+    storeCheck,
     loginEvidence: boundedEvidence(loginCheck, LOGIN_EVIDENCE_ANSWERS, LOGIN_EVIDENCE_WAIT_MS),
     nodeEvidence: nodeOnPathEvidence(session),
     session,
@@ -854,6 +857,41 @@ function explainedBySignedOutCli(
 ): boolean {
   if (login !== 'signed_out' || typeof session.promptObservedAt === 'number') return false;
   return outcomeKind === 'late' || idStore !== 'present';
+}
+
+/**
+ * The store answer a never-captured session is judged on. The window's read is
+ * five minutes old by the ceiling, and an agent that makes its conversation at
+ * its first turn may have made it since, so the check is asked again. A read
+ * that gives no answer falls back to the window's only when that one said
+ * `present`: a stale `absent` is never carried over a read that failed, since
+ * `absent` is what drops a report.
+ */
+async function settleTimeStoreEvidence(pending: PendingSessionIdReport): Promise<SessionIdStoreEvidence> {
+  if (!pending.storeCheck) return pending.storeEvidence;
+  const [atWindow, now] = await Promise.all([
+    pending.storeEvidence,
+    boundedEvidence(pending.storeCheck, STORE_EVIDENCE_ANSWERS, STORE_EVIDENCE_WAIT_MS),
+  ]);
+  if (now !== 'unknown') return now;
+  return atWindow === 'present' ? 'present' : 'unknown';
+}
+
+/**
+ * True for a never-captured session that was never used: no opening prompt, none
+ * typed, and the agent's store holds no conversation made since its spawn. An
+ * agent that makes its conversation at its first turn has none and so no id until
+ * someone types, which no capture path could fix (Sentry DESKTOP-36 on 0.62.0: a
+ * Command Terminal Codex, signed in, that no one typed into for five minutes). A
+ * session where someone typed and the hook was lost has a conversation on disk
+ * and reads `present`, so it still reports. The caller has already sent a death
+ * at start to the launch report, which asks the same question of the same facts.
+ */
+function explainedByUntouchedTerminal(session: ManagedSession, outcomeKind: SessionIdCaptureOutcome['kind'], idStore: SessionIdStoreEvidence): boolean {
+  return outcomeKind === 'never'
+    && session.openingPrompt === 'none'
+    && typeof session.promptObservedAt !== 'number'
+    && idStore === 'absent';
 }
 
 /**
@@ -996,7 +1034,8 @@ export function reportSessionIdCaptureOutcome(
   // unless the session may still be a death at start, which is not that kind.
   if (outcomeReport.latch.has(pending.agent) && !mayHaveExitedWithNoConversation(session, outcome, sessionStatus)) return;
   const promptSettled = outcome.kind === 'late' ? firstPromptSettled(session) : Promise.resolve();
-  void Promise.all([pending.storeEvidence, pending.loginEvidence, pending.nodeEvidence, promptSettled]).then(([idStore, login, nodeOnPath]) => {
+  const storeEvidence = outcome.kind === 'never' ? settleTimeStoreEvidence(pending) : pending.storeEvidence;
+  void Promise.all([storeEvidence, pending.loginEvidence, pending.nodeEvidence, promptSettled]).then(([idStore, login, nodeOnPath]) => {
     if (isShuttingDown()) return;
     if (outcome.kind === 'late' && capturedOnTime(session, outcome.capturedAt)) return;
     if (explainedBySignedOutCli(session, outcome.kind, login, idStore)) {
@@ -1026,6 +1065,11 @@ export function reportSessionIdCaptureOutcome(
     };
     if (exitedWithNoConversation(session, outcome, sessionStatus, idStore)) {
       reportExitedWithNoConversation(session, captureTags);
+      return;
+    }
+    if (explainedByUntouchedTerminal(session, outcome.kind, idStore)) {
+      // The local log still says so: nobody used it, and no event will.
+      console.warn(`[session-manager] ${pending.agent} gave no session ID for session ${sessionId.slice(0, 8)}: no prompt reached it and it wrote no session, so nothing is reported.`);
       return;
     }
     if (outcomeReport.latch.has(pending.agent)) return;

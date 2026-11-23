@@ -7850,12 +7850,18 @@ export interface AdapterRuntimeStrategy {
     }): Promise<string | null>;
     /**
      * Whether the folder or file `fromFilesystem` reads exists at all, for a
-     * session whose id the capture window did not see: `absent` says the agent
-     * wrote nothing there yet, which no capture path could fix. A fixed word,
+     * session whose id the capture window did not see: `absent` says the store
+     * holds no conversation for this session yet, which no capture path could fix. A fixed word,
      * never a path. Read only by the session-id capture reports (late and
      * never); an adapter without it reports `unknown`.
+     *
+     * With `spawnedAt`, an agent whose store holds every earlier run's files
+     * answers about THIS session: `present` only for a conversation written
+     * since the spawn (Codex's rollout folder holds all of the day's runs, so
+     * the folder alone said nothing about one session). An agent whose store is
+     * its own for the machine ignores it.
      */
-    storeEvidence?(options: { cwd: string; cliTarget?: StoredCliTarget | null }): Promise<SessionIdStoreEvidence>;
+    storeEvidence?(options: { cwd: string; cliTarget?: StoredCliTarget | null; spawnedAt?: Date }): Promise<SessionIdStoreEvidence>;
     /**
      * Whether the CLI holds a login, for a session whose id the capture window
      * did not see. A CLI that is signed out can open on its own sign-in screen:

@@ -382,8 +382,29 @@ describe('session id not captured', () => {
     expect(reports[0][1]).toMatchObject({ agent: 'codex', captured_after_s: '30-60', start_path: 'board', opening_prompt: 'none' });
   });
 
-  it('reports a session removed with no id as not captured, with the facts that say why', async () => {
+  // Sentry DESKTOP-36 on 0.62.0: a terminal no one typed into made no conversation, so it
+  // had no id to miss. Its store reads absent for this session, and nothing is sent.
+  it('reports nothing for a session no prompt reached and whose store holds no conversation of its own', async () => {
     const { manager, sent } = await armManager({ storeEvidence: async () => 'absent' });
+    await vi.advanceTimersByTimeAsync(31_000);
+    manager.removeSession('session-1');
+
+    expect(await sent()).toEqual([]);
+  });
+
+  it('still reports a session a prompt reached that gave no id, though its store reads absent', async () => {
+    const { manager, prompt, sent } = await armManager({ storeEvidence: async () => 'absent' });
+    await vi.advanceTimersByTimeAsync(31_000);
+    prompt();
+    manager.removeSession('session-1');
+
+    const reports = await sent();
+    expect(reports).toHaveLength(1);
+    expect(reports[0][1]).toMatchObject({ prompt_seen: 'yes', id_store: 'absent' });
+  });
+
+  it('reports a session removed with no id as not captured, with the facts that say why', async () => {
+    const { manager, sent } = await armManager({ storeEvidence: async () => 'present' });
     await vi.advanceTimersByTimeAsync(31_000);
     manager.removeSession('session-1');
 
@@ -406,7 +427,7 @@ describe('session id not captured', () => {
       session_status: 'running',
       agent_ran_for_s: 'not_run',
       fs_scan: 'none',
-      id_store: 'absent',
+      id_store: 'present',
       login: 'unknown',
       node_on_path: 'yes',
     });

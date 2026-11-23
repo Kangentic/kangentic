@@ -117,16 +117,32 @@ export class CodexSessionHistoryParser {
   }
 
   /**
-   * Whether today's or yesterday's (UTC) rollout folder exists, the folders
-   * `captureSessionIdFromFilesystem` reads. For the session-id report only:
-   * `absent` says Codex wrote no rollout at all yet, which an id still missing
-   * at the capture window would follow from. A fixed word, never a path.
+   * Whether Codex wrote a rollout for this session, in the folders
+   * `captureSessionIdFromFilesystem` reads (today's and yesterday's, UTC). For
+   * the session-id report only: `absent` says this session has no conversation
+   * on disk, which an id still missing would follow from. A fixed word, never a
+   * path.
+   *
+   * With `spawnedAt`, `present` needs a rollout whose `session_meta` was made at
+   * or after the spawn, in this session's cwd. The folder alone said nothing
+   * about one session: it holds every run of the day, so any earlier Codex run
+   * made it `present` (Sentry DESKTOP-36 and DESKTOP-4C on 0.62.0). The match
+   * has no upper bound, because a Codex that waits for its first turn may make
+   * its conversation minutes after the spawn. A sibling started later in the
+   * same cwd can read as this session's, which only moves the answer toward
+   * `present`, the side that reports. Without `spawnedAt` it is the folder check.
    */
-  static async storeEvidence(options: { cwd: string; cliTarget?: StoredCliTarget | null }): Promise<SessionIdStoreEvidence> {
+  static async storeEvidence(options: { cwd: string; cliTarget?: StoredCliTarget | null; spawnedAt?: Date }): Promise<SessionIdStoreEvidence> {
     const place = placeFromStored(options.cliTarget ?? null);
     if (place?.kind === 'ssh') return 'unknown';
     const directories = Array.from(new Set([codexSessionsDirForToday(place), codexSessionsDirForYesterday(place)]));
     const answers = await Promise.all(directories.map((directory) => pathStoreEvidence(directory, 'directory')));
+    if (options.spawnedAt && answers.includes('present')) {
+      const normalizedCwd = normalizeCwdForCompare(cliPathForTarget(options.cwd, place));
+      if (hasRolloutCreatedSince(directories, normalizedCwd, options.spawnedAt.getTime())) return 'present';
+      // A folder that could not be read may hold it, so only a clean miss is `absent`.
+      return answers.includes('unknown') ? 'unknown' : 'absent';
+    }
     if (answers.includes('present')) return 'present';
     return answers.includes('unknown') ? 'unknown' : 'absent';
   }
@@ -593,6 +609,29 @@ function safeReaddirWithStats(directory: string): Array<{ name: string; mtimeMs:
     }
   }
   return results;
+}
+
+/**
+ * Whether one of these folders holds a rollout in `normalizedCwd` whose
+ * `session_meta` was made at or after the spawn (the same 1 s slack
+ * `captureSessionIdFromFilesystem` allows). `storeEvidence`'s question, so it
+ * has no upper bound and reads no cheap mtime away: a rollout this session made
+ * has an mtime at or after the spawn, and the 30 s floor only spares reading
+ * every historical file.
+ */
+function hasRolloutCreatedSince(directories: string[], normalizedCwd: string, spawnedAtMs: number): boolean {
+  const pattern = /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/;
+  for (const directory of directories) {
+    const entries = safeReaddirWithStats(directory)
+      .filter((entry) => pattern.test(entry.name) && entry.mtimeMs >= spawnedAtMs - 30_000);
+    for (const entry of entries) {
+      const meta = readSessionMeta(path.join(directory, entry.name));
+      if (!meta || meta.id !== entry.name.match(pattern)![1]) continue;
+      if (normalizeCwdForCompare(meta.cwd) !== normalizedCwd) continue;
+      if (meta.createdAtMs >= spawnedAtMs - 1000) return true;
+    }
+  }
+  return false;
 }
 
 /** Simple async sleep helper for polling loops. */
