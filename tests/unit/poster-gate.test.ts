@@ -10,7 +10,10 @@
 import { describe, expect, it } from 'vitest';
 import { PNG } from 'pngjs';
 import { FRAME_TOLERANCES, compareFrameMeasures, countClockTexts, differsOnlyInDigits, type FrameMeasure } from '../captures/helpers/frame-measure';
-import { GATE_KNOWN_DIFFERENCES, GATE_SCALES, comparePixels, gateCases, knownDifferenceSkips, posterGateSet } from '../captures/helpers/poster-gate';
+import {
+  GATE_KNOWN_DIFFERENCES, GATE_SCALES, PIXEL_COMPARISON, clockMaskBoxes, comparePixels, gateCases, knownDifferenceSkips, pixelComparisonFor, pixelMaskFor,
+  posterGateSet, stripKnownDifference, textMaskBoxes, type PixelComparisonMode,
+} from '../captures/helpers/poster-gate';
 import { SCENES } from '../captures/scenes';
 
 function poster(): FrameMeasure {
@@ -148,7 +151,7 @@ describe('knownDifferenceSkips', () => {
   const at = (scale: number) => ({ scale, comparePositions: scale === 2 });
 
   it('holds everything for a scene with no known difference', () => {
-    expect(knownDifferenceSkips(undefined, at(1.25))).toEqual({ text: false, terminals: false, pixels: false });
+    expect(knownDifferenceSkips(undefined, at(1.25))).toEqual({ text: false, graphLabels: false, terminals: false, pixels: false });
   });
 
   it('skips a fractional wrap\'s text only at a fractional scale, so 1x and 2x are held', () => {
@@ -159,18 +162,51 @@ describe('knownDifferenceSkips', () => {
   });
 
   it('skips a held terminal only off the poster\'s scale, and never its text or pixels', () => {
-    expect(knownDifferenceSkips('held-terminals', at(1))).toEqual({ text: false, terminals: true, pixels: false });
-    expect(knownDifferenceSkips('held-terminals', at(2))).toEqual({ text: false, terminals: false, pixels: false });
+    expect(knownDifferenceSkips('held-terminals', at(1))).toEqual({ text: false, graphLabels: false, terminals: true, pixels: false });
+    expect(knownDifferenceSkips('held-terminals', at(2))).toEqual({ text: false, graphLabels: false, terminals: false, pixels: false });
   });
 
-  it('skips pixels for a drawing that differs, and text and pixels for text that differs', () => {
-    expect(knownDifferenceSkips('pixels', at(2))).toEqual({ text: false, terminals: false, pixels: true });
-    expect(knownDifferenceSkips('text', at(2))).toEqual({ text: true, terminals: false, pixels: true });
+  it('skips a graph\'s labels and its WebGL pixels at every scale, and nothing else', () => {
+    for (const scale of GATE_SCALES) {
+      expect(knownDifferenceSkips('graph-labels', at(scale))).toEqual({ text: false, graphLabels: true, terminals: false, pixels: true });
+    }
+  });
+});
+
+describe('stripKnownDifference', () => {
+  function graphPage(labels: string[]): FrameMeasure {
+    const line = { x: 0, y: 0, width: 40, height: 16 };
+    return {
+      viewport: { width: 1600, height: 1000 },
+      textNodes: [
+        { path: 'body > div[knowledge-graph-page] > h1', text: 'Knowledge Graph', breaks: [], lines: [line] },
+        ...labels.map((label) => ({ path: `body > div[knowledge-graph-page] > div[knowledge-graph-canvas] > div[knowledge-graph-node-title]`, text: label, breaks: [], lines: [line] })),
+        { path: 'body > div[knowledge-graph-page] > button', text: 'Reset view', breaks: [], lines: [line] },
+      ],
+      terminals: [],
+    };
+  }
+  const graphLabels = knownDifferenceSkips('graph-labels', { scale: 2, comparePositions: true });
+
+  it('drops only the canvas labels, so a different set of titles matches and the page around them is held', () => {
+    const reference = stripKnownDifference(graphPage(['Add Persian and Turkish localizat…', 'Remove unused imports']), graphLabels);
+    const frame = stripKnownDifference(graphPage(['Remove unused imports']), graphLabels);
+    expect(reference.textNodes.map((node) => node.text)).toEqual(['Knowledge Graph', 'Reset view']);
+    expect(compareFrameMeasures(reference, frame)).toEqual([]);
+    const renamed = graphPage([]);
+    renamed.textNodes[0].text = 'Knowledge map';
+    expect(compareFrameMeasures(reference, stripKnownDifference(renamed, graphLabels))).toHaveLength(1);
+  });
+
+  it('keeps every text node for a scene with no known difference', () => {
+    const page = graphPage(['Remove unused imports']);
+    expect(stripKnownDifference(page, knownDifferenceSkips(undefined, { scale: 2, comparePositions: true })).textNodes).toHaveLength(3);
   });
 });
 
 describe('comparePixels', () => {
-  function png(width: number, height: number, paint: (x: number, y: number) => [number, number, number]): Buffer {
+  type Paint = (x: number, y: number) => [number, number, number];
+  function png(width: number, height: number, paint: Paint): Buffer {
     const image = new PNG({ width, height });
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
@@ -184,19 +220,120 @@ describe('comparePixels', () => {
     }
     return PNG.sync.write(image);
   }
-  const flat = png(32, 32, () => [40, 40, 40]);
+  const background: [number, number, number] = [40, 40, 40];
+  const block = (left: number, top: number, size: number, color: [number, number, number]): Paint => (x, y) => (x >= left && x < left + size && y >= top && y < top + size ? color : background);
+  const flat = png(32, 32, () => background);
 
   it('counts nothing between a frame and an identical poster', () => {
-    expect(comparePixels(flat, flat)).toEqual({ differing: 0, total: 1024, sizeMismatch: null });
+    expect(comparePixels(flat, flat)).toEqual({ differing: 0, isolated: 0, total: 1024, masked: 0, sizeMismatch: null });
+  });
+
+  it('does not count a lone differing pixel, an icon edge shaded one step apart, but counts two that touch', () => {
+    const lone = png(32, 32, (x, y) => (x === 12 && y === 12 ? [240, 240, 240] : background));
+    expect(comparePixels(flat, lone)).toMatchObject({ differing: 0, isolated: 1 });
+    const pair = png(32, 32, (x, y) => ((x === 12 || x === 13) && y === 12 ? [240, 240, 240] : background));
+    expect(comparePixels(flat, pair)).toMatchObject({ differing: 2, isolated: 0 });
+    const diagonal = png(32, 32, (x, y) => ((x === 12 && y === 12) || (x === 13 && y === 13) ? [240, 240, 240] : background));
+    expect(comparePixels(flat, diagonal).differing).toBe(2);
   });
 
   it('counts a block that changed, which is not antialiasing', () => {
-    const changed = png(32, 32, (x, y) => (x >= 8 && x < 16 && y >= 8 && y < 16 ? [240, 240, 240] : [40, 40, 40]));
-    expect(comparePixels(flat, changed).differing).toBeGreaterThan(0);
+    expect(comparePixels(flat, png(32, 32, block(8, 8, 8, [240, 240, 240]))).differing).toBeGreaterThan(0);
+  });
+
+  it('leaves a masked region out of both images, at the device scale', () => {
+    const changed = png(32, 32, block(8, 8, 8, [240, 240, 240]));
+    // The box is in CSS px: 4 to 8 at scale 2 is device pixels 8 to 16.
+    const comparison = comparePixels(flat, changed, { mask: { boxes: [{ x: 4, y: 4, width: 4, height: 4 }], scale: 2, padding: 0 } });
+    expect(comparison).toEqual({ differing: 0, isolated: 0, total: 1024, masked: 64, sizeMismatch: null });
+    // Padding grows every side by its CSS px.
+    expect(comparePixels(flat, flat, { mask: { boxes: [{ x: 4, y: 4, width: 4, height: 4 }], scale: 2, padding: 1 } }).masked).toBe(144);
+  });
+
+  it('still counts a change outside every masked box', () => {
+    const changed = png(32, 32, block(20, 20, 8, [240, 240, 240]));
+    const comparison = comparePixels(flat, changed, { mask: { boxes: [{ x: 0, y: 0, width: 8, height: 8 }], scale: 1, padding: 1 } });
+    expect(comparison.differing).toBeGreaterThan(0);
   });
 
   it('names a size mismatch instead of counting pixels', () => {
-    expect(comparePixels(flat, png(16, 32, () => [40, 40, 40])).sizeMismatch).toBe('the frame is 16x32, the poster 32x32');
+    expect(comparePixels(flat, png(16, 32, () => background)).sizeMismatch).toBe('the frame is 16x32, the poster 32x32');
+  });
+});
+
+describe('the pixel comparison on each OS', () => {
+  // A 32 by 32 frame at scale 1 with one text node over a glyph-sized region and an icon beside it.
+  const text = { x: 2, y: 2, width: 10, height: 8 };
+  function measure(label: string): FrameMeasure {
+    return {
+      viewport: { width: 32, height: 32 },
+      textNodes: [{ path: 'body > span', text: label, breaks: [], lines: [{ ...text }] }],
+      terminals: [],
+    };
+  }
+  function png(paint: (x: number, y: number) => [number, number, number]): Buffer {
+    const image = new PNG({ width: 32, height: 32 });
+    for (let y = 0; y < 32; y++) {
+      for (let x = 0; x < 32; x++) {
+        const index = (y * 32 + x) * 4;
+        [image.data[index], image.data[index + 1], image.data[index + 2]] = paint(x, y);
+        image.data[index + 3] = 255;
+      }
+    }
+    return PNG.sync.write(image);
+  }
+  const inText = (x: number, y: number) => x >= 4 && x < 10 && y >= 4 && y < 8;
+  const inIcon = (x: number, y: number, left = 20) => x >= left && x < left + 6 && y >= 20 && y < 26;
+  const background: [number, number, number] = [40, 40, 40];
+  const ink: [number, number, number] = [230, 230, 230];
+  const poster = png((x, y) => (inText(x, y) || inIcon(x, y) ? ink : background));
+  // The same frame with its glyphs drawn in another color, as another OS's scaler draws them.
+  const otherGlyphs = png((x, y) => (inText(x, y) ? [200, 120, 60] : inIcon(x, y) ? ink : background));
+  const iconMoved = png((x, y) => (inText(x, y) || inIcon(x, y, 1) ? ink : background));
+  const iconChanged = png((x, y) => (inText(x, y) ? ink : inIcon(x, y) ? [200, 40, 40] : background));
+  const compare = (mode: PixelComparisonMode, frame: Buffer, reference = measure('Board'), shot = measure('Board')) =>
+    comparePixels(poster, frame, { mask: pixelMaskFor(mode, reference, shot, 1) }).differing;
+
+  it('compares every pixel on Linux and only what is not text on Windows and macOS, each to a budget of 0', () => {
+    expect(PIXEL_COMPARISON).toEqual({
+      linux: { mode: 'full', budget: 0 },
+      win32: { mode: 'outside-text', budget: 0 },
+      darwin: { mode: 'outside-text', budget: 0 },
+    });
+    expect(pixelComparisonFor('freebsd')).toEqual(PIXEL_COMPARISON.linux);
+  });
+
+  it('fails a change inside a text box on Linux, which is the leg that holds how text is drawn', () => {
+    expect(compare('full', otherGlyphs)).toBeGreaterThan(0);
+  });
+
+  it('passes the same change on Windows and macOS, where the layout measure holds that text instead', () => {
+    expect(compare('outside-text', otherGlyphs)).toBe(0);
+  });
+
+  it('fails a changed or moved icon outside the text on every OS', () => {
+    for (const mode of ['full', 'outside-text'] as const) {
+      expect(compare(mode, iconChanged), mode).toBeGreaterThan(0);
+      expect(compare(mode, iconMoved), mode).toBeGreaterThan(0);
+    }
+  });
+
+  it('leaves a clock that moved on out of the pixels on Linux, and still fails a changed icon beside it', () => {
+    const reference = measure('8:27 PM');
+    const shot = measure('9:04 PM');
+    expect(compare('full', otherGlyphs, reference, shot)).toBe(0);
+    expect(compare('full', iconChanged, reference, shot)).toBeGreaterThan(0);
+  });
+
+  it('masks every line box, placeholder and terminal a measure has', () => {
+    const page: FrameMeasure = {
+      ...measure('Board'),
+      unmeasuredText: [{ x: 1, y: 20, width: 8, height: 6 }],
+      terminals: [{ session: 'sess', cols: 2, rows: 1, cell: { width: 6, height: 14 }, rect: { x: 14, y: 2, width: 12, height: 14 } }],
+    };
+    expect(textMaskBoxes(page)).toEqual([text, page.unmeasuredText?.[0], page.terminals[0].rect]);
+    expect(clockMaskBoxes(measure('8:27 PM'), measure('9:04 PM'))).toHaveLength(2);
+    expect(clockMaskBoxes(measure('Board'), measure('Board'))).toEqual([]);
   });
 });
 

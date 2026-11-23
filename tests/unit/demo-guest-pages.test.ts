@@ -3,7 +3,10 @@
  * hold whatever it shows, because the frame's iframe stands in for a real webview and stills and
  * posters must be deterministic: (1) it fetches nothing off-origin (no remote font, icon, image,
  * stylesheet, or script), (2) one fixed light palette with no `prefers-color-scheme` (the iframe
- * follows the visitor's OS, not the frame's `theme=`), and (3) no CSS animation or transition.
+ * follows the visitor's OS, not the frame's `theme=`), (3) no CSS animation or transition, and
+ * (4) it draws in the demo's own sans face, which demo/boot.js registers in its document: a page
+ * that asked for `system-ui` drew in DejaVu, Segoe UI or SF by the visitor's OS, and its text
+ * wrapped and measured differently from its Linux-shot poster (v0.62.0's poster gate).
  * Nothing mechanical enforced any of these before this test: the off-origin assertion in
  * tests/demo/static-demo.spec.ts ("the board scene makes no request off the serving origin")
  * runs only for the `board` scene, which never loads a guest page.
@@ -15,6 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { DEMO_PROJECTS } from '../captures/helpers/demo-dataset';
+import { DEMO_FONT_FAMILIES } from '../../scripts/lib/demo-fonts.mjs';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const GUEST_DIRECTORY = path.join(REPO_ROOT, 'demo', 'guest');
@@ -41,6 +45,13 @@ const CSS_KEYFRAMES = /@keyframes\b/gi;
 // `.transition-panel {` or prose mentioning "animation" never trips this.
 const CSS_ANIMATION_DECLARATION = /\banimation(?:-[a-z]+)?\s*:/gi;
 const CSS_TRANSITION_DECLARATION = /\btransition(?:-[a-z]+)?\s*:/gi;
+// A `font-family` or `font` declaration, its value up to the semicolon or the block's end.
+const CSS_FONT_DECLARATION = /(?<![-\w])font(?:-family)?\s*:\s*([^;}]+)/gi;
+/** A font value a guest page may declare: the demo's sans family first, or the parent's font. */
+function drawsInShippedFace(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed === 'inherit' || trimmed.startsWith(`"${DEMO_FONT_FAMILIES.sans}"`) || trimmed.startsWith(`'${DEMO_FONT_FAMILIES.sans}'`);
+}
 
 /**
  * Finds every violation of the guest-page constraints above in the given HTML source. Returns an
@@ -72,6 +83,9 @@ function findGuestPageViolations(html: string): string[] {
   }
   for (const match of withoutComments.matchAll(CSS_TRANSITION_DECLARATION)) {
     violations.push(`declares a CSS transition: ${match[0]}`);
+  }
+  for (const match of withoutComments.matchAll(CSS_FONT_DECLARATION)) {
+    if (!drawsInShippedFace(match[1])) violations.push(`draws in a face the demo does not ship: ${match[0].trim()}`);
   }
 
   return violations;
@@ -165,6 +179,15 @@ describe('findGuestPageViolations()', () => {
     expect(findGuestPageViolations(html).some((violation) => violation.includes('CSS animation'))).toBe(true);
   });
 
+  it('flags a page that draws in the visitor\'s system face, and passes the shipped face or an inherited font', () => {
+    const systemFace = CLEAN_FIXTURE.replace('body { background: var(--page); }', 'body { background: var(--page); font-family: system-ui, sans-serif; }');
+    expect(findGuestPageViolations(systemFace).some((violation) => violation.includes('a face the demo does not ship'))).toBe(true);
+    const shorthand = CLEAN_FIXTURE.replace('body { background: var(--page); }', 'button { font: 14px Arial; }');
+    expect(findGuestPageViolations(shorthand).some((violation) => violation.includes('a face the demo does not ship'))).toBe(true);
+    const shipped = CLEAN_FIXTURE.replace('body { background: var(--page); }', `body { font-family: "${DEMO_FONT_FAMILIES.sans}", sans-serif; font-size: 16px; } button { font: inherit; }`);
+    expect(findGuestPageViolations(shipped)).toEqual([]);
+  });
+
   it('does not flag a selector or class name that merely contains the word transition or animation', () => {
     const html = CLEAN_FIXTURE.replace(
       'body { background: var(--page); }',
@@ -188,7 +211,7 @@ describe('every DEMO_PROJECTS guest_page holds the constraints demo/README.md do
     expect(fs.existsSync(filePath)).toBe(true);
   });
 
-  it.each(guestPages)('%s fetches nothing off-origin, follows no OS color scheme, and animates nothing', (guestPage) => {
+  it.each(guestPages)('%s fetches nothing off-origin, follows no OS color scheme, animates nothing, and draws in the shipped face', (guestPage) => {
     const filePath = path.join(GUEST_DIRECTORY, guestPage);
     const html = fs.readFileSync(filePath, 'utf-8');
     expect(findGuestPageViolations(html)).toEqual([]);

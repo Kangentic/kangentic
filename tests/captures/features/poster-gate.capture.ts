@@ -24,7 +24,9 @@ import { SCENES } from '../scenes';
 import { hideDevOnlyChrome, launchCaptureBrowser } from '../helpers/capture-page';
 import { openScene, shootWhenStill, type SceneTheme } from '../helpers/scene-page';
 import { compareFrameMeasures, countClockTexts, measureFrame, type FrameMeasure } from '../helpers/frame-measure';
-import { GATE_KNOWN_DIFFERENCES, NON_ANTIALIASING_PIXEL_BUDGET, comparePixels, gateCases, knownDifferenceSkips, posterGateSet } from '../helpers/poster-gate';
+import {
+  GATE_KNOWN_DIFFERENCES, comparePixels, gateCases, knownDifferenceSkips, pixelComparisonFor, pixelMaskFor, posterGateSet, stripKnownDifference,
+} from '../helpers/poster-gate';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
 const DIST_DIR = path.join(REPO_ROOT, 'dist', 'demo');
@@ -34,7 +36,7 @@ const OUTPUT_DIR = process.env.POSTER_GATE_OUTPUT ? path.resolve(process.env.POS
 // Read the build only when asked to gate: a stale or missing build throws here, naming the fix.
 const scenesJson = SET_DIR === null ? null : readBuildScenes({ distDir: DIST_DIR, packageJsonPath: path.join(REPO_ROOT, 'package.json') });
 const cases = scenesJson === null ? [] : gateCases(posterGateSet(scenesJson.scenes.map((scene: { name: string }) => scene.name), scenesJson.frame));
-const pixelBudget = NON_ANTIALIASING_PIXEL_BUDGET[process.platform] ?? 0;
+const pixelComparison = pixelComparisonFor(process.platform);
 
 type DemoServer = Awaited<ReturnType<typeof startDemoServer>>;
 let server: DemoServer;
@@ -80,36 +82,43 @@ test.describe('Poster gate', () => {
         // the poster was shot, past the scrollbar thumb and cursor a terminal shows at ready.
         const measured = await measureFrame(page);
         // The shot is taken only when it is compared or a failure keeps it: a still settles first
-        // (shootWhenStill), which costs every case at a scale with no poster for nothing.
-        let shot: Buffer | null = null;
-        const takeShot = async (): Promise<Buffer> => {
-          if (shot === null) shot = gateCase.motion === 'still' ? await shootWhenStill(page) : await page.screenshot({ type: 'png' });
-          return shot;
+        // (shootWhenStill), which costs every case at a scale with no poster for nothing. The frame
+        // is measured again right after it, so the pixel mask (a clock that ticked since ready, the
+        // text where it is drawn in the shot) describes the pixels that were shot.
+        let captured: { bytes: Buffer; measure: FrameMeasure } | null = null;
+        const takeShot = async (): Promise<{ bytes: Buffer; measure: FrameMeasure }> => {
+          if (captured === null) {
+            const bytes = gateCase.motion === 'still' ? await shootWhenStill(page) : await page.screenshot({ type: 'png' });
+            captured = { bytes, measure: await measureFrame(page) };
+          }
+          return captured;
         };
         if (gateCase.motion === 'loop') await takeShot();
         // What a named difference leaves out of the comparison (GATE_KNOWN_DIFFERENCES), printed on
         // every run that leaves it out.
         const known = GATE_KNOWN_DIFFERENCES[gateCase.scene];
         const skips = knownDifferenceSkips(known?.skips, gateCase);
-        if (skips.text || skips.terminals || skips.pixels) console.log(`[poster-gate] ${gateCase.title}: a known difference, ${known?.skips} not held here: ${known?.reason}`);
-        const strip = (measure: FrameMeasure): FrameMeasure => ({
-          ...measure,
-          textNodes: skips.text ? [] : measure.textNodes,
-          terminals: skips.terminals ? [] : measure.terminals,
-        });
-        const problems = compareFrameMeasures(strip(reference), strip(measured), { comparePositions: gateCase.comparePositions });
-        const clocks = countClockTexts(reference, measured);
-        if (clocks > 0) console.log(`[poster-gate] ${gateCase.title}: ${clocks} clock or counter text(s) moved on since the poster; their layout is held and the pixels are not compared`);
-        if (gateCase.posterFile && !skips.pixels && clocks === 0) {
-          const comparison = comparePixels(fs.readFileSync(path.join(setDir, gateCase.posterFile)), await takeShot(), path.join(OUTPUT_DIR, `${stem}.diff.png`));
+        if (skips.text || skips.graphLabels || skips.terminals || skips.pixels) console.log(`[poster-gate] ${gateCase.title}: a known difference, ${known?.skips} not held here: ${known?.reason}`);
+        const problems = compareFrameMeasures(stripKnownDifference(reference, skips), stripKnownDifference(measured, skips), { comparePositions: gateCase.comparePositions });
+        const clocksAtReady = countClockTexts(reference, measured);
+        if (clocksAtReady > 0) console.log(`[poster-gate] ${gateCase.title}: ${clocksAtReady} clock or counter text(s) moved on since the poster; their line count is held, and their pixels are left out of the comparison`);
+        if (gateCase.posterFile && !skips.pixels) {
+          const shot = await takeShot();
+          // A moved clock is left out on every OS; on Windows and macOS so is every glyph
+          // (PIXEL_COMPARISON).
+          const comparison = comparePixels(fs.readFileSync(path.join(setDir, gateCase.posterFile)), shot.bytes, {
+            diffPath: path.join(OUTPUT_DIR, `${stem}.diff.png`),
+            mask: pixelMaskFor(pixelComparison.mode, reference, shot.measure, gateCase.scale),
+          });
           if (comparison.sizeMismatch) problems.push(comparison.sizeMismatch);
-          else if (comparison.differing > pixelBudget) {
-            problems.push(`${comparison.differing} of ${comparison.total} pixels differ beyond antialiasing (budget on ${process.platform}: ${pixelBudget})`);
+          else if (comparison.differing > pixelComparison.budget) {
+            problems.push(`${comparison.differing} of ${comparison.total - comparison.masked} compared pixels differ beyond antialiasing (${pixelComparison.mode} on ${process.platform}, budget ${pixelComparison.budget})`);
           }
-          console.log(`[poster-gate] ${gateCase.title}: ${comparison.differing} pixels beyond antialiasing`);
+          const share = comparison.total > 0 ? Math.round((comparison.masked / comparison.total) * 100) : 0;
+          console.log(`[poster-gate] ${gateCase.title}: ${comparison.differing} pixels beyond antialiasing (${comparison.isolated} lone edge pixels not counted), ${pixelComparison.mode} on ${process.platform}, ${share}% of the frame left out`);
         }
         if (problems.length > 0) {
-          fs.writeFileSync(path.join(OUTPUT_DIR, `${stem}.png`), await takeShot());
+          fs.writeFileSync(path.join(OUTPUT_DIR, `${stem}.png`), (await takeShot()).bytes);
           fs.writeFileSync(path.join(OUTPUT_DIR, `${stem}.layout.json`), `${JSON.stringify(measured)}\n`);
         }
         expect(problems, `${gateCase.title} on ${process.platform} differs from its poster`).toEqual([]);

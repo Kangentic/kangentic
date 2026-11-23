@@ -435,6 +435,11 @@ describe('release.yml job graph', () => {
     // one group, so the second shard would run nothing and exit 0.
     const gateRig = fs.readFileSync(path.join(REPO_ROOT, 'tests', 'captures', 'features', 'poster-gate.capture.ts'), 'utf8');
     expect(gateRig).toMatch(/test\.describe\.configure\(\{ mode: 'parallel' \}\)/);
+    // A case that passes only on its CI retry differed from its poster once, and must fail the leg.
+    // Read as text because the script runs its gate on import.
+    const gateScript = fs.readFileSync(path.join(REPO_ROOT, 'demo', 'poster-gate.mjs'), 'utf8');
+    expect(gateScript).toContain("const FAIL_ON_FLAKY = '--fail-on-flaky-tests';");
+    expect(gateScript).toMatch(/\[playwrightCli, 'test', '--project=captures', FAIL_ON_FLAKY, GATE_RIG, \.\.\.extraArguments\]/);
   });
 
   // electron-updater skips an update only when latest-mac.yml carries minimumSystemVersion, and
@@ -564,8 +569,10 @@ describe('release.yml job graph', () => {
     expect(posters?.body).not.toContain('fc-match');
 
     // demo/boot.js puts the shipped stack first through --font-sans and --font-mono. That holds
-    // only while the renderer's CSS overrides neither the stack nor the body font: every
-    // font-family it declares is a monospace one (the terminal and code blocks).
+    // only while the renderer's CSS overrides neither the stack nor the body font, and every
+    // font-family it declares goes through one of the two variables. A stack of its own, even a
+    // monospace one, is drawn in each visitor's OS face: inline code's `ui-monospace, monospace`
+    // wrapped differently on Windows than on its Linux-shot poster (v0.62.0's poster gate).
     const rendererDir = path.join(REPO_ROOT, 'src', 'renderer');
     const cssFiles = fs.readdirSync(rendererDir, { recursive: true, encoding: 'utf8' }).filter((name) => name.endsWith('.css'));
     expect(cssFiles).toContain('index.css');
@@ -574,7 +581,7 @@ describe('release.yml job graph', () => {
     expect(rendererCss).not.toMatch(/--default-font-family\s*:/);
     const fontFamilies = [...rendererCss.matchAll(/font-family:\s*([^;]+);/g)].map((match) => match[1]);
     expect(fontFamilies.length).toBeGreaterThan(0);
-    for (const value of fontFamilies) expect(value).toMatch(/mono/);
+    for (const value of fontFamilies) expect(value.trim()).toMatch(/^var\(--font-(mono|sans)\b/);
   });
 });
 

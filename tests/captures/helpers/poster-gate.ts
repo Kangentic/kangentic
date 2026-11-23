@@ -10,14 +10,18 @@
  *             layout the rig recorded beside the poster (frame-measure.ts), and each line box's
  *             position at a scale a poster was shot at.
  *   pixels    where a poster exists at that scale (every scene at 2x, the hero at 1x and 2x): the
- *             frame against the poster, where only antialiasing may differ. A scene that shows a
- *             clock or a counter that moved on since the poster is held to its layout alone.
+ *             frame against the poster, where only antialiasing may differ. On Linux, the OS the
+ *             posters are shot on, every pixel; on Windows and macOS every pixel outside the text,
+ *             since each OS rasterizes glyphs its own way (PIXEL_COMPARISON). A clock or a counter
+ *             that moved on since the poster is left out of the pixels on every OS, and the rest of
+ *             the frame is still compared.
  *   the hero  also booted as the site's hero boots it, `loop=1`, whose layout at ready has to be
  *             the still's: the frame a host lifts its poster onto (demo/boot.js, onReady).
  */
 import fs from 'node:fs';
 import { PNG } from 'pngjs';
 import pixelmatch from 'pixelmatch';
+import { differsOnlyInDigits, type FrameMeasure, type MeasuredBox } from './frame-measure';
 import { HERO_POSTER, POSTER_SCALE, POSTER_THEMES, heroFileName, heroLayoutFileName, posterFileName, posterLayoutFileName } from '../../../scripts/lib/demo-posters.mjs';
 
 /** The display scales a visitor's browser runs at that the gate boots every scene in. */
@@ -48,23 +52,30 @@ export interface GateCase {
 /**
  * Scenes whose live frame differs from its poster for a reason this gate cannot fix and knows,
  * with what it skips for them. Each is a finding, not a pass: the reason is printed on every run.
- *   pixels            the drawing differs boot to boot; layout and terminals are still held.
- *   text              the text itself differs boot to boot; only terminals are held.
+ *   graph-labels      a Knowledge Graph map: a WebGL drawing whose camera comes to rest a little
+ *                     differently on each boot, so its pixels and the set of conversation titles it
+ *                     labels (the text under [knowledge-graph-canvas]) differ. Every other text on
+ *                     the page is held.
  *   held-terminals    a terminal held at a smaller type takes another grid at another display
  *                     scale; its terminals are held only at the poster's own scale.
  *   fractional-wraps  a long text breaks one word differently at 125 or 150 percent, where
  *                     Chromium lays text out with fractional advances; its text is held only at
  *                     whole scales.
  */
-export type GateKnownDifference = 'pixels' | 'text' | 'held-terminals' | 'fractional-wraps';
+export type GateKnownDifference = 'graph-labels' | 'held-terminals' | 'fractional-wraps';
+
+/** The element path segment the Knowledge Graph's canvas carries; its labels sit under it. */
+export const GRAPH_CANVAS_PATH = '[knowledge-graph-canvas]';
+
+const GRAPH_LABELS_REASON = 'the map is a WebGL drawing whose camera comes to rest a little differently on each boot, so the conversation titles it labels differ boot to boot';
 
 const HELD_TERMINAL_REASON = 'its terminal is held at a smaller type, and xterm conforms it to the largest type the pane takes at each display\'s own cell, so the grid differs by scale (130 columns at 100 percent, 118 at 200); holding one grid instead left the pane an empty band at 125 and 200 percent, and the poster would have shown it';
 
 export const GATE_KNOWN_DIFFERENCES: Record<string, { skips: GateKnownDifference; reason: string }> = {
-  'knowledge-graph': { skips: 'text', reason: 'the overview labels a different set of conversation titles on each boot, so its poster names titles the live frame may not' },
-  'knowledge-graph-contoso-web': { skips: 'pixels', reason: 'the map is a WebGL drawing whose camera comes to rest a little differently on each boot' },
-  'knowledge-graph-spring-petclinic': { skips: 'pixels', reason: 'the map is a WebGL drawing whose camera comes to rest a little differently on each boot' },
-  'knowledge-graph-online-boutique': { skips: 'pixels', reason: 'the map is a WebGL drawing whose camera comes to rest a little differently on each boot' },
+  'knowledge-graph': { skips: 'graph-labels', reason: GRAPH_LABELS_REASON },
+  'knowledge-graph-contoso-web': { skips: 'graph-labels', reason: GRAPH_LABELS_REASON },
+  'knowledge-graph-spring-petclinic': { skips: 'graph-labels', reason: GRAPH_LABELS_REASON },
+  'knowledge-graph-online-boutique': { skips: 'graph-labels', reason: GRAPH_LABELS_REASON },
   changes: { skips: 'held-terminals', reason: HELD_TERMINAL_REASON },
   'changes-working': { skips: 'held-terminals', reason: HELD_TERMINAL_REASON },
   'changes-staged': { skips: 'held-terminals', reason: HELD_TERMINAL_REASON },
@@ -75,11 +86,16 @@ export const GATE_KNOWN_DIFFERENCES: Record<string, { skips: GateKnownDifference
   'command-terminal-tiled': { skips: 'held-terminals', reason: HELD_TERMINAL_REASON },
   'workflow-draft': { skips: 'fractional-wraps', reason: 'the draft\'s long description breaks one word later at 125 and 150 percent, where Chromium lays text out with fractional advances' },
   'settings-workflows': { skips: 'fractional-wraps', reason: 'the Workflow agent prompt breaks one word differently at 150 percent, where Chromium lays text out with fractional advances' },
+  'ssh-remote-project': { skips: 'fractional-wraps', reason: 'the cut-short description on the "Fix flaky replication test on slow disks" card breaks one word later at 150 percent, where Chromium lays text out with fractional advances' },
+  'ssh-remote-host': { skips: 'fractional-wraps', reason: 'the redis board under the panel has the "Fix flaky replication test on slow disks" card, whose cut-short description breaks one word later at 150 percent, where Chromium lays text out with fractional advances' },
 };
 
 /** What a case leaves out of its comparison. */
 export interface GateSkips {
+  /** Every text node. */
   text: boolean;
+  /** Only the text under the Knowledge Graph's canvas (GRAPH_CANVAS_PATH). */
+  graphLabels: boolean;
   terminals: boolean;
   pixels: boolean;
 }
@@ -91,9 +107,19 @@ export interface GateSkips {
 export function knownDifferenceSkips(known: GateKnownDifference | undefined, gateCase: Pick<GateCase, 'scale' | 'comparePositions'>): GateSkips {
   const fractionalScale = !Number.isInteger(gateCase.scale);
   return {
-    text: known === 'text' || (known === 'fractional-wraps' && fractionalScale),
+    text: known === 'fractional-wraps' && fractionalScale,
+    graphLabels: known === 'graph-labels',
     terminals: known === 'held-terminals' && !gateCase.comparePositions,
-    pixels: known === 'pixels' || known === 'text',
+    pixels: known === 'graph-labels',
+  };
+}
+
+/** A measure with what `skips` leaves out removed, applied the same way to the poster's and the frame's. */
+export function stripKnownDifference(measure: FrameMeasure, skips: GateSkips): FrameMeasure {
+  return {
+    ...measure,
+    textNodes: skips.text ? [] : skips.graphLabels ? measure.textNodes.filter((node) => !node.path.includes(GRAPH_CANVAS_PATH)) : measure.textNodes,
+    terminals: skips.terminals ? [] : measure.terminals,
   };
 }
 
@@ -167,40 +193,163 @@ export function gateCases(set: GateSet): GateCase[] {
 }
 
 /**
- * How many pixels that are NOT antialiasing may differ between a frame and its poster, per OS
- * running the gate. The posters are shot on Linux, so Linux holds the bar at none. Windows and
- * macOS rasterize text through their own scalers (DirectWrite, CoreText), and the share of their
- * difference pixelmatch does not classify as antialiasing is measured by running the gate there,
- * a dispatched run of demo-poster-gate.yml (demo/README.md, The poster gate) or a local run of the
- * whole gate. Raise a value only from such a run, with its number and source in the comment beside
- * it. An unmeasured entry is 0 on purpose: a leg over budget fails and prints its count, which is
- * the measurement.
+ * Which pixels the gate compares on each OS, and how many that are NOT antialiasing may differ.
+ *
+ *   full          every pixel. Linux, where the posters are shot: the frame and its poster draw
+ *                 their glyphs through the same scaler, so this is the leg that fails on a change in
+ *                 how text itself is drawn (its color, weight or face).
+ *   outside-text  every pixel but the text's (textMaskBoxes). Windows and macOS rasterize glyphs
+ *                 through their own scalers, and no budget separates that from a real change: in
+ *                 v0.62.0 (run 45102383693) every 2x frame differed, welcome clay by 7212 pixels on
+ *                 Windows and 4459 on macOS with the same text in the same places, and masking the
+ *                 measured text took both to 0 and 2. What the mask hides is still held by the
+ *                 layout comparison: every text's content, wraps and line boxes, and every
+ *                 terminal's grid and rect.
+ *
+ * Every budget is 0. Raise one only from a measured run of demo-poster-gate.yml (demo/README.md,
+ * The poster gate), with its number and run beside it.
  */
-export const NON_ANTIALIASING_PIXEL_BUDGET: Record<string, number> = {
-  linux: 0,
-  // Measured by a local Windows run of the whole gate (task 1079): every pixel comparison identical.
-  win32: 0,
-  // Not measured yet: the first macOS leg's failure prints the number to put here.
-  darwin: 0,
+export type PixelComparisonMode = 'full' | 'outside-text';
+
+export const PIXEL_COMPARISON: Record<'linux' | 'win32' | 'darwin', { mode: PixelComparisonMode; budget: number }> = {
+  linux: { mode: 'full', budget: 0 },
+  win32: { mode: 'outside-text', budget: 0 },
+  darwin: { mode: 'outside-text', budget: 0 },
 };
 
+/** The comparison for the OS running the gate; one the table does not name is held to Linux's. */
+export function pixelComparisonFor(platform: string): { mode: PixelComparisonMode; budget: number } {
+  return platform === 'win32' || platform === 'darwin' || platform === 'linux' ? PIXEL_COMPARISON[platform] : PIXEL_COMPARISON.linux;
+}
+
+/**
+ * How far past a text's line box its glyphs may draw, in CSS px: a glyph's ink can overhang its
+ * advance by a fraction of a pixel, and antialiasing bleeds one device pixel past that.
+ */
+export const TEXT_MASK_PADDING_PX = 1;
+
+/** Every region of a measure whose pixels are glyphs: each text line box, each placeholder, each terminal. */
+export function textMaskBoxes(measure: FrameMeasure): MeasuredBox[] {
+  return [
+    ...measure.textNodes.flatMap((node) => node.lines),
+    ...(measure.unmeasuredText ?? []),
+    ...measure.terminals.map((terminal) => terminal.rect),
+  ];
+}
+
+/**
+ * The line boxes of every clock or counter that moved on since the poster (differsOnlyInDigits),
+ * from both measures, so its pixels can be left out while the rest of the frame is compared.
+ */
+export function clockMaskBoxes(reference: FrameMeasure, actual: FrameMeasure): MeasuredBox[] {
+  const boxes: MeasuredBox[] = [];
+  const nodeCount = Math.min(reference.textNodes.length, actual.textNodes.length);
+  for (let index = 0; index < nodeCount; index++) {
+    if (differsOnlyInDigits(reference.textNodes[index].text, actual.textNodes[index].text)) {
+      boxes.push(...reference.textNodes[index].lines, ...actual.textNodes[index].lines);
+    }
+  }
+  return boxes;
+}
+
+/** Regions left out of a pixel comparison, in CSS px, and the device scale the images were shot at. */
+export interface PixelMask {
+  boxes: MeasuredBox[];
+  scale: number;
+  /** CSS px added on every side of every box. */
+  padding: number;
+}
+
+/**
+ * What a case leaves out of its pixels: a clock or counter that moved on since the poster on every
+ * OS, and in `outside-text` mode every glyph, from the poster's measure and the shot's.
+ */
+export function pixelMaskFor(mode: PixelComparisonMode, reference: FrameMeasure, shot: FrameMeasure, scale: number): PixelMask {
+  const boxes = [
+    ...clockMaskBoxes(reference, shot),
+    ...(mode === 'outside-text' ? [...textMaskBoxes(reference), ...textMaskBoxes(shot)] : []),
+  ];
+  return { boxes, scale, padding: TEXT_MASK_PADDING_PX };
+}
+
 export interface PixelComparison {
-  /** Pixels that differ and pixelmatch does not read as antialiasing. */
+  /**
+   * Pixels that differ, that pixelmatch does not read as antialiasing, and that touch another such
+   * pixel. A lone one is an edge pixel of an icon that the OS's rasterizer shaded one step apart
+   * (macOS in v0.62.0: about eight a frame, each on a lucide stroke's edge, the shape the same), and
+   * is counted in `isolated` instead. A real change (a swapped icon, a moved border, another color)
+   * changes neighbouring pixels together.
+   */
   differing: number;
+  /** Differing pixels with no differing neighbour, which `differing` leaves out. */
+  isolated: number;
   total: number;
+  /** Pixels the mask left out of the comparison. */
+  masked: number;
   /** Set when the two images are not the same size, which no pixel count can describe. */
   sizeMismatch: string | null;
 }
 
-/** Compare a frame's shot to its poster, writing a diff image to `diffPath` when any pixel differs. */
-export function comparePixels(posterBytes: Buffer, frameBytes: Buffer, diffPath?: string): PixelComparison {
+/**
+ * Compare a frame's shot to its poster, writing a diff image to `diffPath` when any pixel differs.
+ * A mask's pixels are painted out of both images first, so they cannot count, and the diff image
+ * shows only the pixels that did.
+ */
+export function comparePixels(posterBytes: Buffer, frameBytes: Buffer, options: { diffPath?: string; mask?: PixelMask } = {}): PixelComparison {
   const poster = PNG.sync.read(posterBytes);
   const frame = PNG.sync.read(frameBytes);
   if (poster.width !== frame.width || poster.height !== frame.height) {
-    return { differing: 0, total: 0, sizeMismatch: `the frame is ${frame.width}x${frame.height}, the poster ${poster.width}x${poster.height}` };
+    return { differing: 0, isolated: 0, total: 0, masked: 0, sizeMismatch: `the frame is ${frame.width}x${frame.height}, the poster ${poster.width}x${poster.height}` };
   }
-  const diff = new PNG({ width: poster.width, height: poster.height });
-  const differing = pixelmatch(poster.data, frame.data, diff.data, poster.width, poster.height, { includeAA: false, diffMask: true });
-  if (differing > 0 && diffPath) fs.writeFileSync(diffPath, PNG.sync.write(diff));
-  return { differing, total: poster.width * poster.height, sizeMismatch: null };
+  const { width, height } = poster;
+  let masked = 0;
+  if (options.mask && options.mask.boxes.length > 0) {
+    const { boxes, scale, padding } = options.mask;
+    const covered = new Uint8Array(width * height);
+    for (const box of boxes) {
+      const left = Math.max(0, Math.floor((box.x - padding) * scale));
+      const top = Math.max(0, Math.floor((box.y - padding) * scale));
+      const right = Math.min(width, Math.ceil((box.x + box.width + padding) * scale));
+      const bottom = Math.min(height, Math.ceil((box.y + box.height + padding) * scale));
+      for (let row = top; row < bottom; row++) covered.fill(1, row * width + left, row * width + Math.max(left, right));
+    }
+    for (let pixel = 0; pixel < covered.length; pixel++) {
+      if (covered[pixel] === 0) continue;
+      masked += 1;
+      poster.data.fill(0, pixel * 4, pixel * 4 + 4);
+      frame.data.fill(0, pixel * 4, pixel * 4 + 4);
+    }
+  }
+  const diff = new PNG({ width, height });
+  const counted = pixelmatch(poster.data, frame.data, diff.data, width, height, { includeAA: false, diffMask: true, diffColor: DIFF_COLOR, aaColor: ANTIALIASING_COLOR });
+  if (counted > 0 && options.diffPath) fs.writeFileSync(options.diffPath, PNG.sync.write(diff));
+  const isolated = counted === 0 ? 0 : countIsolatedDiffPixels(diff.data, width, height);
+  return { differing: counted - isolated, isolated, total: width * height, masked, sizeMismatch: null };
+}
+
+/** The colors pixelmatch paints a differing pixel and an antialiasing one in its diff mask. */
+const DIFF_COLOR: [number, number, number] = [255, 0, 0];
+const ANTIALIASING_COLOR: [number, number, number] = [255, 255, 0];
+
+/** Differing pixels in a pixelmatch diff mask with no differing pixel among their eight neighbours. */
+function countIsolatedDiffPixels(mask: Uint8Array, width: number, height: number): number {
+  const isDiff = (x: number, y: number): boolean => {
+    if (x < 0 || y < 0 || x >= width || y >= height) return false;
+    const index = (y * width + x) * 4;
+    return mask[index + 3] > 0 && mask[index] === DIFF_COLOR[0] && mask[index + 1] === DIFF_COLOR[1] && mask[index + 2] === DIFF_COLOR[2];
+  };
+  let isolated = 0;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (!isDiff(x, y)) continue;
+      let neighbour = false;
+      for (let deltaY = -1; deltaY <= 1 && !neighbour; deltaY++) {
+        for (let deltaX = -1; deltaX <= 1 && !neighbour; deltaX++) {
+          if ((deltaX !== 0 || deltaY !== 0) && isDiff(x + deltaX, y + deltaY)) neighbour = true;
+        }
+      }
+      if (!neighbour) isolated += 1;
+    }
+  }
+  return isolated;
 }

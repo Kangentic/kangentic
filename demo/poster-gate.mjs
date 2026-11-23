@@ -26,6 +26,12 @@ const setDir = path.resolve(process.env.POSTER_GATE_SET ?? path.join(repoRoot, '
 const outputDir = path.join(repoRoot, 'dist', 'poster-gate');
 /** Forward slashes on purpose: Playwright reads a file argument as a regular expression (demo/posters.mjs). */
 const GATE_RIG = 'tests/captures/features/poster-gate.capture.ts';
+/**
+ * The captures project retries a case once on CI. A case that passes only on its retry is a frame
+ * that differed from its poster once, so it fails the gate rather than reading as a pass. Before
+ * this, v0.62.0's macOS leg passed 31 cases on retry.
+ */
+const FAIL_ON_FLAKY = '--fail-on-flaky-tests';
 
 function log(message) {
   console.log(`[demo:poster-gate] ${message}`);
@@ -48,7 +54,7 @@ function main() {
   log(`build ${scenesJson.version}, ${scenesJson.scenes.length} scenes, set ${setDir}, on ${process.platform}${extraArguments.length > 0 ? ` (${extraArguments.join(' ')})` : ''}`);
   const env = { ...process.env, POSTER_GATE_SET: setDir, POSTER_GATE_OUTPUT: outputDir };
   delete env.CAPTURE_SCENES;
-  const rig = spawnSync(process.execPath, [playwrightCli, 'test', '--project=captures', GATE_RIG, ...extraArguments], {
+  const rig = spawnSync(process.execPath, [playwrightCli, 'test', '--project=captures', FAIL_ON_FLAKY, GATE_RIG, ...extraArguments], {
     cwd: repoRoot,
     stdio: 'inherit',
     env,

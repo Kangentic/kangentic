@@ -1,5 +1,6 @@
 /**
- * The codepoints a WOFF2 font maps to a glyph, read from its `cmap` table.
+ * The codepoints a WOFF2 font maps to a glyph, read from its `cmap` table, and its vertical
+ * metrics, read from `head`, `hhea` and `OS/2`.
  *
  * The web demo ships its own faces (scripts/lib/demo-fonts.mjs), and a codepoint none of them
  * maps falls back to whatever face the visitor's OS has, which is a different glyph on every OS.
@@ -33,8 +34,8 @@ function readBase128(buffer, cursor) {
   throw new Error('a UIntBase128 ran past five bytes');
 }
 
-/** The `cmap` table's bytes out of a WOFF2 file's contents. */
-function woff2CmapBytes(bytes, label) {
+/** One table's bytes out of a WOFF2 file's contents; it must be a table WOFF2 never transforms. */
+function woff2TableBytes(bytes, wantedTag, label) {
   if (bytes.length < WOFF2_HEADER_BYTES || bytes.readUInt32BE(0) !== WOFF2_SIGNATURE) {
     throw new Error(`${label} is not a WOFF2 file`);
   }
@@ -61,10 +62,34 @@ function woff2CmapBytes(bytes, label) {
   const stream = zlib.brotliDecompressSync(bytes.subarray(cursor.offset, cursor.offset + compressedLength));
   let offset = 0;
   for (const table of tables) {
-    if (table.tag === 'cmap') return stream.subarray(offset, offset + table.length);
+    if (table.tag === wantedTag) return stream.subarray(offset, offset + table.length);
     offset += table.length;
   }
-  throw new Error(`${label} carries no cmap table`);
+  throw new Error(`${label} carries no ${wantedTag} table`);
+}
+
+/**
+ * A face's vertical metrics as Chromium's FreeType backend on Linux reads them, in font units:
+ * the OS/2 typo values when the face sets USE_TYPO_METRICS (fsSelection bit 7), the hhea values
+ * otherwise. CoreText reads the same on macOS for the faces the demo ships. DirectWrite on Windows
+ * reads the OS/2 win values when the bit is off, which for Roboto are taller (1946 and 512 against
+ * hhea's 1900 and 500), so the demo pins these as FontFace overrides (scripts/lib/demo-fonts.mjs).
+ */
+export function woff2VerticalMetrics(bytes, label = 'font') {
+  const buffer = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const head = woff2TableBytes(buffer, 'head', label);
+  const hhea = woff2TableBytes(buffer, 'hhea', label);
+  const os2 = woff2TableBytes(buffer, 'OS/2', label);
+  const unitsPerEm = head.readUInt16BE(18);
+  const useTypoMetrics = (os2.readUInt16BE(62) & 0x80) !== 0;
+  return useTypoMetrics
+    ? { unitsPerEm, ascender: os2.readInt16BE(68), descender: os2.readInt16BE(70), lineGap: os2.readInt16BE(72), source: 'typo' }
+    : { unitsPerEm, ascender: hhea.readInt16BE(4), descender: hhea.readInt16BE(6), lineGap: hhea.readInt16BE(8), source: 'hhea' };
+}
+
+/** The same, for a file on disk. */
+export function woff2FileVerticalMetrics(filePath) {
+  return woff2VerticalMetrics(fs.readFileSync(filePath), filePath);
 }
 
 function addFormat4(cmap, start, into) {
@@ -107,7 +132,7 @@ function addFormat12(cmap, start, into) {
 /** Every codepoint a WOFF2 font's bytes map to a glyph other than .notdef. */
 export function woff2Codepoints(bytes, label = 'font') {
   const buffer = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const cmap = woff2CmapBytes(buffer, label);
+  const cmap = woff2TableBytes(buffer, 'cmap', label);
   const covered = new Set();
   try {
     const subtableCount = cmap.readUInt16BE(2);

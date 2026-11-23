@@ -11,14 +11,15 @@
  *   - every codepoint the demo carries is in a shipped face, or is a named gap whose reason still
  *     holds (DEMO_GLYPH_GAPS); a new recording with a new glyph fails here, naming the command
  *     that cuts it (`node scripts/cut-demo-fonts.mjs`);
- *   - boot.js runs the terminal in the shipped mono stack at the shipped line height.
+ *   - boot.js runs the terminal in the shipped mono stack at the shipped line height;
+ *   - every face pins the vertical metrics Linux reads, so Windows lays its lines out alike.
  *
  * Tier: Unit.
  */
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { woff2FileCodepoints } from '../../scripts/lib/font-cmap.mjs';
+import { woff2FileCodepoints, woff2FileVerticalMetrics } from '../../scripts/lib/font-cmap.mjs';
 import {
   DEMO_FONT_FAMILIES,
   DEMO_FONT_STACKS,
@@ -74,6 +75,40 @@ describe('the faces the demo ships', () => {
     const config = fs.readFileSync(path.join(REPO_ROOT, 'demo', 'vite.config.mts'), 'utf8');
     expect(config).toContain('stacks: DEMO_FONT_STACKS, terminalLineHeight: DEMO_TERMINAL_LINE_HEIGHT');
     expect(DEMO_TERMINAL_LINE_HEIGHT).toBe(1.17);
+  });
+
+  // DirectWrite reads Roboto's OS/2 win metrics (1946 and 512 units) where FreeType and CoreText
+  // read its hhea metrics (1900 and 500), so on Windows every Roboto line was 0.4 px taller at 14 px
+  // and the demo's table rows sat lower than on the Linux-shot posters. Each face pins the metrics
+  // Linux reads as FontFace overrides, in the page and in the Browser pane's guest.
+  it('pins every face\'s vertical metrics to the ones Linux reads, so every OS lays a line out alike', () => {
+    for (const face of faces) {
+      const metrics = woff2FileVerticalMetrics(face.file);
+      const percent = (units: number) => `${(units * 100) / metrics.unitsPerEm}%`;
+      expect(face.metrics, face.name).toEqual({
+        ascentOverride: percent(metrics.ascender),
+        descentOverride: percent(Math.abs(metrics.descender)),
+        lineGapOverride: percent(metrics.lineGap),
+      });
+    }
+    // Read from the right tables: Roboto's hhea, and Inconsolata's typo (it sets USE_TYPO_METRICS).
+    const roboto = faces.find((face) => face.name === 'roboto-latin-400.woff2');
+    expect(roboto?.metrics).toEqual({ ascentOverride: '92.7734375%', descentOverride: '24.4140625%', lineGapOverride: '0%' });
+    const inconsolata = faces.find((face) => face.name === 'inconsolata-latin-400.woff2');
+    expect(inconsolata?.metrics).toEqual({ ascentOverride: '85.9%', descentOverride: '19%', lineGapOverride: '0%' });
+  });
+
+  it('hands the overrides to every FontFace boot.js makes, the guest page\'s included', () => {
+    // boot.js is a classic script that cannot import the plan; the build hands it each face's metrics.
+    const config = fs.readFileSync(path.join(REPO_ROOT, 'demo', 'vite.config.mts'), 'utf8');
+    expect(config).toContain('awaited: face.awaited, metrics: face.metrics }');
+    const boot = fs.readFileSync(path.join(REPO_ROOT, 'demo', 'boot.js'), 'utf8');
+    expect(boot).toContain('ascentOverride: spec.metrics.ascentOverride,');
+    expect(boot).toContain('descentOverride: spec.metrics.descentOverride,');
+    expect(boot).toContain('lineGapOverride: spec.metrics.lineGapOverride,');
+    const constructions = [...boot.matchAll(/new (?:Guest)?FontFace\(([^;]+)\);/g)].map((match) => match[1]);
+    expect(constructions).toHaveLength(2);
+    for (const construction of constructions) expect(construction).toContain('fontFaceDescriptors(spec)');
   });
 });
 

@@ -20,12 +20,20 @@
  * demo/vite.config.mts emits each file under a content hash and hands demo/boot.js the list as
  * `window.__demoFonts`; boot.js registers every face with the FontFace API, waits for the ones
  * marked `awaited` before it reports ready, and puts the stacks first in --font-sans and
- * --font-mono. A face not awaited (the latin-ext and Cyrillic subsets) loads when a text first
+ * --font-mono.
+ *
+ * A face also carries its vertical metrics as FontFace overrides (`metricOverrides`). One file is
+ * not one line box on every OS: Roboto's OS/2 win metrics are taller than its hhea metrics, and
+ * DirectWrite reads the win ones where FreeType and CoreText read hhea, so on Windows every line of
+ * Roboto was 0.4 px taller at 14 px and a table's rows sat up to 2.25 px lower than on the
+ * Linux-shot posters (v0.62.0's poster gate). The overrides are the metrics Linux already reads, so
+ * every OS lays a line out from the same numbers. A face not awaited (the latin-ext and Cyrillic subsets) loads when a text first
  * needs it, as a stylesheet face would. The trade-off is on record in .claude/rules/web-demo-parity.md:
  * a Windows visitor sees Roboto in the demo and Segoe UI in the installed app.
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { woff2FileVerticalMetrics } from './font-cmap.mjs';
 
 export const DEMO_FONT_FAMILIES = {
   sans: 'Kangentic Demo Sans',
@@ -93,6 +101,22 @@ export function unicodeRangeOf(codepoints) {
   return parts.join(',');
 }
 
+/**
+ * A face file's vertical metrics as the FontFace descriptors that pin them on every OS, each a
+ * percentage of the em (`ascentOverride: '92.7734375%'`), from the metrics Linux reads
+ * (woff2VerticalMetrics).
+ */
+export function metricOverrides(filePath) {
+  const metrics = woff2FileVerticalMetrics(filePath);
+  // Multiplied first: 859 * 100 / 1000 is 85.9, where 859 / 1000 * 100 is 85.89999999999999.
+  const percent = (units) => `${(units * 100) / metrics.unitsPerEm}%`;
+  return {
+    ascentOverride: percent(metrics.ascender),
+    descentOverride: percent(Math.abs(metrics.descender)),
+    lineGapOverride: percent(metrics.lineGap),
+  };
+}
+
 /** The cut's manifest: `{ faces: [{ file, source, codepoints }], gaps }`, or a throw naming the fix. */
 export function readSymbolManifest(repoRoot) {
   const manifestPath = path.join(repoRoot, DEMO_SYMBOL_FONTS_DIR, DEMO_SYMBOL_MANIFEST);
@@ -126,6 +150,7 @@ export function demoFontFaces(repoRoot, options = {}) {
           name: `${source.filePrefix}-${subset}-${weight}.woff2`,
           unicodeRange: fontsourceUnicodeRange(packageDir, source.filePrefix, subset, weight),
           awaited: subset === AWAITED_SUBSET,
+          metrics: metricOverrides(file),
         });
       }
     }
@@ -141,6 +166,7 @@ export function demoFontFaces(repoRoot, options = {}) {
       name: face.file,
       unicodeRange: unicodeRangeOf(face.codepoints),
       awaited: true,
+      metrics: metricOverrides(file),
     });
   }
   return faces;

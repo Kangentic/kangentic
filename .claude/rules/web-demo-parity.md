@@ -454,8 +454,11 @@ three things staying in step, and each is enforced rather than remembered.
   the posters are attached and dispatchable on a branch, boots every poster's scene on Windows,
   macOS and Linux at 1, 1.25, 1.5 and 2x and fails on different text, a different wrap, a
   terminal on another grid, a line box moved at a scale a poster was shot at, or a pixel beyond
-  antialiasing past the per-OS budget (`tests/captures/helpers/poster-gate.ts`). What it reports
-  without failing is named there: clock and counter text, and `GATE_KNOWN_DIFFERENCES`.
+  antialiasing: every pixel on Linux, where the posters are shot, and every pixel but the text's
+  on Windows and macOS, which rasterize glyphs their own way (`PIXEL_COMPARISON` in
+  `tests/captures/helpers/poster-gate.ts`). A case that passes only on its CI retry fails. What it
+  reports without failing is named there: clock and counter text, whose own pixels are left out,
+  and `GATE_KNOWN_DIFFERENCES`.
 - **Gap:** the choreography's Firefox and WebKit behavior is checked by hand
   (`demo/README.md`, Choreography and timelines), not in CI: the demo tier runs Chromium only.
   The poster gate is Chromium only too. Firefox ignores `::-webkit-scrollbar` and draws overlay

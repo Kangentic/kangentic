@@ -560,16 +560,26 @@
   // draws, and the cut symbol faces), and so does the seed's first config read, which no terminal
   // is constructed before, so xterm measures its cell in Inconsolata. A face not awaited (latin-ext,
   // Cyrillic) loads when a text first needs it, as a stylesheet face would.
+  //
+  // Each face carries its vertical metrics as overrides (scripts/lib/demo-fonts.mjs,
+  // metricOverrides): DirectWrite reads Roboto's taller OS/2 win metrics where FreeType and
+  // CoreText read hhea, so without them every line on Windows sat lower than on the posters.
+  function fontFaceDescriptors(spec) {
+    return {
+      weight: String(spec.weight),
+      style: 'normal',
+      unicodeRange: spec.unicodeRange,
+      display: 'block',
+      ascentOverride: spec.metrics.ascentOverride,
+      descentOverride: spec.metrics.descentOverride,
+      lineGapOverride: spec.metrics.lineGapOverride,
+    };
+  }
   var fontsReady = Promise.resolve();
   if (demoFonts) {
     injectStyle(':root { --font-sans: ' + demoFonts.stacks.sans + '; --font-mono: ' + demoFonts.stacks.mono + '; font-synthesis: none; }');
     fontsReady = Promise.all(demoFonts.faces.map(function (spec) {
-      var face = new FontFace(spec.family, 'url("' + spec.url + '") format("woff2")', {
-        weight: String(spec.weight),
-        style: 'normal',
-        unicodeRange: spec.unicodeRange,
-        display: 'block',
-      });
+      var face = new FontFace(spec.family, 'url("' + spec.url + '") format("woff2")', fontFaceDescriptors(spec));
       document.fonts.add(face);
       if (!spec.awaited) return null;
       return face.load().then(null, function (error) {
@@ -771,6 +781,24 @@
     if (!guestDocument || !guestDocument.documentElement) return;
     countGuestCreatedAsPage(guestDocument.defaultView);
     shieldDocument(guestDocument)();
+  }
+
+  /**
+   * The demo's faces in the Browser pane's guest page (demo/guest/), whose stack names them first.
+   * A document's FontFaceSet is its own, so the page needs its own copies, built from its own
+   * window's FontFace. Without them it drew in the visitor's system-ui (DejaVu, Segoe UI, SF), and
+   * no poster could match. Resolves once the awaited faces are in; the shim reports the page loaded
+   * only then.
+   */
+  function dressGuestFonts(guestDocument) {
+    var guestWindow = guestDocument && guestDocument.defaultView;
+    if (!demoFonts || !guestWindow || !guestDocument.fonts) return Promise.resolve();
+    var GuestFontFace = guestWindow.FontFace;
+    return Promise.all(demoFonts.faces.map(function (spec) {
+      var face = new GuestFontFace(spec.family, 'url("' + spec.url + '") format("woff2")', fontFaceDescriptors(spec));
+      guestDocument.fonts.add(face);
+      return spec.awaited ? face.load() : null;
+    })).then(function () { return undefined; });
   }
 
   // The microphone is never requested: dictation's capture (src/renderer/audio/audio-capture.ts)
@@ -1303,5 +1331,6 @@
     pressCombo: pressCombo,
     releaseCombo: releaseCombo,
     shieldGuestDocument: shieldGuestDocument,
+    dressGuestFonts: dressGuestFonts,
   };
 })();

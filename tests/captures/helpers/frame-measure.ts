@@ -15,6 +15,12 @@
  *              in. xterm paints into a canvas, so no text node of it exists, and this is what holds
  *              its layout to the poster's.
  *
+ * A same-origin iframe's text (the Browser pane's guest page, demo/webview-shim.js) is kept as
+ * boxes for the poster gate's pixel mask, in the page's coordinates. Monaco places its line
+ * elements absolutely and reuses them, so their DOM order is not the order on screen; the lines of
+ * its editor and its gutter are taken top to bottom, or two boots of one frame list the same lines
+ * in two orders.
+ *
  * `compareFrameMeasures` is the bar. A different text, line count or wrap offset always fails; a
  * line's box may move by at most the tolerances, because each OS's text scaler rounds advances
  * differently (DirectWrite, CoreText, FreeType) and Chromium snaps a border to whole device pixels,
@@ -46,6 +52,13 @@ export interface FrameMeasure {
   viewport: { width: number; height: number };
   textNodes: MeasuredTextNode[];
   terminals: MeasuredTerminal[];
+  /**
+   * Text whose layout is not compared, kept as boxes for the poster gate's pixel mask
+   * (poster-gate.ts, textMaskBoxes): an empty field's placeholder (its content box) and an
+   * icon-font glyph (Monaco's codicons), neither of which is a text node, and each line of a
+   * same-origin iframe's text. Absent from a sidecar written before it existed.
+   */
+  unmeasuredText?: MeasuredBox[];
 }
 
 /**
@@ -55,17 +68,25 @@ export interface FrameMeasure {
 export async function measureFrame(page: Page): Promise<FrameMeasure> {
   return page.evaluate((): FrameMeasure => {
     const round = (value: number): number => Math.round(value * 100) / 100;
+    // Where a document's viewport sits on the page: the page's own, or a same-origin iframe's
+    // content box, scaled when the pane zooms its guest. `prefix` names the iframe in a node's path.
+    interface DocumentOrigin { x: number; y: number; scale: number; prefix: string }
+    const PAGE_ORIGIN: DocumentOrigin = { x: 0, y: 0, scale: 1, prefix: '' };
     // The exported types are erased before Playwright serializes this function, so naming them
     // here reaches nothing outside it.
-    const box = (rect: DOMRect | { left: number; top: number; width: number; height: number }): MeasuredBox => ({
-      x: round(rect.left), y: round(rect.top), width: round(rect.width), height: round(rect.height),
+    const box = (rect: { left: number; top: number; width: number; height: number }, origin: DocumentOrigin): MeasuredBox => ({
+      x: round(origin.x + rect.left * origin.scale),
+      y: round(origin.y + rect.top * origin.scale),
+      width: round(rect.width * origin.scale),
+      height: round(rect.height * origin.scale),
     });
+    const styleOf = (element: Element): CSSStyleDeclaration => (element.ownerDocument.defaultView ?? window).getComputedStyle(element);
     const pathCache = new Map<Element, string>();
     const pathOf = (element: Element): string => {
       const cached = pathCache.get(element);
       if (cached !== undefined) return cached;
       const parent = element.parentElement;
-      if (!parent || element === document.body) return 'body';
+      if (!parent || element === element.ownerDocument.body) return 'body';
       const sameTag = Array.from(parent.children).filter((child) => child.tagName === element.tagName);
       const step = `${element.tagName.toLowerCase()}${sameTag.length > 1 ? `:${sameTag.indexOf(element) + 1}` : ''}`;
       const testId = element.getAttribute('data-testid');
@@ -74,63 +95,142 @@ export async function measureFrame(page: Page): Promise<FrameMeasure> {
       return path;
     };
     const isShown = (element: Element): boolean => {
-      const style = getComputedStyle(element);
+      const style = styleOf(element);
       return style.visibility !== 'hidden' && style.display !== 'none';
+    };
+    // Monaco's editor lines and gutter rows are absolutely placed children of these, reused as it
+    // scrolls, so their order on screen is their top, not their place in the DOM.
+    const rowOf = (element: Element): { container: Element; top: number } | null => {
+      const container = element.closest('.view-lines, .margin-view-overlays');
+      if (!container) return null;
+      let row: Element = element;
+      while (row.parentElement && row.parentElement !== container) row = row.parentElement;
+      return { container, top: row.getBoundingClientRect().top };
     };
 
     const textNodes: MeasuredTextNode[] = [];
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
-      acceptNode(node) {
-        const parent = node.parentElement;
-        if (!node.nodeValue || !node.nodeValue.trim() || !parent) return NodeFilter.FILTER_REJECT;
-        // xterm's own DOM (its helper textarea, its accessibility tree) is measured as a terminal
-        // below; an extension's node is hidden by demo/boot.js and never the page's.
-        if (parent.closest('.xterm, [data-demo-foreign], script, style, noscript, template')) return NodeFilter.FILTER_REJECT;
-        return NodeFilter.FILTER_ACCEPT;
-      },
-    });
-    const range = document.createRange();
-    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-      const parent = node.parentElement as Element;
-      if (!isShown(parent)) continue;
-      range.selectNodeContents(node);
-      const rects = Array.from(range.getClientRects()).filter((rect) => rect.width > 0 && rect.height > 0);
-      if (rects.length === 0) continue;
-      // One box per line: a line can come back as several rects (a bidi run), joined here.
-      const lines: Array<{ left: number; top: number; right: number; bottom: number }> = [];
-      for (const rect of rects) {
-        const line = lines.find((candidate) => Math.abs(candidate.top - rect.top) < 1);
-        if (line) {
-          line.left = Math.min(line.left, rect.left);
-          line.right = Math.max(line.right, rect.right);
-          line.bottom = Math.max(line.bottom, rect.bottom);
-        } else {
-          lines.push({ left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom });
-        }
-      }
-      lines.sort((first, second) => first.top - second.top);
-      // Where each line after the first starts, by character: the first character whose box sits
-      // on that line. Read only for a node that wraps, so a one-line node costs one rect read.
-      const breaks: number[] = [];
-      const text = node.nodeValue ?? '';
-      if (lines.length > 1) {
-        let lineIndex = 1;
-        for (let offset = 0; offset < text.length && lineIndex < lines.length; offset++) {
-          range.setStart(node, offset);
-          range.setEnd(node, offset + 1);
-          const characterRect = Array.from(range.getClientRects()).find((rect) => rect.width > 0 || rect.height > 0);
-          if (characterRect && characterRect.top >= lines[lineIndex].top - 0.5) {
-            breaks.push(offset);
-            lineIndex += 1;
+    const unmeasuredText: MeasuredBox[] = [];
+    // `holdText` false keeps a document's text as boxes only (unmeasuredText), for the pixel mask.
+    const measureDocument = (root: Document, origin: DocumentOrigin, holdText: boolean): void => {
+      const measured: Array<{ entry: MeasuredTextNode; parent: Element }> = [];
+      const ordered: MeasuredTextNode[] = [];
+      const walker = root.createTreeWalker(root.body, NodeFilter.SHOW_TEXT, {
+        acceptNode(node) {
+          const parent = node.parentElement;
+          if (!node.nodeValue || !node.nodeValue.trim() || !parent) return NodeFilter.FILTER_REJECT;
+          // xterm's own DOM (its helper textarea, its accessibility tree) is measured as a terminal
+          // below; an extension's node is hidden by demo/boot.js and never the page's.
+          if (parent.closest('.xterm, [data-demo-foreign], script, style, noscript, template')) return NodeFilter.FILTER_REJECT;
+          return NodeFilter.FILTER_ACCEPT;
+        },
+      });
+      const range = root.createRange();
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const parent = node.parentElement as Element;
+        if (!isShown(parent)) continue;
+        range.selectNodeContents(node);
+        const rects = Array.from(range.getClientRects()).filter((rect) => rect.width > 0 && rect.height > 0);
+        if (rects.length === 0) continue;
+        // One box per line: a line can come back as several rects (a bidi run), joined here.
+        const lines: Array<{ left: number; top: number; right: number; bottom: number }> = [];
+        for (const rect of rects) {
+          const line = lines.find((candidate) => Math.abs(candidate.top - rect.top) < 1);
+          if (line) {
+            line.left = Math.min(line.left, rect.left);
+            line.right = Math.max(line.right, rect.right);
+            line.bottom = Math.max(line.bottom, rect.bottom);
+          } else {
+            lines.push({ left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom });
           }
         }
+        lines.sort((first, second) => first.top - second.top);
+        // Where each line after the first starts, by character: the first character whose box sits
+        // on that line. Read only for a node that wraps, so a one-line node costs one rect read.
+        const breaks: number[] = [];
+        const text = node.nodeValue ?? '';
+        if (lines.length > 1) {
+          let lineIndex = 1;
+          for (let offset = 0; offset < text.length && lineIndex < lines.length; offset++) {
+            range.setStart(node, offset);
+            range.setEnd(node, offset + 1);
+            const characterRect = Array.from(range.getClientRects()).find((rect) => rect.width > 0 || rect.height > 0);
+            if (characterRect && characterRect.top >= lines[lineIndex].top - 0.5) {
+              breaks.push(offset);
+              lineIndex += 1;
+            }
+          }
+        }
+        measured.push({
+          parent,
+          entry: {
+            path: `${origin.prefix}${pathOf(parent)}`,
+            text,
+            breaks,
+            lines: lines.map((line) => box({ left: line.left, top: line.top, width: line.right - line.left, height: line.bottom - line.top }, origin)),
+          },
+        });
       }
-      textNodes.push({
-        path: pathOf(parent),
-        text,
-        breaks,
-        lines: lines.map((line) => box({ left: line.left, top: line.top, width: line.right - line.left, height: line.bottom - line.top })),
-      });
+      // A container's text nodes are one contiguous run in document order, so each Monaco run is
+      // sorted in place, top to bottom, keeping document order within a row.
+      let index = 0;
+      while (index < measured.length) {
+        const first = rowOf(measured[index].parent);
+        if (!first) {
+          ordered.push(measured[index].entry);
+          index += 1;
+          continue;
+        }
+        const run: Array<{ entry: MeasuredTextNode; top: number; order: number }> = [];
+        while (index < measured.length) {
+          const row = rowOf(measured[index].parent);
+          if (!row || row.container !== first.container) break;
+          run.push({ entry: measured[index].entry, top: row.top, order: run.length });
+          index += 1;
+        }
+        run.sort((left, right) => left.top - right.top || left.order - right.order);
+        for (const item of run) ordered.push(item.entry);
+      }
+      if (holdText) textNodes.push(...ordered);
+      else for (const entry of ordered) unmeasuredText.push(...entry.lines);
+      // An empty field's placeholder is drawn by the browser and is no text node: its content box.
+      for (const field of Array.from(root.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input[placeholder], textarea[placeholder]'))) {
+        if (!field.placeholder.trim() || field.value !== '' || !isShown(field)) continue;
+        const rect = field.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) continue;
+        const style = styleOf(field);
+        const left = parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft);
+        const right = parseFloat(style.borderRightWidth) + parseFloat(style.paddingRight);
+        const top = parseFloat(style.borderTopWidth) + parseFloat(style.paddingTop);
+        const bottom = parseFloat(style.borderBottomWidth) + parseFloat(style.paddingBottom);
+        unmeasuredText.push(box({ left: rect.left + left, top: rect.top + top, width: rect.width - left - right, height: rect.height - top - bottom }, origin));
+      }
+      // An icon-font glyph is text the OS rasterizes, drawn by a ::before with no text node:
+      // Monaco's codicons (the diff gutter's + and -, its widgets). Its element's box.
+      for (const icon of Array.from(root.querySelectorAll('.codicon'))) {
+        if (!isShown(icon)) continue;
+        const rect = icon.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) unmeasuredText.push(box(rect, origin));
+      }
+    };
+
+    measureDocument(document, PAGE_ORIGIN, true);
+    // A same-origin iframe's text (the Browser pane's guest) is kept as boxes only: the guest loads
+    // on its own clock, after the frame's own ready (a scene that waits on it says so in its
+    // `ready`), so holding its text by index would race the load. A cross-origin iframe reads as a
+    // null document and is left out.
+    for (const frame of Array.from(document.querySelectorAll('iframe'))) {
+      const inner = frame.contentDocument;
+      if (!inner || !inner.body || !isShown(frame) || frame.offsetWidth === 0) continue;
+      const rect = frame.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) continue;
+      const scale = rect.width / frame.offsetWidth;
+      const style = styleOf(frame);
+      measureDocument(inner, {
+        x: rect.left + (parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft)) * scale,
+        y: rect.top + (parseFloat(style.borderTopWidth) + parseFloat(style.paddingTop)) * scale,
+        scale,
+        prefix: `${pathOf(frame)} >> `,
+      }, false);
     }
 
     const terminals: MeasuredTerminal[] = [];
@@ -153,11 +253,11 @@ export async function measureFrame(page: Page): Promise<FrameMeasure> {
         cols,
         rows,
         cell: { width: round(rect.width / cols), height: round(rect.height / rows) },
-        rect: box(rect),
+        rect: box(rect, PAGE_ORIGIN),
       });
     }
 
-    return { viewport: { width: window.innerWidth, height: window.innerHeight }, textNodes, terminals };
+    return { viewport: { width: window.innerWidth, height: window.innerHeight }, textNodes, terminals, unmeasuredText };
   });
 }
 

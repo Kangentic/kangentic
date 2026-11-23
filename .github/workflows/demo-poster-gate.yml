@@ -6,8 +6,10 @@ name: Demo poster gate
 # that nothing about the text moves at the lift: the same face, wrapping and layout.
 # Each leg boots every poster's scene from the very build the posters were shot
 # from, at 1, 1.25, 1.5 and 2x, and fails on a different wrap, a line box that moved,
-# a terminal on another grid, or a pixel that differs beyond antialiasing
-# (demo/poster-gate.mjs; tests/captures/helpers/poster-gate.ts says what is compared).
+# a terminal on another grid, or a pixel that differs beyond antialiasing: every
+# pixel on Linux, and every pixel but the text's on Windows and macOS, which
+# rasterize glyphs their own way (demo/poster-gate.mjs; tests/captures/helpers/
+# poster-gate.ts says what is compared). A case that passes only on its retry fails.
 #
 # What only this catches: the demo tier runs on Linux alone and never compares a
 # frame to its poster, and the posters are shot on Linux, so a face, a scrollbar
@@ -22,9 +24,9 @@ name: Demo poster gate
 #   workflow_call      release.yml's poster-gate job, with the artifact its
 #                      demo-posters job uploaded (the build and the set it shot).
 #   workflow_dispatch  a run on any branch before a tag: the shoot job builds the
-#                      demo and shoots the set on Linux first. This is also how the
-#                      per-OS pixel budgets in tests/captures/helpers/poster-gate.ts
-#                      are measured (demo/README.md, The poster gate).
+#                      demo and shoots the set on Linux first. This is also how a
+#                      budget in PIXEL_COMPARISON (tests/captures/helpers/poster-gate.ts)
+#                      is measured (demo/README.md, The poster gate).
 
 on:
   workflow_call:
