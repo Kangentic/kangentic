@@ -61,8 +61,10 @@ export interface GateCase {
  *   fractional-wraps  a long text breaks one word differently at 125 or 150 percent, where
  *                     Chromium lays text out with fractional advances; its text is held only at
  *                     whole scales.
+ *   pixels            something on the frame is drawn to the frame's running clock, so where it
+ *                     ends depends on when the shot lands; its layout and terminals are held.
  */
-export type GateKnownDifference = 'graph-labels' | 'held-terminals' | 'fractional-wraps';
+export type GateKnownDifference = 'graph-labels' | 'held-terminals' | 'fractional-wraps' | 'pixels';
 
 /** The element path segment the Knowledge Graph's canvas carries; its labels sit under it. */
 export const GRAPH_CANVAS_PATH = '[knowledge-graph-canvas]';
@@ -86,6 +88,7 @@ export const GATE_KNOWN_DIFFERENCES: Record<string, { skips: GateKnownDifference
   'command-terminal-tiled': { skips: 'held-terminals', reason: HELD_TERMINAL_REASON },
   'workflow-draft': { skips: 'fractional-wraps', reason: 'the draft\'s long description breaks one word later at 125 and 150 percent, where Chromium lays text out with fractional advances' },
   'settings-workflows': { skips: 'fractional-wraps', reason: 'the Workflow agent prompt breaks one word differently at 150 percent, where Chromium lays text out with fractional advances' },
+  'activity-overlay': { skips: 'pixels', reason: 'the overlay draws each session\'s timeline up to the frame\'s running clock, so its bars end a few pixels further along on a slower runner (3 device px on macOS in run 45118082966); its text, clocks included, is held' },
   'ssh-remote-project': { skips: 'fractional-wraps', reason: 'the cut-short description on the "Fix flaky replication test on slow disks" card breaks one word later at 150 percent, where Chromium lays text out with fractional advances' },
   'ssh-remote-host': { skips: 'fractional-wraps', reason: 'the redis board under the panel has the "Fix flaky replication test on slow disks" card, whose cut-short description breaks one word later at 150 percent, where Chromium lays text out with fractional advances' },
 };
@@ -110,7 +113,7 @@ export function knownDifferenceSkips(known: GateKnownDifference | undefined, gat
     text: known === 'fractional-wraps' && fractionalScale,
     graphLabels: known === 'graph-labels',
     terminals: known === 'held-terminals' && !gateCase.comparePositions,
-    pixels: known === 'graph-labels',
+    pixels: known === 'graph-labels' || known === 'pixels',
   };
 }
 
@@ -206,15 +209,20 @@ export function gateCases(set: GateSet): GateCase[] {
  *                 layout comparison: every text's content, wraps and line boxes, and every
  *                 terminal's grid and rect.
  *
- * Every budget is 0. Raise one only from a measured run of demo-poster-gate.yml (demo/README.md,
- * The poster gate), with its number and run beside it.
+ * The budget is how many counted pixels may differ. Raise one only from a measured run of
+ * demo-poster-gate.yml (demo/README.md, The poster gate), with its number and run beside it.
  */
 export type PixelComparisonMode = 'full' | 'outside-text';
 
 export const PIXEL_COMPARISON: Record<'linux' | 'win32' | 'darwin', { mode: PixelComparisonMode; budget: number }> = {
+  // Run 45118082966: 0 on every case, with no lone pixels either.
   linux: { mode: 'full', budget: 0 },
-  win32: { mode: 'outside-text', budget: 0 },
-  darwin: { mode: 'outside-text', budget: 0 },
+  // Run 45118082966: once the text in fields was left out, the largest residue was 41 pixels
+  // (column-automation clay), the edges of lucide icons shaded a step apart in small clusters.
+  win32: { mode: 'outside-text', budget: 60 },
+  // Run 45118082966: the same, largest 66 (completed-task-usage clay: the wrench and sidebar icons'
+  // edges, 1 to 3 pixels a cluster). A swapped or recolored icon changes far more than this.
+  darwin: { mode: 'outside-text', budget: 100 },
 };
 
 /** The comparison for the OS running the gate; one the table does not name is held to Linux's. */

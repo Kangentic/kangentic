@@ -10,7 +10,9 @@
  * compares.
  *
  *   textNodes  every visible text node in document order, its text, the character offsets where it
- *              wraps, and one box per line (Range.getClientRects, merged per line).
+ *              wraps, and one box per line (Range.getClientRects, merged per line). A node whose
+ *              every line lies outside the region its clipping ancestors leave it (an overscan row
+ *              a scroller hides) paints nothing and is left out.
  *   terminals  every mounted xterm: its grid, its cell as the frame shows it, and the rect it draws
  *              in. xterm paints into a canvas, so no text node of it exists, and this is what holds
  *              its layout to the poster's.
@@ -54,7 +56,7 @@ export interface FrameMeasure {
   terminals: MeasuredTerminal[];
   /**
    * Text whose layout is not compared, kept as boxes for the poster gate's pixel mask
-   * (poster-gate.ts, textMaskBoxes): an empty field's placeholder (its content box) and an
+   * (poster-gate.ts, textMaskBoxes): a field's value or placeholder (its content box) and an
    * icon-font glyph (Monaco's codicons), neither of which is a text node, and each line of a
    * same-origin iframe's text. Absent from a sidecar written before it existed.
    */
@@ -108,6 +110,32 @@ export async function measureFrame(page: Page): Promise<FrameMeasure> {
       return { container, top: row.getBoundingClientRect().top };
     };
 
+    // The region of the page an element's content can paint in: its document's viewport, cut by
+    // every ancestor whose overflow clips (a scroller, an overflow-hidden panel). A fixed element
+    // escapes its ancestors' clips. A virtualized list renders overscan rows its scroller hides,
+    // and how many it renders changes with the display scale, so text that paints nowhere is not
+    // measured (the Activity tab rendered one row more at 150 percent, out of sight).
+    interface ClipRect { left: number; top: number; right: number; bottom: number }
+    const clipCache = new Map<Element, ClipRect>();
+    const clipOf = (element: Element): ClipRect => {
+      const cached = clipCache.get(element);
+      if (cached) return cached;
+      const style = styleOf(element);
+      const view = element.ownerDocument.defaultView ?? window;
+      let clip: ClipRect = style.position === 'fixed' || !element.parentElement
+        ? { left: 0, top: 0, right: view.innerWidth, bottom: view.innerHeight }
+        : clipOf(element.parentElement);
+      if (style.overflowX !== 'visible' || style.overflowY !== 'visible') {
+        const rect = element.getBoundingClientRect();
+        clip = { left: Math.max(clip.left, rect.left), top: Math.max(clip.top, rect.top), right: Math.min(clip.right, rect.right), bottom: Math.min(clip.bottom, rect.bottom) };
+      }
+      clipCache.set(element, clip);
+      return clip;
+    };
+    const paintsInside = (rect: DOMRect, clip: ClipRect): boolean =>
+      Math.min(rect.right, clip.right) - Math.max(rect.left, clip.left) > 0.5
+      && Math.min(rect.bottom, clip.bottom) - Math.max(rect.top, clip.top) > 0.5;
+
     const textNodes: MeasuredTextNode[] = [];
     const unmeasuredText: MeasuredBox[] = [];
     // `holdText` false keeps a document's text as boxes only (unmeasuredText), for the pixel mask.
@@ -131,6 +159,8 @@ export async function measureFrame(page: Page): Promise<FrameMeasure> {
         range.selectNodeContents(node);
         const rects = Array.from(range.getClientRects()).filter((rect) => rect.width > 0 && rect.height > 0);
         if (rects.length === 0) continue;
+        const clip = clipOf(parent);
+        if (!rects.some((rect) => paintsInside(rect, clip))) continue;
         // One box per line: a line can come back as several rects (a bidi run), joined here.
         const lines: Array<{ left: number; top: number; right: number; bottom: number }> = [];
         for (const rect of rects) {
@@ -192,9 +222,12 @@ export async function measureFrame(page: Page): Promise<FrameMeasure> {
       }
       if (holdText) textNodes.push(...ordered);
       else for (const entry of ordered) unmeasuredText.push(...entry.lines);
-      // An empty field's placeholder is drawn by the browser and is no text node: its content box.
-      for (const field of Array.from(root.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input[placeholder], textarea[placeholder]'))) {
-        if (!field.placeholder.trim() || field.value !== '' || !isShown(field)) continue;
+      // A field's text, its value or its placeholder, is drawn by the browser and is no text node:
+      // its content box. Only the fields that draw text; a checkbox or a range draws none.
+      const textFields = 'input:not([type]), input[type="text"], input[type="search"], input[type="email"], input[type="url"], input[type="tel"], input[type="number"], input[type="password"], textarea, select';
+      for (const field of Array.from(root.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(textFields))) {
+        const drawsText = field.value !== '' || ('placeholder' in field && field.placeholder.trim() !== '');
+        if (!drawsText || !isShown(field)) continue;
         const rect = field.getBoundingClientRect();
         if (rect.width === 0 || rect.height === 0) continue;
         const style = styleOf(field);

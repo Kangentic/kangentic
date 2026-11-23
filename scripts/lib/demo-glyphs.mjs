@@ -12,7 +12,11 @@
  *   ui        the renderer and shared source (literal glyphs in the UI and the language picker's
  *             native names), the dataset the seed builds the board from, and the English and German
  *             catalogs (the `settings-language` scene switches to German). Source comments are read
- *             too, which costs a few extra glyphs and is why a gap below names one.
+ *             too, which costs a few extra glyphs and is why a gap below names one. So is every
+ *             recording field the frame draws as HTML rather than in xterm (RECORDING_HTML_FIELDS:
+ *             the Monitor card's output peek and the card's message trail), box drawing and
+ *             braille included: there no xterm draws them, and a "│" in a peek fell back to
+ *             DejaVu Sans Mono on Linux and Consolas on Windows (v0.62.0's poster gate).
  *
  * Only codepoints past ASCII count, and invisible format characters (variation selectors, zero
  * width joiners and marks) are skipped, since no face draws them.
@@ -24,6 +28,8 @@ import path from 'node:path';
 export const DEMO_GLYPH_GAPS = {
   0x2139: 'Gemini prints it in one recording (spring-petclinic-gemini-owner-search), and no OFL face on Fontsource carries U+2139, so it falls back to the visitor\'s own face',
   0x257f: 'only in a source comment in terminal-links/buffer-line-text.ts; xterm draws it in the terminal',
+  0x259c: 'Claude Code\'s logo, in a session\'s opening Monitor peek; Fontsource cuts every face it carries by language, and no subset of any OFL face there carries the quadrant blocks, so a peek showing it falls back to the visitor\'s own face. No poster shows one (the poster gate passed every Monitor and Command Terminal scene on 2026-11-23)',
+  0x259d: 'Claude Code\'s logo, in a session\'s opening Monitor peek; Fontsource cuts every face it carries by language, and no subset of any OFL face there carries the quadrant blocks, so a peek showing it falls back to the visitor\'s own face. No poster shows one (the poster gate passed every Monitor and Command Terminal scene on 2026-11-23)',
 };
 
 /** What xterm's WebGL renderer draws itself rather than from a face. */
@@ -43,6 +49,8 @@ function isInvisibleFormat(code) {
 }
 
 const TERMINAL_SOURCES = [{ dir: 'tests/captures/fixtures/demo', pattern: /\.json$/ }];
+/** The recording fields the frame draws as HTML: the Monitor card's output peeks and the card's message trail. */
+export const RECORDING_HTML_FIELDS = ['peek', 'peekTimeline', 'messageTrail'];
 const UI_SOURCES = [
   { dir: 'src/renderer', pattern: /\.(tsx?|css)$/ },
   { dir: 'src/shared', pattern: /\.tsx?$/ },
@@ -73,18 +81,29 @@ function filesUnder(root, pattern) {
  * what xterm draws.
  */
 export function collectDemoCodepoints(repoRoot) {
+  const note = (seen, text, where, skip) => {
+    for (const character of text) {
+      const code = character.codePointAt(0);
+      if (code < 0x80 || isInvisibleFormat(code) || skip(code) || seen.has(code)) continue;
+      seen.set(code, where);
+    }
+  };
+  const relative = (file) => path.relative(repoRoot, file).split(path.sep).join('/');
   const read = (sources, skip) => {
     const seen = new Map();
     for (const source of sources) {
-      for (const file of filesUnder(path.join(repoRoot, source.dir), source.pattern)) {
-        for (const character of fs.readFileSync(file, 'utf8')) {
-          const code = character.codePointAt(0);
-          if (code < 0x80 || isInvisibleFormat(code) || skip(code) || seen.has(code)) continue;
-          seen.set(code, path.relative(repoRoot, file).split(path.sep).join('/'));
-        }
-      }
+      for (const file of filesUnder(path.join(repoRoot, source.dir), source.pattern)) note(seen, fs.readFileSync(file, 'utf8'), relative(file), skip);
     }
     return seen;
   };
-  return { terminal: read(TERMINAL_SOURCES, isDrawnByXterm), ui: read(UI_SOURCES, () => false) };
+  const ui = read(UI_SOURCES, () => false);
+  for (const source of TERMINAL_SOURCES) {
+    for (const file of filesUnder(path.join(repoRoot, source.dir), source.pattern)) {
+      const recording = JSON.parse(fs.readFileSync(file, 'utf8'));
+      for (const field of RECORDING_HTML_FIELDS) {
+        if (recording[field] !== undefined) note(ui, JSON.stringify(recording[field]), `${relative(file)} (${field})`, () => false);
+      }
+    }
+  }
+  return { terminal: read(TERMINAL_SOURCES, isDrawnByXterm), ui };
 }

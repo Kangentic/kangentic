@@ -1179,15 +1179,16 @@ is held to three things (`tests/captures/helpers/poster-gate.ts`):
 - **Pixels**, where a poster exists at that scale: nothing may differ beyond what pixelmatch reads
   as antialiasing (`PIXEL_COMPARISON`). On Linux, where the posters are shot, every pixel counts,
   so this leg fails on a change in how text itself is drawn. On Windows and macOS every pixel
-  counts but the text's: each measured line box, each empty field's placeholder, each terminal,
+  counts but the text's: each measured line box, each field's value or placeholder, each terminal,
   each of Monaco's icon-font glyphs and the Browser pane's guest text are left out, 1 CSS px
   around. Each OS rasterizes glyphs its own way, and no budget tells that from a real change. In
   v0.62.0 every 2x frame differed on both, `welcome clay` by 7212 pixels on Windows and 4459 on
   macOS with the same text in the same places, and leaving the text out took them to 0 and 2. The
   layout above still holds that text on every OS. A differing pixel with no differing neighbour is
-  not counted on any OS: macOS shades about eight icon edges a frame one step apart from Linux. A
-  real change moves pixels together. Every budget is 0, and one is raised only from a measured
-  run, with the number beside the value.
+  not counted on any OS. Icons still shade their edges a step apart in clusters of 1 to 3 pixels,
+  so Windows and macOS carry a budget measured from run 45118082966 (largest 41 and 66; budgets 60
+  and 100). Linux measured 0 and holds at 0. A budget is raised only from a measured run, with the
+  number beside the value.
 
 The frame keeps its own clock (`demo/boot.js`, the frame's clock): it opens at 2026-11-09 12:00
 UTC whenever a visitor opens the page, and dates, times and numbers format in UTC and en-US, so a
@@ -1211,6 +1212,8 @@ run prints it:
   xterm conforms it to the largest type its pane takes at each display's own cell. Its terminals
   are held at the poster's scale only. Holding one grid instead left the pane an empty band at 125
   and 200 percent, the posters' own scale included, so the fill was kept.
+- The Activity overlay draws each session's timeline up to the frame's running clock, so its bars
+  end a few pixels further along on a slower runner. Its pixels are not held; its text is.
 - `workflow-draft`, `settings-workflows` and the two redis scenes (`ssh-remote-project`,
   `ssh-remote-host`) break one long text a word differently at 125 or 150 percent, where Chromium
   lays text out with fractional advances. Their text is held at whole scales only.
@@ -1242,8 +1245,8 @@ underline the agent wrote (the frames rebuilt with
 `node scripts/backfill-demo-timelines.mjs --force`). The looping hero's terminal is held to the
 still's grid and layout at ready, not its pixels: a shot right after ready races the spinner.
 
-The first release runs on Windows and macOS (v0.61.0 and v0.62.0) found five more, each a frame
-that showed a visitor something other than its poster:
+The first release runs on Windows and macOS (v0.61.0 and v0.62.0), and the dispatched runs that
+followed, found these, each a frame that showed a visitor something other than its poster:
 
 - The context bar named the shell from `navigator.platform`, the visitor's OS, so a Windows
   visitor read "Git Bash" over a poster that said "bash". The sample install is a Windows machine,
@@ -1255,14 +1258,24 @@ that showed a visitor something other than its poster:
 - Inline code in a conversation asked for `ui-monospace, monospace` rather than `--font-mono`, so
   each OS drew it in its own face and Windows wrapped it differently. It now uses the variable, and
   `tests/unit/release-workflow-gates.test.ts` fails any renderer `font-family` that does not.
-- The Browser pane's guest page asked for `system-ui`. It now names the demo's sans face, which
-  `demo/boot.js` registers in its document (`dressGuestFonts`) before the shim reports it loaded.
+- The Browser pane's guest page asked for `system-ui`, and drew the OS's native scrollbars. It now
+  names the demo's sans face, which `demo/boot.js` registers in its document (`dressGuestFonts`)
+  before the shim reports it loaded, and paints its scrollbars as the app does.
+- Monaco drew the Changes diff in its own per-OS default face (Consolas on Windows). `DiffViewer`
+  now hands it the app's `--font-mono` stack, which the blame gutter in the same editor already
+  used.
+- A Monitor card's output peek drew a recording's box drawing ("│") as HTML, where xterm does not
+  draw it, so it fell back to each OS's monospace face. `scripts/lib/demo-glyphs.mjs` now counts
+  the recordings' peeks and message trails as UI text, and the symbol cut carries what they need.
 - `windows-tiled` and `ssh-remote-project` reported ready before a window's terminal had drawn, on
   a slow macOS runner, since terminals are built one at a time. Their `ready` now waits for each
   task window's terminal.
 
-Monaco reuses its absolutely placed line elements, so their DOM order changed from one boot to the
-next with the same lines on screen; the measure takes its lines top to bottom.
+Two more were the measure's own. Monaco reuses its absolutely placed line elements, so their DOM
+order changed from one boot to the next with the same lines on screen; the measure takes its lines
+top to bottom. And a virtualized list renders overscan rows its scroller hides, one more at 150
+percent than at 200 on the Activity tab; the measure leaves out text that paints nowhere inside its
+clipping ancestors.
 
 `.github/workflows/demo-poster-gate.yml` runs it on Windows, macOS and Linux, two shards each.
 `release.yml`'s `poster-gate` job calls it after `demo-posters` has attached the zip, on the build

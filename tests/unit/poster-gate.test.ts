@@ -166,6 +166,10 @@ describe('knownDifferenceSkips', () => {
     expect(knownDifferenceSkips('held-terminals', at(2))).toEqual({ text: false, graphLabels: false, terminals: false, pixels: false });
   });
 
+  it('skips the pixels of a drawing made to the running clock, and holds its text and terminals', () => {
+    expect(knownDifferenceSkips('pixels', at(2))).toEqual({ text: false, graphLabels: false, terminals: false, pixels: true });
+  });
+
   it('skips a graph\'s labels and its WebGL pixels at every scale, and nothing else', () => {
     for (const scale of GATE_SCALES) {
       expect(knownDifferenceSkips('graph-labels', at(scale))).toEqual({ text: false, graphLabels: true, terminals: false, pixels: true });
@@ -294,11 +298,11 @@ describe('the pixel comparison on each OS', () => {
   const compare = (mode: PixelComparisonMode, frame: Buffer, reference = measure('Board'), shot = measure('Board')) =>
     comparePixels(poster, frame, { mask: pixelMaskFor(mode, reference, shot, 1) }).differing;
 
-  it('compares every pixel on Linux and only what is not text on Windows and macOS, each to a budget of 0', () => {
+  it('compares every pixel on Linux to none, and only what is not text on Windows and macOS to their measured budgets', () => {
     expect(PIXEL_COMPARISON).toEqual({
       linux: { mode: 'full', budget: 0 },
-      win32: { mode: 'outside-text', budget: 0 },
-      darwin: { mode: 'outside-text', budget: 0 },
+      win32: { mode: 'outside-text', budget: 60 },
+      darwin: { mode: 'outside-text', budget: 100 },
     });
     expect(pixelComparisonFor('freebsd')).toEqual(PIXEL_COMPARISON.linux);
   });
