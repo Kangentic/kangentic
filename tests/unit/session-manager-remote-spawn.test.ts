@@ -334,6 +334,45 @@ describe('spawning an agent session on a host', () => {
     expect(Object.keys(options.env)).not.toContain('USERPROFILE');
   });
 
+  it('pauses a resume whose host output says the conversation is missing, reading that output from the host (DESKTOP-4Y)', async () => {
+    // The PTY has no pid here, so the watcher never registers it and the sweep
+    // can never look. The launch output is read back from the host over the link
+    // and judges the launch itself, through the same pause the sweep uses.
+    const rig = await makeRig();
+    const neverStarted = vi.fn();
+    rig.manager.on('agent-never-started', neverStarted);
+    const parser = {
+      reportsAgentStart: true,
+      namesMissingConversation: (output: string, id: string) => output.includes(`No conversation found with session ID: ${id}`),
+    } as unknown as AgentParser;
+    await rig.manager.spawn({
+      id: 's1',
+      taskId: 'task-1',
+      projectId: 'project-1',
+      command: 'claude --resume conversation-1',
+      cwd: shellFolder,
+      statusOutputPath: rig.statusPath,
+      eventsOutputPath: rig.eventsPath,
+      exitSequence: ['\x03'],
+      shell: 'zsh',
+      agentParser: parser,
+      resuming: true,
+      agentSessionId: 'conversation-1',
+      cliTarget: toStoredCliTarget(rig.place),
+      remote: { hostId: 'host-a', cwd: hostProject.replace(/\\/g, '/'), shellName: 'zsh' },
+    });
+    // Past the 30 s grace, as the timer armed at spawn would find it.
+    const registry = (rig.manager as unknown as { registry: Map<string, { startedAt: string }> }).registry;
+    const row = registry.get('s1');
+    if (!row) throw new Error('the spawn registered no session');
+    row.startedAt = new Date(Date.now() - 34_000).toISOString();
+
+    rig.helperRig.fakes[0].feed('No conversation found with session ID: conversation-1\r\n[dev@host api]$ ');
+
+    await waitFor(() => neverStarted.mock.calls.length === 1);
+    expect(neverStarted.mock.calls[0][0]).toBe('s1');
+  });
+
   it('types the agent\'s command into the host\'s shell, quoted for it', async () => {
     const rig = await makeRig();
 
