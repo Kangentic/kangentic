@@ -467,9 +467,11 @@ sweep (`exitedWithNoConversation`). The retirement's kill is not a deliberate st
 it carries `overrideExitCode` 0, the CLI's own end seen late, while any other `kill()` that keeps
 the row does not count. Seen late is the catch: a launch with no sign it ran is judged only at the
 120 s start ceiling, so the minute is counted to the shell's last output (`lastOutputAt`, its prompt
-as the agent ended), not to the kill. Codex 0.171.0 dead 6 s in under PowerShell was killed 116 s
+as the agent ended), not to the kill. A last output from before the agent ran tells nothing about
+its end, so the exit time stands then. Codex 0.171.0 dead 6 s in under PowerShell was killed 116 s
 after it ran (task #1182). A session whose launch already reported a failure sends no capture
-report at all. See [Error reporting](../../telemetry/error-reporting.md).
+report when its outcome is "never" and no id store holds an id. See
+[Error reporting](../../telemetry/error-reporting.md).
 
 **Which agents can report this.** Only Claude and Droid declare `reportsAgentStart`. The flag is
 static and read at spawn, so it has to hold for every way an adapter launches, print and resume
