@@ -197,10 +197,16 @@ describe('CLAUDE_ACCOUNT_SUPPORT.readIdleUsage', () => {
     expect((failure as EmptyUsageReadError).cause).toBe(rejection);
   });
 
-  it('names a missing state file and one with no cache', async () => {
-    expect(await emptyReason()).toBe('cache-missing');
+  // Sentry DESKTOP-4E on 0.62.0: one `cache-missing` covered three states, and the normal one
+  // before Claude's first usage fetch reported on every launch. Each now has its own word.
+  it('names a missing state file, an unparseable one, one that is not a record, and one with no cache', async () => {
+    expect(await emptyReason()).toBe('state-unreadable');
+    fs.writeFileSync(path.join(accountFolder, '.claude.json'), '{"cachedUsageUtilization": {"fetchedAt');
+    expect(await emptyReason()).toBe('state-unreadable');
+    writeState([]);
+    expect(await emptyReason()).toBe('state-not-record');
     writeState({ oauthAccount: {} });
-    expect(await emptyReason()).toBe('cache-missing');
+    expect(await emptyReason()).toBe('no-cache');
   });
 
   it('names a cache the run did not refresh', async () => {
