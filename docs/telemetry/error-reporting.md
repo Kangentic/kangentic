@@ -580,11 +580,15 @@ in one Sentry org, one triage surface.
     of its own. That one takes prompts and writes its store, so its miss still reports, with
     `login` saying what the CLI answered. A late id needs only the first and last: signed out at
     the window and no prompt seen, whatever the store says. The late id already proves the
-    conversation came after the window, so the delay is the sign-in. And Codex's store answers
-    `present` whenever a rollout folder for today or yesterday exists, so an earlier run that day
-    said nothing about this session. That is how DESKTOP-4C came back on 0.62.0: a Codex with its
-    prompt on the command line, signed out at the window, `id_store` `present`, whose id came by
-    the hook one to five minutes after the spawn. The screen's own text is not what decides it: ConPTY
+    conversation came after the window. That the delay is the sign-in is a reading of the event,
+    not a measurement: DESKTOP-4C came back on 0.62.0 as a Codex with its prompt on the command
+    line, signed out at the window, whose id came by the hook one to five minutes after the spawn,
+    and Codex's source writes a conversation's file at its first persist. No signed-out run that
+    then signed in has been timed. It costs a CLI that works signed out, sees no prompt and
+    captures late its report. Codex's store used to be no help here, because it answered `present`
+    whenever a rollout folder for today or yesterday existed, so an earlier run that day said
+    nothing about this session. It now answers about this session (below), but a late id does not
+    need it. The screen's own text is not what decides it: ConPTY
     draws that screen as cursor moves, which read as one run-on line, so
     `identifyUserSetupFailure`'s whole-line patterns cannot match it. A never-captured session
     whose agent died at start goes to the launch report instead, as stage `agent_exited` with
@@ -595,6 +599,23 @@ in one Sentry org, one triage surface.
     counts: it ends a shell whose agent had already exited, and marks it with `overrideExitCode`
     0. Its agent ran and ended under 60 s later, counted in milliseconds; no prompt was seen;
     and its store is not `present`. Such a run had no conversation to capture.
+    A terminal nobody used sends nothing either. A never-captured session started with no opening
+    prompt (`opening_prompt` `none`), that no prompt reached (`prompt_seen` `no`), and whose store
+    reads `absent`, had no conversation, so there was no id to capture. This is DESKTOP-36's
+    shape on 0.62.0: a signed-in Codex Command Terminal, still running at the ceiling, with no
+    hook line and `id_store` `present`. For Codex that `present` was the day's whole rollout
+    folder. The store now answers about this session: `present` only for a rollout whose
+    `session_meta` was made at or after the spawn less one second, in the session's cwd, with no
+    upper bound on how late, and `absent` for a folder that holds only earlier runs. It is asked
+    again when the session settles, not only at the window, because a conversation made after the
+    window is no miss of ours. A read that fails reads `unknown`, or `present` when the window's
+    read said `present`. Both report, so a stale `absent` is never carried over it. A session where someone typed and the hook was lost has a rollout and
+    still reports. A death at start goes to the launch report first. That a Codex makes no
+    conversation file until its first turn is Codex's source (a new session's file is created at
+    its first persist), not yet a measurement on a signed-in run. Were it written at launch, an
+    untouched terminal would read `present` and still report: the rule then does nothing, and
+    never drops a real miss. A second Codex started later in the same folder can read as this
+    session's, which only moves the answer toward `present`.
     The DESKTOP-36 events after the signed-out drop were one install's Codex 0.163.0 that ran
     with a command-line prompt, exited seconds in and wrote no rollout, on three days. As a
     missed id it hid among the real misses, and dropping it would lose the only sign that a
@@ -620,9 +641,9 @@ in one Sentry org, one triage surface.
     not count, and used to),
     `fs_scan` (what the filesystem pathway did: `none`, `pending`,
     `found`, `empty`, `dropped` for a match another session could own, `failed`), `id_store`
-    (`present`, `absent`, `unknown`: whether the agent's own store exists, from the adapter's
-    `sessionId.storeEvidence`, today's or yesterday's rollout folder for Codex and `opencode.db`
-    for OpenCode), `node_on_path` (`yes`, `no`, `unknown`: whether a bare `node` resolves on
+    (`present`, `absent`, `unknown`: whether the agent's own store holds this session, from the
+    adapter's `sessionId.storeEvidence`: for Codex a rollout in today's or yesterday's UTC folder
+    made since the spawn in the session's cwd, and for OpenCode `opencode.db`), `node_on_path` (`yes`, `no`, `unknown`: whether a bare `node` resolves on
     main's PATH, the one a local session's shell starts from, asked at the window. The command
     hooks Kangentic installs start the event bridge as `node`, so `no` says main found none for
     them; OpenCode's hooks run as a plugin inside OpenCode and need none. A session in a WSL

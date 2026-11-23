@@ -411,7 +411,8 @@ report is `stage: never_started`, one of the stages in
 evidence for every launch.
 
 **It also reports a run that started and ended with nothing to resume.** An agent that ran, ended on
-its own under a minute later and never gave a session id reaches the launch report as `stage:
+its own under a minute later, took no prompt, left no store that holds its session and never gave
+a session id reaches the launch report as `stage:
 agent_exited` with cause `no_conversation`, from the session-id outcome rather than from this
 sweep (`exitedWithNoConversation`). The retirement's kill is not a deliberate stop to that check:
 it carries `overrideExitCode` 0, the CLI's own end seen late, while any other `kill()` that keeps

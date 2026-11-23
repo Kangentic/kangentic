@@ -119,6 +119,96 @@ describe('Codex storeEvidence reduction of the two folder answers', () => {
   });
 });
 
+// Sentry DESKTOP-36 and DESKTOP-4C on 0.62.0: the folder holds every run of the
+// day, so an earlier run made `present` true for a session that had no
+// conversation of its own. Asked with the spawn time, the answer is about this
+// session's rollout.
+describe('Codex storeEvidence about one session (spawnedAt)', () => {
+  let codexHome: string;
+  let projectFolder: string;
+  const originalCodexHome = process.env.CODEX_HOME;
+  const spawnedAt = new Date(Date.now() - 60_000);
+
+  beforeEach(() => {
+    codexHome = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-store-session-'));
+    projectFolder = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-store-project-'));
+    process.env.CODEX_HOME = codexHome;
+    fs.mkdirSync(codexSessionsDirForToday(), { recursive: true });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    if (originalCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = originalCodexHome;
+    fs.rmSync(codexHome, { recursive: true, force: true });
+    fs.rmSync(projectFolder, { recursive: true, force: true });
+  });
+
+  /** A rollout Codex wrote, with the `session_meta` its first line carries. */
+  function writeRollout(options: { id: string; cwd: string; createdAtMs: number }): void {
+    const createdAt = new Date(options.createdAtMs).toISOString();
+    const meta = { type: 'session_meta', payload: { id: options.id, cwd: options.cwd.replace(/\\/g, '/'), timestamp: createdAt } };
+    const fileName = `rollout-${createdAt.replace(/[:.]/g, '-')}-${options.id}.jsonl`;
+    fs.writeFileSync(path.join(codexSessionsDirForToday(), fileName), `${JSON.stringify(meta)}\n`);
+  }
+
+  const storeEvidence = () => {
+    const check = new CodexAdapter().runtime.sessionId?.storeEvidence;
+    if (!check) throw new Error('Codex declares no store evidence');
+    return check({ cwd: projectFolder, spawnedAt });
+  };
+
+  it('reads absent when the folder holds only runs from before this spawn', async () => {
+    writeRollout({ id: '11111111-1111-4111-8111-111111111111', cwd: projectFolder, createdAtMs: spawnedAt.getTime() - 600_000 });
+    await expect(storeEvidence()).resolves.toBe('absent');
+  });
+
+  it('reads absent for a folder with no rollout in it, though the folder exists', async () => {
+    await expect(storeEvidence()).resolves.toBe('absent');
+  });
+
+  it('reads present for a rollout this session made, even minutes after its spawn', async () => {
+    writeRollout({ id: '22222222-2222-4222-8222-222222222222', cwd: projectFolder, createdAtMs: spawnedAt.getTime() + 240_000 });
+    await expect(storeEvidence()).resolves.toBe('present');
+  });
+
+  it('reads present for a rollout made just after the spawn, as the capture window finds one', async () => {
+    writeRollout({ id: '33333333-3333-4333-8333-333333333333', cwd: projectFolder, createdAtMs: spawnedAt.getTime() + 2_000 });
+    await expect(storeEvidence()).resolves.toBe('present');
+  });
+
+  it('reads absent for a rollout made since the spawn in another folder', async () => {
+    writeRollout({ id: '44444444-4444-4444-8444-444444444444', cwd: path.join(projectFolder, 'other'), createdAtMs: spawnedAt.getTime() + 5_000 });
+    await expect(storeEvidence()).resolves.toBe('absent');
+  });
+
+  it('skips a file whose first line is not a session_meta, and one whose id disagrees with its name', async () => {
+    const folder = codexSessionsDirForToday();
+    fs.writeFileSync(path.join(folder, 'rollout-2026-11-23T10-00-00-55555555-5555-4555-8555-555555555555.jsonl'), 'not json\n');
+    writeRollout({ id: '66666666-6666-4666-8666-666666666666', cwd: projectFolder, createdAtMs: spawnedAt.getTime() + 5_000 });
+    const written = fs.readdirSync(folder).find((name) => name.includes('66666666'))!;
+    fs.renameSync(path.join(folder, written), path.join(folder, written.replace('66666666-6666-4666-8666-666666666666', '77777777-7777-4777-8777-777777777777')));
+    await expect(storeEvidence()).resolves.toBe('absent');
+  });
+
+  it('reads unknown, not absent, when a folder could not be read and no rollout was found', async () => {
+    const todayFolder = codexSessionsDirForToday();
+    const yesterdayFolder = codexSessionsDirForYesterday();
+    const directoryStats = fs.statSync(codexHome);
+    vi.spyOn(fs.promises, 'stat').mockImplementation(async (target) => {
+      if (String(target) === todayFolder) return directoryStats;
+      if (String(target) === yesterdayFolder) throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+      throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    });
+    await expect(storeEvidence()).resolves.toBe('unknown');
+  });
+
+  it('keeps the folder-only answer when no spawn time is given', async () => {
+    const check = new CodexAdapter().runtime.sessionId?.storeEvidence;
+    await expect(check?.({ cwd: projectFolder })).resolves.toBe('present');
+  });
+});
+
 describe('pathStoreEvidence error mapping', () => {
   afterEach(() => {
     vi.restoreAllMocks();

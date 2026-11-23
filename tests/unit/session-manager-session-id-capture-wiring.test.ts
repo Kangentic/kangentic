@@ -221,8 +221,13 @@ describe('a session whose id the capture window did not see', () => {
     await vi.advanceTimersByTimeAsync(10);
 
     expect(storeEvidence).toHaveBeenCalledTimes(1);
-    // A local session names no CLI target, and its folder is the one it was started in.
-    expect(storeEvidence).toHaveBeenCalledWith({ cwd: tmpDir, cliTarget: null });
+    // A local session names no CLI target, and its folder is the one it was started in. The check is
+    // asked about this session, so it gets the spawn time too.
+    expect(storeEvidence).toHaveBeenCalledWith({
+      cwd: tmpDir,
+      cliTarget: null,
+      spawnedAt: new Date(registryRowOf(manager, sessionId).startedAt),
+    });
     expect(reportsNamed('AgentSessionIdCapturedLateError')[0].tags.id_store).toBe('present');
   });
 
@@ -235,7 +240,11 @@ describe('a session whose id the capture window did not see', () => {
     await passTheWindow();
 
     expect(storeEvidence).toHaveBeenCalledTimes(1);
-    expect(storeEvidence).toHaveBeenCalledWith({ cwd: tmpDir, cliTarget: wslTarget });
+    expect(storeEvidence).toHaveBeenCalledWith({
+      cwd: tmpDir,
+      cliTarget: wslTarget,
+      spawnedAt: new Date(registryRowOf(manager, sessionId).startedAt),
+    });
   });
 
   it('reports the store as unknown when the adapter has no check', async () => {

@@ -1289,6 +1289,100 @@ describe('the session id capture reports', () => {
     expect(JSON.stringify([(error as Error).message, eventTags])).not.toContain('/Users/dev');
   });
 
+  // Sentry DESKTOP-36 on 0.62.0: a signed-in Command Terminal Codex opened with no
+  // prompt, still running at the ceiling, with no hook line. A Codex makes its
+  // conversation at its first turn, so nobody typing for five minutes means no
+  // conversation and no id. The store answered `present` for the whole day's
+  // folder, so the miss was reported. It now answers about this session.
+  describe('a terminal nobody used', () => {
+    const untouched = {
+      agentName: 'codex',
+      agentCliVersion: '0.171.0 (Codex CLI)',
+      startPath: 'command_terminal',
+      openingPrompt: 'none',
+      sessionIdCreation: 'not_asked',
+      firstOutputAt: STARTED_AT_MS + 900,
+    } as const satisfies Partial<ManagedSession>;
+
+    it('sends nothing, says so locally, and keeps the agent\'s one report', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        const noRollout = vi.fn(async (): Promise<SessionIdStoreEvidence> => 'absent');
+        const pastWindow = session({ resuming: false, ...untouched });
+        noteSessionIdCaptureWindowPassed(pastWindow, noRollout);
+        reportSessionIdCaptureOutcome(pastWindow.id, atCeiling, 'running');
+        await flushReportChain();
+
+        expect(reportHandledError).not.toHaveBeenCalled();
+        expect(warn.mock.calls.some((call) => String(call[0]).includes('no prompt reached it'))).toBe(true);
+        // Asked again at the settle, not only at the window.
+        expect(noRollout).toHaveBeenCalledTimes(2);
+
+        // Not spent on it: a session of the same agent that was typed into and missed its id still reports.
+        await settle({ ...untouched, id: 'session-2-long-id', promptObservedAt: STARTED_AT_MS + 4_000 }, atCeiling, async () => 'present');
+        expect(reportHandledError).toHaveBeenCalledTimes(1);
+        expect(reportHandledError.mock.calls[0][1]).toMatchObject({ prompt_seen: 'yes', id_store: 'present' });
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('sends nothing when the terminal is closed with no conversation made either', async () => {
+      const closed = session({ resuming: false, ...untouched });
+      noteSessionIdCaptureWindowPassed(closed, async () => 'absent');
+      reportSessionIdCaptureOutcome(closed.id, never, 'running');
+      await flushReportChain();
+      expect(reportHandledError).not.toHaveBeenCalled();
+    });
+
+    it('still reports one whose conversation was made after the window, read again at the settle', async () => {
+      const madeLater = vi.fn<() => Promise<SessionIdStoreEvidence>>()
+        .mockResolvedValueOnce('absent')
+        .mockResolvedValueOnce('present');
+      await settle(untouched, atCeiling, madeLater);
+
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({ opening_prompt: 'none', prompt_seen: 'no', id_store: 'present' });
+    });
+
+    it('still reports one that the window saw a conversation for, when the settle read fails', async () => {
+      const failsLater = vi.fn<() => Promise<SessionIdStoreEvidence>>()
+        .mockResolvedValueOnce('present')
+        .mockRejectedValueOnce(new Error('EACCES'));
+      await settle(untouched, atCeiling, failsLater);
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({ id_store: 'present' });
+    });
+
+    it('never drops one on a stale absent: a settle read that fails reads unknown, and reports', async () => {
+      const failsLater = vi.fn<() => Promise<SessionIdStoreEvidence>>()
+        .mockResolvedValueOnce('absent')
+        .mockRejectedValueOnce(new Error('EACCES'));
+      await settle(untouched, atCeiling, failsLater);
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({ id_store: 'unknown' });
+    });
+
+    it.each<[string, Partial<ManagedSession>]>([
+      ['was given its prompt on the command line', { openingPrompt: 'command_line' }],
+      ['was typed into, with the hook lost', { promptObservedAt: STARTED_AT_MS + 4_000 }],
+    ])('still reports one that %s, though its store reads absent', async (_label, overrides) => {
+      await settle({ ...untouched, ...overrides }, atCeiling, async () => 'absent');
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({ id_store: 'absent' });
+    });
+
+    it('leaves a late id to the late rule, which reads no store at the settle', async () => {
+      const noRollout = vi.fn(async (): Promise<SessionIdStoreEvidence> => 'absent');
+      const pastWindow = session({ resuming: false, ...untouched });
+      noteSessionIdCaptureWindowPassed(pastWindow, noRollout);
+      reportSessionIdCaptureOutcome(pastWindow.id, late, 'running');
+      // A session started with no prompt waits two seconds for its first one before a late id is judged.
+      await vi.waitFor(() => expect(reportHandledError).toHaveBeenCalledTimes(1), { timeout: 5_000 });
+
+      expect(noRollout).toHaveBeenCalledTimes(1);
+      expect(reportHandledError.mock.calls[0][0]).toMatchObject({ name: 'AgentSessionIdCapturedLateError' });
+    });
+  });
+
   it('reads a store check that fails or hangs as unknown', async () => {
     await settle({ agentName: 'codex' }, never, async () => { throw new Error('EACCES /Users/dev/.codex'); });
     expect(reportHandledError.mock.calls[0][1]).toMatchObject({ id_store: 'unknown' });
