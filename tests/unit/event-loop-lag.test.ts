@@ -405,7 +405,7 @@ describe('timeSyncWork attribution ring', () => {
 
   it('drops a relayed span while this process runs no monitor', async () => {
     const { recordRelayedSyncSpan, getEventLoopLagReport, getSyncWorkByLabel } = await loadMonitor();
-    recordRelayedSyncSpan('worker:db:checkpoint', 40);
+    recordRelayedSyncSpan('worker:db:checkpoint-tick', 40);
     expect(getEventLoopLagReport().recentRelayedSlowSyncWork).toHaveLength(0);
     expect(getSyncWorkByLabel()).toEqual({});
   });

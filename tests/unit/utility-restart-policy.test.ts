@@ -526,7 +526,7 @@ describe('UtilityRestartPolicy', () => {
 
       it('says which of three crashes held the loop where, in the order the DESKTOP-1Q latch had them', () => {
         // A worker that never says ready can still print one: the watchdog starts first in initialize().
-        const secondLine = '[retrieval-worker] event loop held 5 s in db:checkpoint';
+        const secondLine = '[retrieval-worker] event loop held 5 s in db:checkpoint-tick';
         const { policy, clock } = makePolicy();
         policy.recordCrash(null, makeStderrSource(firstLine), {
           cause: 'request_timeout',
