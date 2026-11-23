@@ -29,7 +29,7 @@ function handlerBody(source: string, eventName: string): string {
   throw new Error(`Unbalanced braces after ${marker}`);
 }
 
-describe('the wake clock is stamped from index.ts', () => {
+describe('the wake clock and the CPU speed limit are stamped from index.ts', () => {
   it('extracts a handler body rather than the whole file', () => {
     expect(handlerBody(indexSource, 'resume')).not.toContain("powerMonitor.on('unlock-screen'");
   });

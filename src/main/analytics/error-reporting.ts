@@ -436,8 +436,10 @@ export function beforeSendEvent(event: ErrorEvent, hint: EventHint): ErrorEvent 
  * Errors only: release-health session tracking (the MainProcessSession
  * integration, on by default) is filtered out, and tracing/replay are never
  * enabled. The Electron breadcrumbs integration is replaced by a copy that
- * skips `powerMonitor.speed-limit-change` (see the `integrations` option). Aptabase's app_error stays as the coarse error-rate pulse on the
- * product dashboard; Sentry is the diagnostic tool.
+ * skips `powerMonitor.speed-limit-change` (see the `integrations` option).
+ *
+ * Aptabase's app_error stays as the coarse error-rate pulse on the product
+ * dashboard; Sentry is the diagnostic tool.
  */
 export function initErrorReporting(options: { previousRun?: PreviousRun | null } = {}): void {
   previousRunForCrashReports = options.previousRun ?? null;
