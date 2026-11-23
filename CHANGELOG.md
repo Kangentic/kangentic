@@ -6,6 +6,72 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 <!-- releases -->
 
+## [v0.62.0] - 2026-11-22
+
+### Features
+- Draw the priority meter on the toolbar Priorities button (6134db2b)
+- Send who paused a task and the card Priority/Labels switches (c183595e)
+- Draw priority as four equal bars after the ticket number (6030b3d5)
+- Hold agent nudges when the reply ends on Needs owner (7d0f19e2)
+- Say which workflow tasks wait for a plan approval (ae57fab2)
+- Mint a per-dial id, send it to the relay, tag Sentry with it (cb29b8b1)
+
+### Fixes
+- Tag a timed-out capture with its display server (DESKTOP-46) (f1db73b0)
+- Report an agent that exits at start as a launch failure (53367303)
+- Map lucide's flip-*2 names and pin legacy icons to lucide's aliases (e2574d96)
+- Upgrade electron to 45.4.1 (421921a1)
+- Upgrade sherpa-onnx-node to 2.0.3 (99435ef3)
+- Upgrade Sentry build plugins to 11.16.0 (49bc7309)
+- Upgrade remove-markdown to 0.8.1 (b2f9299c)
+- Say which branch sent the sudo and usage-read reports (f055f235)
+- Keep the owner's sign-off across a restart that cuts a turn off (00679779)
+- Free the nudge queue slot when the nudged turn starts (c5b7d450)
+- Cite the relay's latency doc by URL, not as a path in this repo (43d66b8b)
+- Drop the Done card's hover delete so its title row matches a board card (598d2970)
+- Let a Reconnect's requests reach the router, keep host text out of analytics (17f1a2d9)
+- Count a removal the reap left a process in, and tag what still reports (7c0afee8)
+- Wait for a connecting host, and stop filing refused starts and denied macOS installs (fb93d800)
+- Re-list sessions before the panel reopen decides (206e8e66)
+- Run push-to-talk in pop-out windows (8ea24e24)
+- Keep a page's open menu open while the annotation tools run (fb16cffa)
+- Open terminal links in a popped-out Browser pane (f4d802df)
+- Hold a link relayed to a Browser pop-out that is still booting (d0f872b8)
+- Mouse back and forward navigate the pane in every window (9f340d21)
+
+### Other
+- Share one browser across dictation-pop-out so a close cannot hang past the budget (b7b1e4da)
+- Pin the ozone switch write-back and tidy the parked capture spec (2d5ae4fc)
+- Note the dictation smoke result on sherpa-onnx 2.0.3 (e1331aa0)
+- Refresh lockfile (2689a693)
+- Upgrade xterm to 6.1.0-beta.339 (67986bac)
+- Upgrade @tanstack/react-virtual to 3.14.28 (1ff1ba81)
+- Upgrade lucide-react to 1.77.0 (28193e1b)
+- Upgrade recharts to 3.11.0 (00c7f282)
+- Upgrade simple-git to 4.1.0 (b077e78c)
+- Upgrade @xyflow/react to 13.0.2 (5c6edcfe)
+- Upgrade vitest to 5.1.1 (b07d33a0)
+- Upgrade fast-check to 4.11.0 (1ff51f31)
+- Share the unreadable usage key list across adapters (9301bbe2)
+- Pin the carried owner turn's guards, parsers and repository writes (ddc4b312)
+- Say PriorityMeter also draws as the Priorities button icon (25cdf9e9)
+- Protocol-v0.29.0 (65a8e48f)
+- Pin paused_by's row and the Labels switch on read-board (cce43bde)
+- Say which later suspend keeps who paused a task (bee714ce)
+- Pin the Priority field in New Task and Edit Task (16daac91)
+- Pin the shared device pixel ratio watch (93b3b6a7)
+- Pin which turn-end rows a Needs owner reply holds (392d9ed1)
+- Hold Executing's Apply findings on a Needs owner: ending (8d53e8dc)
+- Pin the relay dial id's breadcrumb, session getter and tag rule (112a86bb)
+- Share focusByKeyboard from the UI test helpers (d4f3283e)
+- Drive a kept-process reap through to a real failed removal (eea5be68)
+- Name the removal's caller and reap-verdict options (9e8254d8)
+- Replace the removed host-id sentence in remote fixtures (e98cdd91)
+- Note the cross-window hold bound and where the binding is read (44ce45a2)
+- Share the push-to-talk binding and one per-window dictation mount (ce0d4fe4)
+- Share the keyboard combo match with the guest shortcut matcher (7d509054)
+- Wait for a painted guest before drawing the browser annotation (5f63538b)
+
 ## [v0.61.0] - 2026-11-20
 
 ### Features
