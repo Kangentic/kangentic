@@ -5,9 +5,11 @@
  * waited for main's 5 s request, which waits behind the job itself.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import type Database from 'better-sqlite3';
 import { createCheckpointPacer, WRITE_CHECKPOINT_INTERVAL_MS } from '../../src/main/retrieval/worker/checkpoint-pacing';
+import { CHECKPOINT_AFTER_WRITE_LABEL } from '../../src/main/retrieval/worker/checkpoint-labels';
+import { setSyncSpanLabelSink } from '../../src/main/diagnostics/event-loop-lag';
 
 function fakeConnection(): Database.Database {
   return {} as Database.Database;
@@ -44,6 +46,22 @@ describe('worker checkpoint pacing', () => {
     pace(second);
     pace(first);
     expect(checkpointed).toEqual([first, second]);
+  });
+
+  // With no checkpoint thread the default checkpoint runs on the loop, under the pacer's own
+  // label, so a watchdog line tells it from main's 5 s request (Sentry DESKTOP-4P).
+  it('runs the default checkpoint on the loop under its own label when there is no thread', () => {
+    const labels: string[] = [];
+    setSyncSpanLabelSink((label) => { if (label) labels.push(label); });
+    try {
+      const pragma = vi.fn(() => [{ busy: 0, log: 2, checkpointed: 2 }]);
+      const db = { name: 'unused.db', pragma } as unknown as Database.Database;
+      createCheckpointPacer()(db);
+      expect(pragma).toHaveBeenCalledWith('wal_checkpoint(PASSIVE)');
+      expect(labels).toContain(CHECKPOINT_AFTER_WRITE_LABEL);
+    } finally {
+      setSyncSpanLabelSink(null);
+    }
   });
 
   it('a failed checkpoint still starts the interval, so a failing one is not retried on every commit', () => {

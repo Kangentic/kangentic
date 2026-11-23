@@ -661,6 +661,15 @@ async function build() {
       entryPoints: [path.join(projectDir, 'src/main/retrieval/worker/retrieval-worker.ts')],
       outfile: path.join(projectDir, '.vite/build/retrieval-worker.js'),
     },
+    // The retrieval worker's checkpoint thread (a worker thread inside the
+    // worker): every WAL checkpoint, on its own better-sqlite3 connection, so a
+    // long one never holds the worker's request loop. better-sqlite3 stays
+    // external, resolved from the unpacked node_modules like the worker's own.
+    {
+      ...esbuildCommon,
+      entryPoints: [path.join(projectDir, 'src/main/retrieval/worker/checkpoint-thread/checkpoint-thread-entry.ts')],
+      outfile: path.join(projectDir, '.vite/build/retrieval-checkpoint-thread.js'),
+    },
     // The pty host (`kangentic-pty-host` utility process): every node-pty
     // instance and the per-chunk work on its output. node-pty and
     // better-sqlite3 stay external, resolved from the unpacked node_modules.
@@ -679,7 +688,7 @@ async function build() {
     },
   ];
   await runEsbuildBundles(bundleOptions, (options) => esbuild.build(options), { sequential: uploadSourcemaps });
-  console.log('[build] Main + preload + embed, line-count, worktree-copy, dictation and retrieval workers, the pty host and its spawn worker built');
+  console.log('[build] Main + preload + embed, line-count, worktree-copy, dictation and retrieval workers, the retrieval checkpoint thread, the pty host and its spawn worker built');
 
   // Copy external scripts (bridges + adapter plugins) that run outside the
   // esbuild bundle as raw .js/.mjs and must sit next to the bundle. The copy

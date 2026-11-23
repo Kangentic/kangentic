@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
+import path from 'node:path';
 
 /**
  * RetrievalClient lifecycle: the init handshake, calls queued behind `ready`,
@@ -20,8 +21,15 @@ vi.mock('../../src/main/analytics/handled-report', () => ({
   sendHandledFailure: mockSendHandledFailure,
 }));
 
-import { RetrievalClient, RetrievalUnavailableError, INTERACTIVE_TIMEOUT_MS, READY_TIMEOUT_MS } from '../../src/main/retrieval/retrieval-client';
+import {
+  RetrievalClient,
+  RetrievalUnavailableError,
+  CHECKPOINT_HOLD_MAX_MS,
+  INTERACTIVE_TIMEOUT_MS,
+  READY_TIMEOUT_MS,
+} from '../../src/main/retrieval/retrieval-client';
 import { errorShapeOf } from '../../src/main/retrieval/worker/protocol';
+import { vecLoadCause } from '../../src/main/retrieval/vec-load-cause';
 import { UtilityRestartPolicy } from '../../src/main/utility-process/restart-policy';
 import {
   HEARTBEAT_INTERVAL_MS,
@@ -32,6 +40,8 @@ import {
 interface FakeChild extends EventEmitter {
   postMessage: ReturnType<typeof vi.fn>;
   kill: ReturnType<typeof vi.fn>;
+  /** The worker's stderr pipe, which `captureWorkerStderr` drains into the client's tail. */
+  stderr: EventEmitter;
 }
 
 const forkedChildren: FakeChild[] = [];
@@ -63,6 +73,7 @@ describe('RetrievalClient', () => {
       const child = new EventEmitter() as FakeChild;
       child.postMessage = vi.fn();
       child.kill = vi.fn();
+      child.stderr = new EventEmitter();
       forkedChildren.push(child);
       return child;
     });
@@ -89,6 +100,18 @@ describe('RetrievalClient', () => {
     const rows = [{ projectId: 'project-1', conversations: 3, taskRecords: 1, lastIndexedAt: null }];
     child.emit('message', { type: 'reply', id: request.id, ok: true, result: rows });
     await expect(call).resolves.toEqual(rows);
+    client.dispose();
+  });
+
+  // The checkpoint thread is its own bundle beside the worker; without the path in init the worker
+  // cannot start it and every checkpoint falls back to the event loop (Sentry DESKTOP-4P).
+  it('sends init with the path of the checkpoint thread bundle', () => {
+    const client = new RetrievalClient();
+    void client.call('projects.summaries', { projectIds: [] }).catch(() => undefined);
+
+    const [init] = sent(lastChild(), 'init');
+    expect(typeof init.checkpointThreadPath).toBe('string');
+    expect(path.basename(init.checkpointThreadPath as string)).toBe('retrieval-checkpoint-thread.js');
     client.dispose();
   });
 
@@ -157,24 +180,262 @@ describe('RetrievalClient', () => {
   // Not a made-up code: the one message the worker really sends (retrieval-worker.ts posts
   // `{ type: 'handledError', code: 'sqlite_vec_load', ...errorShapeOf(error) }`), built through the
   // worker's own errorShapeOf. This is the only test that uses the code, so the module latch is clear.
-  it('reports the sqlite_vec_load message the worker really sends, grouped by its errno', async () => {
+  it('reports the sqlite_vec_load message the worker really sends, grouped by its errno, with the cause as tags', async () => {
     const client = new RetrievalClient();
     void client.call('projects.summaries', { projectIds: [] }).catch(() => undefined);
     const child = lastChild();
     const loadFailure = Object.assign(new Error('The specified module could not be found: C:\\Users\\dev\\vec0.dll'), { name: 'Error', code: 'ERR_DLOPEN_FAILED' });
 
-    child.emit('message', { type: 'handledError', code: 'sqlite_vec_load', ...errorShapeOf(loadFailure) });
+    child.emit('message', {
+      type: 'handledError',
+      code: 'sqlite_vec_load',
+      ...errorShapeOf(loadFailure),
+      loadCause: vecLoadCause(loadFailure.message),
+      fileExists: true,
+    });
 
     expect(mockSendHandledFailure).toHaveBeenCalledTimes(1);
     const [source, error, tags, contexts, fingerprint] = mockSendHandledFailure.mock.calls[0];
     expect(source).toBe('retrieval_worker');
     expect(error).toMatchObject({ name: 'Error', code: 'ERR_DLOPEN_FAILED', message: 'The retrieval worker reported sqlite_vec_load' });
-    expect(tags).toEqual({ code: 'sqlite_vec_load' });
+    // DESKTOP-4Q: the loader's reason and whether the file was there, as fixed words.
+    expect(tags).toEqual({ code: 'sqlite_vec_load', load_cause: 'not_found', vec_file_exists: 'yes' });
     expect(contexts).toEqual({});
     expect(fingerprint).toEqual(['retrieval-worker', 'sqlite_vec_load', 'ERR_DLOPEN_FAILED']);
-    // The worker's own message never crosses the wire, so none of its path reaches the report.
-    expect(JSON.stringify(mockSendHandledFailure.mock.calls[0])).not.toContain('Users');
+    // The worker's own message never crosses the wire, so none of its path or words reach the report.
+    const sentReport = JSON.stringify(mockSendHandledFailure.mock.calls[0]);
+    expect(sentReport).not.toContain('Users');
+    expect(sentReport).not.toContain('could not be found');
     client.dispose();
+  });
+
+  // The latch is module-level, so each case imports a fresh copy of the client (the mocks above
+  // are hoisted and survive the reset). Fixed words only: the cause and the file's presence are
+  // all that crosses into the report, and neither carries the worker's text.
+  describe('the sqlite_vec_load report tags', () => {
+    async function reportedTags(extra: Record<string, unknown>): Promise<{ tags: unknown; sentReport: string }> {
+      vi.resetModules();
+      const freshClientModule = await import('../../src/main/retrieval/retrieval-client');
+      const client = new freshClientModule.RetrievalClient();
+      void client.call('projects.summaries', { projectIds: [] }).catch(() => undefined);
+      lastChild().emit('message', { type: 'handledError', code: 'sqlite_vec_load', errorName: 'Error', errorCode: 'ERR_DLOPEN_FAILED', ...extra });
+      client.dispose();
+      expect(mockSendHandledFailure).toHaveBeenCalledTimes(1);
+      return { tags: mockSendHandledFailure.mock.calls[0][2], sentReport: JSON.stringify(mockSendHandledFailure.mock.calls[0]) };
+    }
+
+    it('says vec_file_exists no when the file was missing', async () => {
+      const { tags } = await reportedTags({ loadCause: 'not_found', fileExists: false });
+      expect(tags).toEqual({ code: 'sqlite_vec_load', load_cause: 'not_found', vec_file_exists: 'no' });
+    });
+
+    it('carries only the code when the message has neither a cause nor a file flag', async () => {
+      const { tags } = await reportedTags({});
+      expect(tags).toEqual({ code: 'sqlite_vec_load' });
+    });
+
+    it('sends a cause outside the six as other, and none of its text', async () => {
+      const { tags, sentReport } = await reportedTags({ loadCause: 'secret detail at C:\\Users\\dev\\vec0.dll' });
+      expect(tags).toEqual({ code: 'sqlite_vec_load', load_cause: 'other' });
+      expect(sentReport).not.toContain('secret detail');
+      expect(sentReport).not.toContain('Users');
+    });
+  });
+
+  // Sentry DESKTOP-4P: a worker whose loop was held in a WAL checkpoint was killed on the
+  // 15 s budget, the kill threw the copy away, and the next worker held on the same WAL:
+  // five latches in 80 minutes. A PASSIVE checkpoint holds no write lock, which is what the
+  // kill exists for, so such a worker is left to finish.
+  //
+  // Red-green: without `heldInCheckpoint` in `onTimeout`, the first case kills the worker and
+  // records a request_timeout crash.
+  describe('a worker held in a checkpoint', () => {
+    async function readyWorker(policy: UtilityRestartPolicy): Promise<{ client: RetrievalClient; child: FakeChild }> {
+      const client = new RetrievalClient(policy);
+      void client.call('projects.summaries', { projectIds: [] }, { timeoutMs: null }).catch(() => undefined);
+      const child = lastChild();
+      child.emit('message', { type: 'ready' });
+      await flush();
+      return { client, child };
+    }
+
+    function writeWatchdogLine(child: FakeChild, step: string): void {
+      child.stderr.emit('data', Buffer.from(`[retrieval-worker] event loop held 5 s in ${step}\n`));
+    }
+
+    it('fails the call without killing the worker or counting a crash', async () => {
+      vi.useFakeTimers();
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const policy = new UtilityRestartPolicy({ service: 'test-retrieval', maxCrashes: 3 });
+      const recordCrash = vi.spyOn(policy, 'recordCrash');
+      const { client, child } = await readyWorker(policy);
+      try {
+        const call = client.call('projects.summaries', { projectIds: ['project-1'] });
+        await flush();
+        writeWatchdogLine(child, 'db:checkpoint-tick');
+
+        vi.advanceTimersByTime(INTERACTIVE_TIMEOUT_MS);
+
+        await expect(call).rejects.toThrow('The retrieval worker is checkpointing');
+        await expect(call).rejects.toBeInstanceOf(RetrievalUnavailableError);
+        expect(child.kill).not.toHaveBeenCalled();
+        expect(recordCrash).not.toHaveBeenCalled();
+        // The worker stays up: the next call goes to it, not to a new fork.
+        const next = client.call('projects.summaries', { projectIds: [] });
+        await flush();
+        const request = sent(child, 'request').at(-1);
+        child.emit('message', { type: 'reply', id: request?.id, ok: true, result: [] });
+        await expect(next).resolves.toEqual([]);
+        expect(forkedChildren).toHaveLength(1);
+      } finally {
+        client.dispose();
+        warn.mockRestore();
+      }
+    });
+
+    it('names the after-write checkpoint as a hold too', async () => {
+      vi.useFakeTimers();
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const { client, child } = await readyWorker(new UtilityRestartPolicy({ service: 'test-retrieval', maxCrashes: 3 }));
+      try {
+        const call = client.call('projects.summaries', { projectIds: [] });
+        await flush();
+        writeWatchdogLine(child, 'db:checkpoint-after-write');
+        vi.advanceTimersByTime(INTERACTIVE_TIMEOUT_MS);
+        await expect(call).rejects.toThrow('The retrieval worker is checkpointing');
+        expect(child.kill).not.toHaveBeenCalled();
+      } finally {
+        client.dispose();
+        warn.mockRestore();
+      }
+    });
+
+    // The ceiling is time: calls pending together all time out within one budget, and a
+    // count of calls would kill the worker as soon as a handful were waiting at once.
+    //
+    // Red-green: count timed-out calls against a ceiling of four and the fifth of these six
+    // kills the worker inside the first budget.
+    it('leaves it running however many calls were waiting when the hold began', async () => {
+      vi.useFakeTimers();
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const policy = new UtilityRestartPolicy({ service: 'test-retrieval', maxCrashes: 3 });
+      const recordCrash = vi.spyOn(policy, 'recordCrash');
+      const { client, child } = await readyWorker(policy);
+      try {
+        const calls = Array.from({ length: 6 }, () => client.call('projects.summaries', { projectIds: [] }));
+        await flush();
+        writeWatchdogLine(child, 'db:checkpoint-tick');
+
+        vi.advanceTimersByTime(INTERACTIVE_TIMEOUT_MS);
+
+        for (const call of calls) await expect(call).rejects.toThrow('The retrieval worker is checkpointing');
+        expect(child.kill).not.toHaveBeenCalled();
+        expect(recordCrash).not.toHaveBeenCalled();
+      } finally {
+        client.dispose();
+        warn.mockRestore();
+      }
+    });
+
+    it('kills it anyway once the hold outlasts the ceiling', async () => {
+      vi.useFakeTimers();
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const policy = new UtilityRestartPolicy({ service: 'test-retrieval', maxCrashes: 3 });
+      const recordCrash = vi.spyOn(policy, 'recordCrash');
+      const { client, child } = await readyWorker(policy);
+      try {
+        writeWatchdogLine(child, 'db:checkpoint-tick');
+        // The loop stays held: no message arrives between these calls. The first one
+        // starts the ceiling's clock and each later one lands a budget further on, so
+        // this many fit inside it.
+        const callsInsideCeiling = CHECKPOINT_HOLD_MAX_MS / INTERACTIVE_TIMEOUT_MS;
+        for (let index = 0; index < callsInsideCeiling; index += 1) {
+          const call = client.call('projects.summaries', { projectIds: [] });
+          await flush();
+          vi.advanceTimersByTime(INTERACTIVE_TIMEOUT_MS);
+          await expect(call).rejects.toThrow('The retrieval worker is checkpointing');
+        }
+        expect(child.kill).not.toHaveBeenCalled();
+
+        const last = client.call('projects.summaries', { projectIds: [] });
+        await flush();
+        vi.advanceTimersByTime(INTERACTIVE_TIMEOUT_MS);
+        await expect(last).rejects.toThrow('did not answer projects.summaries in time');
+        expect(child.kill).toHaveBeenCalledTimes(1);
+        expect(recordCrash).toHaveBeenCalledWith(null, expect.anything(), expect.objectContaining({ cause: 'request_timeout' }));
+      } finally {
+        client.dispose();
+        warn.mockRestore();
+      }
+    });
+
+    it('still kills a worker held in any other step', async () => {
+      vi.useFakeTimers();
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const { client, child } = await readyWorker(new UtilityRestartPolicy({ service: 'test-retrieval', maxCrashes: 3 }));
+      try {
+        const call = client.call('projects.summaries', { projectIds: [] });
+        await flush();
+        writeWatchdogLine(child, 'transcript:parse-codex');
+        vi.advanceTimersByTime(INTERACTIVE_TIMEOUT_MS);
+        await expect(call).rejects.toThrow('did not answer projects.summaries in time');
+        expect(child.kill).toHaveBeenCalledTimes(1);
+      } finally {
+        client.dispose();
+        warn.mockRestore();
+      }
+    });
+
+    // The ceiling counts one hold, not the worker's lifetime: a message from the worker means the
+    // hold ended, so a later hold starts its own clock.
+    //
+    // Red-green: remove `this.checkpointHoldSince = null` from `onWorkerMessage` and the second
+    // hold inherits the first one's start, is already past the ceiling, and the worker is killed.
+    it('starts a new ceiling clock for a hold that follows a message from the worker', async () => {
+      vi.useFakeTimers();
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const { client, child } = await readyWorker(new UtilityRestartPolicy({ service: 'test-retrieval', maxCrashes: 3 }));
+      try {
+        writeWatchdogLine(child, 'db:checkpoint-tick');
+        const first = client.call('projects.summaries', { projectIds: [] });
+        await flush();
+        vi.advanceTimersByTime(INTERACTIVE_TIMEOUT_MS);
+        await expect(first).rejects.toThrow('The retrieval worker is checkpointing');
+
+        // The hold is over: the worker answered something.
+        child.emit('message', { type: 'event', event: 'graph-changed', projectId: 'project-1' });
+        vi.advanceTimersByTime(CHECKPOINT_HOLD_MAX_MS + 1);
+
+        writeWatchdogLine(child, 'db:checkpoint-tick');
+        const second = client.call('projects.summaries', { projectIds: [] });
+        await flush();
+        vi.advanceTimersByTime(INTERACTIVE_TIMEOUT_MS);
+        await expect(second).rejects.toThrow('The retrieval worker is checkpointing');
+        expect(child.kill).not.toHaveBeenCalled();
+      } finally {
+        client.dispose();
+        warn.mockRestore();
+      }
+    });
+
+    it('still kills a worker whose only checkpoint line came before its last message', async () => {
+      vi.useFakeTimers();
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const { client, child } = await readyWorker(new UtilityRestartPolicy({ service: 'test-retrieval', maxCrashes: 3 }));
+      try {
+        // A hold that ended: the worker answered something after the line.
+        writeWatchdogLine(child, 'db:checkpoint-tick');
+        child.emit('message', { type: 'log', level: 'log', text: 'answering again' });
+        const call = client.call('projects.summaries', { projectIds: [] });
+        await flush();
+        vi.advanceTimersByTime(INTERACTIVE_TIMEOUT_MS);
+        await expect(call).rejects.toThrow('did not answer projects.summaries in time');
+        expect(child.kill).toHaveBeenCalledTimes(1);
+      } finally {
+        client.dispose();
+        warn.mockRestore();
+      }
+    });
   });
 
   it('kills a worker that does not answer in time, and counts it as a crash', async () => {

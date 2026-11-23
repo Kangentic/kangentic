@@ -15,6 +15,7 @@
 
 import type { RetrievalMethods } from './methods';
 import type { KnowledgeGraphBuildProgress } from '../../../shared/types';
+import type { VecLoadCause } from '../vec-load-cause';
 
 export type { RetrievalMethods };
 export type RetrievalMethod = keyof RetrievalMethods;
@@ -30,6 +31,9 @@ export interface InitMessage {
   projectsDir: string;
   /** The sqlite-vec loadable binary, or null when main could not resolve it. */
   vecLoadablePath: string | null;
+  /** The checkpoint thread's bundle (`retrieval-checkpoint-thread.js`, unpacked
+   *  in a packaged build). Absent or null: checkpoints run on the worker's loop. */
+  checkpointThreadPath?: string | null;
 }
 
 export interface RequestMessage<Method extends RetrievalMethod = RetrievalMethod> {
@@ -66,6 +70,11 @@ export interface HandledErrorMessage {
   code: 'sqlite_vec_load';
   errorName?: string;
   errorCode?: string;
+  /** Why the loader refused the extension, read from SQLite's message in the
+   *  worker (`vec-load-cause.ts`). The message itself never crosses. */
+  loadCause?: VecLoadCause;
+  /** Whether the extension's file was at the path main resolved. */
+  fileExists?: boolean;
 }
 
 /** Something main should react to that the worker noticed on its own. */

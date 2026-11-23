@@ -142,7 +142,9 @@ describe('retrieval worker: naming the step that held the loop', () => {
   });
 
   // The method span must not take over a handler's own detail: a report that read
-  // `in method:db.checkpoint` here would blame the open it just ruled out.
+  // `in method:db.checkpoint` here would blame the open it just ruled out. With no
+  // checkpoint thread (this worker never got `init`), main's 5 s checkpoint runs on
+  // the loop under its own label, apart from the after-write one (Sentry DESKTOP-4P).
   it('keeps a span the handler has of its own, since the innermost label wins', async () => {
     getProjectDbMock.mockImplementation(() => ({
       pragma: () => {
@@ -154,6 +156,6 @@ describe('retrieval worker: naming the step that held the loop', () => {
 
     await callWorker('db.checkpoint', { projectIds: ['project-slow-pragma'] });
 
-    expect(writtenSince(sizeBeforeHold)).toContain('in db:checkpoint\n');
+    expect(writtenSince(sizeBeforeHold)).toContain('in db:checkpoint-tick\n');
   });
 });

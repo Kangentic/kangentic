@@ -68,7 +68,8 @@ with a crash policy and stderr capture:
   per-tool call counts and result-token estimates read from a transcript, and the event-log replay
   behind the one-time tool duration repair. It opens
   the project database on its own connection, after main has migrated it, and runs the WAL's
-  PASSIVE checkpoints. Main sends requests through `retrievalClient` and relays the JSON replies.
+  PASSIVE checkpoints on a checkpoint thread with a connection of its own, so a long one never
+  holds the requests behind it. Main sends requests through `retrievalClient` and relays the JSON replies.
   See `.claude/rules/retrieval-out-of-process.md`.
 - **`kangentic-embeddings`** (`src/main/retrieval/embedder/embed-worker.ts`) runs ONNX inference,
   driven only by `embed-engine.ts` on main (`.claude/rules/central-embedding-engine.md`).

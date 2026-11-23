@@ -12,6 +12,8 @@ sources:
   - resource: src/main/db/migrations/default-data.ts
   - resource: src/main/retrieval/checkpoint-driver.ts
   - resource: src/main/retrieval/worker/checkpoint-pacing.ts
+  - resource: src/main/retrieval/worker/checkpoint-runner.ts
+  - resource: src/main/retrieval/worker/checkpoint-thread/checkpoint-thread-entry.ts
 ---
 # Storage model
 
@@ -64,9 +66,9 @@ that grew past 64 MB in a burst back to that size when a checkpoint resets it. `
 decides who checkpoints. SQLite runs an auto-checkpoint on the connection whose commit crosses the
 limit, so on main it put the copy into the database file, and its sync, on the main thread (a sums
 write that normally takes a few ms reached 19 ms). While the retrieval worker is up, main sets it to
-0 and the worker runs a PASSIVE checkpoint of every project database main has open every 5 s
-(`src/main/retrieval/checkpoint-driver.ts`, the worker's `db.checkpoint` method), skipping a tick
-while the last one is still running. PASSIVE never waits for or blocks a writer, which is why it is
+0 and main asks the worker for a PASSIVE checkpoint of every project database it has open every
+5 s (`src/main/retrieval/checkpoint-driver.ts` sends the worker's `db.checkpoint` method, and the
+worker's checkpoint thread does the copy), skipping a tick while the last one is still running. PASSIVE never waits for or blocks a writer, which is why it is
 the only mode used: FULL, RESTART and TRUNCATE wait on writers and would make main wait. The
 worker's and the pty host's connections set 0 too, so no checkpoint runs inside a commit. With the
 default of 1000 pages on the worker, its next commit after a terminal flood also checkpointed every
@@ -79,6 +81,22 @@ during the Source code fill its checkpoints stayed at 19 ms or less. The bulk up
 through the same transactions, so the same pacer covers them. When the worker goes down
 (restarting, or latched off after repeated crashes), main sets 1000 back at once, so no WAL grows
 unchecked.
+
+Both kinds of checkpoint run on the worker's checkpoint thread
+(`src/main/retrieval/worker/checkpoint-thread/checkpoint-thread-entry.ts`, started by
+`checkpoint-runner.ts`), a `worker_threads` thread with its own better-sqlite3 connection to each
+file. A checkpoint copies every page written since the last one, so its length follows the WAL and
+the disk. On the worker's request loop it held every call behind it. One Fedora install's worker
+was killed five times in 80 minutes with `transcript.trailRead` unanswered behind it (Sentry
+DESKTOP-4P), and each kill threw the copy away, so the next worker met the same WAL. Measured on a
+304 MB WAL, the checkpoint held its calling thread for 527 to 683 ms on an SSD, while on the thread
+the loop saw no gap over 65 ms. The thread joins a request for a file whose checkpoint is still
+running, closes its connection when a project is closed for deletion, and is given up for good if
+it fails to start or dies. The checkpoints then run on the loop again, under their own watchdog
+labels (`db:checkpoint-tick` for main's request, `db:checkpoint-after-write` for the pacer). Main
+does not kill a worker whose watchdog names one of those labels for up to a minute
+(`CHECKPOINT_HOLD_MAX_MS` in `retrieval-client.ts`). A PASSIVE checkpoint holds no write lock, and a held write lock is why a
+stuck worker is killed.
 
 The order matters. `busy_timeout` is a connection setting that covers only the statements after
 it, and `journal_mode = WAL` takes a lock: it creates the `-wal` and `-shm` sidecars. Setting the

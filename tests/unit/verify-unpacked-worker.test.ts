@@ -32,6 +32,7 @@ const {
   verifyRetrievalWorkerLoads,
   verifyPtyHostLoads,
   verifySpawnWorkerLoads,
+  verifyRetrievalCheckpointThreadLoads,
   verifyEmbedRuntimeLoads,
   buildEmbedRuntimeLoadScript,
   foreignMsvcRuntimeModules,
@@ -692,5 +693,71 @@ describe('pty host spawn worker gate', () => {
     expect(asarUnpack).toContain('".vite/build/pty-host-spawn-worker.js"');
     const afterPack = fs.readFileSync(path.join(REPO_ROOT, 'build', 'afterPack.js'), 'utf8');
     expect(afterPack).toContain('verifySpawnWorkerLoads({ unpackedRoot, electronBinaryPath });');
+  });
+});
+
+// The retrieval worker's checkpoint thread loads better-sqlite3 on a worker thread (Sentry
+// DESKTOP-4P). A thread that cannot would leave every WAL checkpoint on the worker's request
+// loop, which is what got the worker killed, so the build fails instead.
+describe('retrieval checkpoint thread gate', () => {
+  it('runs the probe under the given Electron binary as Node, and throws with its stderr on failure', () => {
+    const spawn = vi.fn(() => {
+      const error: SpawnError = new Error('Command failed');
+      error.stderr = 'Error: Cannot find module \'better-sqlite3\'';
+      throw error;
+    });
+    const binary = path.join(path.sep, 'mock', 'Kangentic.exe');
+    expect(() => verifyRetrievalCheckpointThreadLoads({ unpackedRoot: MOCK_ROOT, electronBinaryPath: binary, spawn, log: vi.fn() }))
+      .toThrow(/checkpoint thread cannot checkpoint[\s\S]*retrieval-checkpoint-thread\.js and better-sqlite3 in `asarUnpack`[\s\S]*Cannot find module/);
+    expect(spawn).toHaveBeenCalledWith(
+      binary,
+      ['-e', expect.stringContaining("path.join(root, '.vite', 'build', 'retrieval-checkpoint-thread.js')")],
+      expect.objectContaining({ env: expect.objectContaining({ ELECTRON_RUN_AS_NODE: '1' }) }),
+    );
+  });
+
+  it('starts the real thread bundle and checkpoints a WAL through it, under this checkout\'s Electron', async () => {
+    // The bundle is built the way scripts/build.js builds it, into a packaged layout whose
+    // node_modules holds this checkout's better-sqlite3 (a junction, so nothing is copied).
+    const esbuild = await import('esbuild');
+    const buildSource = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'build.js'), 'utf8');
+    const externals = [...(buildSource.match(/external:\s*\[([^\]]*)\]/)?.[1] ?? '').matchAll(/'([^']+)'/g)].map((match) => match[1]);
+    expect(externals).toContain('better-sqlite3');
+    const unpackedRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-checkpoint-thread-gate-'));
+    const linkPath = path.join(unpackedRoot, 'node_modules', 'better-sqlite3');
+    try {
+      await esbuild.build({
+        bundle: true,
+        platform: 'node',
+        target: 'node24',
+        format: 'cjs',
+        external: externals,
+        conditions: ['require'],
+        define: { MAIN_WINDOW_VITE_DEV_SERVER_URL: '""', MAIN_WINDOW_VITE_NAME: '"main_window"', __KANGENTIC_DEV__: 'false' },
+        entryPoints: [path.join(REPO_ROOT, 'src/main/retrieval/worker/checkpoint-thread/checkpoint-thread-entry.ts')],
+        outfile: path.join(unpackedRoot, '.vite', 'build', 'retrieval-checkpoint-thread.js'),
+        logLevel: 'silent',
+      });
+      fs.mkdirSync(path.join(unpackedRoot, 'node_modules'));
+      fs.symlinkSync(path.join(REPO_ROOT, 'node_modules', 'better-sqlite3'), linkPath, 'junction');
+      const electronBinary = require('electron') as unknown as string;
+      const log = vi.fn();
+      verifyRetrievalCheckpointThreadLoads({ unpackedRoot, electronBinaryPath: electronBinary, log });
+      expect(log).toHaveBeenCalledWith('[afterPack] retrieval checkpoint thread: the checkpoint thread loaded better-sqlite3 and checkpointed a WAL');
+    } finally {
+      // The link itself first, so the recursive removal can never reach the checkout's
+      // own better-sqlite3 through it.
+      if (fs.existsSync(linkPath)) fs.unlinkSync(linkPath);
+      fs.rmSync(unpackedRoot, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it('unpacks the thread bundle and runs the probe from afterPack', () => {
+    const config = fs.readFileSync(path.join(REPO_ROOT, 'electron-builder.yml'), 'utf8');
+    const asarUnpack = config.match(/\nasarUnpack:\n([\s\S]*?)\nextraResources:/)?.[1] ?? '';
+    expect(asarUnpack).toContain('".vite/build/retrieval-checkpoint-thread.js"');
+    expect(asarUnpack).toContain('"node_modules/better-sqlite3/**"');
+    const afterPack = fs.readFileSync(path.join(REPO_ROOT, 'build', 'afterPack.js'), 'utf8');
+    expect(afterPack).toContain('verifyRetrievalCheckpointThreadLoads({ unpackedRoot, electronBinaryPath });');
   });
 });

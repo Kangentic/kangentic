@@ -554,7 +554,7 @@ export const UNREPORTED_CATCH_SITES: Readonly<Record<string, number>> = {
   'src/main/retrieval/worker/answer-prepare.ts': 2,
   'src/main/retrieval/worker/index-methods.ts': 7,
   'src/main/retrieval/worker/index-status.ts': 1,
-  'src/main/retrieval/worker/methods.ts': 6,
+  'src/main/retrieval/worker/methods.ts': 5,
   'src/main/retrieval/worker/retrieval-worker.ts': 2,
   'src/main/retrieval/worker/transcript-methods.ts': 3,
   'src/main/retrieval/write-budget.ts': 2,

@@ -286,6 +286,8 @@ const MAIN_BUNDLES = [
   { label: 'dictation worker', entry: 'src/main/transcription/dictation-worker.ts', outfile: '.vite/build/dictation-worker.js' },
   // Retrieval worker.
   { label: 'retrieval worker', entry: 'src/main/retrieval/worker/retrieval-worker.ts', outfile: '.vite/build/retrieval-worker.js' },
+  // Its checkpoint thread.
+  { label: 'retrieval checkpoint thread', entry: 'src/main/retrieval/worker/checkpoint-thread/checkpoint-thread-entry.ts', outfile: '.vite/build/retrieval-checkpoint-thread.js' },
   // The pty host and its spawn worker.
   { label: 'pty host', entry: 'src/main/pty/host/pty-host-entry.ts', outfile: '.vite/build/pty-host.js' },
   { label: 'pty host spawn worker', entry: 'src/main/pty/host/spawn-worker/spawn-worker-entry.ts', outfile: '.vite/build/pty-host-spawn-worker.js' },
