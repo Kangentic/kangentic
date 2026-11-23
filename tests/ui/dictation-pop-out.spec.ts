@@ -14,13 +14,16 @@
  *
  * Like `dictation-note-input.spec.ts`, this launches Chromium with a fake media
  * device so the real capture starts. The hotkey is rebound to `Alt+Shift+Q`,
- * since Playwright cannot press the default `Mouse:Back`. Each test launches its
- * own browser, because a pop-out is booted by a descriptor set before the
- * renderer mounts. The tests run in order in one worker: every page holds a
- * fake capture device and a real AudioContext.
+ * since Playwright cannot press the default `Mouse:Back`. Each test opens its own
+ * context and page in one shared browser: a pop-out is booted by a descriptor an
+ * init script sets before the renderer mounts, and a fresh page is a fresh JS
+ * context. A browser launched and closed per test hung in Chromium's shutdown
+ * past the 15s budget about one run in ten, after a tap that stops the capture
+ * while it is still starting. The tests run in order in one worker: every page
+ * holds a fake capture device and a real AudioContext.
  */
 import { test, expect } from '@playwright/test';
-import { chromium, type Browser, type Page } from '@playwright/test';
+import { chromium, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import path from 'node:path';
 import { waitForViteReady, gotoVite } from './helpers';
 
@@ -88,18 +91,27 @@ interface LaunchOptions {
   initScripts?: string[];
 }
 
+let sharedBrowser: Browser;
+
+test.beforeAll(async () => {
+  await waitForViteReady(VITE_URL);
+  sharedBrowser = await chromium.launch({
+    headless: true,
+    args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required'],
+  });
+});
+
+test.afterAll(async () => {
+  await sharedBrowser?.close();
+});
+
 /** `descriptor` null boots the MAIN window on the same seed, for the cases that
  *  contrast the two (prewarm) or need the settings panel (a rebind capture). */
 async function launchPopOut(
   descriptor: { kind: string; params: Record<string, unknown> } | null,
   options: LaunchOptions = {},
-): Promise<{ browser: Browser; page: Page }> {
-  await waitForViteReady(VITE_URL);
-  const browser = await chromium.launch({
-    headless: true,
-    args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required'],
-  });
-  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, permissions: ['microphone'] });
+): Promise<{ context: BrowserContext; page: Page }> {
+  const context = await sharedBrowser.newContext({ viewport: { width: 1280, height: 800 }, permissions: ['microphone'] });
   const page = await context.newPage();
   await page.addInitScript((config: Record<string, unknown>) => {
     (window as unknown as { __mockConfigOverrides: Record<string, unknown> }).__mockConfigOverrides = config;
@@ -115,7 +127,7 @@ async function launchPopOut(
   `);
   for (const script of options.initScripts ?? []) await page.addInitScript(script);
   await gotoVite(page, VITE_URL);
-  return { browser, page };
+  return { context, page };
 }
 
 /** Wait for the popped-out pane and give its `<webview>` stub the guest surface
@@ -218,7 +230,7 @@ test.describe('Dictation in a pop-out window', () => {
   // popped-out pane gets the same tap-versus-hold split as the main window: a pop-out
   // used to hold no button at all, so Back navigated on the press and never dictated.
   test('with push-to-talk on Mouse:Back, a guest HOLD in a popped-out pane dictates and does not navigate', async () => {
-    const { browser, page } = await launchPopOut(BROWSER_DESCRIPTOR, { hotkey: 'Mouse:Back' });
+    const { context, page } = await launchPopOut(BROWSER_DESCRIPTOR, { hotkey: 'Mouse:Back' });
     try {
       await waitForPane(page);
       await page.locator('[data-testid="browser-note-input"]').click();
@@ -236,12 +248,12 @@ test.describe('Dictation in a pop-out window', () => {
       await expect.poll(async () => (await dictationState(page))?.status, { timeout: 10000 }).toBe('idle');
       expect(await navigationCalls(page)).toEqual([]);
     } finally {
-      await browser.close();
+      await context.close();
     }
   });
 
   test('with push-to-talk on Mouse:Back, a guest TAP in a popped-out pane navigates once and leaves nothing recording', async () => {
-    const { browser, page } = await launchPopOut(BROWSER_DESCRIPTOR, { hotkey: 'Mouse:Back' });
+    const { context, page } = await launchPopOut(BROWSER_DESCRIPTOR, { hotkey: 'Mouse:Back' });
     try {
       await waitForPane(page);
       await page.locator('[data-testid="browser-note-input"]').click();
@@ -258,12 +270,12 @@ test.describe('Dictation in a pop-out window', () => {
       await expect.poll(async () => (await dictationState(page))?.status, { timeout: 10000 }).toBe('idle');
       expect(await navigationCalls(page)).toEqual(['goBack']);
     } finally {
-      await browser.close();
+      await context.close();
     }
   });
 
   test('a hold in a popped-out Browser pane types into its note input and shows the chip there', async () => {
-    const { browser, page } = await launchPopOut(BROWSER_DESCRIPTOR);
+    const { context, page } = await launchPopOut(BROWSER_DESCRIPTOR);
     try {
       await waitForPane(page);
       const note = page.locator('[data-testid="browser-note-input"]');
@@ -281,7 +293,7 @@ test.describe('Dictation in a pop-out window', () => {
       await release(page);
       await expect.poll(async () => (await dictationState(page))?.status, { timeout: 10000 }).toBe('idle');
     } finally {
-      await browser.close();
+      await context.close();
     }
   });
 
@@ -289,7 +301,7 @@ test.describe('Dictation in a pop-out window', () => {
     // The main window falls back to its bottom panel's terminal. A pop-out has
     // no bottom panel, so that fallback would type into a terminal nobody in
     // this window can see.
-    const { browser, page } = await launchPopOut(BROWSER_DESCRIPTOR);
+    const { context, page } = await launchPopOut(BROWSER_DESCRIPTOR);
     try {
       await waitForPane(page);
       // The premise: this window knows the project and its running task agent,
@@ -312,16 +324,16 @@ test.describe('Dictation in a pop-out window', () => {
       await expect.poll(async () => (await dictationState(page))?.status, { timeout: 10000 }).toBe('idle');
       expect(await liveWrites(page)).toEqual([]);
     } finally {
-      await browser.close();
+      await context.close();
     }
   });
 
   test('a hold in the Command Terminal pop-out types into its focused terminal', async () => {
-    // It boots its own browser and waits for a Command Terminal and its xterm
+    // It boots its own page and waits for a Command Terminal and its xterm
     // before the hold starts, which ran past the default budget about one run
     // in six.
     test.slow();
-    const { browser, page } = await launchPopOut(COMMAND_TERMINAL_DESCRIPTOR);
+    const { context, page } = await launchPopOut(COMMAND_TERMINAL_DESCRIPTOR);
     try {
       await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 15000 });
       const terminalInput = page.getByTestId('command-terminal-window').locator('.xterm-helper-textarea').first();
@@ -340,12 +352,12 @@ test.describe('Dictation in a pop-out window', () => {
       await release(page);
       await expect.poll(async () => (await dictationState(page))?.status, { timeout: 10000 }).toBe('idle');
     } finally {
-      await browser.close();
+      await context.close();
     }
   });
 
   test('a press while another window is still dictating says so and records nothing', async () => {
-    const { browser, page } = await launchPopOut(BROWSER_DESCRIPTOR, {
+    const { context, page } = await launchPopOut(BROWSER_DESCRIPTOR, {
       initScripts: ['window.__mockDictationStartRefused = true;'],
     });
     try {
@@ -360,12 +372,12 @@ test.describe('Dictation in a pop-out window', () => {
       await expect.poll(async () => (await dictationState(page))?.status, { timeout: 10000 }).toBe('idle');
       await expect(page.locator('[data-testid="browser-note-input"]')).toHaveValue('');
     } finally {
-      await browser.close();
+      await context.close();
     }
   });
 
   test('with dictation off, a mouse Back release in the guest navigates the popped-out pane', async () => {
-    const { browser, page } = await launchPopOut(BROWSER_DESCRIPTOR, { dictationEnabled: false });
+    const { context, page } = await launchPopOut(BROWSER_DESCRIPTOR, { dictationEnabled: false });
     try {
       await waitForPane(page);
       // Focus inside the pane makes it the one a Back gesture belongs to.
@@ -382,12 +394,12 @@ test.describe('Dictation in a pop-out window', () => {
       { timeout: 5000 }).toEqual(['goBack']);
       expect((await dictationState(page))?.status).toBe('idle');
     } finally {
-      await browser.close();
+      await context.close();
     }
   });
 
   test('a partial and a final for another dictation session leave the target and store untouched', async () => {
-    const { browser, page } = await launchPopOut(BROWSER_DESCRIPTOR);
+    const { context, page } = await launchPopOut(BROWSER_DESCRIPTOR);
     try {
       await waitForPane(page);
       const note = page.locator('[data-testid="browser-note-input"]');
@@ -410,7 +422,7 @@ test.describe('Dictation in a pop-out window', () => {
       await release(page);
       await expect.poll(async () => (await dictationState(page))?.status, { timeout: 10000 }).toBe('idle');
     } finally {
-      await browser.close();
+      await context.close();
     }
   });
 
@@ -418,7 +430,7 @@ test.describe('Dictation in a pop-out window', () => {
     // Two holds in one page, and the first leaves the 1.6s refusal notice to run
     // out before the second: more than the 15s UI default on a loaded worker.
     test.slow();
-    const { browser, page } = await launchPopOut(BROWSER_DESCRIPTOR, {
+    const { context, page } = await launchPopOut(BROWSER_DESCRIPTOR, {
       initScripts: ['window.__mockDictationStartRefused = true;'],
     });
     try {
@@ -446,12 +458,12 @@ test.describe('Dictation in a pop-out window', () => {
       await release(page);
       await expect.poll(async () => (await dictationState(page))?.status, { timeout: 10000 }).toBe('idle');
     } finally {
-      await browser.close();
+      await context.close();
     }
   });
 
   test('with dictation off, a window mouse Forward press and a guest Forward release both navigate forward', async () => {
-    const { browser, page } = await launchPopOut(BROWSER_DESCRIPTOR, { dictationEnabled: false });
+    const { context, page } = await launchPopOut(BROWSER_DESCRIPTOR, { dictationEnabled: false });
     try {
       await waitForPane(page);
       await page.evaluate(() => {
@@ -476,7 +488,7 @@ test.describe('Dictation in a pop-out window', () => {
       });
       expect((await dictationState(page))?.status).toBe('idle');
     } finally {
-      await browser.close();
+      await context.close();
     }
   });
 
@@ -484,7 +496,7 @@ test.describe('Dictation in a pop-out window', () => {
     // The capture widget lives in the main window's Settings panel, so this case
     // boots the main window, opens the task's Browser pane, then arms a capture
     // over it (the settings panel is an overlay sibling, the pane stays mounted).
-    const { browser, page } = await launchPopOut(null, { dictationEnabled: false });
+    const { context, page } = await launchPopOut(null, { dictationEnabled: false });
     try {
       await page.getByText('Pop-out Dictation Task').first().click();
       await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible', timeout: 10000 });
@@ -520,7 +532,7 @@ test.describe('Dictation in a pop-out window', () => {
       await mouseNavigationPress(page, 3);
       await expect.poll(() => navigationCalls(page), { timeout: 5000 }).toEqual(['goBack']);
     } finally {
-      await browser.close();
+      await context.close();
     }
   });
 
@@ -538,7 +550,7 @@ test.describe('Dictation in a pop-out window', () => {
     try {
       await expect.poll(() => prewarmCalls(main.page), { timeout: 10000 }).toEqual([null]);
     } finally {
-      await main.browser.close();
+      await main.context.close();
     }
 
     const popOut = await launchPopOut(BROWSER_DESCRIPTOR, { dictationEnabled: false });
@@ -549,7 +561,7 @@ test.describe('Dictation in a pop-out window', () => {
       await popOut.page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
       expect(await prewarmCalls(popOut.page)).toEqual([]);
     } finally {
-      await popOut.browser.close();
+      await popOut.context.close();
     }
   });
 });
