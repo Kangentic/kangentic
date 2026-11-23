@@ -195,6 +195,34 @@ describe('provisionAccountFolder under another default home', () => {
     expect(fs.readFileSync(path.join(home, 'projects', 'C--repo', 'session-1.jsonl'), 'utf8')).toBe('{"type":"user"}\n');
   });
 
+  // A Windows junction can read back as \\?\C:\..., which path.resolve reads as a different root, so
+  // the link would be classed as pointing elsewhere and block the account. The prefix only parses as a
+  // drive path on Windows, so the test runs there.
+  it.runIf(process.platform === 'win32')('relinks a built-in home link whose junction target reads back with the long-path prefix', async () => {
+    fs.mkdirSync(account, { recursive: true });
+    const link = path.join(account, 'projects');
+    fs.symlinkSync(path.join(home, 'projects'), link, linkKind);
+    const prefixedTarget = `\\\\?\\${fs.realpathSync.native(path.join(home, 'projects'))}`;
+    const realReadlink = fs.readlinkSync.bind(fs) as (target: fs.PathLike, options?: unknown) => string | Buffer;
+    const readlink = vi.spyOn(fs, 'readlinkSync').mockImplementation(((target: fs.PathLike, options?: unknown) => (
+      path.resolve(String(target)) === path.resolve(link) ? prefixedTarget : realReadlink(target, options)
+    )) as typeof fs.readlinkSync);
+    try {
+      const report = await provisionAccountFolder({
+        accountFolder: account,
+        defaultHome: inherited,
+        entries: LINKS,
+        knownHomes: { builtinHome: home, accountsRoot },
+      });
+      expect(readlink).toHaveBeenCalled();
+      expect(report.conversationLinkFailed).toBe(false);
+      expect(report.problems).toEqual([]);
+    } finally {
+      readlink.mockRestore();
+    }
+    expect(linkedTo(link)).toBe(fs.realpathSync.native(path.join(inherited, 'projects')));
+  });
+
   it('points a link into another Kangentic account folder at the default home', async () => {
     const otherAccount = path.join(accountsRoot, 'claude', '3');
     write(path.join(otherAccount, 'projects', 'kept.jsonl'), 'kept');
