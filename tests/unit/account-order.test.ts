@@ -62,6 +62,20 @@ describe('automaticOrder', () => {
     ];
     expect(automaticOrder(accounts, NOW).map((entry) => entry.id)).toEqual(['read', 'fresh', 'gone']);
   });
+
+  it('never lets a shorter window stand in for a longest window that has reset since the reading', () => {
+    // B's week rolled over after its last reading: its next weekly reset is about 7 days out, so it
+    // must not sort first on its 5h reset. It orders with the accounts that have no reading.
+    const accounts = [
+      account('b', 1, [window('five-hour', 20, 2 * 3_600), window('seven-day', 100, -3_600)]),
+      account('a', 2, [window('seven-day', 40, 32 * 3_600)]),
+      account('fresh', 3, null),
+    ];
+    const ordered = automaticOrder(accounts, NOW);
+    expect(ordered.map((entry) => entry.id)).toEqual(['a', 'b', 'fresh']);
+    expect(topAccountWithRoom(ordered, NOW)?.id).toBe('a');
+    expect(nextAccountWithRoom(ordered, 'a', NOW)?.id).toBe('b');
+  });
 });
 
 describe('room', () => {
