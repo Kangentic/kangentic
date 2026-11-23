@@ -126,6 +126,16 @@ vi.mock('../../src/main/browser/jar-seeder', () => ({
   syncJarFromIdentity: fakeSyncJarFromIdentity,
 }));
 
+// The passkey guard is mocked so a test can hold the arm open and see that the
+// load waits for it. The guard itself runs for real in browser-passkey-guard.test.ts.
+const fakeArmGuest = vi.fn(async () => true);
+const fakeMarkAgentControl = vi.fn();
+
+vi.mock('../../src/main/browser/passkey-guard', () => ({
+  armGuest: fakeArmGuest,
+  markAgentControl: fakeMarkAgentControl,
+}));
+
 const {
   openLane,
   destroyLane,
@@ -307,6 +317,40 @@ describe('openLane', () => {
       setUserAgent.mock.invocationCallOrder[0],
       'the user agent must be set before loadURL, or the first request still carries the token',
     ).toBeLessThan(vi.mocked(guest.loadURL).mock.invocationCallOrder[0]);
+  });
+
+  /**
+   * The measured repro behind decision 47: a lane loaded a sign-in page that
+   * asks for a passkey as it loads, and Windows drew "Choose a passkey" on the
+   * user's screen 12s later with nobody to answer it. Arming after the load is
+   * too late, because Chromium never moves a request it already handed to the
+   * OS, so the load must WAIT for the arm.
+   */
+  it('routes passkeys to the virtual authenticator before its first load, and marks the task', async () => {
+    let releaseArm = (): void => undefined;
+    fakeArmGuest.mockImplementationOnce(
+      () => new Promise<boolean>((resolve) => { releaseArm = () => resolve(true); }),
+    );
+    const pending = openLane(input());
+    await vi.waitFor(() => expect(fakeArmGuest).toHaveBeenCalledTimes(1));
+    const guest = created[0].window.webContents;
+    expect(fakeArmGuest).toHaveBeenCalledWith(guest, 'lane');
+    expect(vi.mocked(guest.loadURL), 'the page must not load before the arm settles').not.toHaveBeenCalled();
+    // Marked, so a pane that later reclaims this lane is armed at construction.
+    expect(fakeMarkAgentControl).toHaveBeenCalledWith('project-1', 'task-1');
+
+    releaseArm();
+    expect((await pending).ok).toBe(true);
+    expect(vi.mocked(guest.loadURL)).toHaveBeenCalledTimes(1);
+  });
+
+  // A user loses the lane: a guest that refuses the authenticator would fail every offscreen open
+  // instead of only risking the OS passkey dialog.
+  it('still loads its URL when the arm is refused', async () => {
+    fakeArmGuest.mockResolvedValueOnce(false);
+    const result = await openLane(input());
+    expect(result.ok).toBe(true);
+    expect(vi.mocked(created[0].window.webContents.loadURL)).toHaveBeenCalledTimes(1);
   });
 
   // A lane can open before any pane has used this task's partition in this run, and the pane's

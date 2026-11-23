@@ -109,6 +109,14 @@ const OPEN_PANE_PURPOSE_REQUIRED =
 const OPEN_PANE_REASON_REQUIRED =
   `Pass reason: one line up to ${BROWSER_PANE_REASON_MAX_LENGTH} characters that follows "Agent is", for example "measuring canvas board heights". Nothing was opened.`;
 
+/**
+ * Why a passkey sign-in fails for the agent, on the two tools that load a page.
+ * The behavior is `src/main/browser/passkey-guard.ts`; the numbers were measured
+ * on Electron 45 (decision 47 in the embedded-browser decision log).
+ */
+const PASSKEY_NOTE =
+  'Passkeys: while you drive a surface, its passkey (WebAuthn) requests go to an empty virtual authenticator, so no OS passkey dialog opens and a passkey sign-in fails at once with NotAllowedError. Sign in another way, or ask the user to sign in in the pane. A passkey a page creates while you drive works when the page asks for it by credential id, until the user takes the pane back.';
+
 type TargetArgs = { sessionId?: string; taskId?: string };
 
 /**
@@ -404,7 +412,7 @@ export function registerBrowserTools(
     'kangentic_browser_open_pane',
     {
       description:
-        "Open the embedded Browser pane for YOUR OWN task and load a URL, so you can drive it with the other kangentic_browser_* tools. Say why with `purpose` and `reason`. \"for-user\": a page the user should look at; the pane opens beside the terminal, and a pane the user hid is shown again. \"own-work\": a page you use yourself; the pane opens behind the terminal, where the user can open it to watch, and a pane already showing stays as it is. While you drive the page, its label reads \"Agent is <reason>\". It never opens, raises or focuses a window: with the task's window closed the pane runs out of sight, fully driveable, and `pane.visibility` says so. Returns the surface once it is registered and driveable; `pane.sessionId` is its handle. A task has exactly ONE browser surface: calling again with a different url navigates it, and there is no way to open one for another task or project. If your project is not the one open in Kangentic, the surface comes up OFFSCREEN (`offscreen: true`), fully driveable, and becomes a visible pane by itself once one can mount.",
+        "Open the embedded Browser pane for YOUR OWN task and load a URL, so you can drive it with the other kangentic_browser_* tools. Say why with `purpose` and `reason`. \"for-user\": a page the user should look at; the pane opens beside the terminal, and a pane the user hid is shown again. \"own-work\": a page you use yourself; the pane opens behind the terminal, where the user can open it to watch, and a pane already showing stays as it is. While you drive the page, its label reads \"Agent is <reason>\". It never opens, raises or focuses a window: with the task's window closed the pane runs out of sight, fully driveable, and `pane.visibility` says so. Returns the surface once it is registered and driveable; `pane.sessionId` is its handle. A task has exactly ONE browser surface: calling again with a different url navigates it, and there is no way to open one for another task or project. If your project is not the one open in Kangentic, the surface comes up OFFSCREEN (`offscreen: true`), fully driveable, and becomes a visible pane by itself once one can mount. " + PASSKEY_NOTE,
       inputSchema: z.object({
         url: z
           .string()
@@ -487,7 +495,7 @@ export function registerBrowserTools(
     'kangentic_browser_navigate',
     {
       description:
-        "Point the task's embedded Browser pane at a URL (e.g. http://localhost:4200) so you can drive and verify a dev server. This navigates the in-app pane the user has open, not a general web browser. The pane's URL bar and per-task saved URL update automatically. http(s) only.",
+        "Point the task's embedded Browser pane at a URL (e.g. http://localhost:4200) so you can drive and verify a dev server. This navigates the in-app pane the user has open, not a general web browser. The pane's URL bar and per-task saved URL update automatically. http(s) only. " + PASSKEY_NOTE,
       inputSchema: z.object({
         ...TARGET_SHAPE,
         url: z.string().describe('Absolute http(s) URL to load, e.g. http://localhost:4200.'),

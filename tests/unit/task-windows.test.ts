@@ -8,10 +8,15 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockCloseForTask, mockDestroyLanesForTask, mockListOpenKeys } = vi.hoisted(() => ({
+const { mockCloseForTask, mockDestroyLanesForTask, mockListOpenKeys, mockForgetAgentControl } = vi.hoisted(() => ({
   mockCloseForTask: vi.fn((_task: { projectId: string; taskId: string }) => 0),
   mockDestroyLanesForTask: vi.fn((_taskId: string) => 0),
   mockListOpenKeys: vi.fn((): string[] => []),
+  mockForgetAgentControl: vi.fn(),
+}));
+
+vi.mock('../../src/main/browser/passkey-guard', () => ({
+  forgetAgentControl: mockForgetAgentControl,
 }));
 
 vi.mock('../../src/main/pop-out/pop-out-window-manager', () => ({
@@ -42,6 +47,18 @@ describe('closeTaskWindows', () => {
     expect(mockDestroyLanesForTask).toHaveBeenCalledWith('task-abcdef12');
     expect(logSpy).toHaveBeenCalledWith('[TASK_WINDOWS] Closed 2 pop-out(s) and 1 lane(s) for task task-abc');
     logSpy.mockRestore();
+  });
+
+  it("drops the agent's control of the task's browser, even when closing a window throws", () => {
+    // Decision 47: a guest built for the task after its work ended is a
+    // person's pane, so its passkey sign-ins must reach the OS.
+    mockCloseForTask.mockImplementationOnce(() => { throw new Error('window gone'); });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    closeTaskWindows('project-1', 'task-1');
+
+    expect(mockForgetAgentControl).toHaveBeenCalledWith('project-1', 'task-1');
+    warnSpy.mockRestore();
   });
 
   it('logs nothing when the task had no windows', () => {

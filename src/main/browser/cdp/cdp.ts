@@ -97,6 +97,15 @@ interface AttachedState {
    *  back what it asked for. Rides the same WeakMap entry, so a detach
    *  re-arms it for free. */
   deviceMetrics: DeviceMetrics | null;
+  /** The install of this session's virtual WebAuthn authenticator, or null
+   *  when none is in place. A promise rather than a boolean so concurrent
+   *  callers await ONE install. Rides the WeakMap entry like `focusEmulated`,
+   *  and Chromium drops the virtual environment itself when the session ends,
+   *  so a detach re-arms both sides for free. See `ensureVirtualAuthenticator`. */
+  virtualAuthenticator: Promise<boolean> | null;
+  /** True once `virtualAuthenticator` has settled as installed, so a release
+   *  can disable in the same tick as the person's press. */
+  virtualAuthenticatorReady: boolean;
 }
 
 export interface DeviceMetrics {
@@ -168,6 +177,8 @@ export function attachDebugger(webContents: WebContents): boolean {
     webContents,
     focusEmulated: false,
     deviceMetrics: null,
+    virtualAuthenticator: null,
+    virtualAuthenticatorReady: false,
     consoleRing: [],
     dialogRing: [],
     dialogResponse: { ...DEFAULT_DIALOG_RESPONSE },
@@ -405,6 +416,117 @@ export function ensureFocusEmulation(webContents: WebContents): void {
   void webContents.debugger
     .sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true })
     .catch(() => {});
+}
+
+/**
+ * The virtual authenticator every passkey (WebAuthn) request goes to while an
+ * agent controls a guest. Fixed options, so a test can pin them.
+ *
+ * Starts empty. `automaticPresenceSimulation` answers user presence itself, so
+ * a `create()` the agent triggers registers a throwaway passkey that works
+ * until the authenticator is removed, and a `get()` with no matching passkey
+ * fails instead of waiting for a touch that never comes.
+ */
+export const VIRTUAL_AUTHENTICATOR_OPTIONS = {
+  protocol: 'ctap2',
+  ctap2Version: 'ctap2_1',
+  transport: 'internal',
+  hasResidentKey: true,
+  hasUserVerification: true,
+  isUserVerified: true,
+  automaticPresenceSimulation: true,
+} as const;
+
+/**
+ * Send this guest's passkey requests to a virtual authenticator, so Windows
+ * (or any OS) never draws a passkey dialog that no agent can answer.
+ *
+ * A sign-in page that asks for a passkey on LOAD
+ * (`navigator.credentials.get({ mediation: 'conditional' })`) is silent in
+ * Chrome until a person picks a passkey from autofill. Electron has no such
+ * autofill UI, so its Chromium hands the request to the Windows WebAuthn API,
+ * which draws "Choose a passkey" at once. On an agent's surface that dialog sat
+ * on the user's screen through unattended workflows. `WebAuthn.enable` swaps
+ * Chromium's real authenticator discovery for a virtual one, so the OS is never
+ * asked.
+ *
+ * Idempotent per CDP session, and deliberately NOT called from
+ * `attachDebugger`: the dev inspection bridge attaches through that function
+ * against Kangentic's own window, and the person's own passkey sign-ins in a
+ * pane no agent drives must keep reaching Windows. Only the passkey guard
+ * (`../passkey-guard.ts`) arms it.
+ *
+ * Resolves `false` rather than rejecting, and never throws: a guest that
+ * refuses is not a reason to fail a drive. The caller reports a `false`.
+ */
+export function ensureVirtualAuthenticator(webContents: WebContents): Promise<boolean> {
+  const state = attached.get(webContents);
+  if (!state) return Promise.resolve(false);
+  if (state.virtualAuthenticator) return state.virtualAuthenticator;
+  const install = (async (): Promise<boolean> => {
+    try {
+      await webContents.debugger.sendCommand('WebAuthn.enable', { enableUI: false });
+      await webContents.debugger.sendCommand('WebAuthn.addVirtualAuthenticator', {
+        options: VIRTUAL_AUTHENTICATOR_OPTIONS,
+      });
+      return true;
+    } catch {
+      // report-ok: resolved as false, which the passkey guard reports with a fixed error
+      return false;
+    }
+  })();
+  state.virtualAuthenticator = install;
+  state.virtualAuthenticatorReady = false;
+  void install.then((installed) => {
+    if (state.virtualAuthenticator !== install) return;
+    // A failed install is forgotten, so the next drive tries again rather than
+    // carrying a guest that would reach the OS forever.
+    if (installed) state.virtualAuthenticatorReady = true;
+    else state.virtualAuthenticator = null;
+  });
+  return install;
+}
+
+/** Whether this session has asked for a virtual authenticator. */
+export function hasVirtualAuthenticator(webContents: WebContents): boolean {
+  return attached.get(webContents)?.virtualAuthenticator != null;
+}
+
+/**
+ * Hand passkey requests back to the OS: the person has taken the surface back.
+ * `WebAuthn.disable` drops the virtual environment and every authenticator in
+ * it, along with any passkey an agent registered there. A no-op when none is in
+ * place, so a release on every click costs one map lookup.
+ *
+ * A request the page made BEFORE this stays with the virtual authenticator:
+ * Chromium does not re-route a pending request.
+ *
+ * An installed authenticator is disabled in the SAME tick as the call, with no
+ * `await` ahead of the send. The person's press is the call, and the click
+ * that follows it is what asks for a passkey, so a disable that waited a
+ * microtask would race that click to the browser process.
+ */
+export async function removeVirtualAuthenticator(webContents: WebContents): Promise<void> {
+  if (webContents.isDestroyed()) return;
+  const state = attached.get(webContents);
+  if (!state?.virtualAuthenticator) return;
+  const install = state.virtualAuthenticator;
+  const ready = state.virtualAuthenticatorReady;
+  state.virtualAuthenticator = null;
+  state.virtualAuthenticatorReady = false;
+  if (!ready) {
+    // Wait for an install in flight, or its `addVirtualAuthenticator` could
+    // land after the disable and re-arm a guest the person now drives.
+    await install;
+    // An agent drive that landed during that wait armed it again, and its
+    // authenticator wins: disabling now would take it away mid-drive.
+    if (state.virtualAuthenticator || webContents.isDestroyed()) return;
+  }
+  try {
+    await webContents.debugger.sendCommand('WebAuthn.disable');
+  } catch {
+    // report-ok: the guest went away or the debugger detached, and either one already ended the virtual environment
+  }
 }
 
 /**

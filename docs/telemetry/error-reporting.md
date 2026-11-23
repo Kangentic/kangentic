@@ -472,7 +472,9 @@ in one Sentry org, one triage surface.
     event (Sentry DESKTOP-49 was every such script reported as a defect).
   - `mobile_verb` (tag `verb`, plus `relay_dial_id`), `automation_runner` (tag `automation_type`), `turn_end`,
     `workflow_engine` (tag `stage`), `pr` (tag `stage`), `browser_driver` (tag `kind`, built-in
-    classes and the attach, capture and composite failures only). A `ScreenshotNotComposited`
+    classes and the attach, capture and composite failures only), `browser_passkey_guard` (tag
+    `surface`: `lane`, `drive` or `created`, for a virtual passkey authenticator a guest refused;
+    `src/main/browser/passkey-guard.ts`, no new data class). A `ScreenshotNotComposited`
     report also carries seven fixed tags, so it can say why the capture got no frame (Sentry
     DESKTOP-46, a timeout 18 s after an unlock that could not say whether the capture hold armed):
     `surface` (`pane`, `hidden`, `parked`, `popout`, `lane`), `host_window` (`visible`,

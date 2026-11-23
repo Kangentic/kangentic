@@ -54,11 +54,15 @@ vi.mock('../../src/main/browser/browser-lane-manager', () => ({
   destroyLane: vi.fn(() => true),
   hasLaneForTask: () => laneExistsForTask,
 }));
+vi.mock('../../src/main/browser/passkey-guard', () => ({
+  markAgentControl: vi.fn(),
+}));
 
 import { browserPaneRegistry } from '../../src/main/browser/browser-pane-registry';
 import { withGuest, capabilityGate, validateNavigationUrl } from '../../src/main/browser/browser-pane-driver';
 import { browserUrlStore } from '../../src/main/browser/browser-url-store';
 import { openLane } from '../../src/main/browser/browser-lane-manager';
+import { markAgentControl } from '../../src/main/browser/passkey-guard';
 import {
   openPaneForCallerTask,
   closePanes,
@@ -391,6 +395,21 @@ describe('openPaneForCallerTask', () => {
       await openPaneForCallerTask(openInput('http://localhost:5173'));
       expect(order).toEqual(['seed', 'push']);
       expect(sent[0]).toMatchObject({ channel: IPC.BROWSER_PANE_OPEN_REQUEST, args: [PROJECT, CALLER_TASK, 'for-user'] });
+    });
+
+    it('marks the task under agent control BEFORE pushing, so the guest it mounts is armed before it loads', async () => {
+      // Decision 47: a sign-in page asks for a passkey as it loads, and the
+      // `withGuest` at the end of open_pane runs only after `dom-ready`. The
+      // mark is what lets `web-contents-created` arm the new guest in time.
+      const order: string[] = [];
+      vi.mocked(markAgentControl).mockImplementation(() => { order.push('mark'); });
+      installHost({
+        send: (channel, ...args) => { order.push('push'); sent.push({ channel, args }); return true; },
+      });
+      vi.mocked(browserPaneRegistry.waitForLivePane).mockResolvedValue(null as never);
+      await openPaneForCallerTask(openInput('http://localhost:5173'));
+      expect(vi.mocked(markAgentControl)).toHaveBeenCalledWith(PROJECT, CALLER_TASK);
+      expect(order).toEqual(['mark', 'push']);
     });
 
     it('carries an own-work purpose on the cold push, so the renderer mounts the pane held', async () => {

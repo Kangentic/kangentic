@@ -1,5 +1,6 @@
 import { popOutWindowManager } from '../../pop-out/pop-out-window-manager';
 import { destroyLanesForTask } from '../../browser/browser-lane-manager';
+import { forgetAgentControl } from '../../browser/passkey-guard';
 import { parsePopOutInstanceKey } from '../../../shared/pop-out';
 
 /**
@@ -27,6 +28,9 @@ import { parsePopOutInstanceKey } from '../../../shared/pop-out';
  * Best-effort: a window that fails to close never fails the move or delete.
  */
 export function closeTaskWindows(projectId: string | null | undefined, taskId: string): void {
+  // The agent's control of the task's browser ends with its work. Ahead of the
+  // try, since it cannot throw and must not be skipped by a window that does.
+  forgetAgentControl(projectId, taskId);
   try {
     const popOutCount = projectId ? popOutWindowManager.closeForTask({ projectId, taskId }) : 0;
     const laneCount = destroyLanesForTask(taskId);

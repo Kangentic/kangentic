@@ -71,6 +71,11 @@ vi.mock('../../src/main/browser/browser-pane-driver', () => ({
   withGuest: (...args: unknown[]) => withGuest(...(args as [])),
 }));
 
+const markAgentControl = vi.fn();
+vi.mock('../../src/main/browser/passkey-guard', () => ({
+  markAgentControl: (...args: unknown[]) => markAgentControl(...(args as [])),
+}));
+
 vi.mock('../../src/main/browser/viewport-override', () => ({
   applyViewport: (...args: unknown[]) => applyViewport(...(args as [])),
   displayForWindow: () => ({ width: 2560, height: 1392 }),
@@ -145,6 +150,18 @@ describe('pop_out', () => {
       { projectId: PROJECT, taskId: TASK },
       { focus: false },
     );
+  });
+
+  it('marks the task under agent control BEFORE the window builds its new guest', async () => {
+    // Decision 47: the new guest reloads the page, and only a mark set ahead of
+    // its construction gets it armed before a sign-in page asks for a passkey.
+    seedDockedPane();
+    seedSuccessor();
+
+    await popOutPaneForCallerTask(base());
+
+    expect(markAgentControl).toHaveBeenCalledWith(PROJECT, TASK);
+    expect(markAgentControl.mock.invocationCallOrder[0]).toBeLessThan(popOutOpen.mock.invocationCallOrder[0]);
   });
 
   it('waits for the SUCCESSOR guest and returns its handle, not the dead one', async () => {
@@ -620,6 +637,16 @@ describe('dock', () => {
     if (!result.ok) return;
     expect(result.data.sessionId).toBe('pane_docked');
     expect(result.data.moved).toBe(true);
+  });
+
+  it('marks the task under agent control BEFORE closing the window, so the returning guest is armed', async () => {
+    popOutHas.mockReturnValue(true);
+    seedSuccessor('pane_docked', 11);
+
+    await dockPaneForCallerTask(base());
+
+    expect(markAgentControl).toHaveBeenCalledWith(PROJECT, TASK);
+    expect(markAgentControl.mock.invocationCallOrder[0]).toBeLessThan(popOutClose.mock.invocationCallOrder[0]);
   });
 
   it('refuses with not-detached when the pane is already in the task window', async () => {

@@ -127,6 +127,7 @@ import {
 } from './window-open-policy';
 import { installEmbeddedBrowserSessionPolicy } from './browser/guest-session-policy';
 import { applyBrowserUserAgent } from './browser/browser-user-agent';
+import { armGuest, isUnderAgentControl, releaseAgentControl } from './browser/passkey-guard';
 
 initStartupTimer(PROCESS_START);
 mark('process_start');
@@ -671,6 +672,12 @@ app.on('web-contents-created', (_event, contents) => {
   // the popups below inherit it.
   applyBrowserUserAgent(contents);
 
+  // A guest for a surface an agent controls (`open_pane` mounting it, a pop-out
+  // or dock re-creating it, a pane reclaiming a lane) is armed HERE, at
+  // construction, before `did-attach` loads the first `src`. A pane only a
+  // person has used is never armed. See `browser/passkey-guard.ts`.
+  if (isUnderAgentControl(contents.session)) void armGuest(contents, 'created');
+
   // Forward the guest's mouse BACK / FORWARD buttons to the host renderer.
   //
   // A guest is an out-of-process frame and consumes the mouse outright: measured
@@ -723,6 +730,11 @@ app.on('web-contents-created', (_event, contents) => {
     // which the runtime payload contradicts (see the channel comment); `type` is
     // already a correct literal union and stays checked.
     const event = input as Electron.InputEvent & { button?: string };
+    // The person pressing in the page takes it back from the agent, so their
+    // passkey sign-ins reach the OS again. A no-op during a drive and on a guest
+    // with no virtual authenticator. Released on the press, before the click
+    // that would ask for a passkey. See `browser/passkey-guard.ts`.
+    if (event.type === 'mouseDown') releaseAgentControl(contents);
     if (event.type === 'mouseLeave') {
       for (const held of heldGuestButtons) sendGuestMouseButton(held, 'up');
       heldGuestButtons.clear();
@@ -884,6 +896,10 @@ app.on('web-contents-created', (_event, contents) => {
       }
       return;
     }
+
+    // A key the PERSON typed into the page (the drive branch above has returned):
+    // they are taking it back, so their passkey sign-ins reach the OS again.
+    releaseAgentControl(contents);
 
     // A Browser pane tool shortcut (Select element, Draw) typed into the page.
     // A key the guest holds never reaches the app's document, so the pane's own
