@@ -195,6 +195,13 @@ export interface ManagedSession {
   /** Epoch ms of the first output of any kind, the shell's own included. */
   firstOutputAt?: number | null;
   /**
+   * Epoch ms of the latest output of any kind, within the host's coalescing
+   * window. When an agent under a shell exits, the shell prints its prompt, so
+   * for a session the agent-absence sweep retired this is about when the agent
+   * ended, which the sweep's own kill can trail by minutes.
+   */
+  lastOutputAt?: number | null;
+  /**
    * Epoch ms of the pty host's `agentOutput`: text after the spawn's clear ran,
    * so the shell ran the typed line. Not evidence the AGENT ran, because the
    * shell's own "command not found" lands here too.

@@ -1346,6 +1346,7 @@ export class SessionManager extends EventEmitter {
           outputSession.firstOutputAt = Date.now();
           logLaunchStep(outputSession, 'first_output');
         }
+        if (outputSession) outputSession.lastOutputAt = Date.now();
         this.telemetry.activityEngine.markPtyChunk(event.sessionId);
         // Production stuck-pending-tools signal: a single timestamp write so a
         // long quiet foreground tool (a test run streaming output with no hook

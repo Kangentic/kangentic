@@ -361,4 +361,16 @@ describe('SessionManager start bound', () => {
       expect(read).toHaveBeenCalledTimes(2);
     });
   });
+
+  // The launch report times an agent the sweep retired by this (`agentEndedAt`).
+  it('stamps every output on the row, the latest last', async () => {
+    vi.useFakeTimers();
+    const session = seedSession({ agentRanAt: Date.now() });
+    outputSeen();
+    const first = session.lastOutputAt;
+    await vi.advanceTimersByTimeAsync(5_000);
+    outputSeen();
+    expect(typeof first).toBe('number');
+    expect(session.lastOutputAt).toBe((first as number) + 5_000);
+  });
 });
