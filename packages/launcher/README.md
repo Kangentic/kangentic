@@ -4,7 +4,7 @@
 
 An agentic development environment for AI coding agents. This package installs the desktop app and opens it.
 
-![The Kangentic board with tasks in To Do, Planning, Executing, and Code Review, and the selected agent's terminal open below.](https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-dark.png)
+![The Kangentic board with tasks in To Do, Planning, Executing, and Code Review, and the selected agent's terminal open below.](https://kangentic.github.io/kangentic/readme/board-dark.png)
 
 ## Install and run
 

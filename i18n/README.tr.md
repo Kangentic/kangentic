@@ -1,5 +1,5 @@
-<!-- readme-translation source-blob=addf4d308ea2879895590819a96e54c47a323ac9 -->
-> Bu belge, [README.md](../README.md) dosyasının `addf4d3` revizyonundaki halinin makine çevirisidir. Esas sürüm İngilizce olandır.
+<!-- readme-translation source-blob=ded000bed8af5253da7d62f8cafb9a8369f243a4 -->
+> Bu belge, [README.md](../README.md) dosyasının `ded000b` revizyonundaki halinin makine çevirisidir. Esas sürüm İngilizce olandır.
 
 <p align="center">
   <a href="https://www.kangentic.com"><img src="https://raw.githubusercontent.com/Kangentic/branding/main/resources/web/logo.png" alt="Kangentic logosu" width="96" /></a>
@@ -21,9 +21,9 @@
 <p align="center">
   <a href="https://kangentic.github.io/kangentic/">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-dark.png" />
-      <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-light.png" />
-      <img src="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-dark.png" alt="Yapılacaklar, Planlama, Yürütülüyor ve Kod İncelemesi sütunlarında görevler bulunan Kangentic panosu. Çalışan her kart, ajanının son mesajını gösterir ve seçili ajanın terminali panonun altında açıktır. Canlı demoyu açar." width="900" />
+      <source media="(prefers-color-scheme: dark)" srcset="https://kangentic.github.io/kangentic/readme/board-dark.png" />
+      <source media="(prefers-color-scheme: light)" srcset="https://kangentic.github.io/kangentic/readme/board-light.png" />
+      <img src="https://kangentic.github.io/kangentic/readme/board-dark.png" alt="Yapılacaklar, Planlama, Yürütülüyor ve Kod İncelemesi sütunlarında görevler bulunan Kangentic panosu. Çalışan her kart, ajanının son mesajını gösterir ve seçili ajanın terminali panonun altında açıktır. Canlı demoyu açar." width="900" />
     </picture>
   </a>
 </p>

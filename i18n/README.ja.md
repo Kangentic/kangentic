@@ -1,5 +1,5 @@
-<!-- readme-translation source-blob=addf4d308ea2879895590819a96e54c47a323ac9 -->
-> これは [README.md](../README.md) の `addf4d3` 時点の機械翻訳です。正式版は英語版です。
+<!-- readme-translation source-blob=ded000bed8af5253da7d62f8cafb9a8369f243a4 -->
+> これは [README.md](../README.md) の `ded000b` 時点の機械翻訳です。正式版は英語版です。
 
 <p align="center">
   <a href="https://www.kangentic.com"><img src="https://raw.githubusercontent.com/Kangentic/branding/main/resources/web/logo.png" alt="Kangentic ロゴ" width="96" /></a>
@@ -21,9 +21,9 @@
 <p align="center">
   <a href="https://kangentic.github.io/kangentic/">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-dark.png" />
-      <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-light.png" />
-      <img src="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-dark.png" alt="To Do、Planning、Executing、Code Review の各列にタスクが並ぶ Kangentic のボード。実行中の各カードにはエージェントの最新メッセージが表示され、選択中のエージェントのターミナルがボードの下に開いています。ライブデモを開きます。" width="900" />
+      <source media="(prefers-color-scheme: dark)" srcset="https://kangentic.github.io/kangentic/readme/board-dark.png" />
+      <source media="(prefers-color-scheme: light)" srcset="https://kangentic.github.io/kangentic/readme/board-light.png" />
+      <img src="https://kangentic.github.io/kangentic/readme/board-dark.png" alt="To Do、Planning、Executing、Code Review の各列にタスクが並ぶ Kangentic のボード。実行中の各カードにはエージェントの最新メッセージが表示され、選択中のエージェントのターミナルがボードの下に開いています。ライブデモを開きます。" width="900" />
     </picture>
   </a>
 </p>

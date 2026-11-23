@@ -1,5 +1,5 @@
-<!-- readme-translation source-blob=addf4d308ea2879895590819a96e54c47a323ac9 -->
-> Toto je strojový překlad souboru [README.md](../README.md) v revizi `addf4d3`. Závazná je anglická verze.
+<!-- readme-translation source-blob=ded000bed8af5253da7d62f8cafb9a8369f243a4 -->
+> Toto je strojový překlad souboru [README.md](../README.md) v revizi `ded000b`. Závazná je anglická verze.
 
 <p align="center">
   <a href="https://www.kangentic.com"><img src="https://raw.githubusercontent.com/Kangentic/branding/main/resources/web/logo.png" alt="Logo Kangentic" width="96" /></a>
@@ -21,9 +21,9 @@
 <p align="center">
   <a href="https://kangentic.github.io/kangentic/">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-dark.png" />
-      <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-light.png" />
-      <img src="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-dark.png" alt="Nástěnka Kangentic s úkoly ve sloupcích To Do, Planning, Executing a Code Review. Každá spuštěná karta zobrazuje poslední zprávu svého agenta a pod nástěnkou je otevřený terminál vybraného agenta. Otevře živé demo." width="900" />
+      <source media="(prefers-color-scheme: dark)" srcset="https://kangentic.github.io/kangentic/readme/board-dark.png" />
+      <source media="(prefers-color-scheme: light)" srcset="https://kangentic.github.io/kangentic/readme/board-light.png" />
+      <img src="https://kangentic.github.io/kangentic/readme/board-dark.png" alt="Nástěnka Kangentic s úkoly ve sloupcích To Do, Planning, Executing a Code Review. Každá spuštěná karta zobrazuje poslední zprávu svého agenta a pod nástěnkou je otevřený terminál vybraného agenta. Otevře živé demo." width="900" />
     </picture>
   </a>
 </p>

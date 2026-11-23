@@ -1,5 +1,5 @@
-<!-- readme-translation source-blob=addf4d308ea2879895590819a96e54c47a323ac9 -->
-> 이 문서는 `addf4d3` 시점의 [README.md](../README.md)를 기계 번역한 것입니다. 영어 버전이 정식 문서입니다.
+<!-- readme-translation source-blob=ded000bed8af5253da7d62f8cafb9a8369f243a4 -->
+> 이 문서는 `ded000b` 시점의 [README.md](../README.md)를 기계 번역한 것입니다. 영어 버전이 정식 문서입니다.
 
 <p align="center">
   <a href="https://www.kangentic.com"><img src="https://raw.githubusercontent.com/Kangentic/branding/main/resources/web/logo.png" alt="Kangentic 로고" width="96" /></a>
@@ -21,9 +21,9 @@
 <p align="center">
   <a href="https://kangentic.github.io/kangentic/">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-dark.png" />
-      <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-light.png" />
-      <img src="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-dark.png" alt="To Do, Planning, Executing, Code Review 열에 작업이 있는 Kangentic 보드. 실행 중인 각 카드에는 해당 에이전트의 최신 메시지가 표시되고, 선택한 에이전트의 터미널이 보드 아래에 열려 있습니다. 라이브 데모를 엽니다." width="900" />
+      <source media="(prefers-color-scheme: dark)" srcset="https://kangentic.github.io/kangentic/readme/board-dark.png" />
+      <source media="(prefers-color-scheme: light)" srcset="https://kangentic.github.io/kangentic/readme/board-light.png" />
+      <img src="https://kangentic.github.io/kangentic/readme/board-dark.png" alt="To Do, Planning, Executing, Code Review 열에 작업이 있는 Kangentic 보드. 실행 중인 각 카드에는 해당 에이전트의 최신 메시지가 표시되고, 선택한 에이전트의 터미널이 보드 아래에 열려 있습니다. 라이브 데모를 엽니다." width="900" />
     </picture>
   </a>
 </p>

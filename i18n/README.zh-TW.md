@@ -1,5 +1,5 @@
-<!-- readme-translation source-blob=addf4d308ea2879895590819a96e54c47a323ac9 -->
-> 這是 [README.md](../README.md) 在 `addf4d3` 的機器翻譯。以英文版本為準。
+<!-- readme-translation source-blob=ded000bed8af5253da7d62f8cafb9a8369f243a4 -->
+> 這是 [README.md](../README.md) 在 `ded000b` 的機器翻譯。以英文版本為準。
 
 <p align="center">
   <a href="https://www.kangentic.com"><img src="https://raw.githubusercontent.com/Kangentic/branding/main/resources/web/logo.png" alt="Kangentic 標誌" width="96" /></a>
@@ -21,9 +21,9 @@
 <p align="center">
   <a href="https://kangentic.github.io/kangentic/">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-dark.png" />
-      <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-light.png" />
-      <img src="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-dark.png" alt="Kangentic 看板，任務分布在「待辦」、「規劃」、「執行中」和「程式碼審查」欄中。每張執行中的卡片都會顯示其代理程式的最新訊息，所選代理程式的終端機則開啟在看板下方。點選即可開啟線上展示。" width="900" />
+      <source media="(prefers-color-scheme: dark)" srcset="https://kangentic.github.io/kangentic/readme/board-dark.png" />
+      <source media="(prefers-color-scheme: light)" srcset="https://kangentic.github.io/kangentic/readme/board-light.png" />
+      <img src="https://kangentic.github.io/kangentic/readme/board-dark.png" alt="Kangentic 看板，任務分布在「待辦」、「規劃」、「執行中」和「程式碼審查」欄中。每張執行中的卡片都會顯示其代理程式的最新訊息，所選代理程式的終端機則開啟在看板下方。點選即可開啟線上展示。" width="900" />
     </picture>
   </a>
 </p>

@@ -70,6 +70,11 @@ Any step in the release path that exists to guarantee something must fail when i
   pinned too: `poster-gate` needs `demo-posters`, runs only when that shoot succeeded (so a failed
   shoot skips it rather than gating nothing), checks out the ref the set was shot from, downloads the
   artifact `demo-posters` uploaded, and runs every shard on all three OSes with `fail-fast: false`.
+  The demo deploy is pinned too: `deploy-demo` needs `demo-posters` and runs whether the shoot
+  passed or failed. `deploy-demo.yml`'s README stills step comes before the Pages upload, can
+  fail, never reads `/releases/latest`, and says which release it took. Its jq is run against
+  release lists in which the tag's own zip exists, the tag's zip is missing, and a newer release
+  exists. Every README must load its hero from the paths that step writes.
   It also pins the two shapes v0.39.0 and v0.40.0 broke:
   `create-draft-release` must be able to FAIL on a release that is already published and
   incomplete (rather than reusing it, which lets electron-builder skip every upload while the

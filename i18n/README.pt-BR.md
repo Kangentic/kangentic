@@ -1,5 +1,5 @@
-<!-- readme-translation source-blob=addf4d308ea2879895590819a96e54c47a323ac9 -->
-> Esta é uma tradução automática de [README.md](../README.md) na revisão `addf4d3`. A versão em inglês é a oficial.
+<!-- readme-translation source-blob=ded000bed8af5253da7d62f8cafb9a8369f243a4 -->
+> Esta é uma tradução automática de [README.md](../README.md) na revisão `ded000b`. A versão em inglês é a oficial.
 
 <p align="center">
   <a href="https://www.kangentic.com"><img src="https://raw.githubusercontent.com/Kangentic/branding/main/resources/web/logo.png" alt="Logo do Kangentic" width="96" /></a>
@@ -21,9 +21,9 @@
 <p align="center">
   <a href="https://kangentic.github.io/kangentic/">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-dark.png" />
-      <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-light.png" />
-      <img src="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-dark.png" alt="O quadro do Kangentic com tarefas em A Fazer, Planejamento, Execução e Revisão de Código. Cada cartão em execução mostra a última mensagem do seu agente, e o terminal do agente selecionado está aberto abaixo do quadro. Abre a demonstração ao vivo." width="900" />
+      <source media="(prefers-color-scheme: dark)" srcset="https://kangentic.github.io/kangentic/readme/board-dark.png" />
+      <source media="(prefers-color-scheme: light)" srcset="https://kangentic.github.io/kangentic/readme/board-light.png" />
+      <img src="https://kangentic.github.io/kangentic/readme/board-dark.png" alt="O quadro do Kangentic com tarefas em A Fazer, Planejamento, Execução e Revisão de Código. Cada cartão em execução mostra a última mensagem do seu agente, e o terminal do agente selecionado está aberto abaixo do quadro. Abre a demonstração ao vivo." width="900" />
     </picture>
   </a>
 </p>

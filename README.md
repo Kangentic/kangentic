@@ -18,9 +18,9 @@
 <p align="center">
   <a href="https://kangentic.github.io/kangentic/">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-dark.png" />
-      <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-light.png" />
-      <img src="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-dark.png" alt="The Kangentic board with tasks in To Do, Planning, Executing, and Code Review. Each running card shows its agent's latest message, and the selected agent's terminal is open below the board. Opens the live demo." width="900" />
+      <source media="(prefers-color-scheme: dark)" srcset="https://kangentic.github.io/kangentic/readme/board-dark.png" />
+      <source media="(prefers-color-scheme: light)" srcset="https://kangentic.github.io/kangentic/readme/board-light.png" />
+      <img src="https://kangentic.github.io/kangentic/readme/board-dark.png" alt="The Kangentic board with tasks in To Do, Planning, Executing, and Code Review. Each running card shows its agent's latest message, and the selected agent's terminal is open below the board. Opens the live demo." width="900" />
     </picture>
   </a>
 </p>

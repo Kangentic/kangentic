@@ -1,5 +1,5 @@
-<!-- readme-translation source-blob=addf4d308ea2879895590819a96e54c47a323ac9 -->
-> 本文是 [README.md](../README.md) 在 `addf4d3` 时的机器翻译版本，以英文版本为准。
+<!-- readme-translation source-blob=ded000bed8af5253da7d62f8cafb9a8369f243a4 -->
+> 本文是 [README.md](../README.md) 在 `ded000b` 时的机器翻译版本，以英文版本为准。
 
 <p align="center">
   <a href="https://www.kangentic.com"><img src="https://raw.githubusercontent.com/Kangentic/branding/main/resources/web/logo.png" alt="Kangentic 徽标" width="96" /></a>
@@ -21,9 +21,9 @@
 <p align="center">
   <a href="https://kangentic.github.io/kangentic/">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-dark.png" />
-      <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-light.png" />
-      <img src="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-dark.png" alt="Kangentic 看板，任务分布在“待办”“规划”“执行”和“代码评审”列中。每张运行中的卡片显示其智能体的最新消息，看板下方打开了所选智能体的终端。点击打开在线演示。" width="900" />
+      <source media="(prefers-color-scheme: dark)" srcset="https://kangentic.github.io/kangentic/readme/board-dark.png" />
+      <source media="(prefers-color-scheme: light)" srcset="https://kangentic.github.io/kangentic/readme/board-light.png" />
+      <img src="https://kangentic.github.io/kangentic/readme/board-dark.png" alt="Kangentic 看板，任务分布在“待办”“规划”“执行”和“代码评审”列中。每张运行中的卡片显示其智能体的最新消息，看板下方打开了所选智能体的终端。点击打开在线演示。" width="900" />
     </picture>
   </a>
 </p>

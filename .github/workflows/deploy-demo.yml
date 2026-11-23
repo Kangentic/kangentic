@@ -7,6 +7,11 @@
 # always shows the shipped app and never a ref ahead of or behind it.
 # workflow_dispatch is for a manual redeploy of a tag or branch.
 #
+# The same site serves the README's board image (readme/board-dark.png and
+# readme/board-light.png), taken from a release's poster set. See the step
+# "Add the README board stills" for which release, and why every deploy
+# carries them.
+#
 # The build base is /kangentic/ because a project Pages site serves under the
 # repository name. demo/vite.config.mts defaults to /demo/ for local runs, which
 # would 404 every asset on Pages, so the base is passed on the CLI here.
@@ -106,6 +111,66 @@ jobs:
       # smoke, as in ci.yml (see the note above ci.yml's UI shards run step).
       - name: Smoke-test the built demo
         run: npm run test:demo -- --fail-on-flaky-tests
+
+      # Every README (README.md, i18n/README.*.md, packages/launcher/README.md) loads its hero
+      # from this site, at readme/board-dark.png and readme/board-light.png. A Pages deploy replaces
+      # the whole site, so every deploy carries both, a manual one included, or the next redeploy
+      # breaks the README. They are the board scene's rust and clay posters out of a release's
+      # demo-posters-<version>.zip, copied as shot (3200 by 2000, about 400 KB each).
+      #
+      # Which release: the ref's own when it is a release tag and its zip is attached. When that zip
+      # is missing (the shoot failed, so demo-posters has already turned the release run red), the
+      # newest OLDER release that has one, so the README keeps the previous image instead of
+      # breaking. A ref that is not a release tag takes the newest release with a zip. Never
+      # /releases/latest: a release is latest before its posters are shot. Nothing found fails the
+      # deploy rather than publishing a site the README cannot load from. The ref reaches the script
+      # through env, and the jq takes it with --arg, as in the version step above.
+      - name: Add the README board stills
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ inputs.ref }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag="${REF#refs/tags/}"
+          self=""
+          if printf '%s' "$tag" | grep -qE '^v[0-9]'; then
+            if ! printf '%s' "$tag" | grep -qE '^v[0-9]+[.][0-9]+[.][0-9]+$'; then
+              echo "::error::Ref $REF is a release tag but not a plain vX.Y.Z version, so no poster set can be matched to it. Dispatch with a vX.Y.Z tag or a branch."
+              exit 1
+            fi
+            self="$tag"
+          fi
+          gh api "repos/$REPOSITORY/releases?per_page=100" > /tmp/releases.json
+          source_tag=$(jq -r --arg self "$self" \
+            'def ver: ltrimstr("v") | split(".") | map(tonumber); [.[] | select(.draft == false and .prerelease == false) | select(.tag_name | test("^v[0-9]+[.][0-9]+[.][0-9]+$")) | select(if $self == "" then true else (.tag_name | ver) <= ($self | ver) end) | select(.tag_name as $release | any(.assets[]?; .name == "demo-posters-\($release | ltrimstr("v")).zip"))] | max_by(.tag_name | ver) | .tag_name // empty' \
+            /tmp/releases.json)
+          if [ -z "$source_tag" ]; then
+            echo "::error::No published release${self:+ at or below $self} carries a demo-posters-<version>.zip, so there are no README board stills to deploy. The API returned $(jq 'length' /tmp/releases.json) release(s). Re-run release.yml's demo-posters job for a release, then redeploy."
+            exit 1
+          fi
+          if [ -z "$self" ]; then
+            echo "Ref $REF is not a release tag; taking the README board stills from the newest release with a poster set, $source_tag."
+          elif [ "$source_tag" = "$self" ]; then
+            echo "Taking the README board stills from $self's own poster set."
+          else
+            echo "::warning::$self has no demo-posters zip attached, so the README keeps the board stills from $source_tag. Re-run demo-posters for $self, then redeploy."
+          fi
+          version="${source_tag#v}"
+          zip="$RUNNER_TEMP/readme-stills/demo-posters-$version.zip"
+          gh release download "$source_tag" --repo "$REPOSITORY" --pattern "demo-posters-$version.zip" --dir "$RUNNER_TEMP/readme-stills" --clobber
+          mkdir -p dist/demo/readme
+          unzip -p "$zip" board.rust.frame.png > dist/demo/readme/board-dark.png
+          unzip -p "$zip" board.clay.frame.png > dist/demo/readme/board-light.png
+          for still in board-dark.png board-light.png; do
+            file="dist/demo/readme/$still"
+            signature=$(head -c 8 "$file" | od -An -tx1 | tr -d ' \n')
+            if [ "$signature" != "89504e470d0a1a0a" ]; then
+              echo "::error::readme/$still taken from $source_tag's poster set is not a PNG (first bytes $signature). Refusing to deploy a README image that will not load."
+              exit 1
+            fi
+            echo "readme/$still: $(stat -c %s "$file") bytes from $source_tag."
+          done
 
       # configure-pages is the first step to notice that Pages is not enabled
       # for the repository, and it fails the run there. See the deploy job
