@@ -254,7 +254,7 @@ function keepElectronCrumb(crumb: BreadcrumbShape): boolean {
  * (src/main/browser/cpu-speed-limit.ts). Every other powerMonitor event
  * (suspend, resume, lock-screen, unlock-screen, on-ac, on-battery) is kept.
  */
-export const SUPPRESSED_POWER_MONITOR_EVENTS: readonly string[] = ['speed-limit-change'];
+const SUPPRESSED_POWER_MONITOR_EVENTS: readonly string[] = ['speed-limit-change'];
 
 /** The integration's `powerMonitor` predicate: true records the event as a crumb. */
 export function keepPowerMonitorBreadcrumb(eventName: string): boolean {

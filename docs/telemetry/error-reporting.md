@@ -540,17 +540,17 @@ in one Sentry org, one triage surface.
     pane. On Wayland a minimized app still reads `host_window: visible`, so `host_window` alone
     cannot say whether the app was on screen. The eighth, `cpu_speed_limit` (`100`, `75-99`,
     `50-74`, `<50`, `unknown`), is the latest CPU speed limit the OS advertised through
-    powerMonitor's `speed-limit-change`, in percent, bucketed (`src/main/browser/cpu-speed-limit.ts`).
-    Electron emits that event on Windows and macOS only, so Linux always reads `unknown`, and so
-    does a run whose limit never changed. `unknown` never means unthrottled. It came after the
-    0.62.0 Windows event, whose trail was about 100 `speed-limit-change` crumbs, one every 1 to
-    2 s, that filled main's ring and evicted every other crumb (see the breadcrumbs section). None
-    is a new data class: the `electron` breadcrumbs already carry power events and window focus
-    with their timestamps (the speed-limit crumb included, until this change), the two hold tags
-    describe Kangentic's own calls, and the display server and the speed-limit bucket are
-    few-value facts about the machine, the same class as `host_window`. A `CaptureExceedsSurface`
-    report carries five, so it can say what
-    the refused request looked like (Sentry DESKTOP-48, a refusal that could not say which of the
+    powerMonitor's `speed-limit-change`, in percent, bucketed
+    (`src/main/browser/cpu-speed-limit.ts`). Electron emits that event on Windows and macOS only,
+    so Linux always reads `unknown`, and so does a run whose limit never changed. `unknown` never
+    means unthrottled. It came after the 0.62.0 Windows event, whose trail was about 100
+    `speed-limit-change` crumbs, one every 1 to 2 s, that filled main's ring and evicted every
+    other crumb (see the breadcrumbs section). None is a new data class: the `electron`
+    breadcrumbs already carry power events and window focus with their timestamps (the
+    speed-limit crumb included, until this change), the two hold tags describe Kangentic's own
+    calls, and the display server and the speed-limit bucket are few-value facts about the
+    machine, the same class as `host_window`. A `CaptureExceedsSurface` report carries five, so it
+    can say what the refused request looked like (Sentry DESKTOP-48, a refusal that could not say which of the
     bound's inputs was wrong): `surface` as above, `target` (`viewport`, `full_page`, `element`),
     `clipped` (`yes`, `no`), `emulated` (`yes`, `no`, and `unknown` when no CDP session was
     attached to say) and `widget_size` (`reported`, or `fallback` when the host window stood in

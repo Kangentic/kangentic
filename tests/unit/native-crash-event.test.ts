@@ -977,6 +977,31 @@ describe('correctNativeCrashEvent: a crash while quitting groups apart', () => {
     expect(event.level).toBe('fatal');
   });
 
+  // The ownership split runs first: a crash of someone else's process is a foreign
+  // warning whatever our run was doing, so quitting must not overwrite its fingerprint.
+  it.each([
+    {
+      label: 'a live foreign crash in a session that is shutting down',
+      previousRun: null,
+      shuttingDown: true,
+      event: () => liveEvent(),
+    },
+    {
+      label: 'a startup-found foreign dump from a run that had begun a clean quit',
+      previousRun: { exit: 'clean', uptimeSeconds: 600, lastAliveAt: '2026-09-08T14:46:40.000Z' },
+      shuttingDown: false,
+      event: () => nativeEvent(),
+    },
+  ] as const)('keeps the foreign fingerprint for $label', ({ previousRun, shuttingDown, event }) => {
+    const foreignIdentity = readMinidumpIdentity(
+      buildMinidump({ modules: FFPROBE_MODULES, simpleAnnotations: { _version: '0.57.0' }, timeDateStamp: CRASH_TIME_STAMP })
+    );
+    const decision = correctNativeCrashEvent(event(), foreignIdentity, { ...LINUX_CONTEXT, previousRun, shuttingDown });
+    expect(decision.action).toBe('foreign');
+    expect(decision.event.fingerprint).toEqual(FOREIGN_CRASH_FINGERPRINT);
+    expect(decision.event.fingerprint).not.toContain('quit-begun');
+  });
+
   // A live event decides from the shutdown flag alone, so the mid-run case is the
   // live event with the flag down. Every other case is a startup-found dump, judged
   // by the run record.
