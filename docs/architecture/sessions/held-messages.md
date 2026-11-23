@@ -158,6 +158,11 @@ silence timer of `ActivityDetection.pty`. The wait asks for 1.5 s of PTY quiet t
 up after `PAINT_GIVE_UP_MS` (120 s) of idle: a resumed Claude repaints its status line while its
 own background agents run, and its held messages used to wait out the whole hour and fail (#804).
 
+A paste of held messages alone logs as `held-message:<task>`, not `automation:<task>`, so the logs
+do not show it as a column automation. That covers this flush, the paste after a slash command's
+turn and a handoff's paste. A delivery that carries them inside an opening message, or beside a
+handoff's history pointer, still logs as `automation:<task>`.
+
 A start that opened on an expired conversation's recap delivers none of them: they wait for the
 next start, as the column's messages do. A return recap holds nothing back (see
 [Resume](resume.md#a-return-to-the-main-conversation-opens-on-a-recap)). Ahead of a plain-text

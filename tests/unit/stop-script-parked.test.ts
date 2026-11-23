@@ -308,7 +308,7 @@ describe('stopParkedTask', () => {
 describe('stoppedProcessesMessage', () => {
   it('says when it stopped, what stopped and that the agent may start it again', () => {
     expect(stoppedProcessesMessage(['node (vite)', 'python3 (http.server)'], STOPPED_AT)).toBe(
-      "On 2026-01-05 at 09:15 UTC, the project's Stop script stopped what this task left running while it was paused: node (vite), python3 (http.server). Start them again if you need them.",
+      "On 2026-01-05 at 09:15 UTC, the project's Stop script stopped what this task left running while its agent was paused for being idle: node (vite), python3 (http.server). Start them again if you need them.",
     );
   });
 

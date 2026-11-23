@@ -249,6 +249,12 @@ interface BackgroundPasteInput {
   onOutcome: (report: InjectionReport) => void;
   /** The turn wait also takes a turn held only by background work its agent left. */
   acceptHeld?: boolean;
+  /**
+   * What the paste logs as, before the task id. `held-message` for a paste of
+   * held messages alone, so the log never reads it as a column automation.
+   * `automation` when unset.
+   */
+  source?: 'automation' | 'held-message';
 }
 
 async function runBackgroundPaste(
@@ -337,7 +343,7 @@ async function runBackgroundPaste(
     }
     pasteStarted = true;
     await context.terminalSubmit.submitContent(input.sessionId, input.message, {
-      source: `automation:${input.taskId.slice(0, 8)}`,
+      source: `${input.source ?? 'automation'}:${input.taskId.slice(0, 8)}`,
       signal,
       automated: true,
     });
