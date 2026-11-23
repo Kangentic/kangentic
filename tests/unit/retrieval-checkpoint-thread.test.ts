@@ -298,6 +298,58 @@ describe('the checkpoint thread on a path that is not there', () => {
   }, 30_000);
 });
 
+// The fakes below emit the thread's events by hand. These start a real `worker_threads` Worker that
+// fails the ways a packaged build can (a bundle that is not on disk, a thread that dies holding a
+// request), so the runner is held to what Node really emits, not to what a stand-in assumes.
+// What a user loses if this goes: the checkpoints silently stop landing (a request that never
+// settles holds main's 5 s checkpoint call forever), or the worker returns to the DESKTOP-4P kill
+// loop without any test noticing.
+//
+// Red-green: delete the `thread.on('error', ...)` and `thread.on('exit', ...)` lines in
+// `ensureThread` and both cases below hang until their timeout.
+describe('CheckpointRunner on a real thread that fails', () => {
+  it('runs the checkpoint on the loop, and stays there, when the thread bundle is not on disk', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const runner = new CheckpointRunner();
+      runner.configure(path.join(directory, 'retrieval-checkpoint-thread-missing.js'));
+      const inLoop = vi.fn(() => HELD_ROW);
+
+      await expect(runner.checkpoint(() => path.join(directory, 'a.db'), inLoop)).resolves.toEqual(HELD_ROW);
+      await expect(runner.checkpoint(() => path.join(directory, 'a.db'), inLoop)).resolves.toEqual(HELD_ROW);
+
+      expect(inLoop).toHaveBeenCalledTimes(2);
+      expect(runner.usesThread).toBe(false);
+      // The thread is gone for good, so a close has nothing to wait on and still resolves.
+      await expect(runner.close(path.join(directory, 'a.db'))).resolves.toBeUndefined();
+    } finally {
+      warn.mockRestore();
+    }
+  }, 30_000);
+
+  it('runs what a thread that died holding the request owed on the loop', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const dyingThreadPath = path.join(directory, 'dying-checkpoint-thread.js');
+      fs.writeFileSync(dyingThreadPath, [
+        "const { parentPort } = require('node:worker_threads');",
+        "parentPort.on('message', () => { process.exit(3); });",
+      ].join('\n'));
+      const runner = new CheckpointRunner();
+      runner.configure(dyingThreadPath);
+      const inLoop = vi.fn(() => HELD_ROW);
+
+      await expect(runner.checkpoint(() => path.join(directory, 'a.db'), inLoop)).resolves.toEqual(HELD_ROW);
+
+      expect(inLoop).toHaveBeenCalledTimes(1);
+      expect(runner.usesThread).toBe(false);
+      await expect(runner.close(path.join(directory, 'a.db'))).resolves.toBeUndefined();
+    } finally {
+      warn.mockRestore();
+    }
+  }, 30_000);
+});
+
 /** A thread stand-in whose replies the test sends by hand. */
 interface FakeThread extends EventEmitter {
   posted: Array<{ type: string; id: number; dbPath: string }>;
