@@ -122,6 +122,7 @@ import { app, BrowserWindow, webContents } from 'electron';
 import { attachDebugger, getDeviceMetrics, isDebuggerAttached, SCREENSHOT_TIMEOUT_MS } from '../../src/main/browser/cdp/cdp';
 import { captureScreenshotWithBudget } from '../../src/main/browser/cdp/screenshot';
 import { noteWake, resetWakeClockForTests } from '../../src/main/browser/wake-clock';
+import { noteCpuSpeedLimit, resetCpuSpeedLimitForTests } from '../../src/main/browser/cpu-speed-limit';
 import { RefusalError } from '../../src/shared/refusal';
 import { runHandler } from '../../src/main/agent/mcp-http/handler-helpers';
 import type { CommandContext } from '../../src/main/agent/commands/types';
@@ -429,6 +430,7 @@ describe('withGuest reports a driver failure', () => {
     beforeEach(() => {
       vi.useFakeTimers();
       resetWakeClockForTests();
+      resetCpuSpeedLimitForTests();
     });
 
     afterEach(() => {
@@ -460,6 +462,44 @@ describe('withGuest reports a driver failure', () => {
         host_hold: 'settled',
         guest_hold: 'settled',
         since_wake: 'under_30s',
+      });
+    });
+
+    // DESKTOP-46's 0.62.0 event ran while the OS throttled the CPU, and no report
+    // said by how much. The latest speed-limit-change value rides the report.
+    describe('names the CPU speed limit the OS last advertised', () => {
+      async function timeOutPaneCapture(): Promise<void> {
+        browserPaneRegistry.detachAll();
+        browserPaneRegistry.register({
+          handle: 'pane_s', ownerSessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null, visibility: 'showing',
+        });
+        vi.mocked(webContents.fromId).mockReturnValue(uncompositedGuest(true) as never);
+        vi.mocked(BrowserWindow.fromWebContents).mockReturnValue({ isMinimized: () => false, isVisible: () => true } as never);
+        const result = await captureUntilTimeout();
+        expect(result).toMatchObject({ ok: false, error: { kind: 'driver-error' } });
+      }
+
+      it('tags a throttled CPU with the bucket of its latest limit', async () => {
+        noteCpuSpeedLimit(40);
+        noteCpuSpeedLimit(62);
+
+        await timeOutPaneCapture();
+
+        expect(reportHandledError).toHaveBeenCalledTimes(1);
+        expect(reportedTags()).toMatchObject({
+          error_name: 'ScreenshotNotComposited',
+          surface: 'pane',
+          host_window: 'visible',
+          hold: 'armed',
+          cpu_speed_limit: '50-74',
+        });
+      });
+
+      it('tags unknown when no speed-limit-change arrived this run', async () => {
+        await timeOutPaneCapture();
+
+        expect(reportHandledError).toHaveBeenCalledTimes(1);
+        expect(reportedTags()).toMatchObject({ error_name: 'ScreenshotNotComposited', cpu_speed_limit: 'unknown' });
       });
     });
 
@@ -585,7 +625,7 @@ describe('withGuest reports a driver failure', () => {
       });
 
       const tags = reportedTags();
-      for (const captureTag of ['surface', 'host_window', 'hold', 'host_hold', 'guest_hold', 'since_wake', 'display_server']) {
+      for (const captureTag of ['surface', 'host_window', 'hold', 'host_hold', 'guest_hold', 'since_wake', 'display_server', 'cpu_speed_limit']) {
         expect(tags).not.toHaveProperty(captureTag);
       }
     });
@@ -613,7 +653,7 @@ describe('withGuest reports a driver failure', () => {
       expect(reportHandledError).toHaveBeenCalledTimes(1);
       const tags = reportedTags();
       expect(tags).toMatchObject({ source: 'browser_driver', error_name: 'ScreenshotNotComposited' });
-      for (const captureTag of ['surface', 'host_window', 'hold', 'host_hold', 'guest_hold', 'since_wake', 'display_server']) {
+      for (const captureTag of ['surface', 'host_window', 'hold', 'host_hold', 'guest_hold', 'since_wake', 'display_server', 'cpu_speed_limit']) {
         expect(tags).not.toHaveProperty(captureTag);
       }
       expect(JSON.stringify(tags)).not.toContain('bogus');

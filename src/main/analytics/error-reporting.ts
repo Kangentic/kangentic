@@ -14,7 +14,11 @@ import {
   toBrowserGuestCrashWarning,
   type NativeCrashContext,
 } from './native-crash-event';
-import { filterBreadcrumb, RELAY_DIAL_BREADCRUMB_CATEGORY } from '../../shared/sentry-breadcrumbs';
+import {
+  filterBreadcrumb,
+  keepPowerMonitorBreadcrumb,
+  RELAY_DIAL_BREADCRUMB_CATEGORY,
+} from '../../shared/sentry-breadcrumbs';
 import type { RelayDialOutcome } from '../mobile-bridge/transport/relay-client';
 import { SENTRY_DATA_COLLECTION } from '../../shared/sentry-data-collection';
 import { redactEventPaths } from './redact-event-paths';
@@ -431,7 +435,8 @@ export function beforeSendEvent(event: ErrorEvent, hint: EventHint): ErrorEvent 
  *
  * Errors only: release-health session tracking (the MainProcessSession
  * integration, on by default) is filtered out, and tracing/replay are never
- * enabled. Aptabase's app_error stays as the coarse error-rate pulse on the
+ * enabled. The Electron breadcrumbs integration is replaced by a copy that
+ * skips `powerMonitor.speed-limit-change` (see the `integrations` option). Aptabase's app_error stays as the coarse error-rate pulse on the
  * product dashboard; Sentry is the diagnostic tool.
  */
 export function initErrorReporting(options: { previousRun?: PreviousRun | null } = {}): void {
@@ -459,10 +464,20 @@ export function initErrorReporting(options: { previousRun?: PreviousRun | null }
       // their message, so distinct exit reasons would fold into one issue and
       // every existing process-exit issue would start over under a new one.
       attachStacktrace: false,
-      integrations: (defaultIntegrations) =>
-        defaultIntegrations.filter(
-          (integration) => integration.name !== 'MainProcessSession'
+      // MainProcessSession is release health, which we do not collect. The
+      // default ElectronBreadcrumbs is swapped for one that skips
+      // `powerMonitor.speed-limit-change`, which flooded main's ring on a
+      // throttled CPU (keepPowerMonitorBreadcrumb, src/shared/sentry-breadcrumbs.ts).
+      // Removed by name and appended, rather than left to the SDK's dedupe.
+      // Built here, not at module load, so a test that never calls this
+      // callback needs no mock for it.
+      integrations: (defaultIntegrations) => [
+        ...defaultIntegrations.filter(
+          (integration) =>
+            integration.name !== 'MainProcessSession' && integration.name !== 'ElectronBreadcrumbs'
         ),
+        Sentry.electronBreadcrumbsIntegration({ powerMonitor: keepPowerMonitorBreadcrumb }),
+      ],
       // Tags a frame-capped stack, splits native crash events into ours and
       // foreign ones, then rewrites project roots and the home directory in
       // what is left; see the NATIVE CRASH EVENTS note above for why that one

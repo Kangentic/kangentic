@@ -1,8 +1,9 @@
 /**
  * What is lost if these stamps go: a Browser-pane screenshot timeout reports
- * `since_wake`, read from the wake clock. Only `src/main/index.ts` stamps it, from the
- * powerMonitor's resume and unlock-screen events. If either call is dropped, a timeout
- * right after that event reads `none` forever and the tag says nothing. index.ts cannot
+ * `since_wake`, read from the wake clock, and `cpu_speed_limit`, read from the CPU
+ * speed-limit record. Only `src/main/index.ts` stamps them, from the powerMonitor's
+ * resume and unlock-screen events and its speed-limit-change event. If a call is
+ * dropped, its tag reads `none` or `unknown` forever and says nothing. index.ts cannot
  * be imported by a test, so this reads its source, and reads each handler's own body.
  */
 import fs from 'node:fs';
@@ -35,5 +36,9 @@ describe('the wake clock is stamped from index.ts', () => {
 
   it.each(['resume', 'unlock-screen'])('calls noteWake() in the %s handler', (eventName) => {
     expect(handlerBody(indexSource, eventName)).toMatch(/\bnoteWake\(/);
+  });
+
+  it('records the limit the speed-limit-change event carries', () => {
+    expect(handlerBody(indexSource, 'speed-limit-change')).toMatch(/\bnoteCpuSpeedLimit\(\s*details\.limit\s*\)/);
   });
 });

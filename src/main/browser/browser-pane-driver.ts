@@ -27,6 +27,7 @@ import { isLoopbackHost } from './loopback-host';
 import { createChokepointReporter } from '../analytics/handled-report';
 import { popOutWindowManager } from '../pop-out/pop-out-window-manager';
 import { sinceWakeBucket } from './wake-clock';
+import { cpuSpeedLimitBucket } from './cpu-speed-limit';
 import { readDisplayServer } from './display-server';
 import { isRuntimeDefect } from '../../shared/handled-error-copy';
 
@@ -129,7 +130,8 @@ function isCaptureRefusal(error: unknown): error is CaptureRefusalShape {
  * A capture that timed out (DESKTOP-46) says which surface, the host window and the
  * hold as the capture found them, whether any of the hold's calls on the host and
  * on the guest had returned by the timeout, how long since the machine last woke,
- * and which display server Chromium draws to (`display-server.ts`). A host side at
+ * which display server Chromium draws to (`display-server.ts`), and the latest CPU
+ * speed limit the OS advertised, bucketed (`cpu-speed-limit.ts`). A host side at
  * `none` with `hold: armed` means its compositor stopped. On Wayland
  * `host_window: visible` also covers a minimized app, which Electron cannot see.
  *
@@ -147,9 +149,11 @@ function isCaptureRefusal(error: unknown): error is CaptureRefusalShape {
  * lets a timeout right after an unlock report after an earlier one latched. The hold
  * follows from the host window, so the two make 5 pairs. Only the 2 armed pairs
  * (a visible or minimized host) can carry a settled side, and each takes 4 settlement
- * pairs, so the hold tags make 11 combinations. 5 surfaces x 11 x 5 wake buckets is
- * the bound in principle for a timeout, a handful in practice. The display server
- * is fixed for a run, so it adds no key within one. A
+ * pairs, so the hold tags make 11 combinations. 5 surfaces x 11 x 5 wake buckets x
+ * 5 speed-limit buckets is the bound in principle for a timeout, a handful in
+ * practice. On a CPU the OS keeps throttling the speed limit moves often, so it is
+ * the tag most likely to spend new keys. The display server is fixed for a run, so
+ * it adds no key within one. A
  * refusal has 4 surfaces (a lane has no bound) and 14 request shapes x 2 size
  * sources, again a handful in practice. The 14 are 9 with a clip (3 targets x 3
  * override states) and 5 without: a viewport or a full page with the override on or
@@ -167,6 +171,7 @@ function captureFailureTags(error: unknown, entry: BrowserPaneEntry): Record<str
       guest_hold: error.guestHold,
       since_wake: sinceWakeBucket(),
       display_server: readDisplayServer(),
+      cpu_speed_limit: cpuSpeedLimitBucket(),
     };
   }
   if (isCaptureRefusal(error)) {

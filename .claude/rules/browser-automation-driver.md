@@ -305,8 +305,9 @@ the two surfaces forking the CDP driver (so click/type/screenshot semantics drif
   guest, so whether Chromium still draws is the probe's to answer: re-run it on an Electron upgrade.
   `tests/unit/error-reporting-mcp-browser-behavior.test.ts` times out a real capture and pins that
   the report names the surface, the host window, the hold, whether the hold's calls on each side
-  returned (`host_hold`, `guest_hold`), the time since the last wake, and the display server
-  (`display_server`, from `--ozone-platform`, never an env value).
+  returned (`host_hold`, `guest_hold`), the time since the last wake, the display server
+  (`display_server`, from `--ozone-platform`, never an env value), and the latest CPU speed limit
+  (`cpu_speed_limit`, bucketed, `unknown` with none recorded).
   `tests/e2e/browser-parked-capture.spec.ts` opens a pane through `open_pane` as the task's own
   agent, so its window is born parked, asserts `list_panes` reads `parked`, and captures it, then
   captures again once the user's click un-parks it. On CI that is the X11 measurement under xvfb,

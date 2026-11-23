@@ -241,6 +241,26 @@ function keepElectronCrumb(crumb: BreadcrumbShape): boolean {
   return true;
 }
 
+/**
+ * powerMonitor events the SDK's Electron breadcrumbs integration never records.
+ * Main passes `keepPowerMonitorBreadcrumb` as that integration's `powerMonitor`
+ * option (src/main/analytics/error-reporting.ts), so these crumbs are never
+ * built and never take a slot in the ring.
+ *
+ * `speed-limit-change` fires every 1 to 2 s on a Windows machine the OS keeps
+ * throttling. On DESKTOP-46's 0.62.0 event, about 100 of them filled main's
+ * 100-slot ring and evicted every other crumb from the five minutes before the
+ * capture. The latest limit rides that report as a bucket tag instead
+ * (src/main/browser/cpu-speed-limit.ts). Every other powerMonitor event
+ * (suspend, resume, lock-screen, unlock-screen, on-ac, on-battery) is kept.
+ */
+export const SUPPRESSED_POWER_MONITOR_EVENTS: readonly string[] = ['speed-limit-change'];
+
+/** The integration's `powerMonitor` predicate: true records the event as a crumb. */
+export function keepPowerMonitorBreadcrumb(eventName: string): boolean {
+  return !SUPPRESSED_POWER_MONITOR_EVENTS.includes(eventName);
+}
+
 function basename(value: string): string {
   const segments = value.split(/[\\/]/);
   return segments[segments.length - 1] ?? '';

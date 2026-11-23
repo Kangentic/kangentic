@@ -35,6 +35,12 @@ const hostInstall = vi.hoisted(() => {
   return { executablePath };
 });
 
+const shutdownState = vi.hoisted(() => ({ shuttingDown: false }));
+
+vi.mock('../../src/main/shutdown-state', () => ({
+  isShuttingDown: () => shutdownState.shuttingDown,
+}));
+
 vi.mock('electron', () => ({
   app: {
     isPackaged: true,
@@ -94,6 +100,7 @@ const sentryCore = requireFromSentryElectron('@sentry/core') as SentryCoreModule
 const openClients: RealClient[] = [];
 
 afterEach(async () => {
+  shutdownState.shuttingDown = false;
   await Promise.all(openClients.splice(0).map((client) => client.close(2000)));
 });
 
@@ -114,7 +121,10 @@ function startupFoundMinidumpEvent(): ErrorEvent {
  * plus a second, unrelated attachment of the kind a renderer's scope carries.
  * Returns the one envelope the client built.
  */
-async function captureThroughRealClient(modules: string[]): Promise<Envelope> {
+async function captureThroughRealClient(
+  modules: string[],
+  event: ErrorEvent = startupFoundMinidumpEvent()
+): Promise<Envelope> {
   const envelopes: Envelope[] = [];
   const client = new sentryNode.NodeClient({
     dsn: 'https://public@o0.ingest.sentry.io/0',
@@ -127,7 +137,7 @@ async function captureThroughRealClient(modules: string[]): Promise<Envelope> {
   openClients.push(client);
   client.on('beforeEnvelope', (envelope) => envelopes.push(envelope));
 
-  client.captureEvent(startupFoundMinidumpEvent(), {
+  client.captureEvent(event, {
     attachments: [
       { attachmentType: 'event.minidump', filename: 'crash.dmp', data: buildMinidump({ modules }) },
       { filename: 'renderer-log.txt', data: new Uint8Array([1, 2, 3]) },
@@ -176,6 +186,29 @@ describe('a foreign minidump through the real Sentry client', () => {
     // native_crash is added only by the ownership check, so a beforeSend that
     // failed open (which also keeps the dump) cannot pass this control.
     expect(events[0][1]).toMatchObject({ level: 'fatal', contexts: { native_crash: { found_at_startup: true } } });
+    expect(events[0][1]).not.toHaveProperty('fingerprint');
+    expect(minidumpItems(envelope)).toHaveLength(1);
+  });
+
+  // DESKTOP-W: the split rides the same envelope as the dump, which is what
+  // Sentry groups from. The client's half of "Sentry honours it": the event item
+  // carries the fingerprint and the minidump still uploads beside it.
+  it('sends a crash of ours while quitting with the quit fingerprint and its dump', async () => {
+    shutdownState.shuttingDown = true;
+    const liveEvent = {
+      ...startupFoundMinidumpEvent(),
+      tags: { 'event.environment': 'native', 'event.process': 'GPU', 'exit.reason': 'crashed' },
+    } as ErrorEvent;
+
+    const envelope = await captureThroughRealClient(OUR_APP_MODULES, liveEvent);
+
+    const events = itemsOfType(envelope, 'event');
+    expect(events).toHaveLength(1);
+    expect(events[0][1]).toMatchObject({
+      level: 'fatal',
+      fingerprint: ['{{ default }}', 'quit-begun'],
+      contexts: { native_crash: { quit_begun: true } },
+    });
     expect(minidumpItems(envelope)).toHaveLength(1);
   });
 });

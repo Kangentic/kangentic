@@ -50,6 +50,9 @@ import { BrowserWindow, type WebContents } from 'electron';
  * `speed-limit-change` fired every few seconds, and still got no frame. `none`
  * on the host says its compositor stopped answering, which the hold cannot fix.
  * `settled` on both says the hold was answered and CDP's capture hung anyway.
+ * The 0.62.0 event read `settled` on the host and `none` on the guest, on a CPU
+ * throttled the same way, so the report now also carries the speed limit
+ * (`cpu_speed_limit`, `../cpu-speed-limit.ts`).
  */
 
 /** Often enough that one call is still running when the next starts. */

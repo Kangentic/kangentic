@@ -18,6 +18,11 @@ DESKTOP-18 is the identical `LOG(FATAL)` on Windows 10, via `OnProcessCrashed` w
 launch-failure route is Linux's in practice, because of how Linux launches the GPU process (see
 "Why a Linux launch failure left no trace before Electron 44" below).
 
+The same fatal also fires at a Linux quit, when the zygote goes before the GPU and every relaunch
+fails. From the release that carries the change, a fatal in a run that had begun quitting (`quit_begun: true`)
+files into its own issue with the same `HandleFatal` title, so DESKTOP-W means a mid-run fatal
+([Error reporting](../telemetry/error-reporting.md), "Native and guest crashes").
+
 DESKTOP-18 is worth reading for its timing rather than its stack. All seven of that install's
 runs died between 8.3 and 12.0 seconds after their own `app_start_time`, so Chromium walked its
 entire fallback ladder within nine seconds of boot, seven times, and the user never got in. That

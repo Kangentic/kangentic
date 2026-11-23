@@ -83,6 +83,7 @@ import { DEV_PROCESS_AUMID, applyDevTaskbarIdentity, resolveBackgroundColor, res
 import { findTaskByWorktreePath } from './worktree-task-lookup';
 import { popOutWindowManager } from './pop-out/pop-out-window-manager';
 import { noteWake } from './browser/wake-clock';
+import { noteCpuSpeedLimit } from './browser/cpu-speed-limit';
 import { destroyAllLanes } from './browser/browser-lane-manager';
 import { markBrowserGuestWebContents } from './analytics/renderer-classification';
 import { sweepOrphanedBrowserPartitions } from './browser/browser-partition-cleanup';
@@ -2230,6 +2231,13 @@ app.whenReady().then(async () => {
   powerMonitor.on('unlock-screen', () => {
     noteWake();
     getOptionalIpcContext()?.mobileBridgeService.probeAllPresence('screen unlocked');
+  });
+  // The OS's advertised CPU speed limit (Windows and macOS only). A screenshot
+  // that timed out reports the latest one as a bucket
+  // (`src/main/browser/cpu-speed-limit.ts`). The SDK records no breadcrumb for
+  // this event, because on a throttled machine it fires every second or two.
+  powerMonitor.on('speed-limit-change', (details) => {
+    noteCpuSpeedLimit(details.limit);
   });
 
   // OS-initiated shutdown/reboot bypasses before-quit entirely on Linux/macOS
