@@ -62,6 +62,14 @@ export function getTestDataDir(suiteName: string): string {
 }
 
 /**
+ * The `CODEX_HOME` `launchApp` gives a run with this data dir. A spec that plants a
+ * Codex rollout writes it under `<this>/sessions`, where the app reads.
+ */
+export function codexHomeForDataDir(dataDir: string): string {
+  return path.join(dataDir, 'codex-home');
+}
+
+/**
  * Remove the test data directory for a specific suite.
  */
 export function cleanupTestDataDir(suiteName: string): void {
@@ -351,6 +359,9 @@ export async function launchApp(options?: {
           // mock-kimi.js and the adapter both read it, so a run's Kimi sessions
           // stay in its data dir and leave with it.
           KIMI_CODE_HOME: path.join(dataDir, 'kimi-code-home'),
+          // The same for Codex: its trust entries, hooks and rollouts stay in the
+          // run's data dir instead of the developer's real ~/.codex.
+          CODEX_HOME: codexHomeForDataDir(dataDir),
         },
         colorScheme: 'dark',
       });

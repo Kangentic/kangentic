@@ -164,6 +164,9 @@ describe('what stays a report, because it may be our bug', () => {
     ['droid', 'Error: Not authenticated. Run \'droid headless login\'.'],
     ['grok', 'You are not authenticated.'],
     ['codex', "Not signed in. Please run 'codex login' to sign in with ChatGPT, then re-run 'codex cloud'."],
+    // Codex 0.171.0 answered the first request after a fresh API key login with this, and the
+    // next request worked. A passing failure is not a sign-in to send the user to.
+    ['codex', '401 Unauthorized: Missing bearer or basic authentication in header'],
     ['antigravity', 'Please sign in to view available models. Launch the CLI without arguments to sign in.'],
     ['antigravity', 'Welcome back! You are currently not signed in.'],
     // The CLI itself says this one may be the network.

@@ -3,7 +3,7 @@
   "result": {
     "data": [
       {
-        "cwd": "C:\\Users\\dev\\AppData\\Local\\Temp\\kangentic-codex-hooks-1fRSl7\\folder",
+        "cwd": "C:\\Users\\dev\\AppData\\Local\\Temp\\kangentic-codex-hooks-HgTFhU\\folder",
         "hooks": [
           {
             "key": "C:\\<session-flags>\\config.toml:pre_tool_use:0:0",
@@ -18,6 +18,7 @@
             "sourcePath": "C:\\<session-flags>\\config.toml",
             "source": "sessionFlags",
             "pluginId": null,
+            "environmentId": null,
             "displayOrder": 0,
             "enabled": true,
             "isManaged": false,
@@ -37,6 +38,7 @@
             "sourcePath": "C:\\<session-flags>\\config.toml",
             "source": "sessionFlags",
             "pluginId": null,
+            "environmentId": null,
             "displayOrder": 1,
             "enabled": true,
             "isManaged": false,
@@ -56,6 +58,7 @@
             "sourcePath": "C:\\<session-flags>\\config.toml",
             "source": "sessionFlags",
             "pluginId": null,
+            "environmentId": null,
             "displayOrder": 2,
             "enabled": true,
             "isManaged": false,
@@ -75,6 +78,7 @@
             "sourcePath": "C:\\<session-flags>\\config.toml",
             "source": "sessionFlags",
             "pluginId": null,
+            "environmentId": null,
             "displayOrder": 3,
             "enabled": true,
             "isManaged": false,
@@ -94,6 +98,7 @@
             "sourcePath": "C:\\<session-flags>\\config.toml",
             "source": "sessionFlags",
             "pluginId": null,
+            "environmentId": null,
             "displayOrder": 4,
             "enabled": true,
             "isManaged": false,
@@ -104,7 +109,7 @@
             "key": "C:\\<session-flags>\\config.toml:user_prompt_submit:0:0",
             "eventName": "userPromptSubmit",
             "handlerType": "command",
-            "command": "node .kangentic/codex-event-bridge.cjs env:KANGENTIC_EVENTS_PATH prompt",
+            "command": "node .kangentic/codex-event-bridge.cjs env:KANGENTIC_EVENTS_PATH prompt captureHookContextFields:eyJmaWVsZHMiOlsic2Vzc2lvbl9pZCJdfQ==",
             "async": false,
             "matcher": null,
             "timeoutSec": 10,
@@ -113,17 +118,18 @@
             "sourcePath": "C:\\<session-flags>\\config.toml",
             "source": "sessionFlags",
             "pluginId": null,
+            "environmentId": null,
             "displayOrder": 5,
             "enabled": true,
             "isManaged": false,
-            "currentHash": "sha256:d32a2efb1402059290af12ae7bd749bcf39b2f85d3a365cf54da73b90c72a497",
+            "currentHash": "sha256:0051ee378ef02ee0307aeb134f9926fd6806ec399865d65bc38b44161b60626a",
             "trustStatus": "untrusted"
           },
           {
             "key": "C:\\<session-flags>\\config.toml:stop:0:0",
             "eventName": "stop",
             "handlerType": "command",
-            "command": "node .kangentic/codex-event-bridge.cjs env:KANGENTIC_EVENTS_PATH idle",
+            "command": "node .kangentic/codex-event-bridge.cjs env:KANGENTIC_EVENTS_PATH idle captureHookContextFields:eyJmaWVsZHMiOlsic2Vzc2lvbl9pZCJdfQ==",
             "async": false,
             "matcher": null,
             "timeoutSec": 10,
@@ -132,10 +138,11 @@
             "sourcePath": "C:\\<session-flags>\\config.toml",
             "source": "sessionFlags",
             "pluginId": null,
+            "environmentId": null,
             "displayOrder": 6,
             "enabled": true,
             "isManaged": false,
-            "currentHash": "sha256:82de9976ca78913705bbf1ccdaccca84c4c3d4deae47f6c2defe8b13fa25bbe0",
+            "currentHash": "sha256:e7b4a1e3637239c79c80f82358f3c79be22171341e735bb80d58e6b30c70c168",
             "trustStatus": "untrusted"
           }
         ],

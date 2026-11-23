@@ -15,7 +15,7 @@
  * Also prints `session id: <uuid>` so the Codex adapter's runtime
  * `fromOutput` regex (`session id:\s+<uuid>`) sees a real header to capture.
  *
- * Writes a rollout JSONL file to ~/.codex/sessions/<YYYY>/<MM>/<DD>/ so the
+ * Writes a rollout JSONL file to $CODEX_HOME/sessions/<YYYY>/<MM>/<DD>/ (else ~/.codex) so the
  * session history reader pipeline (captureSessionIdFromFilesystem -> locate
  * -> parse) is exercised end-to-end. Includes session_meta, task_started,
  * turn_context, token_count, response_item (function_call), and task_complete
@@ -102,7 +102,10 @@ function writeRolloutJsonl() {
   const year = iso.slice(0, 4);
   const month = iso.slice(5, 7);
   const day = iso.slice(8, 10);
-  const sessionsDir = path.join(os.homedir(), '.codex', 'sessions', year, month, day);
+  // Codex's home is $CODEX_HOME, else ~/.codex. The E2E launch sets it to the
+  // run's data dir, so a run's rollouts never land in the developer's history.
+  const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+  const sessionsDir = path.join(codexHome, 'sessions', year, month, day);
   fs.mkdirSync(sessionsDir, { recursive: true });
 
   // Filename matches real Codex format: rollout-<ISO-ish>-<uuid>.jsonl

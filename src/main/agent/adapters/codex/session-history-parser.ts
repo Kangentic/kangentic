@@ -131,6 +131,14 @@ export class CodexSessionHistoryParser {
    * its conversation minutes after the spawn. A sibling started later in the
    * same cwd can read as this session's, which only moves the answer toward
    * `present`, the side that reports. Without `spawnedAt` it is the folder check.
+   *
+   * Measured on 0.171.0 (Windows): `session_meta.payload.cwd` is the spawn's
+   * cwd as given, backslashes and case kept, for a project root and a
+   * worktree. A Command Terminal with no prompt writes no rollout and fires no
+   * SessionStart, however long it waits. Typed into a minute later, it writes
+   * the file at the prompt but stamps `session_meta` with its launch time, a few
+   * seconds after the spawn: at or after this session's spawn, and before a
+   * sibling's started later, so a sibling never reads it as its own.
    */
   static async storeEvidence(options: { cwd: string; cliTarget?: StoredCliTarget | null; spawnedAt?: Date }): Promise<SessionIdStoreEvidence> {
     const place = placeFromStored(options.cliTarget ?? null);

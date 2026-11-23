@@ -177,19 +177,20 @@ describe('trustEntriesOf', () => {
   });
 });
 
-/** The `{ id, result }` message tests/fixtures/codex-hooks/codex-0.163.0-hooks-list.json holds. */
+/** The `{ id, result }` message tests/fixtures/codex-hooks/codex-0.171.0-hooks-list.json holds. */
 interface CapturedHooksListMessage {
   id: number;
   result: { data: Array<{ hooks: Array<{ key: string; currentHash: string }> }> };
 }
 
-// The fixture is a real `hooks/list` answer from codex-cli 0.163.0, captured for
+// The fixture is a real `hooks/list` answer from codex-cli 0.171.0, captured for
 // exactly Kangentic's overrides. If this block fails because the commands no
 // longer match, the hook commands changed since the capture: capture the answer
-// again for the new commands rather than editing the fixture.
-describe('trustEntriesOf over the hooks/list answer captured from codex-cli 0.163.0', () => {
+// again for the new commands rather than editing the fixture. The five hooks
+// whose commands did not change since the 0.163.0 capture kept their hashes.
+describe('trustEntriesOf over the hooks/list answer captured from codex-cli 0.171.0', () => {
   const captured = JSON.parse(
-    fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'codex-hooks', 'codex-0.163.0-hooks-list.json'), 'utf-8'),
+    fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'codex-hooks', 'codex-0.171.0-hooks-list.json'), 'utf-8'),
   ) as CapturedHooksListMessage;
   const capturedHooks = captured.result.data[0].hooks;
 
@@ -200,7 +201,7 @@ describe('trustEntriesOf over the hooks/list answer captured from codex-cli 0.16
     expect(entries).toEqual(capturedHooks.map((hook) => ({ key: hook.key, hash: hook.currentHash })));
     expect(entries).toContainEqual({
       key: 'C:\\<session-flags>\\config.toml:stop:0:0',
-      hash: 'sha256:82de9976ca78913705bbf1ccdaccca84c4c3d4deae47f6c2defe8b13fa25bbe0',
+      hash: 'sha256:e7b4a1e3637239c79c80f82358f3c79be22171341e735bb80d58e6b30c70c168',
     });
   });
 
