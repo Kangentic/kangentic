@@ -1299,6 +1299,16 @@ comparison identical, which says only that Windows reproduces itself. Against th
 release set (v0.62.0, run 45102383693) Windows failed 394 cases and macOS 116, for the causes
 above and the glyph rasterization the Windows and macOS comparison now leaves out.
 
+With those fixed, a dispatched run (45126609579, 2026-11-23) passed all six legs: 1,269 cases,
+none failed and none passed only on its retry. The largest counted difference was 0 on Linux, 25 on
+Windows and 66 on macOS. The gate still fails a changed poster. Against that run's own build and
+set, `board rust 2x` on Windows passed the set as shot, failed it with a 24 by 24 CSS px block
+painted into an empty lane (2,304 pixels, the block exactly, against a budget of 60), and failed
+it with one card title changed in the layout sidecar (text node 62 read "Extract auth middleware"
+where the edited poster read "Extract session middleware"). Repeat that check after a change
+to the comparison: a gate made green by comparing less passes the first case and the other two
+as well.
+
 ### One viewport, one scale
 
 Every scene is authored at one viewport, the 1600 by 1000 frame `scenes.json` names, at the
