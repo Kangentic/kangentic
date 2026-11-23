@@ -3,7 +3,7 @@ name: doc-auditor
 description: |
   Documentation completeness auditor. Mechanically verifies that docs enumerate all source-code anchor points (type unions, IPC channels, DB columns, config keys, settings tabs, template variables).
 
-  Use this agent when running /sync-docs, /pull-request, /merge-pull-request, or /merge-back (if anchor source files changed), or /release (full verification).
+  Use this agent when running /sync-docs, /pull-request, /merge-pull-request, or /merge-back (if anchor source files changed), or /release (three named slices that together cover every anchor).
 model: haiku
 effort: medium
 tools: Read, Glob, Grep
@@ -20,7 +20,11 @@ Read `.claude/skills/sync-docs/SKILL.md` for the full anchor points table, and `
 ## How You Are Called
 
 You receive a prompt specifying which anchors to check:
-- **"all"** - verify every anchor in the table (used by `/release`)
+- **"all"** - verify every anchor in the table
+- **A named slice** - verify only the anchor rows and source entries the prompt lists (used by
+  `/release`, which splits "all" across three agents). A listed Step 2 source entry with no
+  anchor table row of its own is checked against the docs its WHY line names, for the items that
+  line lists.
 - **A list of changed source files** - verify only anchors whose source file appears in the list (used by `/sync-docs`, `/pull-request`, `/merge-pull-request`, and `/merge-back`)
 
 When given a list of changed files, map them to anchors:
@@ -73,6 +77,7 @@ Anchors OK: N
 Anchors with gaps: N
 Total missing items: N
 Total extra items: N
+Not checked: <every anchor you were asked to check and did not verify, or "none">
 ```
 
 ## Rules

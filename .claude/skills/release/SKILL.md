@@ -30,7 +30,7 @@ are the trap, because a bare `cd` is reset by the harness between tool calls. Ru
 `Push-Location <main>; <command>`. `npm ci` is the one
 that does damage rather than nothing: run it bare and it wipes the WORKTREE's `node_modules` while
 the verifier in main still reports stale. Every Read, Glob, Grep, Edit, and Write path is a
-main-checkout absolute path, and the `doc-auditor` agent is given the main-checkout root so it does
+main-checkout absolute path, and each `doc-auditor` agent is given the main-checkout root so it does
 not audit a worktree copy of the repo.
 
 The version bump is where getting this wrong is silent. An `npm version` that runs in the worktree
@@ -228,7 +228,7 @@ Report the current version (from package.json), the bump type, and what the new 
 
 ## Step 1 -- Validate
 
-Spawn Step 1.5's `doc-auditor` agent before starting these, so the audit runs alongside them. Read
+Spawn Step 1.5's three `doc-auditor` agents before starting these, so the audit runs alongside them. Read
 Step 1.5 now for why, and for what may and may not be applied while Step 1 is still running.
 
 Pre-flight step 8 has already confirmed the authoritative gate. This step is a second, local
@@ -286,7 +286,7 @@ ten-minute coin flip that cannot tell you anything the four checks above have no
 Full anchor point verification before release. The audit is read-only; this step always applies
 what it finds. There is no skip and no confirmation prompt here.
 
-Spawn the agent when Step 1 STARTS, not when it finishes. The audit reads source and docs, so it
+Spawn the three agents when Step 1 STARTS, not when it finishes. The audit reads source and docs, so it
 does not depend on the test results, and it runs about as long as the UI suite does. Waiting for
 Step 1 first adds roughly ten minutes of wall clock to every release for nothing.
 
@@ -296,9 +296,40 @@ with doc edits already written into main, which the next attempt's clean-tree ch
 for a reason that has nothing to do with the real blocker. If Step 1 fails, discard the findings
 unapplied.
 
-1. Spawn a `doc-auditor` agent with scope "all" (verify every anchor).
-2. **Apply every gap it reports - unconditionally.** For each gap: add missing items, remove
-   extras, fix stale references. Do not ask the user; do not offer a skip.
+1. Spawn three `doc-auditor` agents in parallel, in one message. Give each the main-checkout root
+   and the one slice it checks. The slices split the rows of the "Anchor Points" tables in
+   `.claude/skills/sync-docs/SKILL.md` and the entries of that skill's Step 2 source list:
+   - **Types, IPC channels and database (migrations, table schemas, repositories).** The Type
+     System rows not named in the other two slices (the permission, run-mode, automation, session,
+     swimlane and knowledge-graph unions and interfaces), the IPC Anchors (channels and group
+     counts), the Database Anchors (table schemas, seed data, migration list), the Handoff DB
+     columns row, and the Pop-out surfaces row. Its Step 2 entries are `src/shared/types.ts`,
+     `src/shared/ipc-channels.ts`, `src/shared/automation-manifest.ts`, `src/main/ipc/handlers/**`,
+     and every entry under `src/main/db/` (the migrations glob and `handoff-repository.ts`).
+   - **Settings and config (AppConfig, DEFAULT_CONFIG, settings registry, settings tabs, board
+     config, template vars).** `AppConfig` / `DEFAULT_CONFIG`, `ThemeMode`, `BoardConfig`,
+     `BoardColumnConfig`, the Settings tabs and Settings registry rows, both Template Anchors
+     rows, the Step 2 entries for those rows' source files, and
+     `src/main/config/config-manager.ts`.
+   - **Adapters and integrations (agent adapters, board providers, PR connectors, MCP manifest,
+     event types).** Every Agent Adapter Anchors row except Handoff DB columns,
+     `AdapterRuntimeStrategy`, `EventType`, `EventTypeActivity`, `ActivityDetectionStrategy`, every
+     Integration Anchors row, and every Step 2 entry under `src/main/agent/`.
+
+   Every other table row or Step 2 entry also goes to the settings and config slice. Today that is
+   the transition-engine, pty, git, activity-engine, retrieval, index-summary and analytics
+   entries, `electron-builder.yml` and `package.json`, and later any row added after this list.
+
+   A report that names anchors it did not check is not a pass, whether it ran out, skipped them, or
+   left groups "not verified". The auditor lists them on its Summary's `Not checked:` line. A
+   report with no Summary block counts as its whole slice unchecked. Spawn one more `doc-auditor`
+   for just those anchors as soon as the report returns, and check by hand in the main loop, with
+   `.claude/skills/sync-docs/references/verification-procedures.md`, whatever it also leaves
+   unchecked. Both are read-only, so they may run while Step 1 does; only item 2 waits. On v0.62.0
+   one auditor with scope "all" stopped after about 13 of roughly 30 anchor groups, and only a
+   hand check of the changed anchors covered the rest.
+2. **Apply every gap the three reports and your own check name - unconditionally.** For each gap:
+   add missing items, remove extras, fix stale references. Do not ask the user; do not offer a skip.
 
    A gap is a missing, extra, or stale item in something the docs enumerate. An observation the
    auditor itself labels as prose completeness rather than an anchor gap is not one, so record it
