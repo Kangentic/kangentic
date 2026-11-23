@@ -4532,8 +4532,9 @@ export class SessionManager extends EventEmitter {
         if (this.judgesByIdentifiedOutput(session)) {
           // Its report carries `judge: sweep` though no sweep ran: the path is
           // the sweep's own retirement, and the launch report takes no new tag
-          // value here. A host session's other tags (`agent_process=unknown`,
-          // `typed_line_bytes=0`) are what tell it apart in Sentry.
+          // value here. A host session shows in Sentry by `typed_line_bytes=0`
+          // (a host launch builds no typed line) and by having no
+          // `agent_process` tag, which only a launch ended by a pause or kill sends.
           this.retireAgentlessSession(sessionId);
           return;
         }
