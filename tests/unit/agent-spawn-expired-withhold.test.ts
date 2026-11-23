@@ -1752,6 +1752,8 @@ describe('spawnAgent: held messages on a cross-agent handoff', () => {
       expect.anything(),
       expect.objectContaining({ taskId: TASK_ID, sessionId: 'session-new' }),
     );
+    // The history pointer rides along, so this paste is not a held message.
+    expect(mockPasteAgentMessageInBackground.mock.calls[0][1]).toMatchObject({ source: 'automation' });
     // The normal path's helper pastes the held text alone; the handoff must not use it as well.
     expect(mockPasteHeldAfterTurn).not.toHaveBeenCalled();
     expect(claim.release).not.toHaveBeenCalled();
@@ -1776,6 +1778,7 @@ describe('spawnAgent: held messages on a cross-agent handoff', () => {
     expect(mockClaimHeldMessages).toHaveBeenCalledTimes(1);
     expect(deliveredMessages()).toEqual([SLASH_COLUMN_TEXT]);
     expect(pastedMessages()).toEqual([HANDOFF_POINTER]);
+    expect(mockPasteAgentMessageInBackground.mock.calls[0][1]).toMatchObject({ source: 'automation' });
 
     // A pointer nobody owes a claim for settles nothing, and a landed paste is silent.
     reportOutcomeOf(mockPasteAgentMessageInBackground, injectionReport([HANDOFF_POINTER]));
@@ -1804,6 +1807,7 @@ describe('spawnAgent: held messages on a cross-agent handoff', () => {
 
     expect(deliveredMessages()).toEqual([SLASH_COLUMN_TEXT]);
     expect(pastedMessages()).toEqual([HELD_TEXT]);
+    expect(mockPasteAgentMessageInBackground.mock.calls[0][1]).toMatchObject({ source: 'held-message' });
     expect(claim.release).not.toHaveBeenCalled();
     reportOutcomeOf(mockDeliverAgentMessageInBackground, injectionReport([SLASH_COLUMN_TEXT]));
     expect(mockSettleClaimFromReport).not.toHaveBeenCalled();
