@@ -5,6 +5,7 @@ import {
   pasteDroppedItems,
   resolveImagePasteText,
 } from '../../src/renderer/utils/terminal-clipboard';
+import { CodexAdapter } from '../../src/main/agent/adapters/codex/codex-adapter';
 
 /**
  * Unit coverage for the adapter-declared image-paste decision used by the Ctrl+V
@@ -97,6 +98,15 @@ describe('resolveImagePasteText', () => {
     const nativeOnly = { pastedImageNativeExtensions: ['png'] };
     expect(resolveImagePasteText('/tmp/x.png', '/tmp/x.png', nativeOnly)).toBe('/tmp/x.png');
     expect(resolveImagePasteText('/tmp/x.bmp', '/tmp/x.bmp', nativeOnly)).toBe('/tmp/x.bmp');
+  });
+
+  // Codex 0.171.0 attaches a pasted png, jpg, jpeg, gif or webp path, quoted or
+  // not, as `[Image #1]` (task #1182), so a dropped bmp is worth a PNG copy.
+  it('hands Codex a dropped image it can attach, and a PNG copy of one it cannot', () => {
+    const codex = new CodexAdapter();
+    expect(resolveImagePasteText('"C:\\Users\\dev\\shot.webp"', 'C:\\Users\\dev\\shot.webp', codex)).toBe('"C:\\Users\\dev\\shot.webp"');
+    expect(needsImageNormalization('C:\\Users\\dev\\shot.bmp', codex)).toBe(true);
+    expect(needsImageNormalization('C:\\Users\\dev\\shot.jpg', codex)).toBe(false);
   });
 });
 
