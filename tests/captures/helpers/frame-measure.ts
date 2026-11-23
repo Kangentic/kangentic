@@ -39,6 +39,13 @@ export interface MeasuredTextNode {
   /** Character offsets where a new line starts; empty for a node on one line. */
   breaks: number[];
   lines: MeasuredBox[];
+  /**
+   * The node is cut by a clipping ancestor's edge: part of it paints, part does not. At a scale
+   * whose line boxes drift (compareFrameMeasures, comparePositions false) a node at an edge can be
+   * partly in view on one side and wholly out on the other, so such a node may be missing on
+   * either side there. Absent when the node paints whole.
+   */
+  clipped?: boolean;
 }
 
 export interface MeasuredTerminal {
@@ -161,6 +168,7 @@ export async function measureFrame(page: Page): Promise<FrameMeasure> {
         if (rects.length === 0) continue;
         const clip = clipOf(parent);
         if (!rects.some((rect) => paintsInside(rect, clip))) continue;
+        const clipped = rects.some((rect) => rect.left < clip.left - 0.5 || rect.top < clip.top - 0.5 || rect.right > clip.right + 0.5 || rect.bottom > clip.bottom + 0.5);
         // One box per line: a line can come back as several rects (a bidi run), joined here.
         const lines: Array<{ left: number; top: number; right: number; bottom: number }> = [];
         for (const rect of rects) {
@@ -197,6 +205,7 @@ export async function measureFrame(page: Page): Promise<FrameMeasure> {
             text,
             breaks,
             lines: lines.map((line) => box({ left: line.left, top: line.top, width: line.right - line.left, height: line.bottom - line.top }, origin)),
+            ...(clipped ? { clipped: true } : {}),
           },
         });
       }
@@ -365,14 +374,31 @@ export function compareFrameMeasures(reference: FrameMeasure, actual: FrameMeasu
     report(`viewport is ${actual.viewport.width}x${actual.viewport.height}, the poster's is ${reference.viewport.width}x${reference.viewport.height}`);
   }
 
-  const nodeCount = Math.max(reference.textNodes.length, actual.textNodes.length);
-  for (let index = 0; index < nodeCount; index++) {
-    const expected = reference.textNodes[index];
-    const found = actual.textNodes[index];
+  // Two cursors, one per measure. Off a poster's scale, where line boxes drift, a node cut by its
+  // clip edge on one side may be wholly out of view on the other: it is passed over rather than
+  // read as a different frame. At a poster's scale nothing drifts, and every node is held.
+  const edgeMayDiffer = !comparePositions;
+  let referenceIndex = 0;
+  let actualIndex = 0;
+  while (referenceIndex < reference.textNodes.length || actualIndex < actual.textNodes.length) {
+    const expected = reference.textNodes[referenceIndex];
+    const found = actual.textNodes[actualIndex];
+    const index = actualIndex;
+    if (expected && found && expected.text !== found.text && !differsOnlyInDigits(expected.text, found.text) && edgeMayDiffer) {
+      if (expected.clipped) { referenceIndex += 1; continue; }
+      if (found.clipped) { actualIndex += 1; continue; }
+    }
     if (!expected || !found) {
-      report(`${reference.textNodes.length} text nodes on the poster, ${actual.textNodes.length} on the frame; the first unmatched is ${JSON.stringify((expected ?? found).text)} at ${(expected ?? found).path}`);
+      const unmatched = expected ?? found;
+      if (edgeMayDiffer && unmatched.clipped) {
+        if (expected) referenceIndex += 1; else actualIndex += 1;
+        continue;
+      }
+      report(`${reference.textNodes.length} text nodes on the poster, ${actual.textNodes.length} on the frame; the first unmatched is ${JSON.stringify(unmatched.text)} at ${unmatched.path}`);
       break;
     }
+    referenceIndex += 1;
+    actualIndex += 1;
     const clock = differsOnlyInDigits(expected.text, found.text);
     if (expected.text !== found.text && !clock) {
       report(`text node ${index} reads ${JSON.stringify(found.text)} where the poster reads ${JSON.stringify(expected.text)} (${expected.path})`);

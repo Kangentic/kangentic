@@ -952,6 +952,40 @@
     });
   }
 
+  /**
+   * Resolves once every mounted terminal's grid has held still for TERMINAL_HOLD_MS, or at the
+   * TERMINAL_HOLD_CAP_MS cap, whichever comes first; it never rejects. A terminal that mounts or
+   * switches session just before ready fits its grid over a few frames (the board's panel at
+   * 125 percent on a Windows runner: 201 columns at ready, then 216), and the frame a host lifts its
+   * poster onto must be the final one. Read from each canvas's CSS size, which is the grid times
+   * the cell. The cap keeps a terminal that keeps resizing from holding ready for good.
+   */
+  var TERMINAL_HOLD_MS = 250;
+  var TERMINAL_HOLD_CAP_MS = 2000;
+  function terminalGridSignature() {
+    var canvases = document.querySelectorAll('.xterm .xterm-screen canvas');
+    var parts = [];
+    for (var index = 0; index < canvases.length; index++) parts.push(canvases[index].style.width + 'x' + canvases[index].style.height);
+    return parts.join('|');
+  }
+  function waitForTerminalGridsToHold() {
+    return new Promise(function (resolve) {
+      var cap = Date.now() + TERMINAL_HOLD_CAP_MS;
+      var signature = terminalGridSignature();
+      var stableSince = Date.now();
+      (function poll() {
+        var now = Date.now();
+        var next = terminalGridSignature();
+        if (next !== signature) {
+          signature = next;
+          stableSince = now;
+        }
+        if (now - stableSince >= TERMINAL_HOLD_MS || now >= cap) return resolve();
+        window.requestAnimationFrame(poll);
+      })();
+    });
+  }
+
   function notifyParent(message) {
     if (window.parent && window.parent !== window) window.parent.postMessage(message, '*');
   }
@@ -1274,6 +1308,8 @@
     if (scene && scene.ready) {
       chain = chain.then(function () { return waitForSelector(scene.ready, deadline); });
     }
+    // And its terminals have taken their final grid (waitForTerminalGridsToHold).
+    chain = chain.then(waitForTerminalGridsToHold);
     chain.then(function () {
       if (veiled && root) unveil(root);
       markReady();

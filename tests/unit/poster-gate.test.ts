@@ -106,6 +106,25 @@ describe('compareFrameMeasures', () => {
     expect(compareFrameMeasures(poster(), drifted, { comparePositions: false })[0]).toMatch(/draws at/);
   });
 
+  it('passes over a node cut by its clip edge off a poster\'s scale, and holds it at one', () => {
+    // At 125 percent a list's rows drift up, and the last row's label peeks 1 px into view.
+    const frame = poster();
+    frame.textNodes.splice(1, 0, { path: 'body > div[scroller] > label', text: 'Permissions', breaks: [], lines: [{ x: 949, y: 990, width: 70, height: 16 }], clipped: true });
+    expect(compareFrameMeasures(poster(), frame, { comparePositions: false })).toEqual([]);
+    expect(compareFrameMeasures(poster(), frame)[0]).toMatch(/text node 1 reads "Permissions"/);
+    // The same node at the end of the list, and cut on the poster's side instead.
+    const trailing = poster();
+    trailing.textNodes.push({ ...frame.textNodes[1] });
+    expect(compareFrameMeasures(poster(), trailing, { comparePositions: false })).toEqual([]);
+    expect(compareFrameMeasures(trailing, poster(), { comparePositions: false })).toEqual([]);
+  });
+
+  it('still fails a node that paints whole and is not the poster\'s, at every scale', () => {
+    const frame = poster();
+    frame.textNodes.splice(1, 0, { path: 'body > div[card] > span', text: 'Permissions', breaks: [], lines: [{ x: 949, y: 190, width: 70, height: 16 }] });
+    expect(compareFrameMeasures(poster(), frame, { comparePositions: false })[0]).toMatch(/text node 1 reads "Permissions"/);
+  });
+
   it('fails a frame with a terminal the poster has not', () => {
     const frame = poster();
     frame.terminals.push({ ...frame.terminals[0], session: 'another' });
