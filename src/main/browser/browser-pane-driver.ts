@@ -22,6 +22,7 @@ import type { ResolvedBrowserAutomationConfig } from './browser-automation-confi
 import { withGuestDriveLock, GuestBusyError, guestDriveDepth } from './guest-drive-queue';
 import { logDrive } from './drive-telemetry';
 import { touchLane } from './browser-lane-manager';
+import { armAttachedGuest, markAgentControl } from './passkey-guard';
 import { isLoopbackHost } from './loopback-host';
 import { createChokepointReporter } from '../analytics/handled-report';
 import { popOutWindowManager } from '../pop-out/pop-out-window-manager';
@@ -340,6 +341,13 @@ export async function withGuest<T>(
   // the attaching one: idempotent per CDP session, so this is one no-op call on
   // the hot path. See `.claude/rules/agent-driven-focus.md`.
   ensureFocusEmulation(webContents);
+
+  // Passkeys go to a virtual authenticator while the agent controls the guest.
+  // Marked on EVERY call, so a guest the person took back is covered again from
+  // the agent's next call, and awaited so a `navigate` never loads unarmed. It
+  // resolves at once after the first call. See `passkey-guard.ts`.
+  markAgentControl(target.entry.projectId, target.entry.taskId);
+  await armAttachedGuest(webContents, 'drive');
 
   // Serialize from here down, so only ONE drive touches this guest at a time.
   // Taken AFTER resolution and the compositing precondition, so a call refused

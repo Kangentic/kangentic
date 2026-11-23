@@ -21,6 +21,7 @@ import { parseCommandTerminalBrowserOwner } from '../../shared/browser-owner';
 import { NO_CALLER_BROWSER_DETAIL } from './no-caller-refusal';
 import { BROWSER_PANE_OPEN_TIMEOUT_MS, type BrowserPaneOpenPurpose } from '../../shared/types';
 import { setBrowserPaneReason, clearBrowserPaneReason, getBrowserPaneReason } from './browser-pane-reason';
+import { markAgentControl } from './passkey-guard';
 
 /**
  * Opens and closes a task's embedded Browser pane on behalf of the
@@ -646,6 +647,12 @@ async function openPaneWithReasonStored(
       `Could not save the pane's URL: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
+
+  // Marked BEFORE the push, so the guest the pane is about to mount is armed at
+  // construction, ahead of its first load. A sign-in page asks for a passkey as
+  // it loads, and the `withGuest` below runs only after `dom-ready`, too late to
+  // keep that request away from the OS dialog. See `passkey-guard.ts`.
+  markAgentControl(projectId, callerTaskId);
 
   // The purpose rides the push: the renderer mounts an own-work pane held,
   // behind the terminal, and a for-user pane showing.

@@ -1,7 +1,7 @@
 ---
 type: Design
 title: Embedded browser decision log
-description: "Decisions 1 to 45 behind the Browser pane, cited as decision N from source comments: task-keyed and identity cookie jars, popups, downloads and permissions, agent focus and drive rules, dictation into the pane, offscreen lanes, viewport mechanisms, the Electron/ token, the deny hook that makes it the only browser an agent drives, the Command Terminal's pane, annotations drawn into the page."
+description: "Decisions 1 to 47 behind the Browser pane, cited as decision N from source comments: task-keyed and identity cookie jars, popups, downloads and permissions, agent focus and drive rules, dictation into the pane, offscreen lanes, viewport mechanisms, the Electron/ token, the deny hook that makes it the only browser an agent drives, the Command Terminal's pane, annotations drawn into the page, why an agent opens the pane, passkeys on an agent's surface."
 tags: [browser, decisions, cookies, focus, lanes]
 sources:
   - resource: src/main/permission-policy.ts
@@ -29,6 +29,7 @@ sources:
   - resource: src/renderer/stores/agent-drive-store.ts
   - resource: src/renderer/components/browser/annotations/annotationLayerScript.ts
   - resource: src/main/browser/annotation-drafts.ts
+  - resource: src/main/browser/passkey-guard.ts
   - resource: src/renderer/utils/text-target.ts
   - resource: src/renderer/window-manager/bridge/window-parking.ts
   - resource: src/renderer/window-manager/bridge/useBrowserDownloadToast.ts
@@ -377,3 +378,27 @@ Task #1145. In #1131 a Design agent opened the pane to measure its own canvas bo
 *The reason rides the existing drive label (options 1A, 3B, 4D).* The label reads "Agent is <reason>", one sentence whose text holds while the dot, veil and ring say when the agent drives. It comes and goes with the veil, so it never states a reason the agent has moved on from. It is centred on the page's bottom edge, on the annotation bar's row, with inline padding of the bar's width so it clears a bar in either bottom corner. Main keeps the reason per owner (`browser-pane-reason.ts`) and sends it on the agent-input push's active edge, which already reaches the window hosting the guest, pop-outs included. The reason changes only through the tool: the next call replaces it, a refused call leaves the previous one in place, and a close or the session's end clears it.
 
 *Rejected.* Text in the Browser pill's tip and the card globe's tip: the owner did not want the tips to grow. A new strip under the URL bar: a line that comes and goes resizes the guest under the agent, the trap the toolbar span hit in decision 38. A label that stays between runs: it keeps a reason after the work is done, and clearing it on a turn end would be guessing from turns. Keeping the annotation bar out of the bottom-left corner (option 4C): it takes away a corner users pick, where centring the label costs nothing but space in a narrow pane.
+
+## 47. Passkeys go to a virtual authenticator while an agent controls a surface
+
+Task #1184. A sign-in page that asks for a passkey as it loads (`navigator.credentials.get({ mediation: 'conditional' })`, so a saved passkey can show in the email field's autofill) is silent in Chrome until a person picks one. Electron has no such autofill UI, so its Chromium hands the request to the Windows WebAuthn API, which draws "Choose a passkey" at once. On an agent's surface nobody was there to answer it, and it sat on the user's screen through unattended workflows. The reported case was an offscreen lane that loaded a sign-in page; the dialog appeared 12 s later. Playwright's headless Chromium on the same page drew none.
+
+*The mechanism.* While an agent controls a surface, `ensureVirtualAuthenticator` (`cdp/cdp.ts`) sends `WebAuthn.enable { enableUI: false }` and adds one empty virtual authenticator with automatic presence. Chromium then asks the virtual authenticator instead of the OS. Measured on Electron 45 on Windows against a live `<webview>`, timing the dialog's process (`CredentialUIBroker.exe`) with `scripts/probe-passkey-dialog.js`, which re-runs every case below and says PASS or FAIL for each:
+
+- Unarmed, the process came up 2 s after load and stayed until the page aborted its request.
+- Armed at construction, it never appeared, and it still never appeared after a cross-origin navigation and in a hidden window armed before its first `loadURL`.
+- The autofill-style request does not wait. It fails at once with `NotAllowedError`, as an explicit `get()` does (2 ms).
+- A `create()` succeeds. A `get()` naming the new credential then succeeds, and a username-less `get()` still fails.
+- After `WebAuthn.disable`, the next request reached Windows again.
+
+*When it goes on is the design.* The request that opens the dialog runs on the page's FIRST load, and Chromium never moves a request it already handed to the OS, so arming in `withGuest` alone missed the reported case: a lane loads its URL, and an `open_pane` pane loads its `src`, before any tool call attaches CDP. `passkey-guard.ts` therefore arms at three points. A lane is armed before its first load and stays armed, because a person never drives one. Every `withGuest` call marks its owner and arms before the tool body runs. A new guest whose owner is marked is armed in `web-contents-created`, before `did-attach` loads its `src`, which covers a pane `open_pane` mounts, a pop-out or dock that builds a new guest, and a pane that reclaims a lane. The mark is keyed by partition, the one fact main can read from a guest before it loads, and a task's surfaces share its jar, so the mark follows the task from lane to pane to pop-out.
+
+*It comes off when the person takes the pane back.* The person's first trusted mouse press or key on the guest outside a drive removes it and clears the mark, so their own sign-ins reach Windows Hello and the phone again. The disable is sent in the same tick as the press, with nothing awaited ahead of it, because the click right after the press is what asks for a passkey. Measured in the app: one click on a "Sign in with passkey" button in a pane an agent had just armed reached the Windows dialog on that first click. The agent's next call arms it again, and a task's mark is dropped when its work ends (`closeTaskWindows`). A timer was rejected: the burst window and the drive veil both end between two agent calls, and a page that redirects to sign-in in that gap would reach the OS. A pane only a person has used is never armed.
+
+*An agent may create a passkey (owner's choice).* The authenticator accepts a `create()`, so an agent can test a dev app's passkey flow. The key lives only in the authenticator and is gone when the person takes the pane back. The alternative, override bits that make every ceremony fail on a compliant server, keeps dead passkeys off real accounts, and the owner preferred a working test flow.
+
+*Rejected.* Turning off `WebAuthenticationUseNativeWinApi` for the whole app: Electron ships no WebAuthn UI of its own, so a person's passkey sign-in in the pane would have nowhere to go. Holding every new pane on `about:blank` until it is armed: the arm at construction measured clean, so the extra navigation buys nothing.
+
+*Known gaps.* An autofill-only sign-in page's request failed while the agent held the pane, so the person reloads once after taking it back. OAuth popups from a pane are `window`-type webContents with no CDP and are not covered. The marks live in memory, so after an app restart a restored pane is unarmed until the agent's next call. A Command Terminal's jar is shared and no transition ends its work, so its mark stays until the person's first press. A press in the ~400 ms after the person stops the agent with Ctrl+C still reads as the agent's burst (the bounded gap in `.claude/rules/agent-driven-focus.md`), so it releases nothing, and the press after it does.
+
+*Every platform is armed, and only Windows is measured.* The virtual authenticator is Chromium's, so it answers the same way on macOS and Linux, and an agent gets one behavior wherever it runs: a passkey request fails at once and it signs in another way. What the arm replaces there was not measured. The probe times a Windows process and runs on Windows only. Gating the arm to Windows was the alternative.

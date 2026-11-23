@@ -111,6 +111,7 @@ vi.mock('../../src/main/browser/cdp/cdp', async (importOriginal) => ({
   detachDebugger: vi.fn(),
   ensureFocusEmulation: vi.fn(),
   waitForDialogInterception: vi.fn(async () => {}),
+  ensureVirtualAuthenticator: vi.fn(async () => true),
   dismissedBeforeunloadSince: vi.fn(() => false),
   getDialogResponse: vi.fn(),
   // The session's record of a viewport override, which a test sets to say one is active.

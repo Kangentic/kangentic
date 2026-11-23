@@ -597,7 +597,7 @@ With no valid marker (every project before this shipped, a copied folder, a move
 
 ### On Task Delete
 
-- **`cleanupTaskResources()`** - Ends the sessions and closes the task's pop-out windows and offscreen browser lane (`closeTaskWindows`, inside `cleanupTaskSession`) before the reap. Kills PTY, deletes session DB records, removes session directory, removes worktree (after `prepareWorktreeForRemoval` waits out any creation holding the path, then serialized via `withLock`), prunes stale worktree metadata, optionally deletes branch.
+- **`cleanupTaskResources()`** - Ends the sessions and closes the task's pop-out windows and offscreen browser lane and ends the agent's control of its Browser (`closeTaskWindows`, inside `cleanupTaskSession`, which also drops the passkey guard's mark) before the reap. Kills PTY, deletes session DB records, removes session directory, removes worktree (after `prepareWorktreeForRemoval` waits out any creation holding the path, then serialized via `withLock`), prunes stale worktree metadata, optionally deletes branch.
 
 ## Safety
 

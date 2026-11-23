@@ -13,6 +13,7 @@ import { NO_CALLER_BROWSER_DETAIL } from './no-caller-refusal';
 import { parseCommandTerminalBrowserOwner } from '../../shared/browser-owner';
 import { BROWSER_PANE_OPEN_TIMEOUT_MS } from '../../shared/types';
 import { popOutWindowManager } from '../pop-out/pop-out-window-manager';
+import { markAgentControl } from './passkey-guard';
 import {
   applyViewport,
   displayForWindow,
@@ -326,6 +327,10 @@ export async function popOutPaneForCallerTask(
   }
   const previousWebContentsId = current.webContentsId;
 
+  // The window builds a NEW guest that reloads the page, so it is armed at
+  // construction before that load. See `passkey-guard.ts`.
+  markAgentControl(projectId, callerTaskId);
+
   let window;
   try {
     window = popOutWindowManager.open(
@@ -454,6 +459,9 @@ export async function dockPaneForCallerTask(
   }
 
   const detached = liveOwnPane(projectId, callerTaskId);
+
+  // The in-app pane that comes back is a NEW guest that reloads the page.
+  markAgentControl(projectId, callerTaskId);
 
   popOutWindowManager.close('browser', { projectId, taskId: callerTaskId });
 

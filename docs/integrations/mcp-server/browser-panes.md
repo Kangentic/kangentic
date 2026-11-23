@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Browser panes
-description: "How agents open, list, close, pop out and resize the embedded Browser pane over MCP: the policy that makes it the only browser an agent drives, surface handles and surface-gone, the one-surface-per-task rule with its offscreen lane fallback and hand-off, Command Terminal panes, Browser automation gating, and set_viewport's zoom-to-fit emulation."
+description: "How agents open, list, close, pop out and resize the embedded Browser pane over MCP: the policy that makes it the only browser an agent drives, surface handles and surface-gone, the one-surface-per-task rule with its offscreen lane fallback and hand-off, Command Terminal panes, Browser automation gating, passkeys going to a virtual authenticator while an agent drives, and set_viewport's zoom-to-fit emulation."
 tags: [mcp, browser, panes]
 sources:
   - resource: src/main/agent/mcp-http/browser-tools.ts
@@ -22,6 +22,7 @@ sources:
   - resource: src/main/browser/no-caller-refusal.ts
   - resource: src/main/agent/mcp-http/caller-task.ts
   - resource: src/shared/browser-owner.ts
+  - resource: src/main/browser/passkey-guard.ts
 ---
 # Browser panes
 
@@ -60,6 +61,12 @@ Tool categories (26 tools):
 - **Interact:** `kangentic_browser_click`, `kangentic_browser_hover`, `kangentic_browser_type`, `kangentic_browser_keypress`, `kangentic_browser_scroll`, `kangentic_browser_drag`, `kangentic_browser_select_option`, `kangentic_browser_drop_files`, `kangentic_browser_handle_dialog`
 - **Viewport:** `kangentic_browser_set_viewport` - render at a chosen width and height; `kangentic_browser_pop_out`, `kangentic_browser_dock` - move the pane between the task window and its own OS window. See [Choosing a viewport](#choosing-a-viewport)
 - **Eval:** `kangentic_browser_eval` - evaluate a JavaScript expression in the loaded page; gated by `browserAutomation.allowEval`
+
+### Passkeys while an agent drives
+
+A sign-in page often asks for a passkey as it loads, so a saved one can show in its email field. In Electron that request opens the operating system's passkey dialog at once (Windows' "Choose a passkey"), and on an agent's surface nobody is there to answer it. So while an agent controls a surface, its passkey (WebAuthn) requests go to an empty virtual authenticator instead (`src/main/browser/passkey-guard.ts`, decision 47 in the [decision log](../../architecture/embedded-browser/decision-log.md)). No OS dialog opens. A passkey sign-in fails at once with `NotAllowedError`, so an agent reads a failure rather than waiting on a prompt, and the `open_pane` and `navigate` tool descriptions say so. The agent signs in another way, or asks the user to sign in in the pane. A passkey the page creates while the agent drives works when the page asks for it by credential id, and is gone when the user takes the pane back.
+
+The authenticator is in place before the page's first load, because a request already handed to the OS never moves: a lane is armed before it loads, every tool call arms the surface it drives, and a pane `open_pane` mounts (or a pop-out, dock or lane reclaim builds) is armed as its guest is created. It comes off at the user's first mouse press or key in the page outside a drive, so their own passkey sign-ins reach Windows Hello and their phone as before, and the agent's next call puts it back. A page that only offers passkeys through autofill needs one reload after the user takes the pane back. A pane only the user has used is never armed. OAuth popups a pane opens are not covered.
 
 ### kangentic_browser_open_pane
 

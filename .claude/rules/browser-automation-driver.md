@@ -244,6 +244,18 @@ the two surfaces forking the CDP driver (so click/type/screenshot semantics drif
   **`prompt()` never reaches any of this on Electron**: it is unimplemented and throws in the page
   rather than opening a dialog, so `promptText` is unreachable for a `<webview>` guest. It stays in
   the API because the CDP path handles it correctly and a future runtime may deliver one.
+- **Passkeys go to a virtual authenticator while an agent controls a surface, and it is in place
+  before the page's first load.** A sign-in page asks for a passkey as it loads, and Electron hands
+  that to the OS, which drew Windows' "Choose a passkey" on an agent's surface with nobody to answer
+  it. Chromium never moves a request it already handed to the OS, so arming inside `withGuest`
+  alone misses the first load of a lane and of a pane `open_pane` mounts. `passkey-guard.ts` arms at
+  three points: a lane before its first `loadURL`, every `withGuest` call before the tool body, and
+  a new guest whose owner is marked at `web-contents-created`. It comes off at the person's first
+  trusted mouse press or key on the guest outside a drive, never on a timer, and the disable goes
+  out in the same tick as the press, ahead of the click that asks for a passkey. `ensureVirtualAuthenticator`
+  is never called from `attachDebugger`, for the same reason as focus emulation: the dev bridge
+  attaches through it against Kangentic's own window. Measured, and the rejected alternatives, in
+  decision 47 of `docs/architecture/embedded-browser/decision-log.md`.
 - **Detach is synchronous on shutdown.** `browserPaneRegistry.detachAll()` runs in the synchronous
   `before-quit` path (see [[synchronous-shutdown]]); never make it async.
 
@@ -266,6 +278,18 @@ the two surfaces forking the CDP driver (so click/type/screenshot semantics drif
   guest's URL over the saved sidecar (red-green: deleting that preference fails the case).
   `tests/unit/mcp-server-instructions-browser.test.ts` fails if `isolated: true` reappears in the
   server instructions, where it would send an agent to a zod schema error instead of a browser.
+- **Test (passkeys):** `tests/unit/browser-passkey-guard.test.ts` drives the real `cdp.ts` and pins
+  that `attachDebugger` sends no `WebAuthn.*`, the install's exact commands once per session, the
+  re-arm after a detach, and that a press outside a drive disarms while one during a drive does not.
+  `browser-lane-manager.test.ts` pins that a lane's load waits for the arm (red-green: arming after
+  the load fails it), and `browser-pane-driver.test.ts` that `withGuest` installs before the body
+  and never when the gate refuses. The marks that arm a new guest at construction are pinned where
+  they are set: `browser-pane-opener.test.ts` (before the open push), `browser-pane-detach.test.ts`
+  (before a pop-out opens and before a dock closes), and `task-windows.test.ts` (dropped when a
+  task's work ends). `passkey-guard-wiring.test.ts` reads `src/main/index.ts` and pins the arm in
+  the webview branch of `web-contents-created` and the release in the mouse and key handlers.
+  Whether Chromium honours the arm is Windows-only: re-run `node scripts/probe-passkey-dialog.js`
+  on an Electron upgrade.
 - **Test (Command Terminal caller):** `tests/unit/mcp-caller-command-terminal.test.ts` pins that a
   Command Terminal session resolves to its slot and never to its synthetic task id, and that its
   bare drive call never reaches a task's pane.

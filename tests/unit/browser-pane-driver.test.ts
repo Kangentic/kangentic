@@ -20,15 +20,43 @@ vi.mock('../../src/main/browser/cdp/cdp', () => ({
   detachDebugger: vi.fn(),
   ensureFocusEmulation: vi.fn(),
   waitForDialogInterception: vi.fn(async () => {}),
+  ensureVirtualAuthenticator: vi.fn(async () => true),
 }));
+vi.mock('../../src/main/browser/passkey-guard', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/browser/passkey-guard')>()),
+  markAgentControl: vi.fn(),
+}));
+
+// The passkey guard's reporter is module-private, so its reports are observed by wrapping the
+// factory. Every other reporter (the driver's own) is the real one.
+const passkeyReportTags: unknown[] = [];
+vi.mock('../../src/main/analytics/handled-report', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/analytics/handled-report')>();
+  return {
+    ...actual,
+    createChokepointReporter: (...factoryArguments: Parameters<typeof actual.createChokepointReporter>) => {
+      const reporter = actual.createChokepointReporter(...factoryArguments);
+      if (factoryArguments[0] !== 'browser_passkey_guard') return reporter;
+      return {
+        ...reporter,
+        report: (_error: unknown, options?: { tags?: unknown }) => {
+          passkeyReportTags.push(options?.tags);
+          return true;
+        },
+      };
+    },
+  };
+});
 
 import { webContents, BrowserWindow } from 'electron';
 import {
   attachDebugger,
   ensureFocusEmulation,
+  ensureVirtualAuthenticator,
   isDebuggerAttached,
   waitForDialogInterception,
 } from '../../src/main/browser/cdp/cdp';
+import { markAgentControl } from '../../src/main/browser/passkey-guard';
 import { withGuest, validateNavigationUrl } from '../../src/main/browser/browser-pane-driver';
 import { KeyboardFocusNotInGuestError } from '../../src/main/browser/cdp/keyboard-focus';
 import { AmbiguousSelectorError } from '../../src/main/browser/cdp/ambiguous-selector';
@@ -189,6 +217,66 @@ describe('withGuest - agent input signalling', () => {
     expect(vi.mocked(ensureFocusEmulation)).not.toHaveBeenCalled();
   });
 
+  /**
+   * Passkeys go to a virtual authenticator while an agent drives, so a sign-in
+   * page never opens an OS passkey dialog nobody can answer (decision 47). The
+   * install must land BEFORE the body: a `navigate` that loads first hands the
+   * page's passkey request to Windows, and Chromium never moves it afterwards.
+   */
+  it('marks the owner and installs the virtual authenticator before the body runs', async () => {
+    let releaseInstall = (): void => undefined;
+    vi.mocked(ensureVirtualAuthenticator).mockImplementationOnce(
+      () => new Promise<boolean>((resolve) => { releaseInstall = () => resolve(true); }),
+    );
+    let bodyRan = false;
+    const drive = withGuest(
+      { selector: { projectId: 'p' }, capability: 'navigate', config: config() },
+      async () => { bodyRan = true; return true; },
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(bodyRan, 'the body must not run before the authenticator is installed').toBe(false);
+    expect(vi.mocked(markAgentControl)).toHaveBeenCalledWith('p', 't');
+    releaseInstall();
+    await drive;
+    expect(bodyRan).toBe(true);
+  });
+
+  it('installs the virtual authenticator on an ALREADY-ATTACHED guest too, at every tier', async () => {
+    vi.mocked(isDebuggerAttached).mockReturnValue(true);
+    await withGuest({ selector: { projectId: 'p' }, capability: 'observe', config: config() }, async () => 'ran');
+    expect(vi.mocked(ensureVirtualAuthenticator)).toHaveBeenCalledWith(expect.objectContaining({ id: 7 }));
+    expect(vi.mocked(markAgentControl)).toHaveBeenCalledTimes(1);
+  });
+
+  // A user loses the report that says which entry point's passkey cover failed (a drive here), so
+  // an unattended run that hits the OS dialog again leaves nothing to triage.
+  it('reports a refused install with the drive surface tag', async () => {
+    passkeyReportTags.length = 0;
+    vi.mocked(ensureVirtualAuthenticator).mockResolvedValueOnce(false);
+    await withGuest({ selector: { projectId: 'p' }, capability: 'navigate', config: config() }, async () => 'ran');
+    expect(passkeyReportTags).toEqual([{ surface: 'drive' }]);
+  });
+
+  // A user loses the whole tool call: a guest that refuses the authenticator would fail every
+  // drive on that pane instead of only risking the OS dialog.
+  it('still runs the body and returns ok when the install is refused', async () => {
+    vi.mocked(ensureVirtualAuthenticator).mockResolvedValueOnce(false);
+    let bodyRan = false;
+    const result = await withGuest(
+      { selector: { projectId: 'p' }, capability: 'navigate', config: config() },
+      async () => { bodyRan = true; return 'ran'; },
+    );
+    expect(bodyRan).toBe(true);
+    expect(result).toEqual({ ok: true, data: 'ran' });
+  });
+
+  it('neither marks nor installs when the gate refuses', async () => {
+    await withGuest({ selector: { projectId: 'p' }, capability: 'eval', config: config({ allowEval: false }) }, async () => 'ran');
+    expect(vi.mocked(ensureVirtualAuthenticator)).not.toHaveBeenCalled();
+    expect(vi.mocked(markAgentControl)).not.toHaveBeenCalled();
+  });
+
   it('brackets the operation with an armed and a disarmed edge', async () => {
     await withGuest({ selector: { projectId: 'p' }, capability: 'interact', config: config() }, async () => {
       // Mid-operation: the guard must already be armed, or a focus steal that
@@ -257,9 +345,11 @@ describe('withGuest - agent input signalling', () => {
       return 'second';
     });
 
-    // Let any microtasks settle. The second body must NOT have started: under
+    // Let the microtasks settle. The second body must NOT have started: under
     // the old unguarded driver it would already have run to completion here.
-    await Promise.resolve();
+    // Several turns, because the driver awaits more than once before a body
+    // runs (dialog interception, the passkey install).
+    for (let turn = 0; turn < 10; turn += 1) await Promise.resolve();
     expect(order).toEqual(['first:start']);
 
     releaseFirst?.();

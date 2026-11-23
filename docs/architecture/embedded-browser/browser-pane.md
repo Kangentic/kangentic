@@ -35,6 +35,7 @@ sources:
   - resource: src/main/browser/viewport-override-store.ts
   - resource: src/main/browser/viewport-override.ts
   - resource: src/main/browser/browser-lane-manager.ts
+  - resource: src/main/browser/passkey-guard.ts
   - resource: src/main/browser/browser-lane-handoff.ts
   - resource: src/main/browser/browser-pane-detach.ts
   - resource: src/main/browser/pop-out-link-relay.ts
@@ -360,8 +361,11 @@ src/main/
   browser/browser-pane-registry.ts          open surfaces by per-guest handle; caller-scoped,
                                             own-task-only target resolution; retired-handle memory
   browser/browser-pane-opener.ts            open/close a pane for the caller's task (MCP lifecycle tools)
-  browser/browser-pane-driver.ts            withGuest: gate, resolve, CDP attach, focus emulation,
-                                            drive signal, error envelope
+  browser/browser-pane-driver.ts            withGuest: gate, resolve, live guest, lane touch, CDP attach,
+                                            dialog interception, focus emulation, passkey arm, per-guest
+                                            drive queue, drive signal, error envelope
+  browser/passkey-guard.ts                  routes a guest's passkey requests to a virtual authenticator
+                                            while an agent controls it; the person's press takes it back
   browser/browser-automation-config.ts      resolved Browser automation policy
   browser/agent-input-signal.ts             refcounted "an agent is driving guest N" burst edges
   browser/embedded-signin-refusal.ts        detects a provider refusing an embedded browser

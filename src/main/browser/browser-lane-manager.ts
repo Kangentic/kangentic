@@ -6,6 +6,7 @@ import { syncJarFromIdentity } from './jar-seeder';
 import { applyBrowserUserAgent } from './browser-user-agent';
 import { installEmbeddedBrowserSessionPolicy } from './guest-session-policy';
 import { markBrowserGuestWebContents } from '../analytics/renderer-classification';
+import { armGuest, markAgentControl } from './passkey-guard';
 
 /**
  * Browser LANES: the OFFSCREEN form of a task's one browser surface.
@@ -392,6 +393,13 @@ export async function openLane(input: OpenLaneInput): Promise<OpenLaneResult> {
     browserPaneRegistry.unregisterByWebContentsId(guest.id);
     announceLaneChange();
   });
+
+  // Armed BEFORE the first load, because the page's load-time passkey request is
+  // the one that reaches the OS. A person never drives a lane, so it stays
+  // armed, and the mark carries it to a pane that reclaims this lane. Why the
+  // order matters: `passkey-guard.ts`.
+  markAgentControl(input.projectId, input.taskId);
+  await armGuest(guest, 'lane');
 
   try {
     await loadLaneUrl(guest, input.url);

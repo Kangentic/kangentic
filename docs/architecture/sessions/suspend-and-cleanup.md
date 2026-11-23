@@ -88,7 +88,7 @@ It runs in the task's worktree, or the project folder for a task with none or wh
 ## What is destroyed on To Do cleanup
 
 - PTY process (closed or force-killed; a young session of an agent that is typed into first gets its exit sequence and the grace, see below)
-- The task's pop-out windows (Browser, Changes, each file diff), closed through the normal close path, and its offscreen browser lane (`closeTaskWindows`)
+- The task's pop-out windows (Browser, Changes, each file diff), closed through the normal close path, and its offscreen browser lane, with the agent's control of its Browser ended (`closeTaskWindows`, which drops the passkey guard's mark)
 - What the task's agents left running in its folders, once that PTY has exited (`reapTaskLeftovers`; see [Process reaping](../worktrees/process-reaping.md))
 - Session files on disk (deleted)
 - All session DB records for the task (deleted)
