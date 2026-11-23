@@ -683,7 +683,7 @@ msgstr "任務離開時"
 
 #: src/shared/task-template-vars.ts
 msgid "One line per column between To Do and Done: what it runs, its purpose, any sign-off gate, and recent use."
-msgstr "To Do 與 Done 之間每欄一行：執行內容、用途、簽核門檻及近期使用。"
+msgstr "「待辦」與「已完成」之間每欄一行：執行內容、用途、簽核門檻及近期使用。"
 
 #: src/shared/automation-manifest.ts
 msgid "One per line, as Name: Value."

@@ -683,7 +683,7 @@ msgstr "任务退出时"
 
 #: src/shared/task-template-vars.ts
 msgid "One line per column between To Do and Done: what it runs, its purpose, any sign-off gate, and recent use."
-msgstr "To Do 与 Done 之间每列一行：运行内容、用途、审批门槛及近期使用。"
+msgstr "「待办」与「已完成」之间每列一行：运行内容、用途、审批门槛及近期使用。"
 
 #: src/shared/automation-manifest.ts
 msgid "One per line, as Name: Value."
