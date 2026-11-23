@@ -200,7 +200,8 @@ describe('holdTaskMessage', () => {
 
     holdTaskMessage(context, { projectId: PROJECT_ID, taskId: TASK_ID, message: 'Lower the cap.' });
 
-    expect(mockPaste).toHaveBeenCalledWith(context, expect.objectContaining({ sessionId: 'session-live', message: 'Lower the cap.' }));
+    // Logged as a held message, never as a column automation.
+    expect(mockPaste).toHaveBeenCalledWith(context, expect.objectContaining({ sessionId: 'session-live', message: 'Lower the cap.', source: 'held-message' }));
     const onOutcome = (mockPaste.mock.calls[0][1] as { onOutcome: (report: InjectionReport) => void }).onOutcome;
     onOutcome(report({ sessionId: 'session-live', outcome: 'unconfirmed' }));
     expect(statuses()).toEqual(['delivered_from_hold']);
@@ -565,7 +566,7 @@ describe('deliverOpeningRemainder', () => {
       held, heldInPrompt: false, heldAfterTurn: true, verifier: null,
     });
 
-    expect(mockPaste).toHaveBeenCalledWith(context, expect.objectContaining({ message: 'Lower the cap.' }));
+    expect(mockPaste).toHaveBeenCalledWith(context, expect.objectContaining({ message: 'Lower the cap.', source: 'held-message' }));
   });
 
   it('puts a claim that no delivery took back on hold instead of leaving it reserved', () => {

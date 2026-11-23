@@ -857,10 +857,14 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       const afterTurn = [pointerAfterTurn ? handoffUnsentPrompt : null, heldAfterLead?.text ?? null]
         .filter((part): part is string => part !== null);
       if (afterTurn.length > 0) {
+        // Only held text alone logs as a held message. The history pointer is
+        // not one, so a paste that carries it keeps the automation label.
+        const pastesHeldAlone = heldAfterLead !== null && !pointerAfterTurn;
         pasteAgentMessageInBackground(context, {
           taskId: currentTask.id,
           sessionId: handoffSessionId,
           message: afterTurn.join('\n\n'),
+          source: pastesHeldAlone ? 'held-message' : 'automation',
           onOutcome: (report) => {
             if (heldAfterLead) {
               settleClaimFromReport(heldAfterLead, report, { flushOnRelease: true });

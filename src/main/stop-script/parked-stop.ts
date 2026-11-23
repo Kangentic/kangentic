@@ -93,6 +93,9 @@ export interface ParkedStopDeps {
  * agent that had restarted the stack itself since. The date is fixed in the
  * text when the script ends, because held text is delivered as written. It is
  * UTC, from `toISOString`, so the text is the same on every machine.
+ *
+ * It says the agent was paused for being idle. A bare "while it was paused"
+ * read as the card's "Automations paused", which this script never reads.
  */
 export function stoppedProcessesMessage(labels: readonly string[], stoppedAt: Date): string {
   const named = labels.slice(0, MAX_NAMED_PROCESSES).join(', ');
@@ -100,7 +103,7 @@ export function stoppedProcessesMessage(labels: readonly string[], stoppedAt: Da
   const list = rest > 0 ? `${named} and ${rest} more` : named;
   const isoTimestamp = stoppedAt.toISOString();
   const when = `${isoTimestamp.slice(0, 10)} at ${isoTimestamp.slice(11, 16)} UTC`;
-  return `On ${when}, the project's Stop script stopped what this task left running while it was paused: ${list}. Start them again if you need them.`;
+  return `On ${when}, the project's Stop script stopped what this task left running while its agent was paused for being idle: ${list}. Start them again if you need them.`;
 }
 
 function sameProcess(left: ProbedProcess, right: ProbedProcess): boolean {

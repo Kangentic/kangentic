@@ -123,6 +123,34 @@ describe('acceptHeld on the paste path', () => {
     expect(lastTurnWaitOptions().acceptHeld).toBe(expected);
   });
 
+  // A held message logged as `automation:<task>` read as a column automation.
+  it.each([
+    ['labels a held-message paste as one', { source: 'held-message' as const }, `held-message:${TASK_ID.slice(0, 8)}`],
+    ['labels a paste with no source as an automation', {}, `automation:${TASK_ID.slice(0, 8)}`],
+  ])('pasteAgentMessageInBackground %s', async (_label, options, expected) => {
+    const submitContent = vi.fn(async () => undefined);
+    const context = {
+      sessionManager: {
+        getSession: vi.fn((id: string) => ({ id, status: 'running' })),
+        awaitInputReady: vi.fn(async () => true),
+        awaitAgentLaunched: vi.fn(async () => true),
+      },
+      terminalSubmit: { submitContent },
+      terminalSubmitScheduler: { hasPending: vi.fn(() => false) },
+    } as unknown as IpcContext;
+    await new Promise<InjectionReport>((resolve) => {
+      pasteAgentMessageInBackground(context, {
+        taskId: TASK_ID,
+        sessionId: SESSION_ID,
+        message: MULTI_LINE,
+        onOutcome: resolve,
+        ...options,
+      });
+    });
+
+    expect(submitContent).toHaveBeenCalledWith(SESSION_ID, MULTI_LINE, expect.objectContaining({ source: expected }));
+  });
+
   it('deliverMessageToSession leaves acceptHeld unset when not given', async () => {
     await deliverMessageToSession(makeContext(), {
       taskId: TASK_ID,

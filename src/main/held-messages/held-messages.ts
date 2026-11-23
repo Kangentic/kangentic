@@ -387,6 +387,7 @@ export function pasteHeldAfterTurn(context: IpcContext, claim: HeldClaim, sessio
     sessionId,
     message: claim.text,
     onOutcome: (report) => settleClaimFromReport(claim, report, { flushOnRelease: true }),
+    source: 'held-message',
   });
 }
 
@@ -496,6 +497,7 @@ export function flushHeldIfLive(
       message: claim.text,
       onOutcome: (report) => settleClaimFromReport(claim, report, { flushOnRelease: false }),
       acceptHeld: options.acceptHeld,
+      source: 'held-message',
     });
   } catch (error) {
     // A claim the paste never took goes back on hold (a no-op if it settled).
