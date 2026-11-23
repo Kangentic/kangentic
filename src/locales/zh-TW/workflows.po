@@ -256,7 +256,7 @@ msgstr "載入工作流程失敗"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
 msgid "Find in terminal"
-msgstr ""
+msgstr "在終端機中尋找"
 
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
 msgid "Fit every card in view"
@@ -411,7 +411,7 @@ msgstr "已暫停 {pausedTime}"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
 msgid "Paused: {boards} is on a removed host"
-msgstr ""
+msgstr "已暫停：{boards} 位於已移除的主機上"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
 msgid "Plan approval"

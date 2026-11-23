@@ -9,7 +9,7 @@ msgstr ""
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "API token"
-msgstr ""
+msgstr "API 權杖"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 #, fuzzy
@@ -23,77 +23,77 @@ msgstr "Atlassian 登入未完成。"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Check the site address."
-msgstr ""
+msgstr "請檢查網站位址。"
 
 #. The highlighted phrase is a button label in Atlassian's own English interface. Keep it as written.
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Click <0>Create API token</0>, name it \"Kangentic\", and copy it."
-msgstr ""
+msgstr "按一下 <0>Create API token</0>，命名為「Kangentic」，然後複製。"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Connect Jira"
-msgstr ""
+msgstr "連線 Jira"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Couldn't reach {shownSite}: {detail}."
-msgstr ""
+msgstr "無法連線 {shownSite}：{detail}。"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Couldn't reach {shownSite}."
-msgstr ""
+msgstr "無法連線 {shownSite}。"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Create a personal access token"
-msgstr ""
+msgstr "建立個人存取權杖"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Create an API token"
-msgstr ""
+msgstr "建立 API 權杖"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Create one in your Jira profile"
-msgstr ""
+msgstr "在你的 Jira 個人檔案中建立"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Email"
-msgstr ""
+msgstr "電子郵件"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Jira rejected this email and token."
-msgstr ""
+msgstr "Jira 拒絕了此電子郵件和權杖。"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Jira rejected this token."
-msgstr ""
+msgstr "Jira 拒絕了此權杖。"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Jira rejected this username and password."
-msgstr ""
+msgstr "Jira 拒絕了此使用者名稱和密碼。"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Jira wants a CAPTCHA before password sign-in."
-msgstr ""
+msgstr "Jira 要求先完成 CAPTCHA 才能用密碼登入。"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Open {shownSite}"
-msgstr ""
+msgstr "開啟 {shownSite}"
 
 #. The highlighted phrases are labels in Jira's own English interface. Keep them as written.
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Open <0>Personal Access Tokens</0>, click <1>Create token</1>, and copy it."
-msgstr ""
+msgstr "開啟 <0>Personal Access Tokens</0>，按一下 <1>Create token</1>，然後複製。"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Open id.atlassian.com"
-msgstr ""
+msgstr "開啟 id.atlassian.com"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Open your Atlassian API tokens"
-msgstr ""
+msgstr "開啟你的 Atlassian API 權杖"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Open your Jira profile"
-msgstr ""
+msgstr "開啟你的 Jira 個人檔案"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 #, fuzzy
@@ -117,7 +117,7 @@ msgstr "貼上你的權杖"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Personal access token"
-msgstr ""
+msgstr "個人存取權杖"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 #, fuzzy
@@ -126,15 +126,15 @@ msgstr "使用 Atlassian 登入"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Site"
-msgstr ""
+msgstr "網站"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "This site turned off password sign-in."
-msgstr ""
+msgstr "此網站已關閉密碼登入。"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Use a personal access token"
-msgstr ""
+msgstr "使用個人存取權杖"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 #, fuzzy
@@ -143,7 +143,7 @@ msgstr "使用 API 權杖"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Use your password"
-msgstr ""
+msgstr "使用密碼"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 #, fuzzy
@@ -157,12 +157,12 @@ msgstr "正在瀏覽器中等候 Atlassian"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Your Jira password"
-msgstr ""
+msgstr "你的 Jira 密碼"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Your Jira username"
-msgstr ""
+msgstr "你的 Jira 使用者名稱"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Your Jira username and password"
-msgstr ""
+msgstr "你的 Jira 使用者名稱和密碼"

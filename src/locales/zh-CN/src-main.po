@@ -166,7 +166,7 @@ msgstr "无法打开浏览器进行 Atlassian 登录。"
 #: src/main/boards/adapters/gitlab/oauth.ts
 msgctxt "GitLab connect error"
 msgid "Could not open the browser for GitLab sign-in."
-msgstr ""
+msgstr "无法打开浏览器进行 GitLab 登录。"
 
 #: src/main/boards/adapters/linear/oauth.ts
 #, fuzzy
@@ -192,12 +192,12 @@ msgstr "当时空闲系统内存（提交量）：{remainingMb} MB。"
 #: src/main/boards/adapters/gitlab/oauth.ts
 msgctxt "GitLab sign-in browser page"
 msgid "GitLab sign-in did not finish. Return to Kangentic to try again."
-msgstr ""
+msgstr "GitLab 登录未完成。请返回 Kangentic 重试。"
 
 #: src/main/boards/adapters/gitlab/oauth.ts
 msgctxt "GitLab connect error"
 msgid "GitLab sign-in timed out."
-msgstr ""
+msgstr "GitLab 登录超时。"
 
 #: src/main/db/global-db-dialog.ts
 #, fuzzy
@@ -238,7 +238,7 @@ msgstr "Linear 登录超时。"
 
 #: src/main/updater.ts
 msgid "macOS needs an administrator to install this update."
-msgstr ""
+msgstr "macOS 需要管理员才能安装此更新。"
 
 #: src/main/updater.ts
 #, fuzzy
@@ -253,7 +253,7 @@ msgstr "未安装图形化密码提示程序（例如 pkexec）。"
 #: src/main/boards/adapters/gitlab/oauth.ts
 msgctxt "GitLab connect error"
 msgid "No local port was free for GitLab sign-in."
-msgstr ""
+msgstr "没有空闲的本地端口可用于 GitLab 登录。"
 
 #: src/main/boards/adapters/jira/oauth.ts
 #, fuzzy
@@ -332,7 +332,7 @@ msgstr "此版本不支持使用 Atlassian 登录。"
 #: src/main/boards/adapters/gitlab/oauth.ts
 msgctxt "GitLab connect error"
 msgid "Sign in with GitLab is not available in this build."
-msgstr ""
+msgstr "此构建不支持通过 GitLab 登录。"
 
 #: src/main/boards/adapters/linear/oauth.ts
 #, fuzzy
@@ -404,7 +404,7 @@ msgstr "未知站点"
 #: src/main/boards/adapters/gitlab/oauth.ts
 msgctxt "GitLab sign-in browser page"
 msgid "You can close this tab and return to Kangentic."
-msgstr ""
+msgstr "你可以关闭此标签页并返回 Kangentic。"
 
 #: src/main/boards/adapters/jira/oauth.ts
 #, fuzzy

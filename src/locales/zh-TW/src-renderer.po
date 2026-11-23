@@ -41,7 +41,7 @@ msgstr "「{taskTitle}」"
 
 #: src/renderer/lib/account-toasts.ts
 msgid "\"{taskTitle}\" continues on {accountName}."
-msgstr ""
+msgstr "「{taskTitle}」將在 {accountName} 上繼續。"
 
 #: src/renderer/App.tsx
 msgid "\"{taskTitle}\" did not run {command}."
@@ -157,15 +157,15 @@ msgstr "{seconds, plural, other {「{taskTitle}」:# 秒後逾時。}}"
 
 #: src/renderer/lib/account-toasts.ts
 msgid "{agentName} sessions continue {resetMoment}, when the first account resets."
-msgstr ""
+msgstr "{agentName} 工作階段將在 {resetMoment} 繼續，即第一個帳戶重設時。"
 
 #: src/renderer/lib/account-toasts.ts
 msgid "{agentName} sessions continue in {duration}, when the first account resets."
-msgstr ""
+msgstr "{agentName} 工作階段將在 {duration} 後繼續，即第一個帳戶重設時。"
 
 #: src/renderer/lib/account-toasts.ts
 msgid "{agentName} sessions continue when the first account resets."
-msgstr ""
+msgstr "{agentName} 工作階段將在第一個帳戶重設時繼續。"
 
 #: src/renderer/utils/worktree-placement.tsx
 msgid "{basePill} will be checked out in the project folder"
@@ -197,7 +197,7 @@ msgstr "{count, plural, other {未知的變數：{variableNames}。將依原樣�
 
 #: src/renderer/lib/account-toasts.ts
 msgid "{failed, plural, one {# running session stays on its account.} other {# running sessions stay on their accounts.}}"
-msgstr ""
+msgstr "{failed, plural, other {# 個執行中的工作階段仍留在原帳戶。}}"
 
 #: src/renderer/lib/leftover-processes.ts
 msgid "{failedCount, plural, one {Couldn't stop # process from \"{taskTitle}\", and {keptCount, plural, one {# more is still running.} other {# more are still running.}}} other {Couldn't stop # processes from \"{taskTitle}\", and {keptCount, plural, one {# more is still running.} other {# more are still running.}}}}"
@@ -241,7 +241,7 @@ msgstr "{minutes} 分 {seconds} 秒"
 
 #: src/renderer/lib/account-toasts.ts
 msgid "{moved, plural, one {# running session} other {# running sessions}} moved to {accountName}."
-msgstr ""
+msgstr "{moved, plural, other {# 個執行中的工作階段}}已移至 {accountName}。"
 
 #: src/renderer/components/MarkdownRenderer.tsx
 msgid "{path} has no changes in this view"
@@ -316,7 +316,7 @@ msgstr "#{displayId} 仍留在待辦。{reason}"
 
 #: src/renderer/lib/pr-state.ts
 msgid "A check or build failed as of the last PR refresh"
-msgstr ""
+msgstr "上次重新整理提取要求時，有檢查或建置失敗"
 
 #: src/renderer/App.tsx
 msgid "A project"
@@ -324,7 +324,7 @@ msgstr "某個專案"
 
 #: src/renderer/lib/account-toasts.ts
 msgid "A session continues on {accountName}."
-msgstr ""
+msgstr "工作階段將在 {accountName} 上繼續。"
 
 #: src/renderer/lib/leftover-processes.ts
 msgid "A tmux server. Stopping it ends all your tmux sessions."
@@ -376,11 +376,11 @@ msgstr "代理已啟動"
 
 #: src/renderer/utils/dev-restart.ts
 msgid "Agents pause during a restart and resume after."
-msgstr ""
+msgstr "重新啟動期間代理會暫停，之後恢復。"
 
 #: src/renderer/lib/account-toasts.ts
 msgid "All accounts at their limit"
-msgstr ""
+msgstr "所有帳戶均已達上限"
 
 #: src/renderer/components/ErrorBoundary.tsx
 msgid "An unexpected error occurred."
@@ -425,7 +425,7 @@ msgstr "變更未儲存至磁碟"
 
 #: src/renderer/lib/pr-state.ts
 msgid "checks failing"
-msgstr ""
+msgstr "檢查失敗"
 
 #: src/renderer/hooks/useAddProject.ts
 msgid "Choose a project folder"
@@ -451,7 +451,7 @@ msgstr "清除搜尋"
 #: src/renderer/utils/keybindings.ts
 msgctxt "mouse button, drawn as a key chip after Ctrl or Cmd"
 msgid "Click"
-msgstr ""
+msgstr "點一下"
 
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
 msgid "Close"
@@ -460,7 +460,7 @@ msgstr "關閉"
 #: src/renderer/components/PanelErrorBoundary.tsx
 msgctxt "Action"
 msgid "Close"
-msgstr ""
+msgstr "關閉"
 
 #: src/renderer/window-manager/components/ConversationWindow.tsx
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
@@ -581,7 +581,7 @@ msgstr "無法載入此視窗的終端機。"
 
 #: src/renderer/lib/account-toasts.ts
 msgid "Couldn't move every session"
-msgstr ""
+msgstr "無法移動全部工作階段"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
 msgid "Couldn't move project"
@@ -653,7 +653,7 @@ msgstr "無法重新排序任務"
 
 #: src/renderer/utils/dev-restart.ts
 msgid "Couldn't restart Kangentic"
-msgstr ""
+msgstr "無法重新啟動 Kangentic"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 msgid "Couldn't restore task"
@@ -697,7 +697,7 @@ msgstr "無法儲存任務"
 
 #: src/renderer/utils/terminal-links/register-terminal-links.ts
 msgid "Couldn't show file"
-msgstr ""
+msgstr "無法顯示檔案"
 
 #: src/renderer/stores/workflow-store.ts
 msgid "Couldn't start the workflow"
@@ -717,7 +717,7 @@ msgstr "無法停止處理程序"
 
 #: src/renderer/lib/account-toasts.ts
 msgid "Couldn't switch account"
-msgstr ""
+msgstr "無法切換帳戶"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 msgid "Delete"
@@ -817,7 +817,7 @@ msgstr "無法載入面板"
 
 #: src/renderer/window-manager/components/WindowContent.tsx
 msgid "Failed to load this task"
-msgstr ""
+msgstr "無法載入此任務"
 
 #: src/renderer/components/NumberStepper.tsx
 msgid "Fewer: {ariaLabel}"
@@ -955,7 +955,7 @@ msgstr "已停止殘留的處理程序"
 
 #: src/renderer/utils/dev-restart.ts
 msgid "Main process changed"
-msgstr ""
+msgstr "主處理程序已變更"
 
 #: src/renderer/hooks/useAddProject.ts
 msgid "Make a first commit so each task gets its own worktree."
@@ -967,7 +967,7 @@ msgstr "最大化"
 
 #: src/renderer/lib/pr-state.ts
 msgid "Merge blocked by reviews or branch rules as of the last PR refresh"
-msgstr ""
+msgstr "上次重新整理提取要求時，合併被審查或分支規則阻擋"
 
 #: src/renderer/lib/pr-state.ts
 msgid "Merge conflicts with the base branch as of the last PR refresh"
@@ -1023,15 +1023,15 @@ msgstr "正在移動專案資料夾..."
 
 #: src/renderer/hooks/useBranchSettings.ts
 msgid "Name a branch to start from a commit in the project folder"
-msgstr ""
+msgstr "為專案資料夾中的提交命名一個分支以開始"
 
 #: src/renderer/hooks/useBranchSettings.ts
 msgid "Name a branch to start from a tag in the project folder"
-msgstr ""
+msgstr "為專案資料夾中的標籤命名一個分支以開始"
 
 #: src/renderer/lib/account-toasts.ts
 msgid "New {agentName} sessions start on {accountName}."
-msgstr ""
+msgstr "新的 {agentName} 工作階段將在 {accountName} 上開始。"
 
 #: src/renderer/lib/conversation-expired-toast.ts
 msgid "New conversation"
@@ -1121,7 +1121,7 @@ msgstr "在預設瀏覽器中開啟"
 
 #: src/renderer/utils/link-open.ts
 msgid "Open in Kangentic browser"
-msgstr ""
+msgstr "在 Kangentic 瀏覽器中開啟"
 
 #: src/renderer/pop-out/PopOutButton.tsx
 msgid "Open in new window"
@@ -1129,7 +1129,7 @@ msgstr "在新視窗中開啟"
 
 #: src/renderer/components/PrLink.tsx
 msgid "Open pull request"
-msgstr ""
+msgstr "開啟提取要求"
 
 #: src/renderer/App.tsx
 msgid "Open settings"
@@ -1214,7 +1214,7 @@ msgstr "專案無法使用"
 
 #: src/renderer/components/PrLink.tsx
 msgid "Pull request"
-msgstr ""
+msgstr "提取要求"
 
 #: src/renderer/lib/pr-state.ts
 msgid "queued"
@@ -1252,7 +1252,7 @@ msgstr "重新載入"
 
 #: src/renderer/components/LabelInput.tsx
 msgid "Remove {text}"
-msgstr ""
+msgstr "移除 {text}"
 
 #: src/renderer/utils/gpu-notice.ts
 msgid "Repeated failures shut down your last run."
@@ -1270,7 +1270,7 @@ msgstr "截至上次重新整理 PR 時，必要的檢查或政策正在執行"
 #: src/renderer/utils/dev-restart.ts
 msgctxt "Action"
 msgid "Restart"
-msgstr ""
+msgstr "重新啟動"
 
 #: src/renderer/stores/updater-store.ts
 msgid "Restart to update"
@@ -1363,7 +1363,7 @@ msgstr "Shift+按一下可新增次要排序"
 
 #: src/renderer/utils/terminal-links/link-tip.ts
 msgid "Show in folder"
-msgstr ""
+msgstr "在資料夾中顯示"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 msgid "Show workflow"
@@ -1408,7 +1408,7 @@ msgstr "停止指令碼失敗"
 
 #: src/renderer/lib/account-toasts.ts
 msgid "Switched account"
-msgstr ""
+msgstr "已切換帳戶"
 
 #: src/renderer/stores/board-store/task-completion-slice.ts
 msgid "Task completed"
@@ -1452,7 +1452,7 @@ msgstr "終端機已重新啟動"
 
 #: src/renderer/lib/account-toasts.ts
 msgid "The account is no longer in the list."
-msgstr ""
+msgstr "該帳戶已不在清單中。"
 
 #: src/renderer/utils/worktree-placement.tsx
 msgid "The agent runs on a remote server"
@@ -1464,7 +1464,7 @@ msgstr "自動化未啟動。"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 msgid "The description is too long to start an agent with."
-msgstr ""
+msgstr "描述太長，無法用它啟動代理。"
 
 #: src/renderer/stores/project-store.ts
 msgid "The list has been refreshed."

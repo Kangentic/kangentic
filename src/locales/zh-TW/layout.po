@@ -45,7 +45,7 @@ msgstr "{unreadAnnouncements, plural, other {# 則未讀}}"
 
 #: src/renderer/components/layout/DevRestartController.tsx
 msgid "{workingAgentCount, plural, one {# agent is working. It pauses for the restart and resumes after, but its current turn stops.} other {# agents are working. They pause for the restart and resume after, but their current turns stop.}}"
-msgstr ""
+msgstr "{workingAgentCount, plural, other {# 個代理正在工作。重新啟動時會暫停，之後恢復，但目前輪次會中止。}}"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
 msgid "<0>Found</0><1>{gitFact}</1><2>and</2><3><4>{agentFact}</4></3>"
@@ -101,7 +101,7 @@ msgstr "複製 <0>{loginCommand}</0>"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
 msgid "Copy login"
-msgstr ""
+msgstr "複製登入資訊"
 
 #: src/renderer/components/layout/ToastItem.tsx
 msgid "Copy message"
@@ -121,39 +121,39 @@ msgstr "每個任務都在自己的分支上執行，因此兩個代理絕不會
 
 #: src/renderer/components/layout/SurfaceBoundary.tsx
 msgid "Failed to load search"
-msgstr ""
+msgstr "無法載入搜尋"
 
 #: src/renderer/components/layout/SurfaceBoundary.tsx
 msgid "Failed to load settings"
-msgstr ""
+msgstr "無法載入設定"
 
 #: src/renderer/components/layout/SurfaceBoundary.tsx
 msgid "Failed to load the backlog"
-msgstr ""
+msgstr "無法載入待辦清單"
 
 #: src/renderer/components/layout/SurfaceBoundary.tsx
 msgid "Failed to load the board"
-msgstr ""
+msgstr "無法載入看板"
 
 #: src/renderer/components/layout/SurfaceBoundary.tsx
 msgid "Failed to load the Command Terminal panel"
-msgstr ""
+msgstr "無法載入命令終端機面板"
 
 #: src/renderer/components/layout/SurfaceBoundary.tsx
 msgid "Failed to load the sidebar"
-msgstr ""
+msgstr "無法載入側邊欄"
 
 #: src/renderer/components/layout/SurfaceBoundary.tsx
 msgid "Failed to load the status bar"
-msgstr ""
+msgstr "無法載入狀態列"
 
 #: src/renderer/components/layout/SurfaceBoundary.tsx
 msgid "Failed to load the terminal panel"
-msgstr ""
+msgstr "無法載入終端機面板"
 
 #: src/renderer/components/layout/SurfaceBoundary.tsx
 msgid "Failed to load the title bar"
-msgstr ""
+msgstr "無法載入標題列"
 
 #: src/renderer/components/layout/TitleBar.tsx
 msgid "Focus agent monitor window"
@@ -258,11 +258,11 @@ msgstr "重新整理"
 #: src/renderer/components/layout/DevRestartController.tsx
 msgctxt "Action"
 msgid "Restart"
-msgstr ""
+msgstr "重新啟動"
 
 #: src/renderer/components/layout/DevRestartController.tsx
 msgid "Restart Kangentic?"
-msgstr ""
+msgstr "重新啟動 Kangentic？"
 
 #: src/renderer/components/layout/TitleBar.tsx
 #, fuzzy

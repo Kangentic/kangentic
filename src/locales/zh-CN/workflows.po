@@ -256,7 +256,7 @@ msgstr "加载工作流失败"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
 msgid "Find in terminal"
-msgstr ""
+msgstr "在终端中查找"
 
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
 msgid "Fit every card in view"
@@ -411,7 +411,7 @@ msgstr "暂停时间：{pausedTime}"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
 msgid "Paused: {boards} is on a removed host"
-msgstr ""
+msgstr "已暂停：{boards} 位于已移除的主机上"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
 msgid "Plan approval"

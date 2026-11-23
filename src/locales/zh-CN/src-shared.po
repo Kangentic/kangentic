@@ -9,7 +9,7 @@ msgstr ""
 
 #: src/shared/task-artifacts.ts
 msgid "{baseName}, frame {frame}"
-msgstr ""
+msgstr "{baseName}，第 {frame} 帧"
 
 #: src/shared/workflow-refusals.ts
 msgid "{blockedLabel} already waits for {blockerLabel}."
@@ -53,7 +53,7 @@ msgstr "{label} 已完成，等待它不会产生任何变化。"
 
 #: src/shared/workflow-refusals.ts
 msgid "{label} is in {workflowTitle}, so its automations cannot be paused. To review its plan, set planApproval to manual. To wait on something outside, end a turn on the \"Needs owner:\" line. If it must never start on its own, leave it out of the workflow. To stop work, pause the workflow."
-msgstr ""
+msgstr "{label} 位于 {workflowTitle} 中，因此无法暂停其自动化。要审阅其计划，将 planApproval 设为 manual。要等待外部事项，在 “Needs owner:” 行结束一轮。若它绝不能自行启动，请勿放入工作流。要停止工作，请暂停工作流。"
 
 #: src/shared/workflow-refusals.ts
 msgid "{label} is in {workflowTitle}, which is paused. Resume it to move its tasks."
@@ -105,7 +105,7 @@ msgstr "{value, select, automatic {自动} other {手动}}，已为此任务设�
 
 #: src/shared/workflow-refusals.ts
 msgid "{workflowTitle} has tasks on {boards}, whose SSH host was removed. Add the host again to resume it."
-msgstr ""
+msgstr "{workflowTitle} 在 {boards} 上有任务，其 SSH 主机已被移除。请再次添加该主机以恢复。"
 
 #: src/shared/workflow-refusals.ts
 msgid "A task cannot wait for itself."
@@ -113,7 +113,7 @@ msgstr "任务不能等待自身。"
 
 #: src/shared/automation-manifest.ts
 msgid "A task in {columnName} has no worktree to run in."
-msgstr ""
+msgstr "{columnName} 中的任务没有可运行的工作树。"
 
 #: src/shared/workflow-refusals.ts
 msgid "A task visits at least one column."
@@ -129,7 +129,7 @@ msgstr "智能体监控"
 
 #: src/shared/final-line-match.ts
 msgid "Any line but this one"
-msgstr ""
+msgstr "除此行以外的任意行"
 
 #: src/shared/transcript-format.ts
 msgid "Approved automatically"
@@ -251,7 +251,7 @@ msgstr "条件检查"
 
 #: src/shared/automation-describe.ts
 msgid "Condition: {clauses}."
-msgstr ""
+msgstr "条件：{clauses}。"
 
 #: src/shared/keybindings.ts
 msgctxt "hotkey"
@@ -289,7 +289,7 @@ msgstr "关闭对话框"
 
 #: src/shared/automation-describe.ts
 msgid "does not read {pattern}"
-msgstr ""
+msgstr "未读到 {pattern}"
 
 #: src/shared/knowledge-graph-task-fields.ts
 msgctxt "task status"
@@ -298,7 +298,7 @@ msgstr "已完成"
 
 #: src/shared/keybindings.ts
 msgid "Draw on the page"
-msgstr ""
+msgstr "在页面上绘制"
 
 #: src/shared/dictation-languages.ts
 msgctxt "spoken language"
@@ -339,7 +339,7 @@ msgstr "任务拥有工作树之前为空。"
 
 #: src/shared/task-template-vars.ts
 msgid "Empty until the task has an artifact."
-msgstr ""
+msgstr "任务有产物之前为空。"
 
 #: src/shared/task-template-vars.ts
 msgid "Empty until the task is linked to a tracker issue."
@@ -364,7 +364,7 @@ msgstr "在对话中查找"
 
 #: src/shared/keybindings.ts
 msgid "Find in terminal"
-msgstr ""
+msgstr "在终端中查找"
 
 #: src/shared/keybindings.ts
 msgid "Find on board"
@@ -376,11 +376,11 @@ msgstr "聚焦看板搜索；若不在看板上，则打开快速查找。"
 
 #: src/shared/automation-describe.ts
 msgid "for label {labels}"
-msgstr ""
+msgstr "标签为 {labels}"
 
 #: src/shared/automation-describe.ts
 msgid "for priority {levels}"
-msgstr ""
+msgstr "优先级为 {levels}"
 
 #: src/shared/dictation-languages.ts
 msgctxt "spoken language"
@@ -506,7 +506,7 @@ msgstr "手动，因为 Kangentic 无法批准 {agentName} 的计划。"
 
 #: src/shared/final-line-match.ts
 msgid "Matching a message runs on agent turn end only."
-msgstr ""
+msgstr "匹配消息仅在智能体轮次结束时运行。"
 
 #: src/shared/keybindings.ts
 msgctxt "hotkey"
@@ -609,7 +609,7 @@ msgstr "此项目中的下一个终端"
 
 #: src/shared/automation-manifest.ts
 msgid "No agent runs in {columnName}."
-msgstr ""
+msgstr "{columnName} 中没有智能体运行。"
 
 #: src/shared/automation-describe.ts
 msgid "No message yet."
@@ -683,7 +683,7 @@ msgstr "任务退出时"
 
 #: src/shared/task-template-vars.ts
 msgid "One line per column between To Do and Done: what it runs, its purpose, any sign-off gate, and recent use."
-msgstr ""
+msgstr "To Do 与 Done 之间每列一行：运行内容、用途、签核门槛及近期使用。"
 
 #: src/shared/automation-manifest.ts
 msgid "One per line, as Name: Value."
@@ -699,19 +699,19 @@ msgstr "仅当 {condition} 时。"
 
 #: src/shared/automation-describe.ts
 msgid "only if the last line {rule}"
-msgstr ""
+msgstr "仅当最后一行 {rule}"
 
 #: src/shared/automation-describe.ts
 msgid "Only if the last line {rule}."
-msgstr ""
+msgstr "仅当最后一行 {rule}。"
 
 #: src/shared/automation-describe.ts
 msgid "only if your message {rule}"
-msgstr ""
+msgstr "仅当你的消息 {rule}"
 
 #: src/shared/automation-describe.ts
 msgid "Only if your message {rule}."
-msgstr ""
+msgstr "仅当你的消息 {rule}。"
 
 #: src/shared/knowledge-graph-task-fields.ts
 msgctxt "task status"
@@ -866,23 +866,23 @@ msgstr "快速查找"
 
 #: src/shared/automation-describe.ts
 msgid "reads {patterns}"
-msgstr ""
+msgstr "读到 {patterns}"
 
 #: src/shared/automation-describe.ts
 msgid "reads {patterns}, but not {excluded}"
-msgstr ""
+msgstr "读到 {patterns}，但不是 {excluded}"
 
 #: src/shared/automation-describe.ts
 msgid "reads neither {first} nor {second}"
-msgstr ""
+msgstr "既未读到 {first} 也未读到 {second}"
 
 #: src/shared/automation-describe.ts
 msgid "reads none of {patterns}"
-msgstr ""
+msgstr "未读到 {patterns} 中的任何一项"
 
 #: src/shared/keybindings.ts
 msgid "Rebuild main and preload, then restart. Agents pause and resume."
-msgstr ""
+msgstr "重建 main 和 preload，然后重启。智能体会暂停并恢复。"
 
 #: src/shared/relay.ts
 msgid "Relay address cannot contain a backslash."
@@ -919,7 +919,7 @@ msgstr "重置缩放"
 
 #: src/shared/keybindings.ts
 msgid "Restart Kangentic"
-msgstr ""
+msgstr "重启 Kangentic"
 
 #: src/shared/automation-manifest.ts
 msgid "Review the latest changes and fix any issues you find"
@@ -970,11 +970,11 @@ msgstr "脚本"
 
 #: src/shared/keybindings.ts
 msgid "Search the focused terminal's output, taking this key from any program there that reads it."
-msgstr ""
+msgstr "搜索当前聚焦终端的输出；该快捷键会从其中正在读取它的程序处抢走。"
 
 #: src/shared/keybindings.ts
 msgid "Select element"
-msgstr ""
+msgstr "选择元素"
 
 #: src/shared/keybindings.ts
 msgid "Select the next file in the Changes panel."
@@ -986,7 +986,7 @@ msgstr "在「更改」面板中选择上一个文件。"
 
 #: src/shared/keybindings.ts
 msgid "Send every annotation"
-msgstr ""
+msgstr "发送全部标注"
 
 #: src/shared/automation-manifest.ts
 msgid "Send message to agent"
@@ -1026,11 +1026,11 @@ msgstr "在任务详情对话框中显示或隐藏描述面板。"
 
 #: src/shared/keybindings.ts
 msgid "Show or hide the focused Command Terminal's Kangentic browser."
-msgstr ""
+msgstr "显示或隐藏当前命令终端的 Kangentic 浏览器。"
 
 #: src/shared/keybindings.ts
 msgid "Show or hide the Kangentic browser in the task window."
-msgstr ""
+msgstr "显示或隐藏任务窗口中的 Kangentic 浏览器。"
 
 #: src/shared/keybindings.ts
 msgid "Show or hide the project sidebar."
@@ -1095,15 +1095,15 @@ msgstr "启动智能体。"
 
 #: src/shared/final-line-match.ts
 msgid "Starts with \"Ready for\""
-msgstr ""
+msgstr "以 “Ready for” 开头"
 
 #: src/shared/final-line-match.ts
 msgid "Starts with \"Ready for\", but is not \"Ready for review\""
-msgstr ""
+msgstr "以 “Ready for” 开头，但不是 “Ready for review”"
 
 #: src/shared/final-line-match.ts
 msgid "Starts with \"Ready for\", or is \"Done\""
-msgstr ""
+msgstr "以 “Ready for” 开头，或是 “Done”"
 
 #: src/shared/keybindings.ts
 msgid "Switch board / backlog"
@@ -1187,7 +1187,7 @@ msgstr "任务的 #N，即人们口头称呼的编号。"
 
 #: src/shared/task-template-vars.ts
 msgid "The task's artifact links, one per line with its name. '{{task_xml}}' already includes them."
-msgstr ""
+msgstr "任务的产物链接，每行一个名称。'{{task_xml}}' 已包含它们。"
 
 #: src/shared/task-template-vars.ts
 msgid "The task's labels, comma-separated."
@@ -1199,7 +1199,7 @@ msgstr "此列的智能体无法上报轮次结束。"
 
 #: src/shared/automation-manifest.ts
 msgid "This column's agent doesn't report the messages you send."
-msgstr ""
+msgstr "此列的智能体不会报告你发送的消息。"
 
 #: src/shared/session-resume-eligibility.ts
 msgid "This task is archived. Restore it to the board to continue working on it."
@@ -1236,7 +1236,7 @@ msgstr "切换命令终端"
 
 #: src/shared/keybindings.ts
 msgid "Toggle Command Terminal browser"
-msgstr ""
+msgstr "切换命令终端浏览器"
 
 #: src/shared/keybindings.ts
 msgid "Toggle debug overlay"
@@ -1248,7 +1248,7 @@ msgstr "切换描述速览"
 
 #: src/shared/keybindings.ts
 msgid "Toggle Kangentic browser"
-msgstr ""
+msgstr "切换 Kangentic 浏览器"
 
 #: src/shared/keybindings.ts
 msgid "Toggle Knowledge Graph"
@@ -1282,7 +1282,7 @@ msgstr "乌克兰语"
 
 #: src/shared/keybindings.ts
 msgid "Undo the last mark"
-msgstr ""
+msgstr "撤销上一笔标记"
 
 #: src/shared/automation-manifest.ts
 msgctxt "automation field"
