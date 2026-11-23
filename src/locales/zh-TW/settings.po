@@ -701,7 +701,7 @@ msgstr "按一下任務視窗外的空白處即可關閉。控制項、任務卡
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Click opens links in"
-msgstr "按一下開啟連結於"
+msgstr "點一下開啟連結於"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Click, type and drag. Off is read-only."
@@ -2088,7 +2088,7 @@ msgstr "私密金鑰路徑"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Pause an agent waiting on you this long until you open or move its task."
-msgstr "代理等你這麼久後暫停，直到你開啟或移動該任務。"
+msgstr "代理等你時，過這麼久才暫停，直到你開啟或移動該任務。"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
@@ -2195,7 +2195,7 @@ msgstr "程式 {version}"
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Program {version} (this app is {appVersion})"
-msgstr "程式 {version}（本應用程式為 {appVersion}）"
+msgstr "程式 {version}（本應用為 {appVersion}）"
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Program version unknown"
@@ -2636,7 +2636,7 @@ msgstr "在卡片上顯示每個任務的標籤"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Show each task's priority meter on its card"
-msgstr "在卡片上顯示每個任務的優先順序條"
+msgstr "在卡片上顯示每個任務的優先級條"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Show the status bar at the bottom of the window"
@@ -2876,7 +2876,7 @@ msgstr "終端機游標外觀"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Terminal links, the PR pill and a task's artifacts open here, and Ctrl or Cmd click opens the other browser."
-msgstr "終端機連結、PR 徽章和產物在此開啟。Ctrl 或 Cmd 按一下開啟另一瀏覽器。"
+msgstr "終端機連結、PR 徽章和產物在此開啟。Ctrl 或 Cmd 點一下開啟另一瀏覽器。"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
 msgid "Terminal may intercept"
@@ -3327,11 +3327,11 @@ msgstr "工作流程檢視左側窗格中，由哪個代理規劃各工作流程
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
 msgid "Which browser a click opens. Cmd+Click opens the other."
-msgstr "按一下開啟哪個瀏覽器。Cmd+Click 開啟另一個。"
+msgstr "點一下開啟哪個瀏覽器。Cmd+Click 開啟另一個。"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
 msgid "Which browser a click opens. Ctrl+Click opens the other."
-msgstr "按一下開啟哪個瀏覽器。Ctrl+Click 開啟另一個。"
+msgstr "點一下開啟哪個瀏覽器。Ctrl+Click 開啟另一個。"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Which changes a freshly opened Changes panel shows: working (uncommitted edits), staged (index), or the full branch vs its base."

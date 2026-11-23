@@ -316,7 +316,7 @@ msgstr "#{displayId} 仍保留在“待办”中。{reason}"
 
 #: src/renderer/lib/pr-state.ts
 msgid "A check or build failed as of the last PR refresh"
-msgstr "上次刷新 PR 时，有检查或构建失败"
+msgstr "上次刷新拉取请求时，有检查或构建失败"
 
 #: src/renderer/App.tsx
 msgid "A project"
@@ -967,11 +967,11 @@ msgstr "最大化"
 
 #: src/renderer/lib/pr-state.ts
 msgid "Merge blocked by reviews or branch rules as of the last PR refresh"
-msgstr "上次刷新 PR 时，合并被评审或分支规则阻止"
+msgstr "上次刷新拉取请求时，合并被评审或分支规则阻止"
 
 #: src/renderer/lib/pr-state.ts
 msgid "Merge conflicts with the base branch as of the last PR refresh"
-msgstr "截至上次刷新 PR 时，与基础分支存在合并冲突"
+msgstr "截至上次刷新拉取请求时，与基础分支存在合并冲突"
 
 #: src/renderer/lib/pr-state.ts
 msgid "merged"
@@ -1174,7 +1174,7 @@ msgstr "弹出窗口"
 
 #: src/renderer/components/PrLink.tsx
 msgid "PR"
-msgstr "PR"
+msgstr "拉取请求"
 
 #: src/renderer/components/PrLink.tsx
 msgid "PR #{prNumber}"
@@ -1238,7 +1238,7 @@ msgstr "就绪"
 
 #: src/renderer/lib/pr-state.ts
 msgid "Ready to merge as of the last PR refresh"
-msgstr "截至上次刷新 PR 时，已可合并"
+msgstr "截至上次刷新拉取请求时，已可合并"
 
 #: src/renderer/utils/session-toggle.ts
 msgid "Reconnected"
@@ -1260,11 +1260,11 @@ msgstr "反复失败导致上次运行被关闭。"
 
 #: src/renderer/lib/pr-state.ts
 msgid "Required checks or policies are queued as of the last PR refresh"
-msgstr "截至上次刷新 PR 时，必需的检查或策略仍在排队"
+msgstr "截至上次刷新拉取请求时，必需的检查或策略仍在排队"
 
 #: src/renderer/lib/pr-state.ts
 msgid "Required checks or policies are running as of the last PR refresh"
-msgstr "截至上次刷新 PR 时，必需的检查或策略正在运行"
+msgstr "截至上次刷新拉取请求时，必需的检查或策略正在运行"
 
 #: src/renderer/components/ErrorBoundary.tsx
 #: src/renderer/utils/dev-restart.ts

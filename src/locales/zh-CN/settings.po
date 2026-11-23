@@ -2088,7 +2088,7 @@ msgstr "私钥路径"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Pause an agent waiting on you this long until you open or move its task."
-msgstr "智能体等你这么久后暂停，直到你打开或移动该任务。"
+msgstr "智能体等你时，过这么久才暂停，直到你打开或移动该任务。"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
