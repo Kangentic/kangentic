@@ -21,7 +21,8 @@ import { countReplaced, fileParts, hashParts, loadHomeRecord, type HomeRecord } 
  *   itself, which are merged and never replace anything there (a name clash keeps both).
  * - A conversation-bearing link that cannot be made is reported, and the caller blocks the account.
  * - Nothing here deletes a folder's contents. What it removes is an empty folder a link replaces,
- *   and an old link into the default home where an `own-dir` entry goes.
+ *   an old link into the default home where an `own-dir` entry goes, and a link Kangentic made
+ *   under another default home (`KnownHomes`, the recorded home), which is made again to this one.
  * - Nothing made from an account session is copied back into the default home. A copy or a
  *   derived file still replaces a change made on the account, and says so (`change-replaced`).
  *   Text a person wrote in the account's own file is moved aside first, never written over.
@@ -29,10 +30,41 @@ import { countReplaced, fileParts, hashParts, loadHomeRecord, type HomeRecord } 
 
 export type AccountFolderProblemCode = 'link-failed' | 'user-owned' | 'kept-aside' | 'history-private' | 'change-replaced';
 
+/**
+ * What stood at a `user-owned` entry, in one fixed word: a link to somewhere other than the
+ * default home's entry, a file where a folder goes, a link where a file goes, or a link or folder
+ * where a file goes.
+ */
+export type UserOwnedShape = 'link-elsewhere' | 'file' | 'link' | 'not-a-file';
+
+/**
+ * Where a link that stood in the way points, by the path it names (never its real path, which
+ * collapses a link to an account folder's own link into the home that one points at): inside the
+ * CLI's built-in home, inside Kangentic's accounts folder, at the entry in the home this folder's
+ * links were last made to, or anywhere else.
+ */
+export type LinkTargetClass = 'builtin-home' | 'kangentic-account' | 'recorded-home' | 'other';
+
 export interface AccountFolderProblem {
   entry: string;
   code: AccountFolderProblemCode;
   detail: string;
+  /** Set on a `user-owned` problem. */
+  shape?: UserOwnedShape;
+  /** Set on a `user-owned` problem whose entry is a link. */
+  linkTarget?: LinkTargetClass;
+}
+
+/**
+ * Homes a link in an account folder may point into because Kangentic made it under another
+ * default home: a launch with an inherited home variable and one without see two default homes,
+ * and each run's links point at its own. Parameters, so tests pass temp folders.
+ */
+export interface KnownHomes {
+  /** The CLI's home when no home variable is set (`~/.claude`). */
+  builtinHome?: string;
+  /** Kangentic's own accounts folder, `<configDir>/accounts`. */
+  accountsRoot?: string;
 }
 
 export interface AccountFolderReport {
@@ -50,7 +82,22 @@ export interface ProvisionAccountFolderInput {
   entries: readonly SharedEntry[];
   /** The data folder inside the account folder, when not the folder itself (`.gemini`). */
   accountDataSubfolder?: string;
+  /** Homes a link Kangentic made may point into; see `KnownHomes`. Absent: only the recorded home. */
+  knownHomes?: KnownHomes;
   platform?: NodeJS.Platform;
+}
+
+/** The homes `linkDirectory` and `ownDirectory` judge a link against. */
+interface LinkHomes extends KnownHomes {
+  /** The default home this folder's links were last made to (`HomeRecord.linkedHome`). */
+  recordedHome: string | null;
+  /** The account folder being provisioned, so a link's place inside it can be compared. */
+  accountFolder: string;
+}
+
+/** Kangentic's own accounts folder, `<configDir>/accounts`, which holds `<agent>/<id>` folders. */
+export function accountsRootOf(configDir: string): string {
+  return path.join(configDir, 'accounts');
 }
 
 const KEPT_SUFFIX = '.kangentic-kept';
@@ -77,15 +124,103 @@ function realOrResolved(filePath: string): string {
   }
 }
 
+/**
+ * True when a `path.relative` result stays inside its base. `..` alone or as the first part leads
+ * out; a name that only starts with two dots is inside. Another drive or root reads as absolute.
+ */
+function relativeStaysInside(relative: string): boolean {
+  const leadsOut = relative === '..' || relative.startsWith(`..${path.sep}`);
+  return !leadsOut && !path.isAbsolute(relative);
+}
+
 /** True when `child` is `parent` or inside it, by real path, case-insensitive on Windows. */
 export function isInsideOrSame(child: string, parent: string, platform: NodeJS.Platform = process.platform): boolean {
   const childPath = comparable(realOrResolved(child), platform);
   const parentPath = comparable(realOrResolved(parent), platform);
   if (childPath === parentPath) return true;
   const relative = path.relative(parentPath, childPath);
-  // `..` alone or as the first part leads out; a name that only starts with two dots is inside.
-  const leadsOut = relative === '..' || relative.startsWith(`..${path.sep}`);
-  return relative !== '' && !leadsOut && !path.isAbsolute(relative);
+  return relative !== '' && relativeStaysInside(relative);
+}
+
+/**
+ * True when `child` is `parent` or inside it, by the paths as written, case-insensitive on
+ * Windows. Links are not followed: a link's own path says where Kangentic made it point.
+ */
+export function isLexicallyInside(child: string, parent: string, platform: NodeJS.Platform = process.platform): boolean {
+  const relative = path.relative(comparable(parent, platform), comparable(child, platform));
+  return relative === '' || relativeStaysInside(relative);
+}
+
+function lexicallySame(first: string, second: string, platform: NodeJS.Platform): boolean {
+  return comparable(first, platform) === comparable(second, platform);
+}
+
+/**
+ * A link's target as `readlink` gives it, without Windows' long-path prefix: a junction can read
+ * back as `\\?\C:\...`, and one on a share as `\\?\UNC\server\share\...`, which is `\\server\share\...`.
+ */
+export function withoutLongPathPrefix(target: string): string {
+  if (/^\\\\\?\\UNC\\/i.test(target)) return `\\\\${target.slice('\\\\?\\UNC\\'.length)}`;
+  return target.replace(/^\\\\\?\\/, '');
+}
+
+/** The path a link names, resolved against its folder. Null when it is not a link or cannot be read. */
+function namedLinkTarget(link: string): string | null {
+  try {
+    return path.resolve(path.dirname(link), withoutLongPathPrefix(fs.readlinkSync(link)));
+  } catch {
+    // report-ok: a link that cannot be read is classed `other`, which keeps the account's link as
+    // it was and reports it.
+    return null;
+  }
+}
+
+/**
+ * True when `named` is this link's own entry in another account folder: the same path below
+ * `<accountsRoot>/<agent>/<id>` that the link has below the account folder being provisioned.
+ * A folder further down another account, or another entry there, is not one Kangentic made.
+ */
+function namesSameEntryInAnotherAccount(named: string, link: string, homes: LinkHomes, platform: NodeJS.Platform): boolean {
+  if (!homes.accountsRoot) return false;
+  const inFolder = path.relative(comparable(homes.accountFolder, platform), comparable(link, platform)).split(path.sep);
+  const underRoot = path.relative(comparable(homes.accountsRoot, platform), comparable(named, platform)).split(path.sep);
+  return underRoot.length === inFolder.length + 2 && inFolder.every((part, index) => part === underRoot[index + 2]);
+}
+
+/** Where a link points, as a fixed class (`LinkTargetClass`). */
+function classifyLinkTarget(named: string | null, entryName: string, homes: LinkHomes, platform: NodeJS.Platform): LinkTargetClass {
+  if (!named) return 'other';
+  if (homes.builtinHome && isLexicallyInside(named, homes.builtinHome, platform)) return 'builtin-home';
+  if (homes.accountsRoot && isLexicallyInside(named, homes.accountsRoot, platform)) return 'kangentic-account';
+  if (homes.recordedHome && lexicallySame(named, entryPath(homes.recordedHome, entryName), platform)) return 'recorded-home';
+  return 'other';
+}
+
+/**
+ * How a link that does not point at the current home's entry is judged: where it points, as a
+ * class, and whether Kangentic made it under another default home, so it is pointed at the current
+ * home's entry instead of blocking the account. Kangentic's are the same entry in the built-in
+ * home or in the recorded home, and the same entry of another Kangentic account folder.
+ */
+function judgeForeignLink(
+  link: string,
+  entryName: string,
+  homes: LinkHomes,
+  platform: NodeJS.Platform,
+): { linkTarget: LinkTargetClass; kangentic: boolean } {
+  const named = namedLinkTarget(link);
+  const linkTarget = classifyLinkTarget(named, entryName, homes, platform);
+  if (!named) return { linkTarget, kangentic: false };
+  switch (linkTarget) {
+    case 'builtin-home':
+      return { linkTarget, kangentic: homes.builtinHome !== undefined && lexicallySame(named, entryPath(homes.builtinHome, entryName), platform) };
+    case 'kangentic-account':
+      return { linkTarget, kangentic: namesSameEntryInAnotherAccount(named, link, homes, platform) };
+    case 'recorded-home':
+      return { linkTarget, kangentic: true };
+    case 'other':
+      return { linkTarget, kangentic: false };
+  }
 }
 
 /**
@@ -183,12 +318,13 @@ function linkDirectory(
   accountRoot: string,
   platform: NodeJS.Platform,
   report: AccountFolderReport,
+  homes: LinkHomes,
 ): void {
   if (entry.onlyOn && !entry.onlyOn.includes(platform)) return;
   const source = entryPath(homeRoot, entry.name);
   const target = entryPath(accountRoot, entry.name);
-  const fail = (code: AccountFolderProblemCode, detail: string): void => {
-    report.problems.push({ entry: entry.name, code, detail });
+  const fail = (code: AccountFolderProblemCode, detail: string, facts: Pick<AccountFolderProblem, 'shape' | 'linkTarget'> = {}): void => {
+    report.problems.push({ entry: entry.name, code, detail, ...facts });
     if (entry.conversationBearing && (code === 'link-failed' || code === 'user-owned')) {
       report.conversationLinkFailed = true;
     }
@@ -214,14 +350,30 @@ function linkDirectory(
     }
     if (resolved && comparable(resolved, platform) === comparable(realOrResolved(source), platform)) return;
     if (resolved) {
-      fail('user-owned', `${target} links somewhere else`);
-      return;
-    }
-    // A dangling link: remove only the link itself.
-    try {
-      fs.unlinkSync(target);
-    } catch {
-      fs.rmdirSync(target);
+      const { linkTarget, kangentic } = judgeForeignLink(target, entry.name, homes, platform);
+      if (!kangentic) {
+        fail('user-owned', `${target} links somewhere else`, { shape: 'link-elsewhere', linkTarget });
+        return;
+      }
+      // A link Kangentic made under another default home (Sentry DESKTOP-4S): pointed at this
+      // home's entry. Only the link goes; what it pointed at stays where it is.
+      try {
+        // Checked again just before: only ever a link, never a folder with files in it.
+        if (!lstatIfPresent(target)?.isSymbolicLink()) return;
+        removeLinkOnly(target);
+      } catch (error) {
+        // report-ok: pushed onto the folder report as `link-failed`, which the account service
+        // reports, and the account is blocked until a later spawn can replace the link.
+        fail('link-failed', `Could not remove the link ${target}: ${String(error)}`);
+        return;
+      }
+    } else {
+      // A dangling link: remove only the link itself.
+      try {
+        fs.unlinkSync(target);
+      } catch {
+        fs.rmdirSync(target);
+      }
     }
   } else if (current?.isDirectory()) {
     // The account's own entries go into the default home, never replacing anything there.
@@ -238,7 +390,7 @@ function linkDirectory(
       return;
     }
   } else if (current) {
-    fail('user-owned', `${target} is a file, not a folder`);
+    fail('user-owned', `${target} is a file, not a folder`, { shape: 'file' });
     return;
   }
   try {
@@ -272,12 +424,10 @@ function linksTo(link: string, homeEntry: string, platform: NodeJS.Platform): bo
   try {
     return comparable(fs.realpathSync.native(link), platform) === comparable(realOrResolved(homeEntry), platform);
   } catch {
-    try {
-      const named = comparable(path.resolve(path.dirname(link), fs.readlinkSync(link)), platform);
-      return named === comparable(homeEntry, platform) || named === comparable(realOrResolved(homeEntry), platform);
-    } catch {
-      return false;
-    }
+    const namedPath = namedLinkTarget(link);
+    if (!namedPath) return false;
+    const named = comparable(namedPath, platform);
+    return named === comparable(homeEntry, platform) || named === comparable(realOrResolved(homeEntry), platform);
   }
 }
 
@@ -293,14 +443,19 @@ function ownDirectory(
   accountRoot: string,
   platform: NodeJS.Platform,
   report: AccountFolderReport,
+  homes: LinkHomes,
 ): void {
   const homeEntry = entryPath(homeRoot, entry.name);
   const target = entryPath(accountRoot, entry.name);
   const current = lstatIfPresent(target);
   if (current?.isSymbolicLink()) {
     if (!linksTo(target, homeEntry, platform)) {
-      report.problems.push({ entry: entry.name, code: 'user-owned', detail: `${target} links somewhere else` });
-      return;
+      // A link an earlier version made under another default home is Kangentic's too.
+      const { linkTarget, kangentic } = judgeForeignLink(target, entry.name, homes, platform);
+      if (!kangentic) {
+        report.problems.push({ entry: entry.name, code: 'user-owned', detail: `${target} links somewhere else`, shape: 'link-elsewhere', linkTarget });
+        return;
+      }
     }
     try {
       // Checked again just before: only ever a link, never a folder with files in it.
@@ -313,7 +468,7 @@ function ownDirectory(
   } else if (current?.isDirectory()) {
     return;
   } else if (current) {
-    report.problems.push({ entry: entry.name, code: 'user-owned', detail: `${target} is a file, not a folder` });
+    report.problems.push({ entry: entry.name, code: 'user-owned', detail: `${target} is a file, not a folder`, shape: 'file' });
     return;
   }
   try {
@@ -410,12 +565,12 @@ function copyFile(
     if (entry.reportReplaced && record.get(entry.name) === undefined) record.set(entry.name, null);
     return;
   }
-  const fail = (code: AccountFolderProblemCode, detail: string): void => {
-    report.problems.push({ entry: entry.name, code, detail });
+  const fail = (code: AccountFolderProblemCode, detail: string, facts: Pick<AccountFolderProblem, 'shape'> = {}): void => {
+    report.problems.push({ entry: entry.name, code, detail, ...facts });
     if (entry.required) report.conversationLinkFailed = true;
   };
   if (lstatIfPresent(target)?.isSymbolicLink()) {
-    fail('user-owned', `${target} is a link`);
+    fail('user-owned', `${target} is a link`, { shape: 'link' });
     return;
   }
   let content: string;
@@ -466,7 +621,7 @@ function writeText(
     // and the entries after this one still run.
     const current = lstatIfPresent(target);
     if (current && !current.isFile()) {
-      report.problems.push({ entry: entry.name, code: 'user-owned', detail: `${target} is a link or a folder` });
+      report.problems.push({ entry: entry.name, code: 'user-owned', detail: `${target} is a link or a folder`, shape: 'not-a-file' });
       return;
     }
     if (current) {
@@ -596,14 +751,15 @@ export async function provisionAccountFolder(input: ProvisionAccountFolderInput)
   }
   // Kept in the account folder itself, the one path checked above against the default home.
   const record = loadHomeRecord(input.accountFolder);
+  const homes: LinkHomes = { ...input.knownHomes, recordedHome: record.linkedHome(), accountFolder: input.accountFolder };
   try {
     for (const entry of input.entries) {
       switch (entry.how) {
         case 'link-dir':
-          linkDirectory(entry, homeRoot, accountRoot, platform, report);
+          linkDirectory(entry, homeRoot, accountRoot, platform, report, homes);
           break;
         case 'own-dir':
-          ownDirectory(entry, homeRoot, accountRoot, platform, report);
+          ownDirectory(entry, homeRoot, accountRoot, platform, report, homes);
           break;
         case 'hardlink-file':
           linkFile(entry, homeRoot, accountRoot, report);
@@ -618,6 +774,11 @@ export async function provisionAccountFolder(input: ProvisionAccountFolderInput)
           await deriveJson(entry, input, homeRoot, accountRoot, report, record);
           break;
       }
+    }
+    // The home every link now points at, so a launch under another default home knows them as
+    // Kangentic's. Only when every link is in place: a blocked folder still points elsewhere.
+    if (!report.conversationLinkFailed && input.entries.some((entry) => entry.how === 'link-dir' || entry.how === 'own-dir')) {
+      record.setLinkedHome(path.resolve(homeRoot));
     }
   } finally {
     // Also when a derive throws at its lock, so the entries written before it stay recorded.

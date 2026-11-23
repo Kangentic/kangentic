@@ -40,6 +40,7 @@ function folderSupport(): FolderAccountSupport {
   return {
     kind: 'folder',
     accountEnv: (accountFolder) => ({ TEST_AGENT_HOME: accountFolder }),
+    homeEnvVars: ['TEST_AGENT_HOME'],
     defaultHome: () => home,
     loginArgs: ['login'],
     sharedEntries: [{ name: 'projects', how: 'link-dir', conversationBearing: true }],

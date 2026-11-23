@@ -18,6 +18,7 @@ import {
   type FolderAccountSupport,
   type KeyFileAccountSupport,
 } from '../../src/main/accounts/account-support';
+import { dropInheritedAccountHomes, resetInheritedAccountHomes } from '../../src/main/accounts/inherited-home-env';
 import type { AgentAdapter } from '../../src/main/agent/agent-adapter';
 import { runGlobalMigrations } from '../../src/main/db/migrations/global-schema';
 import { AgentAccountRepository } from '../../src/main/db/repositories/agent-account-repository';
@@ -48,6 +49,7 @@ function folderSupport(overrides: Partial<FolderAccountSupport> = {}): FolderAcc
   return {
     kind: 'folder',
     accountEnv: (accountFolder) => ({ TEST_AGENT_HOME: accountFolder }),
+    homeEnvVars: ['TEST_AGENT_HOME'],
     defaultHome: () => {
       defaultHomeCalls += 1;
       return home;
@@ -253,6 +255,116 @@ describe('AccountService.refreshIdentity', () => {
     expect(identifyCalls).toEqual([]);
     expect(refreshed).toEqual(row);
     expect(changeCount).toBe(0);
+  });
+});
+
+// Sentry DESKTOP-4S sent only the entry's name, so it could not say whether a file or a link stood
+// there, where the link pointed, or which default home the run used. The new facts are fixed words.
+describe('what a folder problem report carries', () => {
+  const linkKind = process.platform === 'win32' ? 'junction' : 'dir';
+  /** A fact a report may carry: a flag, a count, or one token with no path separator in it. */
+  const FIXED_TOKEN = /^[A-Za-z0-9._-]+$/;
+
+  afterEach(() => {
+    resetInheritedAccountHomes();
+  });
+
+  function folderProblemFacts(): Record<string, unknown> {
+    const report = reports.find(([problem]) => problem === 'folder-entry-user-owned');
+    expect(report).toBeDefined();
+    return (report?.[2] ?? {}) as Record<string, unknown>;
+  }
+
+  function expectNoPath(facts: Record<string, unknown>): void {
+    for (const value of Object.values(facts)) {
+      if (typeof value === 'boolean' || typeof value === 'number') continue;
+      expect(typeof value).toBe('string');
+      expect(value).toMatch(FIXED_TOKEN);
+    }
+    expect(JSON.stringify(reports)).not.toContain(path.basename(root));
+  }
+
+  it('names a link that points elsewhere, its target as a class, and the built-in default home', async () => {
+    const row = insertFolderAccount('ok');
+    const elsewhere = path.join(root, 'elsewhere', 'projects');
+    fs.mkdirSync(elsewhere, { recursive: true });
+    fs.mkdirSync(row.folderPath!, { recursive: true });
+    fs.symlinkSync(elsewhere, path.join(row.folderPath!, 'projects'), linkKind);
+    await folderService(folderSupport(), { environment: () => ({}) }).refreshIdentity(row.id);
+    const facts = folderProblemFacts();
+    expect(facts).toEqual({
+      entry: 'projects',
+      blocksAccount: true,
+      reason: 'link-elsewhere',
+      shape: 'link-elsewhere',
+      link_target: 'other',
+      default_home: 'builtin',
+    });
+    expectNoPath(facts);
+  });
+
+  it('names a file where a folder goes, and a default home the agent inherited', async () => {
+    const row = insertFolderAccount('ok');
+    fs.mkdirSync(row.folderPath!, { recursive: true });
+    fs.writeFileSync(path.join(row.folderPath!, 'projects'), 'a file where the link must go');
+    const environment = { TEST_AGENT_HOME: path.join(root, 'my-own-home') };
+    await folderService(folderSupport(), { environment: () => environment }).refreshIdentity(row.id);
+    const facts = folderProblemFacts();
+    expect(facts).toMatchObject({ entry: 'projects', reason: 'file', shape: 'file', default_home: 'inherited' });
+    expect(facts.link_target).toBeUndefined();
+    expectNoPath(facts);
+  });
+
+  it('says a home inherited from a Kangentic account folder was ignored, on the identity report too', async () => {
+    const environment: NodeJS.ProcessEnv = { TEST_AGENT_HOME: path.join(root, 'config', 'accounts', AGENT, '2') };
+    const accountService = folderService(folderSupport(), { environment: () => environment });
+    expect(dropInheritedAccountHomes(environment, path.join(root, 'config', 'accounts'), [{ name: AGENT, accounts: folderSupport() }])).toEqual(['TEST_AGENT_HOME']);
+    const own = accountService.ensureDefaultAccount(AGENT)!;
+    repository.updateIdentity(own.id, { email: 'own@example.com', plan: 'pro', status: 'ok' });
+    insertFolderAccount('ok', 'dev@example.com', 'pro');
+    // The default home holds a login a folder account names: the shape of DESKTOP-4R.
+    identity = { signedIn: true, email: 'dev@example.com', plan: 'pro', hasSubscription: true };
+    await accountService.refreshIdentity(own.id);
+    const changed = reports.find(([problem]) => problem === 'identity-changed');
+    expect(changed?.[2]).toMatchObject({ kind: 'default', default_home: 'inherited-ignored' });
+    expectNoPath((changed?.[2] ?? {}) as Record<string, unknown>);
+  });
+});
+
+describe('what the service hands the folder as the homes a link may have come from', () => {
+  const linkKind = process.platform === 'win32' ? 'junction' : 'dir';
+
+  it.each([
+    ['the built-in home the adapter names', () => path.join(root, 'builtin', 'projects')],
+    ['another Kangentic account folder of the config directory', () => path.join(root, 'config', 'accounts', AGENT, '9', 'projects')],
+  ])('relinks a projects link into %s at the default home, with no user-owned report', async (_label, targetOf) => {
+    const builtin = path.join(root, 'builtin');
+    const row = insertFolderAccount('ok');
+    const target = targetOf();
+    fs.mkdirSync(target, { recursive: true });
+    fs.mkdirSync(row.folderPath!, { recursive: true });
+    fs.symlinkSync(target, path.join(row.folderPath!, 'projects'), linkKind);
+    const support = folderSupport({ builtinHome: () => builtin });
+    const refreshed = await folderService(support, { environment: () => ({}) }).refreshIdentity(row.id);
+    expect(reports.filter(([problem]) => problem === 'folder-entry-user-owned')).toEqual([]);
+    expect(refreshed?.status).toBe('ok');
+    expect(fs.realpathSync.native(path.join(row.folderPath!, 'projects'))).toBe(fs.realpathSync.native(path.join(home, 'projects')));
+    expect(fs.existsSync(target)).toBe(true);
+  });
+
+  it('carries the default home origin on the report of a re-point that threw', async () => {
+    const accountService = folderService(folderSupport(), {
+      environment: () => ({}),
+      repointSessions: () => { throw new Error('repoint failed'); },
+    });
+    const own = accountService.ensureDefaultAccount(AGENT)!;
+    repository.updateIdentity(own.id, { email: 'own@example.com', plan: 'pro', status: 'ok' });
+    insertFolderAccount('ok', 'dev@example.com', 'pro');
+    identity = { signedIn: true, email: 'dev@example.com', plan: 'pro', hasSubscription: true };
+    await accountService.refreshIdentity(own.id);
+    const repointReports = reports.filter(([problem, , facts]) => problem === 'identity-changed' && facts?.stage === 'repoint');
+    expect(repointReports).toHaveLength(1);
+    expect(repointReports[0][2]).toEqual({ stage: 'repoint', default_home: 'builtin' });
   });
 });
 
@@ -790,7 +902,8 @@ describe('AccountService.refreshUsage', () => {
     // they carry no tags and must not pay for a version probe.
     it.each<[string, () => Promise<RateLimitWindow[] | null>]>([
       ['cache-stale', async () => { throw new EmptyUsageReadError('cache-stale'); }],
-      ['cache-missing', async () => { throw new EmptyUsageReadError('cache-missing'); }],
+      ['state-unreadable', async () => { throw new EmptyUsageReadError('state-unreadable'); }],
+      ['state-not-record', async () => { throw new EmptyUsageReadError('state-not-record'); }],
       ['no-answer', async () => null],
     ])('reports %s with no tags and never resolves the CLI version', async (reason, readIdleUsage) => {
       const resolveCliVersion = vi.fn(async () => '2.1.319 (Claude Code)');
@@ -803,6 +916,42 @@ describe('AccountService.refreshUsage', () => {
       expect([problem, agent, facts]).toEqual(['usage-read-empty', AGENT, { kind: 'default', reason }]);
       expect(tags).toEqual({});
       expect(resolveCliVersion).not.toHaveBeenCalled();
+    });
+
+    // Sentry DESKTOP-4E on 0.62.0: a home before the CLI's first usage fetch holds no cache, and
+    // was reported on every launch. Only an account that had a reading and lost it is a fault.
+    describe('whose state holds no usage cache', () => {
+      const noCache = async (): Promise<RateLimitWindow[] | null> => { throw new EmptyUsageReadError('no-cache'); };
+
+      it('sends nothing for an account that never stored a reading', async () => {
+        const accountService = folderService(folderSupport({ readIdleUsage: noCache }));
+        const own = accountService.ensureDefaultAccount(AGENT)!;
+
+        expect(await accountService.refreshUsage(own.id)).toBe(false);
+        expect(await accountService.refreshUsage(own.id)).toBe(false);
+        expect(reports).toEqual([]);
+      });
+
+      it('reports no-cache once the account had a reading', async () => {
+        const accountService = folderService(folderSupport({ readIdleUsage: noCache }));
+        const own = accountService.ensureDefaultAccount(AGENT)!;
+        database.prepare('UPDATE agent_accounts SET last_usage_json = ?, last_usage_at = ? WHERE id = ?').run(JSON.stringify(GOOD), READ_AT, own.id);
+
+        expect(await accountService.refreshUsage(own.id)).toBe(false);
+        expect(reports.map((entry) => entry.slice(0, 3))).toEqual([['usage-read-empty', AGENT, { kind: 'default', reason: 'no-cache' }]]);
+        expect(repository.getById(own.id)?.lastUsage).toEqual(GOOD);
+      });
+    });
+
+    it('never reads an account whose sign-in says it has no subscription', async () => {
+      const readIdleUsage = vi.fn(async (): Promise<RateLimitWindow[] | null> => { throw new EmptyUsageReadError('no-cache'); });
+      const accountService = folderService(folderSupport({ readIdleUsage }));
+      const own = accountService.ensureDefaultAccount(AGENT)!;
+      repository.updateIdentity(own.id, { email: 'own@example.com', plan: null, status: 'no-subscription' });
+
+      expect(await accountService.refreshUsage(own.id)).toBe(false);
+      expect(readIdleUsage).not.toHaveBeenCalled();
+      expect(reports).toEqual([]);
     });
 
     // Sentry DESKTOP-4E: one failed `claude -p /usage` run was reported with nothing to say why.

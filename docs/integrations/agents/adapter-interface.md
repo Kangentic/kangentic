@@ -108,8 +108,10 @@ paste (a held message, a Send message row, the setup-failure note) waits until t
 the alternate screen or the agent has taken a prompt (`SessionManager.awaitInputReady`). An agent
 left on a boot screen otherwise reads as idle once the stale-thinking reclaim fires, 3 minutes in,
 and the paste would answer the screen. The answer reads the environment Kangentic runs with, and
-on macOS and Linux that is only the login shell's `PATH`, so a renderer variable set only in a
-shell profile reaches Claude but not the answer. Such a launch draws classic and never enters the
+on macOS and Linux that is the login shell's `PATH` plus each folder adapter's home variable
+(`homeEnvVars`) that the shell exports, which `adoptShellHomeVariables` sets at boot. So a home
+variable set only in a shell profile reaches Claude's answer, and any other renderer variable set
+only in a profile reaches Claude but not the answer. Such a launch draws classic and never enters the
 alternate screen, which is why a prompt the agent has taken also ends the wait.
 
 The verdicts for the other agents were measured on 2026-10-31 by launching each installed CLI with

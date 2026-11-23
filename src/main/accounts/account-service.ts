@@ -4,10 +4,11 @@ import type { AgentAdapter } from '../agent/agent-adapter';
 import type { AgentAccount, AgentAccountStatus, AgentAccountsCard, AgentAccountsConfig } from '../../shared/agent-accounts';
 import type { RateLimitWindow, ResumeAccountMatch } from '../../shared/types';
 import type { AgentAccountRepository } from '../db/repositories/agent-account-repository';
-import { provisionAccountFolder, type AccountFolderProblemCode } from './account-folder';
+import { accountsRootOf, provisionAccountFolder, type AccountFolderProblemCode } from './account-folder';
 import { automaticOrder, keepFullWindows, topAccountWithRoom } from './account-order';
 import { decideIdentity, duplicateLoginRows, loginFromRead, loginOf, NO_LOGIN, sameLogin, type IdentityDecision, type LoginIdentity } from './account-identity';
 import { readKeyFile } from './key-file';
+import { defaultHomeOrigin, type DefaultHomeOrigin } from './inherited-home-env';
 import {
   EmptyUsageReadError,
   IdentityReadError,
@@ -169,7 +170,7 @@ export class AccountService {
 
   /** Where Kangentic keeps a new folder account for `agent`. */
   nextFolderPath(agent: string): string {
-    const base = path.join(this.dependencies.configDir, 'accounts', agent);
+    const base = path.join(accountsRootOf(this.dependencies.configDir), agent);
     let index = 2;
     while (fs.existsSync(path.join(base, String(index)))) index += 1;
     return path.join(base, String(index));
@@ -181,7 +182,7 @@ export class AccountService {
    * the same one: the second finds it taken and moves on.
    */
   private reserveFolder(agent: string): string {
-    const base = path.join(this.dependencies.configDir, 'accounts', agent);
+    const base = path.join(accountsRootOf(this.dependencies.configDir), agent);
     fs.mkdirSync(base, { recursive: true });
     for (let index = 2; ; index += 1) {
       const folderPath = path.join(base, String(index));
@@ -219,11 +220,24 @@ export class AccountService {
       defaultHome: support.defaultHome(),
       entries: support.sharedEntries,
       accountDataSubfolder: support.accountDataSubfolder,
+      knownHomes: {
+        builtinHome: support.builtinHome?.(),
+        accountsRoot: accountsRootOf(this.dependencies.configDir),
+      },
     });
     for (const problem of report.problems) {
       const reportable = REPORTABLE_FOLDER_PROBLEM[problem.code];
-      // The entry's name only: the detail holds the user's folder paths.
-      if (reportable) this.reportProblem(reportable, account.agent, { entry: problem.entry, blocksAccount: report.conversationLinkFailed });
+      if (!reportable) continue;
+      // Fixed words only: the entry's name, what stood there and where a link pointed, as a
+      // class. The detail holds the user's folder paths. The shape is the reason, so a file and
+      // a link in one run each latch their own report.
+      this.reportProblem(reportable, account.agent, {
+        entry: problem.entry,
+        blocksAccount: report.conversationLinkFailed,
+        ...(problem.shape ? { reason: problem.shape, shape: problem.shape } : {}),
+        ...(problem.linkTarget ? { link_target: problem.linkTarget } : {}),
+        default_home: this.defaultHomeOrigin(account.agent),
+      });
     }
     if (report.historyPrivate !== account.historyPrivate) {
       this.dependencies.repository.setHistoryPrivate(account.id, report.historyPrivate);
@@ -500,7 +514,18 @@ export class AccountService {
   /** Logs and reports a home whose login changed, with how it was reconciled and never the email. */
   private noteIdentityChanged(account: AgentAccount, change: IdentityChangeKind): void {
     console.warn(`[ACCOUNTS] The login in a ${account.kind} account's home of ${account.agent} changed (${change})`);
-    this.reportProblem('identity-changed', account.agent, { kind: account.kind, change });
+    this.reportProblem('identity-changed', account.agent, { kind: account.kind, change, default_home: this.defaultHomeOrigin(account.agent) });
+  }
+
+  /**
+   * Where the agent's default home came from, as a fixed word for a report (`DefaultHomeOrigin`):
+   * `builtin`, `inherited`, `login-shell`, or `inherited-ignored` for one that named a Kangentic
+   * account folder and was dropped at boot. Never the path.
+   */
+  private defaultHomeOrigin(agent: string): DefaultHomeOrigin {
+    const support = this.dependencies.getAdapter(agent)?.accounts;
+    const homeEnvVars = support?.kind === 'folder' ? support.homeEnvVars : [];
+    return defaultHomeOrigin(agent, homeEnvVars, this.dependencies.environment?.() ?? process.env);
   }
 
   private repointSessions(homeAccountId: string, toAccountId: string): void {
@@ -510,7 +535,7 @@ export class AccountService {
       // The list is already right; a session left on its old row only draws usage there.
       console.warn('[ACCOUNTS] Could not move sessions to the login their home holds:', error instanceof Error ? error.name : 'unknown');
       const agent = this.dependencies.repository.getById(homeAccountId)?.agent ?? 'unknown';
-      this.reportProblem('identity-changed', agent, { stage: 'repoint' }, error);
+      this.reportProblem('identity-changed', agent, { stage: 'repoint', default_home: this.defaultHomeOrigin(agent) }, error);
     }
   }
 
@@ -557,10 +582,13 @@ export class AccountService {
   /**
    * A usage read that gave no windows: the account keeps its last values, and the local log says
    * why each time the reason changes, so a read that keeps failing is one line, not one per pass.
-   * Every reason is reported at once but a failed CLI run, which waits for the next read
-   * (`reportRepeatedRunFailure`). A `no-windows` read carries the CLI version as a tag: Sentry
-   * DESKTOP-4E had none, so a plan whose windows are all null could not be told from a CLI
-   * release that changed what it writes.
+   * Every reason is reported at once but two. A failed CLI run waits for the next read
+   * (`reportRepeatedRunFailure`). A `no-cache` read on an account that never stored a reading is
+   * the home before the CLI's first usage fetch (an API-key login, a CLI that has not shown its
+   * usage yet), so it is logged and not reported: Sentry DESKTOP-4E took that state for a fault
+   * and reported it on every launch. Once the account had a reading, losing the cache is reported.
+   * A `no-windows` read carries the CLI version as a tag: Sentry DESKTOP-4E had none, so a plan
+   * whose windows are all null could not be told from a CLI release that changed what it writes.
    */
   private async noteEmptyUsageRead(account: AgentAccount, reason: EmptyUsageReadReason, failure: EmptyUsageReadError | null = null): Promise<void> {
     if (this.emptyUsageReasons.get(account.id) !== reason) {
@@ -573,6 +601,7 @@ export class AccountService {
     }
     // The run itself worked, so a failed run before it is not one of a row.
     this.consecutiveRunFailures.delete(account.id);
+    if (reason === 'no-cache' && account.lastUsageAt === null) return;
     const tags: AccountProblemTags = reason === 'no-windows'
       ? { agent_cli_version: cliVersionTag(await this.cliVersionOf(account.agent)) }
       : {};
@@ -619,8 +648,9 @@ export class AccountService {
   async refreshUsage(accountId: string): Promise<boolean> {
     const account = this.dependencies.repository.getById(accountId);
     if (!account || account.kind === 'key-file') return false;
-    // A `replaced` row's home holds another login, whose usage is not this row's.
-    if (account.status === 'signed-out' || account.status === 'not-found' || account.status === 'replaced') {
+    // A `replaced` row's home holds another login, whose usage is not this row's. A login the CLI
+    // says has no subscription (an API key) has no plan windows to read.
+    if (account.status === 'signed-out' || account.status === 'not-found' || account.status === 'replaced' || account.status === 'no-subscription') {
       console.debug(`[ACCOUNTS] Usage read skipped: a ${account.kind} account is ${account.status}`);
       return false;
     }

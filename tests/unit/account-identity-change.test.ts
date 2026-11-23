@@ -55,6 +55,7 @@ function support(): FolderAccountSupport {
   return {
     kind: 'folder',
     accountEnv: (accountFolder) => ({ TEST_AGENT_HOME: accountFolder }),
+    homeEnvVars: ['TEST_AGENT_HOME'],
     defaultHome: () => path.join(root, 'home'),
     loginArgs: ['login'],
     loginEmailArgs: (email) => ['--email', email],
@@ -146,7 +147,8 @@ describe('a home whose login was replaced by a listed one', () => {
     expect(repository.getById(folder.id)?.status).toBe('ok');
     expect(listedEmails().filter((email) => email === 'b@example.com')).toHaveLength(1);
     expect(repoints).toEqual([[own.id, folder.id]]);
-    expect(changeReports().map(([problem, agent, facts]) => [problem, agent, facts])).toEqual([['identity-changed', AGENT, { kind: 'default', change: 'to-listed' }]]);
+    // `default_home` says whether the agent's own home was its built-in one (Sentry DESKTOP-4R).
+    expect(changeReports().map(([problem, agent, facts]) => [problem, agent, facts])).toEqual([['identity-changed', AGENT, { kind: 'default', change: 'to-listed', default_home: 'builtin' }]]);
     // No email or path leaves in the report.
     expect(JSON.stringify(changeReports())).not.toContain('example.com');
   });

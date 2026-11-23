@@ -14,7 +14,7 @@ import {
 import type { RateLimitWindow } from '../../../../shared/types';
 import { execRunFailureOf } from '../../../utility-process/off-main-exec';
 import { isPlainRecord } from '../../shared/plain-record';
-import { claudeHomeDir, claudeStatePathForHome, isDefaultClaudeHome, withClaudeJsonFileLock } from './claude-json-lock';
+import { builtinClaudeHomeDir, claudeHomeDir, claudeStatePathForHome, isDefaultClaudeHome, withClaudeJsonFileLock } from './claude-json-lock';
 import { runClaudeCli } from './cli-run';
 import { carryClaudePlanFiles } from './plan-carry';
 import { RATE_LIMIT_WINDOWS } from './status-parser';
@@ -379,8 +379,10 @@ function spentWindowKeys(utilization: Record<string, unknown>): Set<string> {
  * file), in the shape the status line's `rate_limits` parse to. Measured on 2.1.319: each window
  * is null when it does not apply (Ultra has no 5h window), `utilization` is a percentage (99 where
  * `/usage` printed "99% used"), and `resets_at` is an ISO time. A window Claude marks spent in
- * `limits[]` reads 100 (`spentWindowKeys`). Otherwise why it gives no current windows: the cache is
- * missing, older than `maxAgeMs`, or holds no window.
+ * `limits[]` reads 100 (`spentWindowKeys`). Otherwise why it gives no current windows: the state is
+ * not a record (`state-not-record`), it holds no cache with a numeric `fetchedAtMs` (`no-cache`,
+ * what a home looks like before Claude's first usage fetch, as with an API-key login), the cache is
+ * older than `maxAgeMs`, or it holds no window.
  *
  * Throws `UnreadableUsageError` with the record's keys when `utilization` names none of the windows
  * this reader knows, and with the cache's keys when `utilization` is missing or neither a record
@@ -393,9 +395,9 @@ export function readClaudeCachedUsage(
   nowMs: number,
   maxAgeMs: number = IDLE_USAGE_MAX_AGE_MS,
 ): { windows: RateLimitWindow[] } | { empty: EmptyUsageReadReason } {
-  if (!isPlainRecord(state)) return { empty: 'cache-missing' };
+  if (!isPlainRecord(state)) return { empty: 'state-not-record' };
   const cache = state.cachedUsageUtilization;
-  if (!isPlainRecord(cache) || typeof cache.fetchedAtMs !== 'number') return { empty: 'cache-missing' };
+  if (!isPlainRecord(cache) || typeof cache.fetchedAtMs !== 'number') return { empty: 'no-cache' };
   if (nowMs - cache.fetchedAtMs > maxAgeMs) return { empty: 'cache-stale' };
   const utilization = cache.utilization;
   // Null is how Claude marks what does not apply. A missing field or another type is a renamed or
@@ -448,7 +450,7 @@ async function readClaudeIdleUsage(cliPath: string, home: string | null): Promis
   } catch {
     // report-ok: a state file that is missing or mid-write is what this error names, and the
     // account service reports it.
-    throw new EmptyUsageReadError('cache-missing');
+    throw new EmptyUsageReadError('state-unreadable');
   }
   const reading = readClaudeCachedUsage(state, Date.now());
   if ('empty' in reading) throw new EmptyUsageReadError(reading.empty);
@@ -504,8 +506,10 @@ async function identifyClaudeAccount(cliPath: string, home: string | null): Prom
 export const CLAUDE_ACCOUNT_SUPPORT: FolderAccountSupport = {
   kind: 'folder',
   accountEnv: (accountFolder) => ({ CLAUDE_CONFIG_DIR: accountFolder }),
+  homeEnvVars: ['CLAUDE_CONFIG_DIR'],
   // The agent's own home (account #1), which honours an inherited `CLAUDE_CONFIG_DIR`.
   defaultHome: claudeHomeDir,
+  builtinHome: builtinClaudeHomeDir,
   loginArgs: ['auth', 'login'],
   // `claude auth login --email` fills in the address on the sign-in page; the browser still signs
   // in whatever claude.ai login it holds.

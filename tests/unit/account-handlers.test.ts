@@ -133,6 +133,7 @@ function adapterFor(name: string, accountOverrides: Record<string, unknown> = {}
     accounts: {
       kind: 'folder',
       accountEnv: (accountFolder: string) => ({ TEST_AGENT_HOME: accountFolder }),
+      homeEnvVars: ['TEST_AGENT_HOME'],
       defaultHome: () => home,
       loginArgs: ['login'],
       sharedEntries: [{ name: 'projects', how: 'link-dir', conversationBearing: true }],

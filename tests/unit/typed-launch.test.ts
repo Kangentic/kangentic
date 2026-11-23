@@ -6,8 +6,13 @@
  * including the ones CI has no shell for.
  */
 import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { agentRegistry } from '../../src/main/agent/agent-registry';
+import type { FolderAccountSupport } from '../../src/main/accounts/account-support';
 import {
+  buildEnvReassertPrelude,
   buildTypedLaunch,
   CMD_COMMAND_LINE_LIMIT,
   CMD_TYPED_LINE_BYTE_BUDGET,
@@ -27,6 +32,8 @@ import {
 import type { BatchShimGiveUp } from '../../src/main/agent/shared/npm-shim-target';
 import { classifyLaunchOutput } from '../../src/main/pty/agent-launch-report';
 import { buildSpawnClearPrelude, quoteArg } from '../../src/shared/paths';
+import { accountHomeEnvOf } from '../../src/main/pty/spawn/account-home-env';
+import type { AgentParser } from '../../src/shared/types';
 
 const SESSION_DIRECTORY = path.join(path.sep, 'projects', 'demo', '.kangentic', 'sessions', 'session-1');
 const CMD_SHELL = 'C:\\Windows\\System32\\cmd.exe';
@@ -36,6 +43,125 @@ const NO_SHIM = (): null => null;
 function commandOfBytes(bytes: number): string {
   return `agent ${'x'.repeat(bytes - 'agent '.length)}`;
 }
+
+// Sentry DESKTOP-4R. The real-shell round trip is in typed-launch-round-trip.test.ts; this pins the
+// shells and platforms CI has no shell for, which must get no line at all.
+describe('buildEnvReassertPrelude', () => {
+  const ACCOUNT_ENV = { CLAUDE_CONFIG_DIR: '/home/dev/.config/kangentic/accounts/claude/account two' };
+
+  it('exports each variable for a POSIX shell and sets it globally for fish, quoted', () => {
+    expect(buildEnvReassertPrelude(ACCOUNT_ENV, '/bin/bash', 'linux')).toBe(
+      `export CLAUDE_CONFIG_DIR=${quoteArg(ACCOUNT_ENV.CLAUDE_CONFIG_DIR, '/bin/bash')}; `,
+    );
+    expect(buildEnvReassertPrelude(ACCOUNT_ENV, '/bin/zsh', 'darwin')).toBe(
+      `export CLAUDE_CONFIG_DIR=${quoteArg(ACCOUNT_ENV.CLAUDE_CONFIG_DIR, '/bin/zsh')}; `,
+    );
+    expect(buildEnvReassertPrelude(ACCOUNT_ENV, '/usr/bin/fish', 'linux')).toBe(
+      `set -gx CLAUDE_CONFIG_DIR ${quoteArg(ACCOUNT_ENV.CLAUDE_CONFIG_DIR, '/usr/bin/fish')}; `,
+    );
+  });
+
+  it('types nothing on Windows, for nushell or PowerShell, or with no variables', () => {
+    expect(buildEnvReassertPrelude(ACCOUNT_ENV, 'bash', 'win32')).toBe('');
+    expect(buildEnvReassertPrelude(ACCOUNT_ENV, 'wsl -d Ubuntu', 'win32')).toBe('');
+    expect(buildEnvReassertPrelude(ACCOUNT_ENV, '/usr/bin/nu', 'linux')).toBe('');
+    expect(buildEnvReassertPrelude(ACCOUNT_ENV, '/usr/bin/pwsh', 'linux')).toBe('');
+    expect(buildEnvReassertPrelude(ACCOUNT_ENV, '/bin/tcsh', 'linux')).toBe('');
+    expect(buildEnvReassertPrelude(undefined, '/bin/bash', 'linux')).toBe('');
+  });
+
+  it('skips a name a shell would not read as a variable', () => {
+    expect(buildEnvReassertPrelude({ 'BAD NAME': 'x', 'A;B': 'y', GOOD_NAME: 'z' }, '/bin/bash', 'linux')).toBe('export GOOD_NAME=z; ');
+  });
+
+  it('exports for sh, dash and ksh too', () => {
+    for (const shell of ['/bin/sh', '/usr/bin/dash', '/usr/bin/ksh']) {
+      expect(buildEnvReassertPrelude(ACCOUNT_ENV, shell, 'linux')).toBe(
+        `export CLAUDE_CONFIG_DIR=${quoteArg(ACCOUNT_ENV.CLAUDE_CONFIG_DIR, shell)}; `,
+      );
+    }
+  });
+
+  it('keeps a run of spaces and a leading space exactly', () => {
+    const value = '/home/dev/my  accounts/ x';
+    const literal = "export CLAUDE_CONFIG_DIR='/home/dev/my  accounts/ x'; ";
+    expect(buildEnvReassertPrelude({ CLAUDE_CONFIG_DIR: value }, '/bin/bash', 'linux')).toBe(literal);
+    expect(buildEnvReassertPrelude({ CLAUDE_CONFIG_DIR: value }, '/bin/bash', 'linux')).toBe(
+      `export CLAUDE_CONFIG_DIR=${quoteArg(value, '/bin/bash', { multiline: true })}; `,
+    );
+    expect(buildEnvReassertPrelude({ CLAUDE_CONFIG_DIR: value }, '/usr/bin/fish', 'linux')).toBe(
+      "set -gx CLAUDE_CONFIG_DIR '/home/dev/my  accounts/ x'; ",
+    );
+  });
+
+  it('quotes a value with a single quote so it round-trips', () => {
+    expect(buildEnvReassertPrelude({ NOTE: "it's" }, '/bin/bash', 'linux')).toBe("export NOTE='it'\\''s'; ");
+    const fish = buildEnvReassertPrelude({ NOTE: "it's" }, '/usr/bin/fish', 'linux');
+    expect(fish).toBe(`set -gx NOTE ${quoteArg("it's", '/usr/bin/fish', { multiline: true })}; `);
+    expect(fish).toBe("set -gx NOTE 'it\\'s'; ");
+  });
+
+  it('skips a value with a line break and still emits the others', () => {
+    const prelude = buildEnvReassertPrelude(
+      { LF_VAR: 'a\nb', CR_VAR: 'a\rb', KEPT_ONE: '/x', KEPT_TWO: '/y' },
+      '/bin/bash',
+      'linux',
+    );
+    expect(prelude).toBe('export KEPT_ONE=/x; export KEPT_TWO=/y; ');
+  });
+
+  it('runs after the clear prelude and before the command', () => {
+    const launch = buildTypedLaunch({
+      command: 'claude --resume abc',
+      shell: '/bin/bash',
+      sessionDirectory: SESSION_DIRECTORY,
+      platform: 'linux',
+      batchShimLaunch: NO_SHIM,
+      reassertEnv: { CLAUDE_CONFIG_DIR: '/accounts/claude/2' },
+    });
+    expect(launch.typedLine).toBe(`${buildSpawnClearPrelude('/bin/bash')}export CLAUDE_CONFIG_DIR=/accounts/claude/2; claude --resume abc`);
+  });
+});
+
+describe('accountHomeEnvOf', () => {
+  const folderAdapter = { name: 'agent', accounts: { kind: 'folder', homeEnvVars: ['AGENT_HOME'] } } as unknown as AgentParser;
+
+  it('picks the adapter\'s home variables the spawn sets, and nothing else', () => {
+    expect(accountHomeEnvOf({ agentParser: folderAdapter, env: { AGENT_HOME: '/accounts/agent/2', OTHER: 'x' } })).toEqual({ AGENT_HOME: '/accounts/agent/2' });
+  });
+
+  it('is undefined for the agent\'s own login, an agent with no folder accounts, or no adapter', () => {
+    expect(accountHomeEnvOf({ agentParser: folderAdapter, env: { OTHER: 'x' } })).toBeUndefined();
+    const keyFileAdapter = { name: 'keys', accounts: { kind: 'key-file', keyEnvVars: ['AGENT_HOME'] } } as unknown as AgentParser;
+    expect(accountHomeEnvOf({ agentParser: keyFileAdapter, env: { AGENT_HOME: 'k' } })).toBeUndefined();
+    expect(accountHomeEnvOf({ agentParser: undefined, env: { AGENT_HOME: 'x' } })).toBeUndefined();
+    expect(accountHomeEnvOf({ agentParser: folderAdapter, env: undefined })).toBeUndefined();
+  });
+
+  it('returns exactly the home variables of every real folder adapter', () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-home-env-'));
+    try {
+      const folderAdapters = agentRegistry.list()
+        .flatMap((name) => agentRegistry.get(name) ?? [])
+        .filter((adapter) => adapter.accounts?.kind === 'folder');
+      expect(folderAdapters.length).toBeGreaterThan(0);
+      for (const adapter of folderAdapters) {
+        const support = adapter.accounts as FolderAccountSupport;
+        const env = support.accountEnv(path.join(base, 'account'), path.join(base, 'home'));
+        const parser = adapter as unknown as AgentParser;
+        const expected = Object.fromEntries(support.homeEnvVars.map((name) => [name, env[name]]));
+        expect({ agent: adapter.name, picked: accountHomeEnvOf({ agentParser: parser, env }) })
+          .toEqual({ agent: adapter.name, picked: expected });
+
+        // Only the first home variable set: just that one comes back.
+        const [first] = support.homeEnvVars;
+        expect(accountHomeEnvOf({ agentParser: parser, env: { [first]: env[first] } })).toEqual({ [first]: env[first] });
+      }
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('commandLineLimit', () => {
   const nativeProgram = 'C:\\Users\\dev\\.local\\bin\\claude.exe';

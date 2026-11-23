@@ -177,6 +177,7 @@ export const GROK_ACCOUNT_SUPPORT: FolderAccountSupport = {
   defaultHome: () => grokHomeDir(),
   // The file, not the folder, and absolute: Grok resolves a relative value against its cwd.
   accountEnv: (accountFolder) => ({ GROK_AUTH_PATH: path.join(accountFolder, 'auth.json') }),
+  homeEnvVars: ['GROK_AUTH_PATH'],
   // `grok login` always starts a new browser sign-in and writes the login where the variable says.
   loginArgs: ['login'],
   sharedEntries: [],

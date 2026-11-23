@@ -387,6 +387,21 @@ describe('performSpawn - a command too long to type', () => {
     expect(buildTypedLaunchSpy.mock.calls[0][0].batchShimLaunch).toBe(directLaunchOfBatchShim);
   });
 
+  // Sentry DESKTOP-4R: a shell's startup file can export the account's home variable over the
+  // one on the PTY, so the typed line sets it again.
+  it('sets an account\'s home variable again on the typed line, after the clear', async () => {
+    const accountAdapter = { name: 'agent', accounts: { kind: 'folder', homeEnvVars: ['AGENT_HOME'] } } as unknown as AgentParser;
+    await performSpawn(makeInput({
+      command: 'agent --resume abc',
+      agentParser: accountAdapter,
+      env: { AGENT_HOME: '/accounts/agent/2', OTHER_VARIABLE: '1' },
+    }), makeContext());
+
+    expect(buildTypedLaunchSpy.mock.calls[0][0].reassertEnv).toEqual({ AGENT_HOME: '/accounts/agent/2' });
+    const line = await typedLine();
+    expect(line).toContain('export AGENT_HOME=/accounts/agent/2; agent --resume abc');
+  });
+
   it('refuses an agent past cmd\'s budget whose .cmd shim it cannot read past, before any PTY or sibling', async () => {
     // Sentry DESKTOP-3Q, DESKTOP-3R: this used to type `echo The command line is
     // too long.` and leave a working agent on the card until the absence sweep.

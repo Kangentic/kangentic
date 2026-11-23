@@ -56,6 +56,9 @@ import { readPendingGpuEscalation, clearGpuEscalation, isEscalationFromCurrentRu
 import { trackSettingsSnapshot } from './analytics/settings-snapshot';
 import { resolveClientId } from './analytics/client-id';
 import { PATHS } from './config/paths';
+import { agentRegistry } from './agent/agent-registry';
+import { adoptShellHomeVariables, dropInheritedAccountHomes, folderHomeVariableNames } from './accounts/inherited-home-env';
+import { accountsRootOf } from './accounts/account-folder';
 // Whether this launch found an existing global config.json. Read at module
 // scope, before anything can call ConfigManager.save(): this is the only
 // reliable way to tell a fresh install from an upgrade, since on an existing
@@ -133,6 +136,13 @@ mark('process_start');
 // for the inspection server's /event-loop-lag route. Dead-code-eliminated in
 // production via __KANGENTIC_DEV__.
 if (__KANGENTIC_DEV__) startEventLoopLagMonitor();
+
+// An agent home variable inherited from an account session's terminal names one of Kangentic's
+// own account folders, which is never the agent's default home (Sentry DESKTOP-4R). Dropped
+// here, before anything starts a child process, a worker or the pty host, each of which would
+// inherit it. The same adapters are read again after the login shell probe below.
+const homeVariableSources = agentRegistry.list().flatMap((name) => agentRegistry.get(name) ?? []);
+dropInheritedAccountHomes(process.env, accountsRootOf(PATHS.configDir), homeVariableSources);
 
 // The GPU health escalation record. One constant, because the crash-capture
 // path below WRITES it and the whenReady block far below READS and clears it:
@@ -1880,9 +1890,13 @@ app.whenReady().then(async () => {
   // npm-global, or pip --user locations. Without this, agent detection
   // (via `which`) fails for CLIs installed in those locations. No-op on
   // Windows.
+  // It also reads the agents' home variables (CLAUDE_CONFIG_DIR) the login shell exports, which
+  // every session's shell sets for itself, so the agent's own home here is the one its sessions
+  // use (Sentry DESKTOP-4S).
   phase('restoreShellEnv');
   try {
-    await restoreShellEnv();
+    const shellHomeValues = await restoreShellEnv(folderHomeVariableNames(homeVariableSources));
+    adoptShellHomeVariables(process.env, shellHomeValues, accountsRootOf(PATHS.configDir), homeVariableSources);
   } catch (error) {
     console.warn('[APP] restoreShellEnv failed:', error);
   } finally {

@@ -25,6 +25,7 @@ import { execFile } from 'node:child_process';
 import {
   mergePathSegments,
   parsePathFromEnvDump,
+  parseVariablesFromEnvDump,
   restoreShellEnv,
 } from '../../src/main/shell-env';
 
@@ -138,6 +139,32 @@ Welcome to zsh\n` + buildEnvDump('/opt/homebrew/bin:/usr/bin');
   });
 });
 
+describe('parseVariablesFromEnvDump', () => {
+  it('keeps the first value of a name that appears twice', () => {
+    const dump = START + 'HOME_VAR=/first\nHOME_VAR=/second' + END;
+    expect(parseVariablesFromEnvDump(dump, ['HOME_VAR'])).toEqual({ HOME_VAR: '/first' });
+  });
+
+  it('skips a line that starts with = and a line with no =', () => {
+    const dump = START + '=/nameless\nNOSEPARATOR\nHOME_VAR=/home/dev/x' + END;
+    expect(parseVariablesFromEnvDump(dump, ['HOME_VAR', 'NOSEPARATOR', ''])).toEqual({ HOME_VAR: '/home/dev/x' });
+  });
+
+  it('trims whitespace around a value', () => {
+    const dump = START + 'HOME_VAR=   /home/dev/x \t' + END;
+    expect(parseVariablesFromEnvDump(dump, ['HOME_VAR'])).toEqual({ HOME_VAR: '/home/dev/x' });
+  });
+
+  it('returns an empty object for an empty names list', () => {
+    expect(parseVariablesFromEnvDump(buildEnvDump('/usr/bin', { HOME_VAR: '/x' }), [])).toEqual({});
+  });
+
+  it('leaves out a variable that is present but not requested', () => {
+    const dump = buildEnvDump('/usr/bin', { HOME_VAR: '/x', OTHER_VAR: '/y' });
+    expect(parseVariablesFromEnvDump(dump, ['HOME_VAR'])).toEqual({ HOME_VAR: '/x' });
+  });
+});
+
 describe('restoreShellEnv', () => {
   const originalPlatform = process.platform;
   const originalPath = process.env.PATH;
@@ -193,6 +220,39 @@ describe('restoreShellEnv', () => {
     expect(process.env.PATH).toBe(
       '/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin:/Users/dev/.claude/local',
     );
+  });
+
+  // Sentry DESKTOP-4S: a desktop launch read ~/.claude while every session's shell read the rc
+  // file's CLAUDE_CONFIG_DIR. The probe returns the named variables; it sets none of them.
+  it('returns only the named variables the login shell sets, and sets none of them', async () => {
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    mockExecFileStdout(buildEnvDump('/usr/bin', { CLAUDE_CONFIG_DIR: '/home/dev/.config/claude', SECRET_TOKEN: 'x', CODEX_HOME: '' }));
+    const before = process.env.CLAUDE_CONFIG_DIR;
+
+    const values = await restoreShellEnv(['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'GEMINI_CLI_HOME']);
+
+    expect(values).toEqual({ CLAUDE_CONFIG_DIR: '/home/dev/.config/claude' });
+    expect(process.env.CLAUDE_CONFIG_DIR).toBe(before);
+    expect(parseVariablesFromEnvDump('no markers', ['CLAUDE_CONFIG_DIR'])).toBeNull();
+  });
+
+  it('still returns a requested variable when the dump has no PATH line', async () => {
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    mockExecFileStdout(START + 'HOME=/home/dev\nCLAUDE_CONFIG_DIR=/home/dev/.config/claude' + END);
+
+    const values = await restoreShellEnv(['CLAUDE_CONFIG_DIR']);
+
+    expect(values).toEqual({ CLAUDE_CONFIG_DIR: '/home/dev/.config/claude' });
+    expect(process.env.PATH).toBe('/usr/bin:/bin');
+  });
+
+  it('returns no variables when KANGENTIC_SHELL_ENV=off, without running the shell', async () => {
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    process.env.KANGENTIC_SHELL_ENV = 'off';
+    mockExecFileStdout(buildEnvDump('/usr/bin', { CLAUDE_CONFIG_DIR: '/home/dev/.config/claude' }));
+
+    await expect(restoreShellEnv(['CLAUDE_CONFIG_DIR'])).resolves.toEqual({});
+    expect(execFile).not.toHaveBeenCalled();
   });
 
   it('merges shell PATH on Linux', async () => {

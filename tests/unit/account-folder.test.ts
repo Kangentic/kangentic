@@ -130,6 +130,17 @@ describe('provisionAccountFolder', () => {
     fs.symlinkSync(elsewhere, path.join(account, 'projects'), process.platform === 'win32' ? 'junction' : 'dir');
     const report = await provisionAccountFolder({ accountFolder: account, defaultHome: home, entries: ENTRIES });
     expect(report.conversationLinkFailed).toBe(true);
+    // The report says what stood there and where it pointed, as fixed words (Sentry DESKTOP-4S).
+    expect(report.problems).toContainEqual(expect.objectContaining({ entry: 'projects', code: 'user-owned', shape: 'link-elsewhere', linkTarget: 'other' }));
+  });
+
+  it('names a file where a conversation folder goes as a file', async () => {
+    write(path.join(account, 'projects'), 'not a folder');
+    const report = await provisionAccountFolder({ accountFolder: account, defaultHome: home, entries: ENTRIES });
+    expect(report.conversationLinkFailed).toBe(true);
+    const problem = report.problems.find((candidate) => candidate.entry === 'projects');
+    expect(problem).toMatchObject({ code: 'user-owned', shape: 'file' });
+    expect(problem?.linkTarget).toBeUndefined();
   });
 
   it('refuses an account folder that overlaps the default home', async () => {
@@ -144,6 +155,259 @@ describe('provisionAccountFolder', () => {
     expect(fs.readFileSync(path.join(home, 'projects', 'C--repo', 'session-1.jsonl'), 'utf8')).toBe('{"type":"user"}\n');
     expect(fs.existsSync(path.join(home, 'skills', 'review', 'SKILL.md'))).toBe(true);
     expect(fs.existsSync(path.join(home, 'history.jsonl'))).toBe(true);
+  });
+});
+
+// Sentry DESKTOP-4S: Kangentic started once with an inherited home variable and once without sees
+// two default homes. Links one run made point at its home, so the other run must not block them.
+describe('provisionAccountFolder under another default home', () => {
+  const linkKind = process.platform === 'win32' ? 'junction' : 'dir';
+  const LINKS: SharedEntry[] = [
+    { name: 'projects', how: 'link-dir', conversationBearing: true },
+    { name: 'plans', how: 'own-dir' },
+  ];
+  let inherited: string;
+  let accountsRoot: string;
+
+  beforeEach(() => {
+    inherited = path.join(root, 'inherited-home');
+    accountsRoot = path.join(root, 'accounts');
+    write(path.join(inherited, 'projects', 'C--other', 'session-7.jsonl'), '{"type":"user"}\n');
+  });
+
+  function linkedTo(link: string): string {
+    return fs.realpathSync.native(link);
+  }
+
+  it('points a link at the built-in home at the inherited home, and leaves the built-in home as it was', async () => {
+    fs.mkdirSync(account, { recursive: true });
+    fs.symlinkSync(path.join(home, 'projects'), path.join(account, 'projects'), linkKind);
+    const report = await provisionAccountFolder({
+      accountFolder: account,
+      defaultHome: inherited,
+      entries: LINKS,
+      knownHomes: { builtinHome: home, accountsRoot },
+    });
+    expect(report.conversationLinkFailed).toBe(false);
+    expect(report.problems).toEqual([]);
+    expect(linkedTo(path.join(account, 'projects'))).toBe(fs.realpathSync.native(path.join(inherited, 'projects')));
+    // Only the link was replaced: the built-in home keeps every conversation it had.
+    expect(fs.readFileSync(path.join(home, 'projects', 'C--repo', 'session-1.jsonl'), 'utf8')).toBe('{"type":"user"}\n');
+  });
+
+  it('points a link into another Kangentic account folder at the default home', async () => {
+    const otherAccount = path.join(accountsRoot, 'claude', '3');
+    write(path.join(otherAccount, 'projects', 'kept.jsonl'), 'kept');
+    fs.mkdirSync(account, { recursive: true });
+    fs.symlinkSync(path.join(otherAccount, 'projects'), path.join(account, 'projects'), linkKind);
+    const report = await provisionAccountFolder({ accountFolder: account, defaultHome: home, entries: LINKS, knownHomes: { accountsRoot } });
+    expect(report.conversationLinkFailed).toBe(false);
+    expect(linkedTo(path.join(account, 'projects'))).toBe(fs.realpathSync.native(path.join(home, 'projects')));
+    expect(fs.readFileSync(path.join(otherAccount, 'projects', 'kept.jsonl'), 'utf8')).toBe('kept');
+  });
+
+  it('follows the default home back and forth through the recorded home, never blocking', async () => {
+    for (const defaultHome of [inherited, home, inherited]) {
+      const report = await provisionAccountFolder({ accountFolder: account, defaultHome, entries: LINKS });
+      expect(report.conversationLinkFailed).toBe(false);
+      expect(report.problems).toEqual([]);
+      expect(linkedTo(path.join(account, 'projects'))).toBe(fs.realpathSync.native(path.join(defaultHome, 'projects')));
+    }
+  });
+
+  it('classes a link it cannot place as user-owned, and does not record a home for a blocked folder', async () => {
+    const elsewhere = path.join(root, 'elsewhere', 'projects');
+    fs.mkdirSync(elsewhere, { recursive: true });
+    fs.mkdirSync(account, { recursive: true });
+    fs.symlinkSync(elsewhere, path.join(account, 'projects'), linkKind);
+    const blocked = await provisionAccountFolder({ accountFolder: account, defaultHome: home, entries: LINKS, knownHomes: { builtinHome: inherited, accountsRoot } });
+    expect(blocked.conversationLinkFailed).toBe(true);
+    expect(blocked.problems).toContainEqual(expect.objectContaining({ entry: 'projects', shape: 'link-elsewhere', linkTarget: 'other' }));
+    // A later run under another home finds no recorded home that names `elsewhere`.
+    const again = await provisionAccountFolder({ accountFolder: account, defaultHome: inherited, entries: LINKS });
+    expect(again.conversationLinkFailed).toBe(true);
+  });
+
+  it('classes a link into the built-in home that names another entry as built-in, and keeps it', async () => {
+    fs.mkdirSync(path.join(home, 'notes'), { recursive: true });
+    fs.mkdirSync(account, { recursive: true });
+    fs.symlinkSync(path.join(home, 'notes'), path.join(account, 'projects'), linkKind);
+    const report = await provisionAccountFolder({ accountFolder: account, defaultHome: inherited, entries: LINKS, knownHomes: { builtinHome: home, accountsRoot } });
+    expect(report.conversationLinkFailed).toBe(true);
+    expect(report.problems).toContainEqual(expect.objectContaining({ entry: 'projects', shape: 'link-elsewhere', linkTarget: 'builtin-home' }));
+  });
+});
+
+// Coverage holes of the account-home change: own-dir relinks, the kangentic-account shape check,
+// the recorded home, the entry shapes a report names, and a link that cannot be removed.
+describe('provisionAccountFolder account-home coverage', () => {
+  const linkKind = process.platform === 'win32' ? 'junction' : 'dir';
+  const LINKS: SharedEntry[] = [
+    { name: 'projects', how: 'link-dir', conversationBearing: true },
+    { name: 'plans', how: 'own-dir' },
+  ];
+  const PROJECTS_ONLY: SharedEntry[] = [{ name: 'projects', how: 'link-dir', conversationBearing: true }];
+  let inherited: string;
+  let accountsRoot: string;
+
+  beforeEach(() => {
+    inherited = path.join(root, 'inherited-home');
+    accountsRoot = path.join(root, 'accounts');
+    fs.mkdirSync(account, { recursive: true });
+  });
+
+  function recordOf(): Record<string, unknown> {
+    const recordPath = path.join(account, '.kangentic-home-record.json');
+    return fs.existsSync(recordPath) ? (JSON.parse(fs.readFileSync(recordPath, 'utf8')) as Record<string, unknown>) : {};
+  }
+
+  function isLink(target: string): boolean {
+    return fs.lstatSync(target).isSymbolicLink();
+  }
+
+  it('relinks a plans link into the built-in home as a real empty folder and leaves the home plans', async () => {
+    write(path.join(home, 'plans', 'calm-river.md'), '# Plan');
+    fs.symlinkSync(path.join(home, 'plans'), path.join(account, 'plans'), linkKind);
+    const report = await provisionAccountFolder({
+      accountFolder: account,
+      defaultHome: inherited,
+      entries: LINKS,
+      knownHomes: { builtinHome: home, accountsRoot },
+    });
+    expect(report.problems).toEqual([]);
+    expect(isLink(path.join(account, 'plans'))).toBe(false);
+    expect(fs.lstatSync(path.join(account, 'plans')).isDirectory()).toBe(true);
+    expect(fs.readdirSync(path.join(account, 'plans'))).toEqual([]);
+    expect(fs.readFileSync(path.join(home, 'plans', 'calm-river.md'), 'utf8')).toBe('# Plan');
+  });
+
+  it('relinks a plans link into the recorded home as a real empty folder and leaves that home plans', async () => {
+    // The first run records `home` as the home this folder's links were made to.
+    await provisionAccountFolder({ accountFolder: account, defaultHome: home, entries: LINKS });
+    expect(recordOf().linkedHome).toBe(path.resolve(home));
+    write(path.join(home, 'plans', 'calm-river.md'), '# Plan');
+    fs.rmSync(path.join(account, 'plans'), { recursive: true, force: true });
+    fs.symlinkSync(path.join(home, 'plans'), path.join(account, 'plans'), linkKind);
+    const report = await provisionAccountFolder({ accountFolder: account, defaultHome: inherited, entries: LINKS });
+    expect(report.problems).toEqual([]);
+    expect(isLink(path.join(account, 'plans'))).toBe(false);
+    expect(fs.readdirSync(path.join(account, 'plans'))).toEqual([]);
+    expect(fs.readFileSync(path.join(home, 'plans', 'calm-river.md'), 'utf8')).toBe('# Plan');
+  });
+
+  it('keeps a plans link to an unrelated folder and reports it as the user-owned link it is', async () => {
+    const unrelated = path.join(root, 'unrelated-plans');
+    fs.mkdirSync(unrelated, { recursive: true });
+    fs.symlinkSync(unrelated, path.join(account, 'plans'), linkKind);
+    const report = await provisionAccountFolder({
+      accountFolder: account,
+      defaultHome: inherited,
+      entries: LINKS,
+      knownHomes: { builtinHome: home, accountsRoot },
+    });
+    expect(isLink(path.join(account, 'plans'))).toBe(true);
+    expect(report.problems).toContainEqual(expect.objectContaining({ entry: 'plans', code: 'user-owned', shape: 'link-elsewhere', linkTarget: 'other' }));
+  });
+
+  it.each([
+    ['another entry name', ['claude', '3', 'notes']],
+    ['deeper than agent, id and entry', ['claude', '3', 'deeper', 'projects']],
+  ])('keeps a projects link into another account folder that names %s, as kangentic-account', async (_label, parts) => {
+    const named = path.join(accountsRoot, ...parts);
+    fs.mkdirSync(named, { recursive: true });
+    fs.symlinkSync(named, path.join(account, 'projects'), linkKind);
+    const report = await provisionAccountFolder({ accountFolder: account, defaultHome: home, entries: PROJECTS_ONLY, knownHomes: { accountsRoot } });
+    expect(isLink(path.join(account, 'projects'))).toBe(true);
+    expect(fs.realpathSync.native(path.join(account, 'projects'))).toBe(fs.realpathSync.native(named));
+    expect(report.conversationLinkFailed).toBe(true);
+    expect(report.problems).toContainEqual(expect.objectContaining({ entry: 'projects', code: 'user-owned', shape: 'link-elsewhere', linkTarget: 'kangentic-account' }));
+  });
+
+  it('records the default home after a clean run, and none after a blocked or copy-only run', async () => {
+    await provisionAccountFolder({ accountFolder: account, defaultHome: home, entries: LINKS });
+    expect(recordOf().linkedHome).toBe(path.resolve(home));
+
+    const blockedAccount = path.join(root, 'accounts', 'claude', '8');
+    fs.mkdirSync(blockedAccount, { recursive: true });
+    const elsewhere = path.join(root, 'elsewhere');
+    fs.mkdirSync(elsewhere, { recursive: true });
+    fs.symlinkSync(elsewhere, path.join(blockedAccount, 'projects'), linkKind);
+    const blocked = await provisionAccountFolder({ accountFolder: blockedAccount, defaultHome: home, entries: LINKS });
+    expect(blocked.conversationLinkFailed).toBe(true);
+    const blockedRecordPath = path.join(blockedAccount, '.kangentic-home-record.json');
+    const blockedRecord = fs.existsSync(blockedRecordPath) ? (JSON.parse(fs.readFileSync(blockedRecordPath, 'utf8')) as Record<string, unknown>) : {};
+    expect(blockedRecord.linkedHome).toBeUndefined();
+
+    const copyAccount = path.join(root, 'accounts', 'claude', '9');
+    await provisionAccountFolder({
+      accountFolder: copyAccount,
+      defaultHome: home,
+      entries: [{ name: 'settings.json', how: 'copy-file', reportReplaced: true }],
+    });
+    const copyRecordPath = path.join(copyAccount, '.kangentic-home-record.json');
+    const copyRecord = fs.existsSync(copyRecordPath) ? (JSON.parse(fs.readFileSync(copyRecordPath, 'utf8')) as Record<string, unknown>) : {};
+    expect(copyRecord.linkedHome).toBeUndefined();
+  });
+
+  it.skipIf(process.platform === 'win32')('names a link where a copied file goes as a link, and blocks a required one', async () => {
+    // Skipped on win32: a file symlink needs a privilege a developer machine may not hold.
+    const real = path.join(root, 'real-settings.json');
+    fs.writeFileSync(real, '{}');
+    fs.symlinkSync(real, path.join(account, 'settings.json'), 'file');
+    const report = await provisionAccountFolder({
+      accountFolder: account,
+      defaultHome: home,
+      entries: [{ name: 'settings.json', how: 'copy-file', required: true }],
+    });
+    expect(report.conversationLinkFailed).toBe(true);
+    expect(report.problems).toContainEqual(expect.objectContaining({ entry: 'settings.json', code: 'user-owned', shape: 'link' }));
+    expect(fs.readFileSync(real, 'utf8')).toBe('{}');
+  });
+
+  it('names a folder where a text file goes as not-a-file, with no link target', async () => {
+    fs.mkdirSync(path.join(account, 'CLAUDE.md'));
+    const report = await provisionAccountFolder({
+      accountFolder: account,
+      defaultHome: home,
+      entries: [{ name: 'CLAUDE.md', how: 'text', text: () => 'imported\n' }],
+    });
+    const problem = report.problems.find((candidate) => candidate.entry === 'CLAUDE.md');
+    expect(problem).toMatchObject({ code: 'user-owned', shape: 'not-a-file' });
+    expect(problem?.linkTarget).toBeUndefined();
+    expect(fs.lstatSync(path.join(account, 'CLAUDE.md')).isDirectory()).toBe(true);
+  });
+
+  it('reports link-failed and keeps the link when a Kangentic link cannot be removed', async () => {
+    fs.mkdirSync(path.join(home, 'projects'), { recursive: true });
+    const link = path.join(account, 'projects');
+    fs.symlinkSync(path.join(home, 'projects'), link, linkKind);
+    const realUnlink = fs.unlinkSync;
+    const realRmdir = fs.rmdirSync;
+    const isTheLink = (candidate: unknown): boolean => path.resolve(String(candidate)) === path.resolve(link);
+    const unlinkSpy = vi.spyOn(fs, 'unlinkSync').mockImplementation((candidate) => {
+      if (isTheLink(candidate)) throw Object.assign(new Error('busy'), { code: 'EBUSY' });
+      return realUnlink(candidate);
+    });
+    const rmdirSpy = vi.spyOn(fs, 'rmdirSync').mockImplementation((candidate, options) => {
+      if (isTheLink(candidate)) throw Object.assign(new Error('busy'), { code: 'EBUSY' });
+      return realRmdir(candidate, options);
+    });
+    try {
+      const report = await provisionAccountFolder({
+        accountFolder: account,
+        defaultHome: inherited,
+        entries: PROJECTS_ONLY,
+        knownHomes: { builtinHome: home, accountsRoot },
+      });
+      expect(unlinkSpy).toHaveBeenCalled();
+      expect(report.conversationLinkFailed).toBe(true);
+      expect(report.problems).toContainEqual(expect.objectContaining({ entry: 'projects', code: 'link-failed' }));
+    } finally {
+      unlinkSpy.mockRestore();
+      rmdirSpy.mockRestore();
+    }
+    expect(isLink(link)).toBe(true);
+    expect(fs.realpathSync.native(link)).toBe(fs.realpathSync.native(path.join(home, 'projects')));
   });
 });
 

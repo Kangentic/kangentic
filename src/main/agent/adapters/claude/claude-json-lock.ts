@@ -53,14 +53,23 @@ export function isClaudeJsonLockError(error: unknown): error is ClaudeJsonLockEr
   return error instanceof ClaudeJsonLockError;
 }
 
+/** `~/.claude`: the home Claude uses when no `CLAUDE_CONFIG_DIR` is set. */
+export function builtinClaudeHomeDir(): string {
+  return path.join(os.homedir(), '.claude');
+}
+
 /**
  * Claude's own home on this machine: the folder an inherited `CLAUDE_CONFIG_DIR` names, else
  * `~/.claude`. A user who runs Claude with that variable keeps everything there, so Kangentic
  * reads and writes there too. Read per call, so a test or a user that changes it is not shadowed.
+ * One that names this instance's own accounts folder (Kangentic started from an account
+ * session's terminal) is dropped from the environment at boot (`inherited-home-env.ts`), so it
+ * never reaches here (Sentry DESKTOP-4R). One that names another instance's accounts folder, a
+ * `/preview` with its own data folder, is kept.
  */
 export function claudeHomeDir(): string {
   const inherited = process.env.CLAUDE_CONFIG_DIR?.trim();
-  return inherited ? path.resolve(inherited) : path.join(os.homedir(), '.claude');
+  return inherited ? path.resolve(inherited) : builtinClaudeHomeDir();
 }
 
 /**

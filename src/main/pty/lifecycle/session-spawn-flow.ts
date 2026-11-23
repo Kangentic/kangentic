@@ -28,6 +28,7 @@ import { localPathToHost, placeFromStored } from '../../agent/shared/cli-target'
 import { remoteTranscriptSource, type RemoteSessionRegistration } from '../../remote/remote-session-relay';
 import { batchShimGiveUpOf, directLaunchOfBatchShim } from '../../agent/shared/npm-shim-target';
 import { buildTypedLaunch, launchRefusal, type TypedLaunch, type TypedLaunchInput } from '../spawn/typed-launch';
+import { accountHomeEnvOf } from '../spawn/account-home-env';
 
 /**
  * Default PTY dimensions a session is spawned at, before any renderer-driven
@@ -230,6 +231,8 @@ function typedLaunchInput(input: SpawnSessionInput, command: string, shell: stri
     platform: process.platform,
     sessionDirectory: outputPath ? path.dirname(outputPath) : null,
     batchShimLaunch: directLaunchOfBatchShim,
+    // An account's home variable, set again after the shell's startup files (Sentry DESKTOP-4R).
+    reassertEnv: accountHomeEnvOf(input),
   };
 }
 
