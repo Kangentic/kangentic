@@ -232,7 +232,7 @@ blocks its `.ps1` or the sibling is missing. So:
    [Shells and paths](../../platforms/shells-and-paths.md)). The shim refusal is reported, unlike a
    prompt too long, because a shim the launcher cannot resolve is the launcher's gap; a queued
    promotion reports it too, since no caller does. A prompt too long is never reported, on any path:
-   `reportPreflightFailure` counts it and returns before it spends a key (Sentry DESKTOP-3Z).
+   `reportPreflightFailure` counts it (and counts nothing once a quit has begun) and returns before it spends a key (Sentry DESKTOP-3Z).
 
 A column message that follows the task template (`carriedMessageJoinsTemplate`, #1138) is measured
 with the template, and it never decides the third path. `resolveLaunch` joins it only when the

@@ -44,7 +44,7 @@ Nineteen event types are tracked, all on critical-path actions only:
 | `update_outcome` | Next launch after the app version changed | result (`applied` / `rolled_back`), fromVersion, toVersion |
 | `spawn_failed` | An agent spawn failed (born-into-column create, MCP auto-spawn, any board-driven resume including a drag move, startup recovery) | agent, reason (`create_spawn`, `auto_spawn`, `resume`, `unknown_agent`, `cli_not_found`, and for a failure the user's own setup caused, which stays out of Sentry: `login_required`, `bad_configuration`, `worktree`, `checkout`) |
 | `utility_worker_crashed` | A Kangentic utility process failed unexpectedly (it exited, failed to fork, never said ready, or stopped answering; not an idle recycle or quit): at most twice per service per app run, on the first crash and when the restart cap latches | service (`kangentic-embeddings`, `kangentic-line-count`, `kangentic-worktree-copy`, `kangentic-dictation`, `kangentic-retrieval`, `kangentic-pty-host`), exitCode (see below), cause (`exit` / `fork_failed` / `ready_timeout` / `request_timeout`), phase (`first` / `latched`) |
-| `gpu_process_gone` | The GPU process failed (a fault death: not a kill, an OOM, or a Windows session-teardown exit): at most twice per app run, on the first fault and when the escalation threshold latches | reason (Electron's `child-process-gone` reason), exitCode, phase (`first` / `latched`) |
+| `gpu_process_gone` | The GPU process failed (a fault death: not a kill, an OOM, a Windows session-teardown exit, or a death after the quit began): at most twice per app run, on the first fault and when the escalation threshold latches | reason (Electron's `child-process-gone` reason), exitCode, phase (`first` / `latched`) |
 | `leftover_processes` | Once per leftover-process report, the one a toast shows: a terminal transition (Done, To Do, delete) or a burst of them found something a task's agent left running in its folder, or the startup sweep stopped or failed to stop something. Never sent when a task left nothing | stopped, kept, failed (counts of processes stopped, left running on purpose or with stopping off, and still running after the force kill), stoppingEnabled |
 | `mobile_bridge_forced_redial` | The mobile bridge abandoned a relay socket that still read connected but carried nothing (a socket the relay reaped while the network was away; see `docs/integrations/mobile-bridge/relay-transport.md`): at most once per reason per app run | reason (`paired-silent` / `parked-stale`) |
 
@@ -101,8 +101,8 @@ the embed client rebuilds its policy on every model change and project switch.
 mirroring Chromium's own judgment of GPU health: three deaths inside five minutes is also the point
 at which Chromium falls back to software compositing on its own
 (`GpuProcessHost::RecordProcessCrash`). `first` fires on the first death, `latched` on the third,
-counting FAULT deaths only (`isGpuFaultDeath`, see [Counted, not reported](error-reporting.md#counted-not-reported)): a kill or a Windows
-session-teardown exit is written to the record but never ticks, or every shutdown with the app open
+counting FAULT deaths only (`isGpuFaultDeath`, see [Counted, not reported](error-reporting.md#counted-not-reported)): a kill, a Windows
+session-teardown exit or a death after the quit began is written to the record but never ticks, or every shutdown with the app open
 would read as a GPU death on the dashboard. Neither fires again for the rest of the RUN, even across a later decay reset and a fresh escalation -
 the phase gate is per-run, not per-window, which is what keeps this at exactly two Aptabase events no
 matter how many separate incidents one launch has. `exitCode`'s `-1` sentinel does NOT carry the same

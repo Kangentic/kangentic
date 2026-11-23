@@ -40,8 +40,8 @@ failed at boot, the failures started seconds in, before any agent or terminal ex
 driver is the usual culprit for that shape, so updating yours is the first thing worth trying, but
 the app has no way to confirm that from the inside and will not claim it did. If it keeps happening,
 the local crash records under `<project>/.kangentic/logs/crashes/` (kind `gpu-process-gone`) are the
-useful thing to attach to a bug report. A record whose message ends in "(not a GPU fault)" was a kill
-or a shutdown, not a failure. When the graphics process could not be started at all,
+useful thing to attach to a bug report. A record whose message ends in "(not a GPU fault)" was a kill,
+a shutdown or a death after the quit began, not a failure. When the graphics process could not be started at all,
 there is no such record: Chromium never reports a failed start to the app, and only the fallback
 itself is recorded.
 

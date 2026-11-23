@@ -163,8 +163,9 @@ in one Sentry org, one triage surface.
     (`isQuitTimeGpuLaunchFailure` in `src/main/analytics/error-reporting.ts`). At quit the GPU
     process dies with the session, Chromium relaunches it, the launch fails, and Chromium aborts the
     browser for it, so the message only duplicates that native fatal. DESKTOP-2Q arrived at the
-    same instant as a DESKTOP-W event, inside the PTY drain. The GPU health tracker already counts
-    teardown exits as no fault. `ignoreErrors` cannot hold this rule, because it cannot see whether
+    same instant as a DESKTOP-W event, inside the PTY drain. The GPU health tracker marks a death
+    after the quit began and counts it as no fault (DESKTOP-4T, see "A GPU health escalation is
+    reported once"). `ignoreErrors` cannot hold this rule, because it cannot see whether
     the app is quitting.
   - The same integration's message for a Browser pane page's renderer,
     `'browser-guest' process exited with ...`. The page is the user's, not ours, and a pane page
@@ -573,11 +574,17 @@ in one Sentry org, one triage surface.
     sign-in screen in the alt screen 2.7 s after the spawn, which counts as the agent having run,
     fires no hook and writes no session. Quit from that screen, its session was retired 82 s
     later. That is the shape of the DESKTOP-36 recurrence, and it is the user's setup, so it no
-    longer reports: a session of either kind sends nothing when its CLI holds no login (`login`
+    longer reports: a never-captured session sends nothing when its CLI holds no login (`login`
     `signed_out`), its store is not `present`, and no prompt was seen. All three, because a CLI
     can answer "not logged in" and still work, on a key in its environment or a model provider
     of its own. That one takes prompts and writes its store, so its miss still reports, with
-    `login` saying what the CLI answered. The screen's own text is not what decides it: ConPTY
+    `login` saying what the CLI answered. A late id needs only the first and last: signed out at
+    the window and no prompt seen, whatever the store says. The late id already proves the
+    conversation came after the window, so the delay is the sign-in. And Codex's store answers
+    `present` whenever a rollout folder for today or yesterday exists, so an earlier run that day
+    said nothing about this session. That is how DESKTOP-4C came back on 0.62.0: a Codex with its
+    prompt on the command line, signed out at the window, `id_store` `present`, whose id came by
+    the hook one to five minutes after the spawn. The screen's own text is not what decides it: ConPTY
     draws that screen as cursor moves, which read as one run-on line, so
     `identifyUserSetupFailure`'s whole-line patterns cannot match it. A never-captured session
     whose agent died at start goes to the launch report instead, as stage `agent_exited` with
@@ -834,7 +841,12 @@ in one Sentry org, one triage surface.
   `recordSpawnFailure` keeps its `app_error` count and files nothing. That is the host's state, and
   the router's sentence named the host's id. Sentry DESKTOP-4N was one, sent renamed as
   `AgentLaunchPreflightError (worktree_other)`. It is not every `isExpectedFailure` class:
-  `AgentCwdMissingError` is one, and a gone folder is reported here on purpose. In any shell, a launch
+  `AgentCwdMissingError` is one, and a gone folder is reported here on purpose. A preflight failure
+  once shutdown has begun sends nothing, counts no `spawn_failed` and writes one local
+  `[AGENT-LAUNCH] ... shutdown=yes` line, whatever the error: the spawn
+  refuses itself then (`Cannot spawn session during shutdown`), and a quit takes a host's links down
+  under starts still running. Sentry DESKTOP-4V was a Command Terminal start that an update's
+  `quitAndInstall` overtook. In any shell, a launch
   past cmd's typed budget whose `.cmd` shim cannot be read past
   (`AgentBatchShimUnresolvedError`) is refused the same way, with the same card reason, and goes
   under the cause `batch_shim_unresolved` whichever path started it, with `batch_shim` naming why
@@ -1129,7 +1141,8 @@ in one Sentry org, one triage surface.
   `abnormal-exit`, `launch-failed`, `integrity-failure`) AND an exit code outside the
   session-teardown set: `0xC000026B` (STATUS_DLL_INIT_FAILED_LOGOFF), `0x40010004`
   (DBG_TERMINATE_PROCESS) and `0xC000013A` (STATUS_CONTROL_C_EXIT), compared unsigned because
-  records store the signed form. `killed`, `oom` and `memory-eviction` never count. The reason alone
+  records store the signed form, AND the death did not come after the quit began (`quitBegun`,
+  below). `killed`, `oom` and `memory-eviction` never count. The reason alone
   is not enough, because Chromium reports an exit code it does not recognize as `crashed`. A Windows
   shutdown with the dev instance open wrote five GPU deaths in 126 ms: one `killed` with
   `0x40010004`, then four relaunches `crashed` with `0xC000026B`, because Windows will not start a
@@ -1137,6 +1150,14 @@ in one Sentry org, one triage surface.
   exit. Counting every death, that read as a crash loop that killed the run, and the next launch
   turned a healthy GPU's acceleration off. A fallback counts too, unless a non-fault death came up
   to 5 s before it, since Chromium steps down its ladder on the counted failure itself.
+
+  A death after the quit began is never a fault, whatever its reason and code. `crash-capture.ts`
+  reads `isShuttingDown()` at each `child-process-gone` and passes it on, and the death is kept in
+  the record marked `quitBegun`, so a triage still sees it. DESKTOP-4T was that teardown filed as a
+  crash loop: on a Fedora install, each run ended in DESKTOP-W's quit-time fatal (`quit_begun`
+  true), and in the same second the GPU's zygote was already gone and five relaunches failed
+  `launch-failed` with exit code 1002 inside 10 ms. Mid-run the GPU worked on that machine. As
+  non-fault deaths, they also explain the fallback to the last rung that the quit set off.
 
   Not every pending record earns an issue: `shouldReportEscalation` reports on 3+ fault deaths, OR
   when `gpuEndedPreviousRun` holds. That needs all three of: the previous run ended `abrupt`; the
@@ -1154,7 +1175,7 @@ in one Sentry org, one triage surface.
   the fallback-only message is left for a fallback no reported death explains. It carries tags
   `source: gpu_process`, `reason`, `exitCode`, `crashCount`, and a `gpu_process` context carrying
   `reason`, `exitCode`, `count`, `faultDeathCount` (how many of `count` were fault deaths; the gap
-  is kills and teardown exits), `firstAt`, `lastAt`, `escalatedInVersion` (the app version that
+  is kills, teardown exits and deaths after the quit began), `firstAt`, `lastAt`, `escalatedInVersion` (the app version that
   produced the escalation, not the one reporting it - the same build-attribution concern the native
   crash correction below exists for), `featureStatusAtEscalation`, `featureStatusOnReport`, and
   `previousRunExit`. The last three are deliberately three separate facts, not one:
@@ -1173,7 +1194,8 @@ in one Sentry org, one triage surface.
   depth 3, which turned every entry of `deaths` and `modeChanges` into `[Object]` and
   `gpuInfoOnReport.gpuDevice` into `[Array]`, so DESKTOP-29 arrived with none of the fields that
   explain it and the Linux reading had never reached Sentry. Each `deaths` and `modeChanges` entry
-  is now one line, as in `launch-failed code=1002 at=<iso> compositing=<value> webgl=<value>`, and a
+  is now one line, as in `launch-failed code=1002 at=<iso> compositing=<value> webgl=<value>`, with
+  ` quit=begun` at the end of a death after the quit began, and a
   `modeChanges` line on Linux ends with `zygote=<state> schedulingEntities=<n>
   maxUserProcesses=<limit>`. `gpuDevice` sits a level deeper, where any array flattens, so it is one
   string with its first four adapters joined by `; `. `normalizeDepth` stays at the default, because raising it

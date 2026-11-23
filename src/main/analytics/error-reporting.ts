@@ -343,8 +343,9 @@ const GPU_LAUNCH_FAILED_MESSAGE = "'GPU' process exited with 'launch-failed'";
  * begun quitting (DESKTOP-2Q). At shutdown the GPU process dies with the
  * session, Chromium relaunches it, the launch fails, and Chromium aborts the
  * browser for it (DESKTOP-W). The message then only duplicates that native
- * fatal, and gpu-health.ts's `isGpuFaultDeath` already counts teardown exits
- * as no fault. Mid-run it is still the backstop #725 kept, so it stays then.
+ * fatal, and gpu-health.ts's `isGpuFaultDeath` counts a GPU death after the
+ * quit began as no fault (DESKTOP-4T). Mid-run it is still the backstop #725
+ * kept, so it stays then.
  */
 function isQuitTimeGpuLaunchFailure(event: ErrorEvent, shuttingDown: boolean): boolean {
   return shuttingDown && event.message === GPU_LAUNCH_FAILED_MESSAGE;

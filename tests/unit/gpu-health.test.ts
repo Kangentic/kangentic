@@ -1275,6 +1275,22 @@ describe('buildGpuProcessContext', () => {
     ]);
   });
 
+  it('marks a death that happened after the quit began, and leaves every other death unmarked', () => {
+    const context = buildGpuProcessContext({
+      ...record,
+      deaths: [
+        { reason: 'killed', exitCode: null, at: '2026-10-31T10:00:00.000Z', compositing: 'enabled', webgl: 'enabled', quitBegun: true },
+        { reason: 'killed', exitCode: null, at: '2026-10-31T10:00:00.062Z', compositing: 'enabled', webgl: 'enabled' },
+        { reason: 'killed', exitCode: null, at: '2026-10-31T10:00:00.090Z', compositing: 'enabled', webgl: 'enabled', quitBegun: false },
+      ],
+    }, facts);
+    expect(context.deaths).toEqual([
+      'killed code=none at=2026-10-31T10:00:00.000Z compositing=enabled webgl=enabled quit=begun',
+      'killed code=none at=2026-10-31T10:00:00.062Z compositing=enabled webgl=enabled',
+      'killed code=none at=2026-10-31T10:00:00.090Z compositing=enabled webgl=enabled',
+    ]);
+  });
+
   it('shows a null reading as unknown instead of dropping it', () => {
     const context = buildGpuProcessContext({
       ...record,
@@ -1669,6 +1685,55 @@ describe('which GPU exits count as faults', () => {
     // two teardown exits after that added nothing.
     expect(mockTrackEvent.mock.calls.map((call) => call[1].phase)).toEqual(['first', 'latched']);
     expect(mockTrackEvent.mock.calls.every((call) => call[1].exitCode === EXCEPTION_BREAKPOINT_SIGNED)).toBe(true);
+  });
+
+  // Sentry DESKTOP-4T (Fedora, Intel): each run ended in a quit-time browser fatal
+  // (DESKTOP-W with `quit_begun: true`), and in the same second the GPU's zygote
+  // was gone and five relaunches failed `launch-failed` 1002 inside 10 ms. The
+  // next launch reported that teardown as a crash loop.
+  describe('deaths after the quit began', () => {
+    const runStartMs = Date.parse('2026-11-23T08:30:00.000Z');
+    const lastKnownAliveAt = '2026-11-23T08:37:00.000Z';
+
+    function quitTimeTeardown(quitBegun: boolean): GpuEscalationRecord {
+      const clock = makeClock(runStartMs);
+      observe(clock, HARDWARE_STATUS);
+      clock.advance(Date.parse('2026-11-23T08:37:34.577Z') - clock.now());
+      for (let deathIndex = 0; deathIndex < 5; deathIndex++) {
+        if (deathIndex > 0) clock.advance(2);
+        recordGpuProcessGone(escalationPath, 'launch-failed', 1002, '0.62.0', { now: clock.now, quitBegun });
+        // Chromium steps down its ladder on the third counted failure.
+        if (deathIndex === 2) {
+          recordGpuModeObservation(escalationPath, '0.62.0', {
+            now: clock.now,
+            getFeatureStatus: () => DISPLAY_COMPOSITOR_STATUS,
+            readLinuxProcessSnapshot: () => ({ zygote: 'dead', schedulingEntities: 970, maxUserProcesses: '123561' }),
+          });
+        }
+      }
+      return readPendingGpuEscalation(escalationPath)!;
+    }
+
+    it('reports nothing and turns nothing off, and keeps every death for triage', () => {
+      const pending = quitTimeTeardown(true);
+
+      expect(pending.count).toBe(5);
+      expect(pending.deaths).toHaveLength(5);
+      expect(pending.deaths.every((death) => death.quitBegun === true)).toBe(true);
+      expect(pending.modeChanges).toHaveLength(1);
+      expect(summarizeGpuFaults(pending)).toEqual({ faultCount: 0, unexplainedFallback: false, lastFaultAt: null, lastFaultDeath: null });
+      expect(shouldReportEscalation(pending, { previousRunExit: 'clean', lastKnownAliveAt })).toBe(false);
+      expect(gpuEndedPreviousRun(pending, { previousRunExit: 'abrupt', lastKnownAliveAt })).toBe(false);
+      expect(mockTrackEvent).not.toHaveBeenCalled();
+    });
+
+    it('still reports the same deaths when they came before the quit', () => {
+      const pending = quitTimeTeardown(false);
+
+      expect(pending.deaths.some((death) => 'quitBegun' in death)).toBe(false);
+      expect(summarizeGpuFaults(pending).faultCount).toBe(5);
+      expect(shouldReportEscalation(pending, { previousRunExit: 'clean', lastKnownAliveAt })).toBe(true);
+    });
   });
 
   it('never ticks Aptabase for kills or session-teardown exits', () => {
