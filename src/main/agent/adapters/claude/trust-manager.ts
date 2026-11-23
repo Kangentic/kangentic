@@ -2,6 +2,7 @@ import { promises as fsPromises } from 'node:fs';
 import * as path from 'node:path';
 import { toForwardSlash } from '../../../../shared/paths';
 import { cliPathForTarget, type CliPlace } from '../../shared/cli-target';
+import { folderExists, isKangenticMadeFolder } from '../../shared/kangentic-made-folder';
 import { claudeJsonPath, isClaudeJsonLockError, withClaudeJsonLock } from './claude-json-lock';
 import { applyDiffPanelClosed } from './diff-panel';
 import { physicalPath } from './physical-path';
@@ -288,6 +289,75 @@ export async function ensureClaudeSpawnConfig(workingDirectory: string, place: C
     ];
     return changes.some(Boolean);
   }, place);
+}
+
+/** A `projects` key as compared: Windows paths compare without case. */
+function comparableKey(key: string): string {
+  return process.platform === 'win32' ? key.toLowerCase() : key;
+}
+
+/** Drop every `projects` entry filed under one of `keys`. True when it changed anything. */
+function applyEntriesRemoved(data: Record<string, unknown>, keys: readonly string[]): boolean {
+  if (!data.projects || typeof data.projects !== 'object') return false;
+  const projects = data.projects as Record<string, unknown>;
+  const targets = new Set(keys.map(comparableKey));
+  let changed = false;
+  for (const existing of Object.keys(projects)) {
+    if (!targets.has(comparableKey(existing))) continue;
+    delete projects[existing];
+    changed = true;
+  }
+  return changed;
+}
+
+/**
+ * Drop a removed worktree's entry from ~/.claude.json. Kangentic trusts every
+ * worktree it starts Claude in (`ensureClaudeSpawnConfig`), and nothing removed
+ * the entry again: a dogfooding machine held 1,644 of them for task worktrees
+ * long gone, and 1,603 for dev preview folders, in a 2.6 MB file Claude rewrites
+ * whole under its lock. The entry is the folder's: trust, allowed tools and MCP
+ * choices for a folder that no longer exists, so all of it goes. Only a folder
+ * Kangentic made (`isKangenticMadeFolder`).
+ */
+export async function removeWorktreeEntry(worktreePath: string, place: CliPlace | null = null): Promise<void> {
+  const key = await trustKey(worktreePath, place);
+  if (!isKangenticMadeFolder(key)) return;
+  await updateClaudeJson('removed worktree entry', (data) => applyEntriesRemoved(data, [key]), place);
+}
+
+/**
+ * Drop the entries of every Kangentic-made folder that is gone: the ones
+ * removed before `removeWorktreeEntry` existed, and any whose removal ran
+ * while the app was not (a preview stopped with its terminal closed, a crash).
+ * The folders are checked outside the lock, and the file is read again under
+ * it, so the lock is held only for the one write. Answers how many it dropped.
+ */
+export async function sweepRemovedFolderEntries(exists: (key: string) => Promise<boolean> = folderExists): Promise<number> {
+  const filePath = claudeJsonPath(null);
+  let snapshot: Record<string, unknown> | null;
+  try {
+    snapshot = parseObject(await fsPromises.readFile(filePath, 'utf-8'));
+  } catch {
+    // report-ok: no ~/.claude.json, or one that cannot be read, holds nothing to sweep.
+    return 0;
+  }
+  const projects = snapshot?.projects;
+  if (!projects || typeof projects !== 'object') return 0;
+  const candidates = Object.keys(projects).filter(isKangenticMadeFolder);
+  const gone: string[] = [];
+  for (const key of candidates) {
+    if (!await exists(key)) gone.push(key);
+  }
+  if (gone.length === 0) return 0;
+  let dropped = 0;
+  await updateClaudeJson('removed folder sweep', (data) => {
+    const before = data.projects && typeof data.projects === 'object' ? Object.keys(data.projects).length : 0;
+    const changed = applyEntriesRemoved(data, gone);
+    const after = data.projects && typeof data.projects === 'object' ? Object.keys(data.projects).length : 0;
+    dropped = before - after;
+    return changed;
+  });
+  return dropped;
 }
 
 /** How Windows refuses to replace a file another process holds open: a

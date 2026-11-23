@@ -34,6 +34,7 @@ import {
   removeCodexWorktreeTrust,
   readCodexTrustLevel,
 } from '../../src/main/agent/adapters/codex';
+import { sweepRemovedFolderTrust } from '../../src/main/agent/adapters/codex/trust-manager';
 
 function configPath(): string {
   return path.join(tmpHome, '.codex', 'config.toml');
@@ -242,6 +243,39 @@ describe('removeCodexWorktreeTrust', () => {
     writeConfig('model = "gpt-5.5"\n');
     await removeCodexWorktreeTrust(WORKTREE);
     expect(readConfig()).toContain('model = "gpt-5.5"');
+  });
+});
+
+// The tables left for Kangentic-made folders that went while no removal ran: a
+// dev preview's project roots (no removal ever names them) and older worktrees.
+describe('sweepRemovedFolderTrust', () => {
+  it('drops the trusted tables of Kangentic-made folders that are gone, and nothing else', async () => {
+    const gone = path.join(tmpHome, 'repo', '.kangentic', 'worktrees', 'gone');
+    const live = path.join(tmpHome, 'repo', '.kangentic', 'worktrees', 'live');
+    const preview = path.join(tmpHome, 'checkout', '.kangentic', 'data', 'preview-projects', 'project-1');
+    const userFolder = path.join(tmpHome, 'user-folder-gone');
+    const deliberate = path.join(tmpHome, 'repo', '.kangentic', 'worktrees', 'untrusted');
+    fs.mkdirSync(live, { recursive: true });
+    const table = (folder: string, level = 'trusted'): string[] => [`[projects.'${folder}']`, `trust_level = "${level}"`, ''];
+    writeConfig(['model = "gpt-5.5"', '', ...table(gone), ...table(live), ...table(preview), ...table(userFolder), ...table(deliberate, 'untrusted')].join('\n'));
+
+    expect(await sweepRemovedFolderTrust()).toBe(2);
+
+    expect(trustOf(gone)).toBeNull();
+    expect(trustOf(preview)).toBeNull();
+    expect(trustOf(live)).toBe('trusted');
+    // Gone, but not Kangentic's.
+    expect(trustOf(userFolder)).toBe('trusted');
+    // Kangentic's folder, but the user's own answer.
+    expect(trustOf(deliberate)).toBe('untrusted');
+    expect(readConfig()).toContain('model = "gpt-5.5"');
+  });
+
+  it('keeps a table whose folder cannot be checked', async () => {
+    const worktree = path.join(tmpHome, 'repo', '.kangentic', 'worktrees', 'unreadable');
+    writeConfig([`[projects.'${worktree}']`, 'trust_level = "trusted"', ''].join('\n'));
+    expect(await sweepRemovedFolderTrust(async () => true)).toBe(0);
+    expect(trustOf(worktree)).toBe('trusted');
   });
 });
 

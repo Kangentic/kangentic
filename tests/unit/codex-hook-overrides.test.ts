@@ -23,7 +23,7 @@ vi.mock('../../src/main/agent/shared/bridge-utils', () => ({
   resolveBridgeScript: vi.fn(() => fakeBridgeSource),
 }));
 
-import { buildCodexHookOverrides, codexHookDefinitions, codexHookStateOverride, CODEX_EVENT_BRIDGE_COPY_NAME, type CodexHookTrustEntry } from '../../src/main/agent/adapters/codex/hook-manager';
+import { buildCodexHookOverrides, codexHookDefinitions, codexHookStateOverride, CODEX_EVENT_BRIDGE_COPY_NAME, type CodexHookDefinition, type CodexHookTrustEntry } from '../../src/main/agent/adapters/codex/hook-manager';
 import { CodexHookTrustCheck, readCodexHookTrust, trustEntriesOf } from '../../src/main/agent/adapters/codex/hook-trust';
 import { CodexCommandBuilder, type CodexCommandOptions } from '../../src/main/agent/adapters/codex/command-builder';
 import type { CliChildProcess } from '../../src/main/utility-process/off-main-cli';
@@ -41,11 +41,14 @@ import {
   type ShellArgvProbe,
 } from './helpers/shell-argv-probe';
 
-const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PermissionRequest', 'Stop', 'PreCompact'];
+/** The base set: every Codex Kangentic supports lists these. */
+const BASE_HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PermissionRequest', 'Stop', 'PreCompact'];
+/** The extended set, the default: the base set and the subagent hooks codex-cli 0.171.0 lists. */
+const HOOK_EVENTS = [...BASE_HOOK_EVENTS, 'SubagentStart', 'SubagentStop'];
 
 /** Trust entries shaped like Codex 0.163.0's `hooks/list` answer on Windows. */
-function reportedEntries(): Array<{ key: string; hash: string }> {
-  return HOOK_EVENTS.map((event, index) => ({
+function reportedEntries(events: readonly string[] = HOOK_EVENTS): Array<{ key: string; hash: string }> {
+  return events.map((event, index) => ({
     key: `C:\\<session-flags>\\config.toml:${event.replace(/[A-Z]/g, (letter, offset: number) => (offset ? '_' : '') + letter.toLowerCase())}:0:0`,
     hash: `sha256:${String(index).repeat(64).slice(0, 64)}`,
   }));
@@ -194,10 +197,10 @@ describe('trustEntriesOf over the hooks/list answer captured from codex-cli 0.17
   ) as CapturedHooksListMessage;
   const capturedHooks = captured.result.data[0].hooks;
 
-  it('lists all seven hooks with the key and hash Codex computed for the commands Kangentic passes', () => {
+  it('lists all nine hooks with the key and hash Codex computed for the commands Kangentic passes', () => {
     const entries = trustEntriesOf(captured.result, codexHookDefinitions());
     expect(entries).not.toBeNull();
-    expect(entries).toHaveLength(7);
+    expect(entries).toHaveLength(HOOK_EVENTS.length);
     expect(entries).toEqual(capturedHooks.map((hook) => ({ key: hook.key, hash: hook.currentHash })));
     expect(entries).toContainEqual({
       key: 'C:\\<session-flags>\\config.toml:stop:0:0',
@@ -407,37 +410,87 @@ describe('CodexHookTrustCheck', () => {
     expect(check.stateOverrideFor('C:\\other\\codex.ps1')).toBeNull();
   });
 
+  // The trust read is all-or-nothing, and a Codex older than the subagent hooks
+  // may not list them: it must keep the base seven rather than lose every hook.
+  describe('the extended set and its fallback', () => {
+    /** A Codex that confirms only the sets `confirms` names, and fails or answers nothing for the rest. */
+    function codexConfirming(confirms: { extended: boolean; base: boolean }, otherwise: 'null' | 'throws' = 'null') {
+      return vi.fn(async (_codexPath: string, definitions: readonly CodexHookDefinition[]): Promise<CodexHookTrustEntry[] | null> => {
+        const extended = definitions.length === HOOK_EVENTS.length;
+        if (extended ? confirms.extended : confirms.base) return reportedEntries(extended ? HOOK_EVENTS : BASE_HOOK_EVENTS);
+        if (otherwise === 'throws') throw new Error('app-server exited before answering');
+        return null;
+      });
+    }
+
+    it('runs the extended hooks when Codex confirms them, reading once', async () => {
+      const read = codexConfirming({ extended: true, base: true });
+      const check = new CodexHookTrustCheck(read, () => 'stamp');
+      check.start('codex');
+      await check.settle(1000);
+      expect(read).toHaveBeenCalledTimes(1);
+      expect(check.hookSetFor('codex')).toBe('extended');
+      expect(check.stateOverrideFor('codex')).toContain('subagent_start');
+    });
+
+    it.each([
+      ['answers without them', 'null'],
+      ['fails to run with them', 'throws'],
+    ] as const)('falls back to the base hooks when Codex %s', async (_description, otherwise) => {
+      const read = codexConfirming({ extended: false, base: true }, otherwise);
+      const check = new CodexHookTrustCheck(read, () => 'stamp');
+      check.start('codex');
+      await check.settle(1000);
+      expect(read).toHaveBeenCalledTimes(2);
+      expect(check.hookSetFor('codex')).toBe('base');
+      const state = check.stateOverrideFor('codex');
+      expect(state).not.toBeNull();
+      expect(state).not.toContain('subagent_start');
+    });
+
+  });
+
   describe('a read that failed to run', () => {
     // Five minutes, as FAILED_READ_RETRY_MS in hook-trust.ts. One slow cold start
     // must not leave hooks off for the whole run, and a broken Codex must not be
     // launched on every detect.
     const RETRY_AFTER_MS = 5 * 60_000;
 
-    /** A check whose reads take their outcome from `outcomes` in order, on a clock the test moves. */
-    function checkWithClock(outcomes: Array<'fails' | 'confirms'>): { check: CodexHookTrustCheck; read: ReturnType<typeof vi.fn>; advance: (milliseconds: number) => void } {
+    /**
+     * A check whose read attempts take their outcome from `outcomes` in order, on a clock the test
+     * moves. An attempt is the extended read, and the base read a failed one falls back to shares
+     * its outcome, so `read` counts attempts (`attempts`), not calls.
+     */
+    function checkWithClock(outcomes: Array<'fails' | 'confirms'>): { check: CodexHookTrustCheck; read: { mock: { calls: unknown[][] } } & ReturnType<typeof vi.fn>; advance: (milliseconds: number) => void } {
       let clock = 1_000_000;
-      const read = vi.fn((): Promise<CodexHookTrustEntry[] | null> => (
-        outcomes.shift() === 'confirms' ? Promise.resolve(reportedEntries()) : Promise.reject(new Error('timed out'))
-      ));
+      let current: 'fails' | 'confirms' | undefined;
+      const read = vi.fn((_codexPath: string, definitions: readonly CodexHookDefinition[]): Promise<CodexHookTrustEntry[] | null> => {
+        if (definitions.length === HOOK_EVENTS.length) current = outcomes.shift();
+        return current === 'confirms' ? Promise.resolve(reportedEntries(definitions.length === HOOK_EVENTS.length ? HOOK_EVENTS : BASE_HOOK_EVENTS)) : Promise.reject(new Error('timed out'));
+      });
       const check = new CodexHookTrustCheck(read, () => 'stamp', () => clock);
       return { check, read, advance: (milliseconds) => { clock += milliseconds; } };
     }
+
+    /** Read attempts made: each begins with a read of the extended set. */
+    const attempts = (read: { mock: { calls: unknown[][] } }): number =>
+      read.mock.calls.filter((call) => (call[1] as readonly CodexHookDefinition[]).length === HOOK_EVENTS.length).length;
 
     it('is read again by a later start only once five minutes have passed, and a good second read confirms', async () => {
       const { check, read, advance } = checkWithClock(['fails', 'confirms']);
       check.start('codex');
       await check.settle(1000);
-      expect(read).toHaveBeenCalledTimes(1);
+      expect(attempts(read)).toBe(1);
       expect(check.stateOverrideFor('codex')).toBeNull();
 
       advance(RETRY_AFTER_MS - 1);
       check.start('codex');
-      expect(read).toHaveBeenCalledTimes(1);
+      expect(attempts(read)).toBe(1);
 
       advance(1);
       check.start('codex');
       await check.settle(1000);
-      expect(read).toHaveBeenCalledTimes(2);
+      expect(attempts(read)).toBe(2);
       expect(check.stateOverrideFor('codex')).toMatch(/^hooks\.state=\{/);
     });
 
@@ -448,16 +501,16 @@ describe('CodexHookTrustCheck', () => {
       advance(RETRY_AFTER_MS);
       check.start('codex');
       await check.settle(1000);
-      expect(read).toHaveBeenCalledTimes(2);
+      expect(attempts(read)).toBe(2);
 
       advance(RETRY_AFTER_MS - 1);
       check.start('codex');
-      expect(read).toHaveBeenCalledTimes(2);
+      expect(attempts(read)).toBe(2);
 
       advance(1);
       check.start('codex');
       await check.settle(1000);
-      expect(read).toHaveBeenCalledTimes(3);
+      expect(attempts(read)).toBe(3);
       expect(check.stateOverrideFor('codex')).not.toBeNull();
     });
 
@@ -473,7 +526,7 @@ describe('CodexHookTrustCheck', () => {
       clock += 24 * 60 * 60_000;
       check.start('codex');
       await check.settle(1000);
-      expect(read).toHaveBeenCalledTimes(1);
+      expect(attempts(read)).toBe(1);
     });
   });
 
@@ -515,6 +568,19 @@ describe('CodexCommandBuilder hook wiring', () => {
     };
   }
 
+  // A hook registered without its trust entry opens Codex's blocking "Hooks need
+  // review" dialog, so the session registers the set the trust read confirmed.
+  it('registers exactly the confirmed set: the base seven unless the extended set is named', () => {
+    const build = (codexHookSet?: 'extended' | 'base'): string => new CodexCommandBuilder().buildCodexCommand(options({ codexHookStateOverride: state, codexHookSet }));
+    for (const hookSet of [undefined, 'base'] as const) {
+      const command = build(hookSet);
+      for (const event of BASE_HOOK_EVENTS) expect(command, `${hookSet} ${event}`).toContain(`hooks.${event}=`);
+      expect(command).not.toContain('hooks.SubagentStart=');
+    }
+    expect(build('extended')).toContain('hooks.SubagentStart=');
+    expect(build('extended')).toContain('hooks.SubagentStop=');
+  });
+
   it('wires no hooks without a confirmed trust state, so the TUI cannot stop at the review dialog', () => {
     const command = new CodexCommandBuilder().buildCodexCommand(options({ codexHookStateOverride: null }));
     expect(command).not.toContain('hooks.');
@@ -530,7 +596,7 @@ describe('CodexCommandBuilder hook wiring', () => {
   ];
 
   it.each(COPY_FAILURES)('builds the command without hooks, and does not throw, when %s', (_description, breakCopy) => {
-    const builtOptions = options({ codexHookStateOverride: state });
+    const builtOptions = options({ codexHookStateOverride: state, codexHookSet: 'extended' });
     breakCopy(builtOptions.cwd);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
@@ -546,14 +612,14 @@ describe('CodexCommandBuilder hook wiring', () => {
   });
 
   it('wires every hook and the trust state, and copies the bridge into the workspace', () => {
-    const builtOptions = options({ codexHookStateOverride: state });
+    const builtOptions = options({ codexHookStateOverride: state, codexHookSet: 'extended' });
     const command = new CodexCommandBuilder().buildCodexCommand(builtOptions);
     for (const override of [...buildCodexHookOverrides(), state!]) expect(command).toContain(quoteArg(override, 'bash'));
     expect(fs.readFileSync(path.join(builtOptions.cwd, '.kangentic', CODEX_EVENT_BRIDGE_COPY_NAME), 'utf8')).toBe('// bridge');
   });
 
   it('keeps the bridge copy out of git in a checkout whose .gitignore does not list .kangentic/', () => {
-    const builtOptions = options({ codexHookStateOverride: state });
+    const builtOptions = options({ codexHookStateOverride: state, codexHookSet: 'extended' });
     fs.mkdirSync(path.join(builtOptions.cwd, '.git', 'info'), { recursive: true });
     new CodexCommandBuilder().buildCodexCommand(builtOptions);
     expect(fs.readFileSync(path.join(builtOptions.cwd, '.git', 'info', 'exclude'), 'utf8').split('\n')).toContain('.kangentic/');
@@ -561,8 +627,8 @@ describe('CodexCommandBuilder hook wiring', () => {
 
   it('builds byte-identical hook overrides for two sessions, so one trust read covers both', () => {
     const hookArgsOf = (command: string): string[] => command.split(' -c ').filter((part) => part.startsWith("'hooks."));
-    const first = new CodexCommandBuilder().buildCodexCommand(options({ codexHookStateOverride: state, taskId: 'task-a', eventsOutputPath: path.join(scratch, 'a', 'events.jsonl') }));
-    const second = new CodexCommandBuilder().buildCodexCommand(options({ codexHookStateOverride: state, taskId: 'task-b', eventsOutputPath: path.join(scratch, 'b', 'events.jsonl'), sessionId: 'resume-me', resume: true }));
+    const first = new CodexCommandBuilder().buildCodexCommand(options({ codexHookStateOverride: state, codexHookSet: 'extended', taskId: 'task-a', eventsOutputPath: path.join(scratch, 'a', 'events.jsonl') }));
+    const second = new CodexCommandBuilder().buildCodexCommand(options({ codexHookStateOverride: state, codexHookSet: 'extended', taskId: 'task-b', eventsOutputPath: path.join(scratch, 'b', 'events.jsonl'), sessionId: 'resume-me', resume: true }));
     expect(hookArgsOf(first).length).toBe(HOOK_EVENTS.length + 1);
     expect(hookArgsOf(second)).toEqual(hookArgsOf(first));
   });
@@ -605,7 +671,7 @@ describe.skipIf(process.platform !== 'win32')('Codex hook overrides through a Wi
       permissionMode: 'acceptEdits',
       eventsOutputPath: path.join(scratch, 'events.jsonl'),
       shell,
-      codexHookStateOverride: state,
+      codexHookStateOverride: state, codexHookSet: 'extended',
     });
   }
 
@@ -663,7 +729,7 @@ describe.skipIf(process.platform === 'win32' && POSIX_HOOK_ROUND_TRIP_SHELLS.len
       permissionMode: 'acceptEdits',
       eventsOutputPath: path.join(scratch, 'events.jsonl'),
       shell,
-      codexHookStateOverride: state,
+      codexHookStateOverride: state, codexHookSet: 'extended',
     });
     return `${quoteArg(process.execPath, shell)} ${quoteArg(probe.printerPath, shell)}${command.slice('codex'.length)}`;
   }

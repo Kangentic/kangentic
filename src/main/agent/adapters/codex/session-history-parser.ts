@@ -101,6 +101,8 @@ export class CodexSessionHistoryParser {
           const candidateId = entry.name.match(pattern)![1];
           const meta = readSessionMeta(path.join(directory, entry.name));
           if (!meta || meta.id !== candidateId) continue;
+          // A subagent's rollout: its id would resume the child, not the session.
+          if (meta.isSubagent) continue;
           if (normalizeCwdForCompare(meta.cwd) !== normalizedCwd) continue;
           // Authoritative filter: session_meta timestamp must fall
           // within the spawn window. This excludes old still-running
@@ -565,18 +567,23 @@ export function findMatchingFile(directory: string, pattern: RegExp): string | n
  * read whole. `createdAtMs` is parsed from `payload.timestamp`
  * (ISO8601 string written once by Codex at session start) and is
  * the authoritative "when did this session begin" value.
+ *
+ * `isSubagent`: a `spawn_agent` child keeps a rollout of its own beside its
+ * parent's, in the same cwd and seconds later, and says so with
+ * `parent_thread_id` and `source.subagent` (measured on 0.171.0).
  */
-function readSessionMeta(filePath: string): { id: string; cwd: string; createdAtMs: number } | null {
+function readSessionMeta(filePath: string): { id: string; cwd: string; createdAtMs: number; isSubagent: boolean } | null {
   try {
     const content = fs.readFileSync(filePath, 'utf-8');
     const firstLine = content.slice(0, content.indexOf('\n') + 1 || content.length);
     const parsed: unknown = JSON.parse(firstLine);
     if (!isRecord(parsed) || parsed.type !== 'session_meta' || !isRecord(parsed.payload)) return null;
-    const { id, cwd, timestamp } = parsed.payload;
+    const { id, cwd, timestamp, parent_thread_id: parentThreadId, source } = parsed.payload;
     if (typeof id !== 'string' || typeof cwd !== 'string' || typeof timestamp !== 'string') return null;
     const createdAtMs = Date.parse(timestamp);
     if (!Number.isFinite(createdAtMs)) return null;
-    return { id, cwd, createdAtMs };
+    const isSubagent = typeof parentThreadId === 'string' || (isRecord(source) && 'subagent' in source);
+    return { id, cwd, createdAtMs, isSubagent };
   } catch {
     return null;
   }

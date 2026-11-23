@@ -8,7 +8,7 @@ import { codexLoginEvidence } from './accounts';
 import { createCodexCommandInjectionVerifier } from './command-injection-verifier';
 import { parseCodexTranscript, codexHostRolloutSearch, findCodexTranscriptFile, locateCodexTranscriptFile, readCodexTranscriptPage, CODEX_PATCH_TOOL, CODEX_PATCH_PATH_FIELD } from './transcript-parser';
 import { migrateCodexProjectData } from './project-relocation';
-import { ensureWorktreeTrust, removeWorktreeTrust } from './trust-manager';
+import { ensureWorktreeTrust, removeWorktreeTrust, sweepRemovedFolderTrust } from './trust-manager';
 import { CodexStatusParser } from './status-parser';
 import { CodexHookTrustCheck, readHostCodexVersion } from './hook-trust';
 import { CODEX_WSL_HOOK_COPY_NAME } from './hook-manager';
@@ -247,6 +247,9 @@ export class CodexAdapter implements AgentAdapter {
       codexHookStateOverride: options.cliTarget?.kind === 'ssh'
         ? this.hookTrust.stateOverrideForHost(options.cliTarget.hostId)
         : this.hookTrust.stateOverrideFor(agentPath),
+      codexHookSet: options.cliTarget?.kind === 'ssh'
+        ? this.hookTrust.hookSetForHost(options.cliTarget.hostId)
+        : this.hookTrust.hookSetFor(agentPath),
     });
     // buildCodexCommand sweeps any stale legacy `.codex/hooks.json` in the
     // project root whenever eventsOutputPath is present. Hold that root until
@@ -628,6 +631,10 @@ export class CodexAdapter implements AgentAdapter {
    */
   async onWorktreeRemoved(worktreePath: string, place?: CliPlace | null): Promise<void> {
     await removeWorktreeTrust(worktreePath, place ?? null);
+  }
+
+  async sweepRemovedFolderTrust(): Promise<number> {
+    return sweepRemovedFolderTrust();
   }
 
   /**
