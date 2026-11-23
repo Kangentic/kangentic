@@ -424,6 +424,9 @@ describe('quitAndInstallIfUpdatePending', () => {
 
     expect(updater.quitAndInstallIfUpdatePending()).toBe(false);
     expect(mocks.autoUpdaterMock.quitAndInstall).not.toHaveBeenCalled();
+    // No install, no quit to explain: a later quit is the user's.
+    const quitCause = await import('../../src/main/quit-cause');
+    expect(quitCause.quitByNoted()).toBe('user');
   });
 
   it('returns false when an update is downloaded but autoInstallOnAppQuit is off (Linux)', async () => {
@@ -467,5 +470,29 @@ describe('quitAndInstallIfUpdatePending', () => {
     // isSilent, isForceRunAfter: the second flag is what brings the app back
     // after the install, matching the release-notes modal's own call.
     expect(mocks.autoUpdaterMock.quitAndInstall).toHaveBeenCalledWith(true, true);
+  });
+
+  // Sentry DESKTOP-2N: the quit an install begins ended a launch that had shown
+  // nothing, and the next start reported a person giving up. The install says
+  // what began the quit before it quits, so the launch it ends can say so too.
+  it('notes the quit as the update\'s before it installs', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    const quitCause = await import('../../src/main/quit-cause');
+    const updater = await import('../../src/main/updater');
+    updater.initUpdater(fakeWindow);
+    const updateDownloadedCall = mocks.autoUpdaterMock.on.mock.calls.find(
+      (call) => call[0] === 'update-downloaded',
+    );
+    if (!updateDownloadedCall) throw new Error('update-downloaded handler was not registered');
+    (updateDownloadedCall[1] as (info: { version: string; releaseNotes: unknown }) => void)({ version: '9.9.9', releaseNotes: '' });
+    expect(quitCause.quitByNoted()).toBe('user');
+
+    let notedWhenInstalling: string | null = null;
+    mocks.autoUpdaterMock.quitAndInstall.mockImplementation(() => {
+      notedWhenInstalling = quitCause.quitByNoted();
+    });
+    expect(updater.quitAndInstallIfUpdatePending()).toBe(true);
+
+    expect(notedWhenInstalling).toBe('update');
   });
 });

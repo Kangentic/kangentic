@@ -89,6 +89,7 @@ import { sweepOrphanedBrowserPartitions } from './browser/browser-partition-clea
 import { loadReactDevTools } from './devtools';
 import { syncShutdownCleanup, startHardShutdownFailsafe } from './shutdown';
 import { reportAbandonedLaunches } from './pty/abandoned-launches';
+import { noteQuitBy } from './quit-cause';
 import { PTY_HOST_STALL_AT_QUIT_FILE_NAME, reportPtyHostStallFromLastRun } from './pty/host/pty-host-report';
 import { createBeforeQuitHandler } from './pty/shutdown/before-quit-handler';
 import { drainPtyExitCallbacks, type PtyExitDrainResult } from './pty/shutdown/exit-callback-drain';
@@ -1466,6 +1467,8 @@ const createWindow = () => {
   if (process.platform === 'win32') {
     mainWindow.on('session-end', () => {
       osShutdownCannotBeDelayed = true;
+      // So a launch this quit ends reads as the OS's, not a person giving up.
+      noteQuitBy('os');
       performShutdown();
     });
   }
@@ -2252,6 +2255,8 @@ app.whenReady().then(async () => {
   if (process.platform !== 'win32') {
     powerMonitor.on('shutdown', (event?: ElectronEvent) => {
       event?.preventDefault?.();
+      // So a launch this quit ends reads as the OS's, not a person giving up.
+      noteQuitBy('os');
       // The before-quit that follows drains from the module-level report, so a
       // young session's kill may ride that drain's timer here too.
       performShutdown({ allowGrace: true });

@@ -449,6 +449,14 @@ describe('SessionManager agent-absence wiring', () => {
       expect(launches).toHaveLength(1);
       expect(launches[0]).toMatchObject({ agent: 'claude', ended_by: 'quit', agent_process: 'unknown', output_class: 'not_read' });
     });
+
+    // Sentry DESKTOP-2N: a person installing an update read as a person giving up.
+    it('says what began the quit on each launch it lists, user unless told otherwise', () => {
+      seedSession({ reportsAgentStart: true, id: 'gave-up', agentName: 'claude' });
+      expect(manager.abandonedLaunchTags()[0]).toMatchObject({ ended_by: 'quit', quit_by: 'user' });
+      expect(manager.abandonedLaunchTags(Date.now(), 'update')[0]).toMatchObject({ ended_by: 'quit', quit_by: 'update' });
+      expect(manager.abandonedLaunchTags(Date.now(), 'os')[0]).toMatchObject({ quit_by: 'os' });
+    });
   });
 
   describe('launch-failure wiring that real events and a quit reach', () => {

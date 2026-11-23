@@ -614,6 +614,67 @@ describe('reportSessionLaunchFailure', () => {
     });
   });
 
+  // Sentry DESKTOP-2J: a launch whose output matched no class ended with
+  // `output_class=other`, and a shell refusing the typed line reads the same as
+  // an agent that started and left. Only the shell's own error record tells them
+  // apart, and only a fixed word leaves.
+  describe('output that named no cause', () => {
+    const POWERSHELL_PARSER_ERROR = [
+      '$ claude --resume Acme-migration-token',
+      "At line:1 char:19",
+      '+ claude --resume Acme-migration-token',
+      '+                 ~~~~~~~~~~~~~~~~~~~~',
+      "Unexpected token 'Acme-migration-token' in expression or statement.",
+      '    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException',
+      '    + FullyQualifiedErrorId : UnexpectedToken',
+      'PS C:\\project> ',
+    ].join('\r\n');
+
+    async function sentTags(output: string): Promise<Record<string, string>> {
+      reportSessionLaunchFailure({ session: session(), stage: 'never_started', readOutput: async () => output });
+      await vi.waitFor(() => expect(reportHandledError).toHaveBeenCalledTimes(1));
+      return reportHandledError.mock.calls[0][1];
+    }
+
+    it('says the shell wrote it when a PowerShell error record is there, and sends none of its text', async () => {
+      const tags = await sentTags(POWERSHELL_PARSER_ERROR);
+      expect(tags).toMatchObject({ output_class: 'other', other_from: 'shell' });
+      expect(JSON.stringify(tags)).not.toContain('Acme');
+    });
+
+    it('says unknown for output with no such record', async () => {
+      const tags = await sentTags('$ claude\r\nsomething the agent printed before it left\r\n$ ');
+      expect(tags).toMatchObject({ output_class: 'other', other_from: 'unknown' });
+    });
+
+    it('does not take prose that names a record field for the record', async () => {
+      const tags = await sentTags('$ claude\r\nlook for CategoryInfo : in the docs\r\n$ ');
+      expect(tags).toMatchObject({ output_class: 'other', other_from: 'unknown' });
+    });
+
+    it('adds nothing when the output named a cause, which already says who wrote it', async () => {
+      const tags = await sentTags(OUTPUT);
+      expect(tags.output_class).toBe('command_not_found');
+      expect(tags).not.toHaveProperty('other_from');
+    });
+
+    it('adds nothing when the ring could not be read', () => {
+      reportSessionLaunchFailure({ session: session(), stage: 'abandoned', readOutput: null });
+      expect(reportHandledError.mock.calls[0][1]).not.toHaveProperty('other_from');
+    });
+
+    it('sits beside agent_process when the sweep asked for it', async () => {
+      reportSessionLaunchFailure({
+        session: session(),
+        stage: 'never_started',
+        readOutput: async () => POWERSHELL_PARSER_ERROR,
+        agentProcess: Promise.resolve('absent'),
+      });
+      await vi.waitFor(() => expect(reportHandledError).toHaveBeenCalledTimes(1));
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({ other_from: 'shell', agent_process: 'absent' });
+    });
+  });
+
   it('posts the read before it returns, ahead of the kill a caller does next', () => {
     const readOutput = vi.fn(async () => OUTPUT);
     reportSessionLaunchFailure({ session: session(), stage: 'never_started', readOutput });

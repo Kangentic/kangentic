@@ -62,6 +62,7 @@ import type {
   SeedFrameResult,
 } from './host/protocol';
 import { isShuttingDown } from '../shutdown-state';
+import type { QuitBy } from '../quit-cause';
 import { DEFAULT_CONFIG, EventType, PromptReason } from '../../shared/types';
 import type { HistoryViewOpenResult, SuspendedBy } from '../../shared/types';
 import { reportUnrecognizedHistoryView } from './history-view-report';
@@ -1877,15 +1878,17 @@ export class SessionManager extends EventEmitter {
    * The launches a quit is about to end that a person gave up on, by the same
    * test as `noteLaunchEnded`. Synchronous, for the quit path: no exit listener
    * runs there, so these go on disk for the next launch (`abandoned-launches.ts`).
+   * `quitBy` says what began the quit, so a person installing an update reads as
+   * that and not as a person giving up (Sentry DESKTOP-2N).
    */
-  abandonedLaunchTags(now: number = Date.now()): LaunchTags[] {
+  abandonedLaunchTags(now: number = Date.now(), quitBy: QuitBy = 'user'): LaunchTags[] {
     const launches: LaunchTags[] = [];
     for (const session of this.registry.values()) {
       if (session.status !== 'running' || !this.mayReportAbandoned(session, now)) continue;
       const endedBy: LaunchEndedBy = 'quit';
       // Nothing can read the process table inside a quit.
       const agentProcess: AgentProcessPresence = 'unknown';
-      launches.push({ ...launchTagsOf(session, now), ended_by: endedBy, agent_process: agentProcess, output_class: 'not_read' });
+      launches.push({ ...launchTagsOf(session, now), ended_by: endedBy, quit_by: quitBy, agent_process: agentProcess, output_class: 'not_read' });
     }
     return launches;
   }

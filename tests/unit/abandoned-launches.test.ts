@@ -104,6 +104,23 @@ describe('abandoned launches', () => {
     expect(vi.mocked(console.warn)).toHaveBeenCalledTimes(3);
   });
 
+  // Sentry DESKTOP-2N: the launch an update's install ended was reported as a
+  // person giving up, and only a timestamp match against another issue showed
+  // otherwise. The quit says what began it, and the next start reports that.
+  it.each(['update', 'os', 'user'] as const)('reports what began the quit as quit_by=%s on the next start', (quitBy) => {
+    recordAbandonedLaunches(filePath, [{ ...LAUNCH, quit_by: quitBy }]);
+    reportAbandonedLaunches(filePath);
+
+    expect(reportHandledError).toHaveBeenCalledTimes(1);
+    expect(reportHandledError.mock.calls[0][1]).toMatchObject({ stage: 'abandoned', ended_by: 'quit', quit_by: quitBy });
+  });
+
+  it('sends nothing that is not a fixed value as quit_by', () => {
+    fs.writeFileSync(filePath, JSON.stringify([{ ...LAUNCH, quit_by: 'update to /Users/dev/secret-project' }]));
+    reportAbandonedLaunches(filePath);
+    expect(reportHandledError).not.toHaveBeenCalled();
+  });
+
   it('keeps a quit with many broken launches to a few', () => {
     recordAbandonedLaunches(filePath, Array.from({ length: 50 }, () => LAUNCH));
     expect(JSON.parse(fs.readFileSync(filePath, 'utf-8'))).toHaveLength(8);
