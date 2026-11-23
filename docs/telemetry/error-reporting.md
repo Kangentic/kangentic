@@ -916,7 +916,7 @@ in one Sentry org, one triage surface.
   | `pty_spawn` | The shell did not spawn. Its `source` stays `pty_spawn` | `PtyOutputNotConnectedError`, or the plain `Error` every earlier issue was grouped on |
   | `shell_exit` | The shell exited on its own with no sign the agent ran | `AgentLaunchShellExitError` |
   | `never_started` | The sweep, or a timer where the sweep cannot judge, found no agent and no sign one ran; or a launch on an SSH host whose adapter reports its start and whose output named its cause | `AgentLaunchNeverStartedError` |
-  | `agent_exited` | A CLI named its own startup failure (`describeStartupFailure`), or a never-captured session's agent ran, then ended on its own under a minute later with no prompt, no session store and no deliberate kill (cause `no_conversation`, sent from the `agent_session_id` report with its tags) | `AgentLaunchAgentExitedError` |
+  | `agent_exited` | A CLI named its own startup failure (`describeStartupFailure`), or a never-captured session's agent ran, then ended on its own under a minute later with no prompt, no session store and no deliberate kill (cause `no_conversation`, sent from the `agent_session_id` report with its tags). For a shell the agent-absence sweep retired, the agent's end is the shell's last output, since the sweep can kill it minutes later. A session whose launch already reported sends no capture report | `AgentLaunchAgentExitedError` |
   | `abandoned` | A person, or a quit an update or the OS began, ended a launch that had shown nothing for 15 s | `AgentLaunchAbandonedError` |
   | `pty_port` | A renderer that stays open never got its terminal port | `PtyPortDeliveryError` |
 

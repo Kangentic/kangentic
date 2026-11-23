@@ -1016,6 +1016,20 @@ function endedOnItsOwn(session: ManagedSession): boolean {
 }
 
 /**
+ * When the agent ended. A PTY that exited on its own ended with it. A shell the
+ * agent-absence sweep retired outlived it, and the sweep judges a launch with no
+ * sign it ran only at its 120 s start ceiling: Codex 0.171.0 dead 6 s in under
+ * PowerShell was killed 116 s after it ran (task #1182). The shell printed its
+ * prompt as the agent ended, so its last output is that moment.
+ */
+function agentEndedAt(session: ManagedSession, exitedAt: number): number {
+  const retiredBySweep = session.intentionalExit === true && session.overrideExitCode === 0;
+  const lastOutputAt = session.lastOutputAt;
+  if (!retiredBySweep || typeof lastOutputAt !== 'number') return exitedAt;
+  return Math.min(lastOutputAt, exitedAt);
+}
+
+/**
  * True for a never-captured session whose agent ran, ended on its own under a
  * minute later, took no prompt and left no store: settled at the ceiling with
  * its PTY exited, not by a removal or a deliberate kill (`endedOnItsOwn`), since a
@@ -1034,7 +1048,7 @@ function mayHaveExitedWithNoConversation(
   if (outcome.kind !== 'never' || outcome.settledBy !== 'ceiling' || sessionStatus !== 'exited') return false;
   if (!endedOnItsOwn(session)) return false;
   if (typeof session.agentRanAt !== 'number' || typeof session.exitedAt !== 'number') return false;
-  if (session.exitedAt - session.agentRanAt >= AGENT_EXITED_AT_START_MS) return false;
+  if (agentEndedAt(session, session.exitedAt) - session.agentRanAt >= AGENT_EXITED_AT_START_MS) return false;
   return typeof session.promptObservedAt !== 'number';
 }
 
