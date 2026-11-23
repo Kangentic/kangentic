@@ -1214,6 +1214,9 @@ run prints it:
   and 200 percent, the posters' own scale included, so the fill was kept.
 - The Activity overlay draws each session's timeline up to the frame's running clock, so its bars
   end a few pixels further along on a slower runner. Its pixels are not held; its text is.
+- `browser-annotations` draws its badges' numbers in `system-ui` inside a closed shadow root, which
+  keeps the page's CSS away from them and keeps every measure out too, so each OS draws the digit
+  in its own face where the gate cannot leave it out. Its pixels are not held; its layout is.
 - `workflow-draft`, `settings-workflows` and the two redis scenes (`ssh-remote-project`,
   `ssh-remote-host`) break one long text a word differently at 125 or 150 percent, where Chromium
   lays text out with fractional advances. Their text is held at whole scales only.
@@ -1270,12 +1273,18 @@ followed, found these, each a frame that showed a visitor something other than i
 - `windows-tiled` and `ssh-remote-project` reported ready before a window's terminal had drawn, on
   a slow macOS runner, since terminals are built one at a time. Their `ready` now waits for each
   task window's terminal.
+- The board's panel terminal was still fitting its grid at ready on a Windows runner at 125
+  percent: 201 columns, then 216 a moment later, so a host would have lifted the hero's poster onto
+  a terminal that then resized. `demo/boot.js` now reports ready only once every mounted terminal's
+  grid has held still for 250 ms (at most 2 s), on every scene.
 
 Two more were the measure's own. Monaco reuses its absolutely placed line elements, so their DOM
 order changed from one boot to the next with the same lines on screen; the measure takes its lines
 top to bottom. And a virtualized list renders overscan rows its scroller hides, one more at 150
 percent than at 200 on the Activity tab; the measure leaves out text that paints nowhere inside its
-clipping ancestors.
+clipping ancestors. A text the clip cuts is marked, because the same drift that moves a list's
+rows can bring its last label a pixel into view at 125 percent where the poster shows none of it.
+Off a poster's scale such a node may be missing on either side; at a poster's scale it is held.
 
 `.github/workflows/demo-poster-gate.yml` runs it on Windows, macOS and Linux, two shards each.
 `release.yml`'s `poster-gate` job calls it after `demo-posters` has attached the zip, on the build
