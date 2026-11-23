@@ -1109,7 +1109,9 @@ export function reportSessionIdCaptureOutcome(
     }
     if (explainedBySignedOutCli(session, outcome.kind, login, idStore)) {
       // The local log still says so: the user's CLI needs a sign-in, and no event will.
-      console.warn(`[session-manager] ${pending.agent} gave no session ID for session ${sessionId.slice(0, 8)}: its CLI holds no login, so nothing is reported.`);
+      // A late id is one a sign-in after the window let through (task #1182).
+      const gave = outcome.kind === 'late' ? 'gave its session ID late' : 'gave no session ID';
+      console.warn(`[session-manager] ${pending.agent} ${gave} for session ${sessionId.slice(0, 8)}: its CLI held no login at launch, so nothing is reported.`);
       return;
     }
     const outcomeTags: Record<string, string> = outcome.kind === 'late'
