@@ -229,6 +229,19 @@ describe('kangentic_browser_* caller scoping', () => {
     await close();
   });
 
+  // A user loses the agent's warning that a passkey sign-in fails with NotAllowedError, so it
+  // retries a dead end instead of signing in another way.
+  it('tells the agent about passkeys on the two tools that load a page', async () => {
+    const { client, close } = await connect({ projectId: CALLER_PROJECT });
+    const { tools } = await client.listTools();
+    for (const name of ['kangentic_browser_open_pane', 'kangentic_browser_navigate']) {
+      const description = tools.find((tool) => tool.name === name)?.description ?? '';
+      expect(description, `${name} description`).toContain('passkey');
+      expect(description, `${name} description`).toContain('NotAllowedError');
+    }
+    await close();
+  });
+
   it('keeps the caller scope when an explicit taskId is passed', async () => {
     const { client, close } = await connect({ projectId: CALLER_PROJECT });
     await client.callTool({
