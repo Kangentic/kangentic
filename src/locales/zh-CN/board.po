@@ -50,7 +50,7 @@ msgstr "{count, plural, other {# 个工具运行中}}"
 
 #: src/renderer/components/board/CollapsedLane.tsx
 msgid "{count, plural, one {Expand {columnName} column, # task} other {Expand {columnName} column, # tasks}}"
-msgstr ""
+msgstr "{count, plural, other {展开 {columnName} 列，# 个任务}}"
 
 #: src/renderer/components/board/HostDegradedStrip.tsx
 #, fuzzy
@@ -193,11 +193,11 @@ msgstr "检测到 kangentic.json 有更改。是否应用更新后的看板配�
 
 #: src/renderer/components/board/CollapseColumnButton.tsx
 msgid "Collapse {columnName} column"
-msgstr ""
+msgstr "折叠 {columnName} 列"
 
 #: src/renderer/components/board/CollapseColumnButton.tsx
 msgid "Collapse column"
-msgstr ""
+msgstr "折叠列"
 
 #: src/renderer/components/board/AutomationsDisabledStrip.tsx
 msgid "Column automations don't run for this task. Resume them from the card's menu."
@@ -224,7 +224,7 @@ msgstr "删除任务"
 
 #: src/renderer/components/board/task-card-view.tsx
 msgid "Didn't start"
-msgstr ""
+msgstr "未能启动"
 
 #: src/renderer/components/board/BoardDialogs.tsx
 msgid "Dismiss"
@@ -253,7 +253,7 @@ msgstr "编辑 {columnName} 列"
 
 #: src/renderer/components/board/task-card-view.tsx
 msgid "Folder missing"
-msgstr ""
+msgstr "文件夹缺失"
 
 #: src/renderer/components/board/useActivityReasonTip.ts
 msgctxt "Agent status"
@@ -270,11 +270,11 @@ msgstr "如果恢复此任务，将根据分支的最新提交重新创建工作
 
 #: src/renderer/components/board/task-card-view.tsx
 msgid "Its prompt is too long for this agent to start with."
-msgstr ""
+msgstr "提示词太长，该智能体无法以此启动。"
 
 #: src/renderer/components/board/task-card-view.tsx
 msgid "Its worktree folder is gone. Resume makes it again from the branch."
-msgstr ""
+msgstr "工作树文件夹已不在。恢复时会从分支重新创建。"
 
 #: src/renderer/components/board/BoardDialogs.tsx
 msgid "Keep Working"
@@ -338,7 +338,7 @@ msgstr "已暂停"
 #: src/renderer/components/board/task-card-view.tsx
 msgctxt "Agent status"
 msgid "Paused while idle"
-msgstr ""
+msgstr "空闲时已暂停"
 
 #: src/renderer/components/board/task-card-view.tsx
 msgid "Queued..."
@@ -472,15 +472,15 @@ msgstr "任务已移动"
 
 #: src/renderer/components/board/task-card-view.tsx
 msgid "The agent never reported that it started."
-msgstr ""
+msgstr "智能体从未报告已启动。"
 
 #: src/renderer/components/board/task-card-view.tsx
 msgid "The folder this agent starts in is gone."
-msgstr ""
+msgstr "该智能体的启动文件夹已不在。"
 
 #: src/renderer/components/board/task-card-view.tsx
 msgid "The terminal could not start. Its window shows why."
-msgstr ""
+msgstr "终端无法启动。窗口中会显示原因。"
 
 #: src/renderer/components/board/activity-reason-text.ts
 #: src/renderer/components/board/useActivityReasonTip.ts
@@ -551,7 +551,7 @@ msgstr "工作流，{workflowCount, plural, other {# 个工作流}}，{runningWo
 
 #: src/renderer/components/board/task-card-view.tsx
 msgid "Worktree missing"
-msgstr ""
+msgstr "工作树缺失"
 
 #: src/renderer/components/board/SendToBacklogDialog.tsx
 msgid "You can move it back to the board later."

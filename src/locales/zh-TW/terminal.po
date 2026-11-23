@@ -98,7 +98,7 @@ msgstr "看板設定方案：此任務在各欄依循的代理、模型與推理
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
 msgid "Close find"
-msgstr ""
+msgstr "關閉尋找"
 
 #: src/renderer/components/terminal/TerminalPanel.tsx
 msgid "Collapse terminal panel"
@@ -154,7 +154,7 @@ msgstr "尋找"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
 msgid "Find in terminal"
-msgstr ""
+msgstr "在終端機中尋找"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
 #, fuzzy

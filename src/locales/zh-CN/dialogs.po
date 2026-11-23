@@ -9,11 +9,11 @@ msgstr ""
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid ", then "
-msgstr ""
+msgstr "，然后 "
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "! at the very start: not. The row runs only when the last line does not match."
-msgstr ""
+msgstr "行首的 ! 表示「非」。仅当最后一行不匹配时，该行才运行。"
 
 #: src/renderer/components/dialogs/task-detail/useAttachments.ts
 msgid "\"{fileName}\" is over the 10 MB limit."
@@ -165,15 +165,15 @@ msgstr "{oldPath} 到 {newPath}"
 
 #: src/renderer/components/dialogs/DescriptionLimitNote.tsx
 msgid "{overage, plural, one {# character over the limit} other {# characters over the limit}}"
-msgstr ""
+msgstr "{overage, plural, other {超出限制 # 个字符}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "{passedCount} passed"
-msgstr ""
+msgstr "{passedCount} 项已通过"
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "{patterns}: {rule}."
-msgstr ""
+msgstr "{patterns}：{rule}。"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 msgid "{percent}% of pixels changed"
@@ -191,7 +191,7 @@ msgstr "第 {position} 项，共 {total} 项"
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "{prFixes, plural, one {# thing on the PR to fix} other {# things on the PR to fix}}"
-msgstr ""
+msgstr "{prFixes, plural, other {拉取请求上有 # 项待修复}}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "{reason} Saved {savedBeforeFailing} before failing."
@@ -272,27 +272,27 @@ msgstr "{fileCount, plural, other {# 个文件中已查看 {viewedCount} 个}}"
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "*: any text. Use it anywhere. Without one, a pattern must match the whole line."
-msgstr ""
+msgstr "* 表示任意文本，可放在任何位置。没有 * 时，模式必须匹配整行。"
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "<0>Any case.</0> Punctuation is ignored too, so \"READY for review.\" matches."
-msgstr ""
+msgstr "<0>不区分大小写。</0>标点也会忽略，因此 “READY for review.” 也能匹配。"
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "<0>Any text.</0> Use it anywhere. Without one, a pattern must match the whole line."
-msgstr ""
+msgstr "<0>任意文本。</0>可放在任何位置。没有通配时，模式必须匹配整行。"
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "<0>Not.</0> At the very start, the row runs only when the last line does not match."
-msgstr ""
+msgstr "<0>非。</0>放在最开头时，仅当最后一行不匹配才运行。"
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "<0>One per line.</0> Runs on any plain line, never on a ! line."
-msgstr ""
+msgstr "<0>每行一条。</0>作用于普通行，从不作用于以 ! 开头的行。"
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "A folder inside your home on the host, such as ~/code/api"
-msgstr ""
+msgstr "主机上你主目录里的文件夹，例如 ~/code/api"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
 msgid "A narrow pane renders inline"
@@ -321,7 +321,7 @@ msgstr "添加列"
 
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgid "Add condition"
-msgstr ""
+msgstr "添加条件"
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #, fuzzy
@@ -374,7 +374,7 @@ msgstr "智能体"
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgctxt "condition group"
 msgid "Agent"
-msgstr ""
+msgstr "智能体"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
@@ -417,7 +417,7 @@ msgstr "此列中已使用。"
 
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgid "An agent checks your statement"
-msgstr ""
+msgstr "由智能体核对你的陈述"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 msgid "An alternate set of per-column agent, model, and effort settings"
@@ -425,7 +425,7 @@ msgstr "另一套按列设置的智能体、模型和推理强度配置"
 
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgid "An Automation agent reads this statement against the turn and answers yes or no, after the variables are filled in."
-msgstr ""
+msgstr "自动化智能体会在变量填入后，对照本轮内容判断该陈述，并回答是或否。"
 
 #: src/renderer/components/dialogs/IconPickerDialog.tsx
 msgid "Another column uses this icon"
@@ -433,7 +433,7 @@ msgstr "其他列已使用此图标"
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "Any case. Punctuation is ignored too."
-msgstr ""
+msgstr "不区分大小写。标点也会忽略。"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Approve each plan for you. Questions the agent asks still wait."
@@ -452,7 +452,7 @@ msgstr "已归档"
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
 msgctxt "completed task metric"
 msgid "Artifacts"
-msgstr ""
+msgstr "产物"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgctxt "plan approval"
@@ -510,11 +510,11 @@ msgstr "基础分支：{displayBranch}"
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
 msgid "Base commit: {baseCommitSha}"
-msgstr ""
+msgstr "基础提交：{baseCommitSha}"
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
 msgid "Base tag: {displayBranch}"
-msgstr ""
+msgstr "基础标签：{displayBranch}"
 
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
 msgid "Base: {baseBranch}"
@@ -566,7 +566,7 @@ msgstr "分支"
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "Browse"
-msgstr ""
+msgstr "浏览"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 msgctxt "column header"
@@ -632,11 +632,11 @@ msgstr "更改已在单独的窗口中打开"
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
 msgid "Checking <0>{trimmedQuery}</0>..."
-msgstr ""
+msgstr "正在检查 <0>{trimmedQuery}</0>..."
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "Choose"
-msgstr ""
+msgstr "选择"
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #, fuzzy
@@ -684,7 +684,7 @@ msgstr "关闭下拉列表"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Close find"
-msgstr ""
+msgstr "关闭查找"
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
 msgid "Closing now will discard this new task and its unsaved changes."
@@ -832,11 +832,11 @@ msgstr "确认"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "Conflicts with {base}"
-msgstr ""
+msgstr "与 {base} 冲突"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "Conflicts with the base branch"
-msgstr ""
+msgstr "与基础分支冲突"
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #, fuzzy
@@ -988,7 +988,7 @@ msgstr "无法保存任务"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 msgid "Couldn't send the failed checks"
-msgstr ""
+msgstr "无法发送失败的检查"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
 msgid "Couldn't send to backlog"
@@ -1105,7 +1105,7 @@ msgstr "差异范围"
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "Directory"
-msgstr ""
+msgstr "目录"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
@@ -1223,7 +1223,7 @@ msgstr "已结束"
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
 msgid "Enter"
-msgstr ""
+msgstr "Enter"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 msgctxt "call outcome"
@@ -1233,15 +1233,15 @@ msgstr "错误"
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgctxt "condition kind"
 msgid "Evaluation"
-msgstr ""
+msgstr "评估"
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "Examples"
-msgstr ""
+msgstr "示例"
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "Examples: {examples}"
-msgstr ""
+msgstr "示例：{examples}"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
@@ -1308,7 +1308,7 @@ msgstr "筛选文件…"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Find in terminal"
-msgstr ""
+msgstr "在终端中查找"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 msgid "Flat list"
@@ -1358,7 +1358,7 @@ msgstr "交接链"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 msgid "Held for the next agent"
-msgstr ""
+msgstr "留给下一个智能体"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Hex color value"
@@ -1394,7 +1394,7 @@ msgstr "历史记录：{historyFileName}"
 
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgid "How Evaluation works"
-msgstr ""
+msgstr "评估如何工作"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 msgid "How many times it can run on a task."
@@ -1439,7 +1439,7 @@ msgstr "图片已按较低质量发送"
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "In a git repository, each task gets its own worktree on the host. Otherwise tasks share the folder."
-msgstr ""
+msgstr "在 git 仓库中，每个任务在主机上有自己的工作树。否则任务共用该文件夹。"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesEmpty.tsx
 msgid "Indexing is off, so no commits are linked"
@@ -1502,7 +1502,7 @@ msgstr "标签"
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgctxt "condition kind"
 msgid "Labels"
-msgstr ""
+msgstr "标签"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
 msgid "Last message"
@@ -1532,7 +1532,7 @@ msgstr "正在加载图标"
 #: src/renderer/components/dialogs/BranchPicker.tsx
 msgctxt "a branch only this machine has"
 msgid "local"
-msgstr ""
+msgstr "本地"
 
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
 msgid "Locate Folder..."
@@ -1622,7 +1622,7 @@ msgstr "所有配置方案共享名称、描述、颜色和图标。切换到「
 
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgid "Needs an Automation agent."
-msgstr ""
+msgstr "需要自动化智能体。"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 msgid "Needs both images"
@@ -1728,7 +1728,7 @@ msgstr "无文件更改"
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "No folders here."
-msgstr ""
+msgstr "这里没有文件夹。"
 
 #: src/renderer/components/dialogs/FontCombobox.tsx
 msgid "No fonts match \"{typedFilter}\""
@@ -1805,7 +1805,7 @@ msgstr "此仓库没有可用的 PR 解析器。"
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
 msgid "Not a branch, tag or commit SHA"
-msgstr ""
+msgstr "不是分支、标签或提交 SHA"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 msgid "Not image data"
@@ -1845,7 +1845,7 @@ msgstr "没有可供搜索的依据"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Nothing to update from"
-msgstr ""
+msgstr "没有可更新的来源"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
 msgid "On enter"
@@ -1871,7 +1871,7 @@ msgstr "逐个执行"
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "One pattern per line. Runs on any plain line, never on a ! line."
-msgstr ""
+msgstr "每行一条模式。作用于普通行，从不作用于以 ! 开头的行。"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 msgid "Only one agent CLI detected - install another to choose"
@@ -1879,7 +1879,7 @@ msgstr "仅检测到一个智能体 CLI，请安装其他 CLI 以供选择"
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "Only the first folders are shown. Type the rest in the Directory field."
-msgstr ""
+msgstr "只显示靠前的文件夹。其余请在「目录」中输入。"
 
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 msgid "Only the label changes. Tasks already using this profile stay on it."
@@ -1892,7 +1892,7 @@ msgstr "开放"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "Open {name} in browser"
-msgstr ""
+msgstr "在浏览器中打开 {name}"
 
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
 msgid "Open {shortHash} on {providerName}"
@@ -1900,7 +1900,7 @@ msgstr "在 {providerName} 上打开 {shortHash}"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "Open all checks in browser"
-msgstr ""
+msgstr "在浏览器中打开全部检查"
 
 #: src/renderer/components/dialogs/Combobox.tsx
 #: src/renderer/components/dialogs/FontCombobox.tsx
@@ -1947,7 +1947,7 @@ msgstr "打开看板以更改此设置"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "Open the pull request in browser"
-msgstr ""
+msgstr "在浏览器中打开拉取请求"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Open worktree"
@@ -1995,7 +1995,7 @@ msgstr "页面已保留"
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "Path"
-msgstr ""
+msgstr "路径"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 msgid "Path copied"
@@ -2003,11 +2003,11 @@ msgstr "已复制路径"
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "Patterns"
-msgstr ""
+msgstr "模式"
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "Patterns. {plain}"
-msgstr ""
+msgstr "模式。{plain}"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Pause session"
@@ -2015,7 +2015,7 @@ msgstr "暂停会话"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
 msgid "Paused while idle."
-msgstr ""
+msgstr "空闲时已暂停。"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
 msgid "Pausing agent..."
@@ -2046,7 +2046,7 @@ msgstr "权限"
 
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgid "Pick levels..."
-msgstr ""
+msgstr "选择级别..."
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 msgid "Pinned for the whole task, ignoring column settings."
@@ -2104,7 +2104,7 @@ msgstr "优先级"
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgctxt "condition kind"
 msgid "Priority"
-msgstr ""
+msgstr "优先级"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #: src/renderer/components/dialogs/board-manager/ProfileBar.tsx
@@ -2127,12 +2127,12 @@ msgstr "项目已重新定位"
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgctxt "condition kind"
 msgid "Prompt"
-msgstr ""
+msgstr "提示词"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailEditForm.tsx
 msgid "Pull request"
-msgstr ""
+msgstr "拉取请求"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
 msgctxt "completed task metric"
@@ -2155,7 +2155,7 @@ msgstr "已运行"
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "Read once each time the agent ends its turn, from its final message."
-msgstr ""
+msgstr "每次智能体结束轮次时，从其最后一条消息读取一次。"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Rebase or merge it in the session instead."
@@ -2192,7 +2192,7 @@ msgstr "删除列「{removeTargetName}」"
 
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgid "Remove condition"
-msgstr ""
+msgstr "移除条件"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 msgid "Removed profile"
@@ -2218,7 +2218,7 @@ msgstr "已重命名"
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgctxt "condition kind"
 msgid "Reply"
-msgstr ""
+msgstr "回复"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Reset"
@@ -2295,7 +2295,7 @@ msgstr "流转路径"
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "Rules"
-msgstr ""
+msgstr "规则"
 
 #: src/renderer/components/dialogs/WorktreePlacementControl.tsx
 msgid "Run in a new worktree"
@@ -2317,11 +2317,11 @@ msgstr "运行"
 
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgid "Runs for every task."
-msgstr ""
+msgstr "对每个任务都运行。"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 msgid "Runs only when all match."
-msgstr ""
+msgstr "仅当全部匹配时运行。"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 msgctxt "column header"
@@ -2375,7 +2375,7 @@ msgstr "搜索任务…"
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
 msgid "Search, or type a tag or commit"
-msgstr ""
+msgstr "搜索，或输入标签或提交"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 msgid "Select a commit to see its changes"
@@ -2437,7 +2437,7 @@ msgstr "会话不会在 {terminalName} 列中运行。"
 
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgid "Set up"
-msgstr ""
+msgstr "设置"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Share the task's conversation with the other columns."
@@ -2589,7 +2589,7 @@ msgstr "当你移动任务或任务离开「已完成」时重新计数；由智
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
 msgid "Starts with a dash, so git would read it as an option"
-msgstr ""
+msgstr "以短横线开头，git 会把它当成选项"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 msgctxt "column header"
@@ -2598,7 +2598,7 @@ msgstr "状态"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
 msgid "Stays paused until resumed."
-msgstr ""
+msgstr "会保持暂停，直到被恢复。"
 
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
 msgctxt "leftover section"
@@ -2658,7 +2658,7 @@ msgstr "切换到树视图"
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgctxt "condition group"
 msgid "Task"
-msgstr ""
+msgstr "任务"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
 msgid "Task archived"
@@ -2705,11 +2705,11 @@ msgstr "文本匹配"
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgctxt "condition group"
 msgid "Text match"
-msgstr ""
+msgstr "文本匹配"
 
 #: src/renderer/components/dialogs/board-manager/PatternLinesField.tsx
 msgid "Text match, line {lineNumber}"
-msgstr ""
+msgstr "文本匹配，第 {lineNumber} 行"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 msgid "The agent CLI this task runs on"
@@ -2717,27 +2717,27 @@ msgstr "此任务运行所用的智能体 CLI"
 
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgid "The agent's last line"
-msgstr ""
+msgstr "智能体的最后一行"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "The base is the commit {baseLabel}, which does not move."
-msgstr ""
+msgstr "基础是提交 {baseLabel}，它不会移动。"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "The base is the commit {shortBase}, which does not move"
-msgstr ""
+msgstr "基础是提交 {shortBase}，它不会移动"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "The base is the tag {baseLabel}, which does not move."
-msgstr ""
+msgstr "基础是标签 {baseLabel}，它不会移动。"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "The base is the tag {shortBase}, which does not move"
-msgstr ""
+msgstr "基础是标签 {shortBase}，它不会移动"
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
 msgid "The description is too long to start an agent with."
-msgstr ""
+msgstr "描述太长，无法用它启动智能体。"
 
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
 msgid "The folder could not be used."
@@ -2753,7 +2753,7 @@ msgstr "新智能体会接续上一个智能体的对话，而不是从任务描
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 msgid "The next agent on this task gets the failed checks in its first message."
-msgstr ""
+msgstr "该任务的下一个智能体会在第一条消息中收到失败的检查。"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "The PR host returned an error."
@@ -2769,11 +2769,11 @@ msgstr "无法读取任务的更改。"
 
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgid "The task's labels"
-msgstr ""
+msgstr "任务的标签"
 
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgid "The task's priority level"
-msgstr ""
+msgstr "任务的优先级"
 
 #: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 msgid "The window could not be created."
@@ -2810,7 +2810,7 @@ msgstr "此计算机"
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "This directory is not on the host."
-msgstr ""
+msgstr "该目录不在主机上。"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 msgid "This is handled by the column's settings now. Remove it to use them."
@@ -2818,7 +2818,7 @@ msgstr "此项现由列的设置处理。移除此项即可使用列设置。"
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
 msgid "This project is not a git repository"
-msgstr ""
+msgstr "此项目不是 git 仓库"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "This task has no branch, commit or PR number yet."
@@ -2914,7 +2914,7 @@ msgstr "请稍后重试。"
 
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgid "Turn end only"
-msgstr ""
+msgstr "仅轮次结束"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Turn on \"Start an agent here\" in the Agent section to enable {label}."
@@ -2931,7 +2931,7 @@ msgstr "类型"
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
 msgid "Type a branch, tag or commit"
-msgstr ""
+msgstr "输入分支、标签或提交"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 msgid "Under 0.1% of pixels changed"
@@ -2994,7 +2994,7 @@ msgstr "用量"
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
 msgid "Use <0>{trimmedQuery}</0>"
-msgstr ""
+msgstr "使用 <0>{trimmedQuery}</0>"
 
 #: src/renderer/components/dialogs/ReleaseNotesDialog.tsx
 msgid "Version {updateVersion} is ready to install"
@@ -3034,7 +3034,7 @@ msgstr "运行的内容。每种类型有各自的字段。"
 
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgid "What you sent this turn"
-msgstr ""
+msgstr "你本轮发送的内容"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "When a task enters this column and the assigned agent differs from the one that ran in the previous column, Kangentic injects the previous session's transcript as the first message, so the new agent continues with full context instead of starting from the task description alone."

@@ -9,11 +9,11 @@ msgstr ""
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid ", then "
-msgstr ""
+msgstr "，然後 "
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "! at the very start: not. The row runs only when the last line does not match."
-msgstr ""
+msgstr "行首的 ! 表示「非」。僅當最後一行不符合時，該列才執行。"
 
 #: src/renderer/components/dialogs/task-detail/useAttachments.ts
 msgid "\"{fileName}\" is over the 10 MB limit."
@@ -165,15 +165,15 @@ msgstr "{oldPath} 改為 {newPath}"
 
 #: src/renderer/components/dialogs/DescriptionLimitNote.tsx
 msgid "{overage, plural, one {# character over the limit} other {# characters over the limit}}"
-msgstr ""
+msgstr "{overage, plural, other {超出限制 # 個字元}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "{passedCount} passed"
-msgstr ""
+msgstr "{passedCount} 項已通過"
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "{patterns}: {rule}."
-msgstr ""
+msgstr "{patterns}：{rule}。"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 msgid "{percent}% of pixels changed"
@@ -191,7 +191,7 @@ msgstr "第 {position} 個，共 {total} 個"
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "{prFixes, plural, one {# thing on the PR to fix} other {# things on the PR to fix}}"
-msgstr ""
+msgstr "{prFixes, plural, other {提取要求上有 # 項待修復}}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "{reason} Saved {savedBeforeFailing} before failing."
@@ -272,27 +272,27 @@ msgstr "{fileCount, plural, other {已檢視 {viewedCount} / # 個檔案}}"
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "*: any text. Use it anywhere. Without one, a pattern must match the whole line."
-msgstr ""
+msgstr "* 表示任意文字，可放在任何位置。沒有 * 時，模式必須符合整行。"
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "<0>Any case.</0> Punctuation is ignored too, so \"READY for review.\" matches."
-msgstr ""
+msgstr "<0>不區分大小寫。</0>標點也會忽略，因此 “READY for review.” 也能符合。"
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "<0>Any text.</0> Use it anywhere. Without one, a pattern must match the whole line."
-msgstr ""
+msgstr "<0>任意文字。</0>可放在任何位置。沒有萬用字元時，模式必須符合整行。"
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "<0>Not.</0> At the very start, the row runs only when the last line does not match."
-msgstr ""
+msgstr "<0>非。</0>放在最開頭時，僅當最後一行不符合才執行。"
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "<0>One per line.</0> Runs on any plain line, never on a ! line."
-msgstr ""
+msgstr "<0>每行一條。</0>作用於普通列，從不作用於以 ! 開頭的列。"
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "A folder inside your home on the host, such as ~/code/api"
-msgstr ""
+msgstr "主機上你家目錄裡的資料夾，例如 ~/code/api"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
 msgid "A narrow pane renders inline"
@@ -321,7 +321,7 @@ msgstr "新增欄"
 
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgid "Add condition"
-msgstr ""
+msgstr "新增條件"
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #, fuzzy
@@ -374,7 +374,7 @@ msgstr "代理"
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgctxt "condition group"
 msgid "Agent"
-msgstr ""
+msgstr "代理"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
@@ -417,7 +417,7 @@ msgstr "此欄已使用。"
 
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgid "An agent checks your statement"
-msgstr ""
+msgstr "由代理核對你的陳述"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 msgid "An alternate set of per-column agent, model, and effort settings"
@@ -425,7 +425,7 @@ msgstr "另一組依欄套用的代理、模型與投入程度設定"
 
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgid "An Automation agent reads this statement against the turn and answers yes or no, after the variables are filled in."
-msgstr ""
+msgstr "自動化代理會在變數填入後，對照本輪內容判斷該陳述，並回答是或否。"
 
 #: src/renderer/components/dialogs/IconPickerDialog.tsx
 msgid "Another column uses this icon"
@@ -433,7 +433,7 @@ msgstr "其他欄已使用此圖示"
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "Any case. Punctuation is ignored too."
-msgstr ""
+msgstr "不區分大小寫。標點也會忽略。"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Approve each plan for you. Questions the agent asks still wait."
@@ -452,7 +452,7 @@ msgstr "已封存"
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
 msgctxt "completed task metric"
 msgid "Artifacts"
-msgstr ""
+msgstr "產物"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgctxt "plan approval"
@@ -510,11 +510,11 @@ msgstr "基礎分支：{displayBranch}"
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
 msgid "Base commit: {baseCommitSha}"
-msgstr ""
+msgstr "基礎提交：{baseCommitSha}"
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
 msgid "Base tag: {displayBranch}"
-msgstr ""
+msgstr "基礎標籤：{displayBranch}"
 
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
 msgid "Base: {baseBranch}"
@@ -566,7 +566,7 @@ msgstr "分支"
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "Browse"
-msgstr ""
+msgstr "瀏覽"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 msgctxt "column header"
@@ -632,11 +632,11 @@ msgstr "變更已在獨立視窗中開啟"
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
 msgid "Checking <0>{trimmedQuery}</0>..."
-msgstr ""
+msgstr "正在檢查 <0>{trimmedQuery}</0>..."
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "Choose"
-msgstr ""
+msgstr "選擇"
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #, fuzzy
@@ -684,7 +684,7 @@ msgstr "關閉下拉式選單"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Close find"
-msgstr ""
+msgstr "關閉尋找"
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
 msgid "Closing now will discard this new task and its unsaved changes."
@@ -832,11 +832,11 @@ msgstr "確認"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "Conflicts with {base}"
-msgstr ""
+msgstr "與 {base} 衝突"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "Conflicts with the base branch"
-msgstr ""
+msgstr "與基礎分支衝突"
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #, fuzzy
@@ -988,7 +988,7 @@ msgstr "無法儲存任務"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 msgid "Couldn't send the failed checks"
-msgstr ""
+msgstr "無法傳送失敗的檢查"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
 msgid "Couldn't send to backlog"
@@ -1105,7 +1105,7 @@ msgstr "差異範圍"
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "Directory"
-msgstr ""
+msgstr "目錄"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
@@ -1223,7 +1223,7 @@ msgstr "已結束"
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
 msgid "Enter"
-msgstr ""
+msgstr "Enter"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 msgctxt "call outcome"
@@ -1233,15 +1233,15 @@ msgstr "錯誤"
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgctxt "condition kind"
 msgid "Evaluation"
-msgstr ""
+msgstr "評估"
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "Examples"
-msgstr ""
+msgstr "範例"
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "Examples: {examples}"
-msgstr ""
+msgstr "範例：{examples}"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
@@ -1308,7 +1308,7 @@ msgstr "篩選檔案..."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Find in terminal"
-msgstr ""
+msgstr "在終端機中尋找"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 msgid "Flat list"
@@ -1358,7 +1358,7 @@ msgstr "交接鏈"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 msgid "Held for the next agent"
-msgstr ""
+msgstr "留給下一個代理"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Hex color value"
@@ -1394,7 +1394,7 @@ msgstr "歷程記錄：{historyFileName}"
 
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgid "How Evaluation works"
-msgstr ""
+msgstr "評估如何運作"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 msgid "How many times it can run on a task."
@@ -1439,7 +1439,7 @@ msgstr "已以較低品質傳送圖片"
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "In a git repository, each task gets its own worktree on the host. Otherwise tasks share the folder."
-msgstr ""
+msgstr "在 git 存放庫中，每個任務在主機上有自己的工作樹。否則任務共用該資料夾。"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesEmpty.tsx
 msgid "Indexing is off, so no commits are linked"
@@ -1502,7 +1502,7 @@ msgstr "標籤"
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgctxt "condition kind"
 msgid "Labels"
-msgstr ""
+msgstr "標籤"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
 msgid "Last message"
@@ -1532,7 +1532,7 @@ msgstr "正在載入圖示"
 #: src/renderer/components/dialogs/BranchPicker.tsx
 msgctxt "a branch only this machine has"
 msgid "local"
-msgstr ""
+msgstr "本機"
 
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
 msgid "Locate Folder..."
@@ -1622,7 +1622,7 @@ msgstr "名稱、描述、色彩和圖示由所有設定檔共用。請切換至
 
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgid "Needs an Automation agent."
-msgstr ""
+msgstr "需要自動化代理。"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 msgid "Needs both images"
@@ -1728,7 +1728,7 @@ msgstr "沒有變更的檔案"
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "No folders here."
-msgstr ""
+msgstr "這裡沒有資料夾。"
 
 #: src/renderer/components/dialogs/FontCombobox.tsx
 msgid "No fonts match \"{typedFilter}\""
@@ -1805,7 +1805,7 @@ msgstr "此存放庫沒有可用的項目。"
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
 msgid "Not a branch, tag or commit SHA"
-msgstr ""
+msgstr "不是分支、標籤或提交 SHA"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 msgid "Not image data"
@@ -1845,7 +1845,7 @@ msgstr "沒有可搜尋的依據"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Nothing to update from"
-msgstr ""
+msgstr "沒有可更新的來源"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
 msgid "On enter"
@@ -1871,7 +1871,7 @@ msgstr "一次一個"
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "One pattern per line. Runs on any plain line, never on a ! line."
-msgstr ""
+msgstr "每行一條模式。作用於普通列，從不作用於以 ! 開頭的列。"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 msgid "Only one agent CLI detected - install another to choose"
@@ -1879,7 +1879,7 @@ msgstr "僅偵測到一個代理 CLI，請再安裝一個以供選擇"
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "Only the first folders are shown. Type the rest in the Directory field."
-msgstr ""
+msgstr "只顯示靠前的資料夾。其餘請在「目錄」中輸入。"
 
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 msgid "Only the label changes. Tasks already using this profile stay on it."
@@ -1892,7 +1892,7 @@ msgstr "開啟"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "Open {name} in browser"
-msgstr ""
+msgstr "在瀏覽器中開啟 {name}"
 
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
 msgid "Open {shortHash} on {providerName}"
@@ -1900,7 +1900,7 @@ msgstr "在 {providerName} 上開啟 {shortHash}"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "Open all checks in browser"
-msgstr ""
+msgstr "在瀏覽器中開啟全部檢查"
 
 #: src/renderer/components/dialogs/Combobox.tsx
 #: src/renderer/components/dialogs/FontCombobox.tsx
@@ -1947,7 +1947,7 @@ msgstr "開啟看板以變更此設定"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "Open the pull request in browser"
-msgstr ""
+msgstr "在瀏覽器中開啟提取要求"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Open worktree"
@@ -1995,7 +1995,7 @@ msgstr "頁面已保留"
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "Path"
-msgstr ""
+msgstr "路徑"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 msgid "Path copied"
@@ -2003,11 +2003,11 @@ msgstr "已複製路徑"
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "Patterns"
-msgstr ""
+msgstr "模式"
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "Patterns. {plain}"
-msgstr ""
+msgstr "模式。{plain}"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Pause session"
@@ -2015,7 +2015,7 @@ msgstr "暫停工作階段"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
 msgid "Paused while idle."
-msgstr ""
+msgstr "閒置時已暫停。"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
 msgid "Pausing agent..."
@@ -2046,7 +2046,7 @@ msgstr "權限"
 
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgid "Pick levels..."
-msgstr ""
+msgstr "選擇等級..."
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 msgid "Pinned for the whole task, ignoring column settings."
@@ -2104,7 +2104,7 @@ msgstr "優先順序"
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgctxt "condition kind"
 msgid "Priority"
-msgstr ""
+msgstr "優先級"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #: src/renderer/components/dialogs/board-manager/ProfileBar.tsx
@@ -2127,12 +2127,12 @@ msgstr "專案已重新定位"
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgctxt "condition kind"
 msgid "Prompt"
-msgstr ""
+msgstr "提示詞"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailEditForm.tsx
 msgid "Pull request"
-msgstr ""
+msgstr "提取要求"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
 msgctxt "completed task metric"
@@ -2155,7 +2155,7 @@ msgstr "已執行"
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "Read once each time the agent ends its turn, from its final message."
-msgstr ""
+msgstr "每次代理結束輪次時，從其最後一則訊息讀取一次。"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Rebase or merge it in the session instead."
@@ -2192,7 +2192,7 @@ msgstr "移除欄「{removeTargetName}」"
 
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgid "Remove condition"
-msgstr ""
+msgstr "移除條件"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 msgid "Removed profile"
@@ -2218,7 +2218,7 @@ msgstr "已重新命名"
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgctxt "condition kind"
 msgid "Reply"
-msgstr ""
+msgstr "回覆"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Reset"
@@ -2295,7 +2295,7 @@ msgstr "路線"
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "Rules"
-msgstr ""
+msgstr "規則"
 
 #: src/renderer/components/dialogs/WorktreePlacementControl.tsx
 msgid "Run in a new worktree"
@@ -2317,11 +2317,11 @@ msgstr "執行"
 
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgid "Runs for every task."
-msgstr ""
+msgstr "對每個任務都執行。"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 msgid "Runs only when all match."
-msgstr ""
+msgstr "僅當全部符合時執行。"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 msgctxt "column header"
@@ -2375,7 +2375,7 @@ msgstr "搜尋任務..."
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
 msgid "Search, or type a tag or commit"
-msgstr ""
+msgstr "搜尋，或輸入標籤或提交"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 msgid "Select a commit to see its changes"
@@ -2437,7 +2437,7 @@ msgstr "工作階段不會在 {terminalName} 欄中執行。"
 
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgid "Set up"
-msgstr ""
+msgstr "設定"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Share the task's conversation with the other columns."
@@ -2589,7 +2589,7 @@ msgstr "你移動任務或任務離開「已完成」時會重新計算；由代
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
 msgid "Starts with a dash, so git would read it as an option"
-msgstr ""
+msgstr "以短橫線開頭，git 會把它當成選項"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 msgctxt "column header"
@@ -2598,7 +2598,7 @@ msgstr "狀態"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
 msgid "Stays paused until resumed."
-msgstr ""
+msgstr "會保持暫停，直到被恢復。"
 
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
 msgctxt "leftover section"
@@ -2658,7 +2658,7 @@ msgstr "切換為樹狀檢視"
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgctxt "condition group"
 msgid "Task"
-msgstr ""
+msgstr "任務"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
 msgid "Task archived"
@@ -2705,11 +2705,11 @@ msgstr "文字比對"
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgctxt "condition group"
 msgid "Text match"
-msgstr ""
+msgstr "文字符合"
 
 #: src/renderer/components/dialogs/board-manager/PatternLinesField.tsx
 msgid "Text match, line {lineNumber}"
-msgstr ""
+msgstr "文字符合，第 {lineNumber} 列"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 msgid "The agent CLI this task runs on"
@@ -2717,27 +2717,27 @@ msgstr "此任務使用的代理 CLI"
 
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgid "The agent's last line"
-msgstr ""
+msgstr "代理的最後一列"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "The base is the commit {baseLabel}, which does not move."
-msgstr ""
+msgstr "基礎是提交 {baseLabel}，它不會移動。"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "The base is the commit {shortBase}, which does not move"
-msgstr ""
+msgstr "基礎是提交 {shortBase}，它不會移動"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "The base is the tag {baseLabel}, which does not move."
-msgstr ""
+msgstr "基礎是標籤 {baseLabel}，它不會移動。"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "The base is the tag {shortBase}, which does not move"
-msgstr ""
+msgstr "基礎是標籤 {shortBase}，它不會移動"
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
 msgid "The description is too long to start an agent with."
-msgstr ""
+msgstr "描述太長，無法用它啟動代理。"
 
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
 msgid "The folder could not be used."
@@ -2753,7 +2753,7 @@ msgstr "新的代理會接續前一個代理的對話，而不是從任務描述
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 msgid "The next agent on this task gets the failed checks in its first message."
-msgstr ""
+msgstr "該任務的下一個代理會在第一則訊息中收到失敗的檢查。"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "The PR host returned an error."
@@ -2769,11 +2769,11 @@ msgstr "無法讀取此任務的變更。"
 
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgid "The task's labels"
-msgstr ""
+msgstr "任務的標籤"
 
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgid "The task's priority level"
-msgstr ""
+msgstr "任務的優先級"
 
 #: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 msgid "The window could not be created."
@@ -2810,7 +2810,7 @@ msgstr "這台電腦"
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "This directory is not on the host."
-msgstr ""
+msgstr "該目錄不在主機上。"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 msgid "This is handled by the column's settings now. Remove it to use them."
@@ -2818,7 +2818,7 @@ msgstr "此項目現由欄的設定處理。移除它即可改用這些設定。
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
 msgid "This project is not a git repository"
-msgstr ""
+msgstr "此專案不是 git 存放庫"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "This task has no branch, commit or PR number yet."
@@ -2914,7 +2914,7 @@ msgstr "請稍後再試。"
 
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgid "Turn end only"
-msgstr ""
+msgstr "僅輪次結束"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Turn on \"Start an agent here\" in the Agent section to enable {label}."
@@ -2931,7 +2931,7 @@ msgstr "類型"
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
 msgid "Type a branch, tag or commit"
-msgstr ""
+msgstr "輸入分支、標籤或提交"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 msgid "Under 0.1% of pixels changed"
@@ -2994,7 +2994,7 @@ msgstr "使用量"
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
 msgid "Use <0>{trimmedQuery}</0>"
-msgstr ""
+msgstr "使用 <0>{trimmedQuery}</0>"
 
 #: src/renderer/components/dialogs/ReleaseNotesDialog.tsx
 msgid "Version {updateVersion} is ready to install"
@@ -3034,7 +3034,7 @@ msgstr "要執行的內容。每種類型有各自的欄位。"
 
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgid "What you sent this turn"
-msgstr ""
+msgstr "你本輪傳送的內容"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "When a task enters this column and the assigned agent differs from the one that ran in the previous column, Kangentic injects the previous session's transcript as the first message, so the new agent continues with full context instead of starting from the task description alone."

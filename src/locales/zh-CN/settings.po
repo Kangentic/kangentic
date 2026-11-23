@@ -33,7 +33,7 @@ msgstr "{blurb}。打开文档页面。"
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "{clearCount, plural, one {Stop the running agents of this project and delete its boards, tasks and history for good? Its files on the host stay.} other {Stop the running agents of these # projects and delete their boards, tasks and history for good? Their files on the host stay.}}"
-msgstr ""
+msgstr "{clearCount, plural, other {停止这 # 个项目正在运行的智能体，并永久删除其看板、任务和历史？主机上的文件会保留。}}"
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
 msgid "{comboName} is already in use by your OS or another app. Pick another."
@@ -114,7 +114,7 @@ msgstr "{eventName}提示"
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "{hostname} now presents a different key."
-msgstr ""
+msgstr "{hostname} 现在出示了不同的密钥。"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 msgid "{hours, plural, one {# hr left} other {# hr left}}"
@@ -126,7 +126,7 @@ msgstr "{label}，始终开启"
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "{liveSessions, plural, one {# terminal running} other {# terminals running}}"
-msgstr ""
+msgstr "{liveSessions, plural, other {# 个终端运行中}}"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 msgid "{minutes, plural, one {# min left} other {# min left}}"
@@ -181,7 +181,7 @@ msgstr "调用失败"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "A column with no tasks shrinks to the width of its name and opens again when a task arrives."
-msgstr ""
+msgstr "无任务的列收成列名宽，有任务时再展开。"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "A floating panel of each session's activity state and last transitions, also written to .kangentic/debug."
@@ -189,7 +189,7 @@ msgstr "浮动面板显示每个会话的活动状态和最近转换，同时写
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "A key with a passphrase must be in your SSH agent."
-msgstr ""
+msgstr "带口令的密钥必须已在 SSH agent 中。"
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
@@ -207,7 +207,7 @@ msgstr "私钥文件；Kangentic 会在自己的文件夹中保留一份副本"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
 msgid "A random id for each mobile relay connection attempt, which the relay's own log also keeps for about a week"
-msgstr ""
+msgstr "每次移动端中继连接尝试的随机 id，中继自身日志也会保留约一周"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "A relay you run"
@@ -475,7 +475,7 @@ msgstr "自动"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Auto-apply changes"
-msgstr ""
+msgstr "自动应用更改"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Auto-cleanup"
@@ -543,7 +543,7 @@ msgstr "基本准确度"
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Before"
-msgstr ""
+msgstr "之前"
 
 #: src/renderer/components/settings/settings-tabs.ts
 msgid "Behavior"
@@ -668,7 +668,7 @@ msgstr "选择智能体"
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Choose…"
-msgstr ""
+msgstr "选择…"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Claude 5h / weekly quota bars"
@@ -701,7 +701,7 @@ msgstr "点击任务窗口外的空白处即可关闭。控件、任务卡片和
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Click opens links in"
-msgstr ""
+msgstr "单击打开链接于"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Click, type and drag. Off is read-only."
@@ -1026,7 +1026,7 @@ msgstr "默认基础分支"
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
 msgctxt "click opens links in"
 msgid "Default browser"
-msgstr ""
+msgstr "默认浏览器"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Default diff scope"
@@ -1140,7 +1140,7 @@ msgstr "每个智能体会话会获得一个本地 MCP 服务器，并自行发�
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgctxt "host row action"
 msgid "Edit"
-msgstr ""
+msgstr "编辑"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
 msgid "Editors"
@@ -1242,7 +1242,7 @@ msgstr "在智能体启动前复制到每个新工作树中的文件、文件夹
 #: src/renderer/components/settings/tabs/BoardTab.tsx
 msgctxt "column width"
 msgid "Fill"
-msgstr ""
+msgstr "铺满"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Finds your work by meaning and answers questions."
@@ -1289,7 +1289,7 @@ msgstr "字号"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
 msgid "For a handled error, its type, a fixed failure code and, for an interface crash, the names of the components it was in (never the error's own text)"
-msgstr ""
+msgstr "已处理错误的类型、固定失败码；界面崩溃时还会有所在组件名（从不包含错误原文）"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
 msgid "Foreground"
@@ -1467,7 +1467,7 @@ msgstr "如何安装和配对"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "How wide a column with tasks is, or Fill to share the window's width between the columns."
-msgstr ""
+msgstr "有任务的列宽。选「铺满」则各列均分窗口。"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
 #, fuzzy
@@ -1544,7 +1544,7 @@ msgstr "Kangentic 浏览器"
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
 msgctxt "click opens links in"
 msgid "Kangentic browser"
-msgstr ""
+msgstr "Kangentic 浏览器"
 
 #: src/renderer/components/settings/AppSettingsPanel.tsx
 msgid "Kangentic could not write its settings file."
@@ -1583,11 +1583,11 @@ msgstr "Kangentic 运营的中继"
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/BoardTab.tsx
 msgid "kangentic.json"
-msgstr ""
+msgstr "kangentic.json"
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Keep"
-msgstr ""
+msgstr "保留"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Keep capturing briefly after release so the last word is not clipped."
@@ -1599,7 +1599,7 @@ msgstr "继续编辑"
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Keep signing in the way the host does now"
-msgstr ""
+msgstr "继续用主机现在的方式登录"
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
@@ -1703,7 +1703,7 @@ msgstr "链接 node_modules"
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
 msgctxt "settings card"
 msgid "Links"
-msgstr ""
+msgstr "链接"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1871,7 +1871,7 @@ msgstr "新账户"
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "New host key"
-msgstr ""
+msgstr "新主机密钥"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
 #, fuzzy
@@ -1927,7 +1927,7 @@ msgstr "无"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 msgid "Not checked"
-msgstr ""
+msgstr "未检查"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 msgid "Not found"
@@ -1935,7 +1935,7 @@ msgstr "未找到"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 msgid "Not on hosts yet"
-msgstr ""
+msgstr "尚未在主机上"
 
 #: src/renderer/components/settings/keybindings/KeyCombo.tsx
 #, fuzzy
@@ -1968,7 +1968,7 @@ msgstr "通知"
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Now"
-msgstr ""
+msgstr "现在"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
 msgctxt "close on outside click"
@@ -2088,7 +2088,7 @@ msgstr "私钥路径"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Pause an agent waiting on you this long until you open or move its task."
-msgstr ""
+msgstr "智能体等你时，过这么久才暂停，直到你打开或移动该任务。"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
@@ -2183,7 +2183,7 @@ msgstr "隐私"
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Private key"
-msgstr ""
+msgstr "私钥"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Profiles the main process and names a stall's heaviest functions in the event-loop report; costs CPU while on."
@@ -2191,15 +2191,15 @@ msgstr "分析主进程，在事件循环报告中列出卡顿时最耗时的函
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Program {version}"
-msgstr ""
+msgstr "程序 {version}"
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Program {version} (this app is {appVersion})"
-msgstr ""
+msgstr "程序 {version}（本应用为 {appVersion}）"
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Program version unknown"
-msgstr ""
+msgstr "程序版本未知"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Progress bar"
@@ -2402,11 +2402,11 @@ msgstr "移除此账户？"
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Removing \"{removeName}\" forgets the connection, and nothing is deleted."
-msgstr ""
+msgstr "移除「{removeName}」只会忘掉这条连接，不会删除任何内容。"
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Removing \"{removeName}\" hides its projects and suspends their agents until it is added again, and nothing is deleted."
-msgstr ""
+msgstr "移除「{removeName}」会隐藏其项目并暂停智能体，直到再次添加；不会删除任何内容。"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "Rename"
@@ -2632,11 +2632,11 @@ msgstr "在卡片上显示每个任务的 #N 编号"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Show each task's labels on its card"
-msgstr ""
+msgstr "在卡片上显示每个任务的标签"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Show each task's priority meter on its card"
-msgstr ""
+msgstr "在卡片上显示每个任务的优先级条"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Show the status bar at the bottom of the window"
@@ -2658,7 +2658,7 @@ msgstr "在任务栏或程序坞上显示需要你处理的智能体数量。"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Shrink empty columns"
-msgstr ""
+msgstr "收起空列"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 msgid "Side by side"
@@ -2876,7 +2876,7 @@ msgstr "终端光标外观"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Terminal links, the PR pill and a task's artifacts open here, and Ctrl or Cmd click opens the other browser."
-msgstr ""
+msgstr "终端链接、PR 徽章和产物在此打开。Ctrl 或 Cmd 点击打开另一浏览器。"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
 msgid "Terminal may intercept"
@@ -2929,7 +2929,7 @@ msgstr "智能体的近期消息，每条一行"
 
 #: src/renderer/components/settings/tabs/BoardTab.tsx
 msgid "The board your team shares: columns, automations and shortcuts."
-msgstr ""
+msgstr "团队共享的看板：列、自动化和快捷方式。"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "The branch new worktrees start from."
@@ -2937,7 +2937,7 @@ msgstr "新工作树的起始分支。"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
 msgid "The browser beside the task's terminal"
-msgstr ""
+msgstr "任务终端旁的浏览器"
 
 #: src/renderer/components/settings/AppSettingsPanel.tsx
 msgid "The change was not written."
@@ -2949,7 +2949,7 @@ msgstr "默认分支的代码和文档，保持最新；跳过测试、数据文
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
 msgid "The domain of an artifact link we do not recognise, once (never the rest of the link)"
-msgstr ""
+msgstr "无法识别的产物链接域名，各记一次（从不包含链接其余部分）"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
 #, fuzzy
@@ -2971,7 +2971,7 @@ msgstr "Kangentic 中继"
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "The key Kangentic made was added to the old address, so choose how to sign in to the new one."
-msgstr ""
+msgstr "Kangentic 生成的密钥已加到旧地址，请选择如何登录新地址。"
 
 #: src/renderer/components/settings/tabs/LanguageTab.tsx
 msgid "The language of menus, settings and dialogs."
@@ -2983,11 +2983,11 @@ msgstr "你使用的语言。模型会跟随你的选择调整。"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
 msgid "The local model could not load on this computer - showing keyword matches until Kangentic restarts."
-msgstr ""
+msgstr "本机模型无法在此电脑加载，重启 Kangentic 前只显示关键词匹配。"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
 msgid "The local model could not load on this computer - showing keyword matches until Kangentic restarts. ({workerError})"
-msgstr ""
+msgstr "本机模型无法在此电脑加载，重启 Kangentic 前只显示关键词匹配。({workerError})"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
 msgid "The local model is unavailable - showing keyword matches."
@@ -3059,7 +3059,7 @@ msgstr "此快捷键固定，无法重新绑定"
 #. placeholder {0}: probe.hostname
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "This is the key {0} presents."
-msgstr ""
+msgstr "这是 {0} 出示的密钥。"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "This project's path to the agent CLI (auto-detected if empty)"
@@ -3117,15 +3117,15 @@ msgstr "过渡与动效。"
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Trust it only if it matches the host. Kangentic records it once, and refuses the host if its key ever changes."
-msgstr ""
+msgstr "仅在与主机一致时信任。Kangentic 会记录一次，密钥若再变就会拒绝该主机。"
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Trust it only if you know the host was rebuilt or reinstalled. Kangentic records it once and connects."
-msgstr ""
+msgstr "仅在你确认主机已重建或重装时信任。Kangentic 会记录一次并连接。"
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Trust new key"
-msgstr ""
+msgstr "信任新密钥"
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
@@ -3134,7 +3134,7 @@ msgstr "信任此密钥"
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Trust this key and save"
-msgstr ""
+msgstr "信任此密钥并保存"
 
 #: src/renderer/components/settings/shared.tsx
 msgid "Try a different search term"
@@ -3327,11 +3327,11 @@ msgstr "由哪个智能体规划各工作流，位于工作流视图的左侧窗
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
 msgid "Which browser a click opens. Cmd+Click opens the other."
-msgstr ""
+msgstr "单击打开哪个浏览器。Cmd+Click 打开另一个。"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
 msgid "Which browser a click opens. Ctrl+Click opens the other."
-msgstr ""
+msgstr "单击打开哪个浏览器。Ctrl+Click 打开另一个。"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Which changes a freshly opened Changes panel shows: working (uncommitted edits), staged (index), or the full branch vs its base."
@@ -3432,4 +3432,4 @@ msgstr "手机上也会显示此代码。请在手机上确认以完成配对。
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
 msgid "Your system's default browser"
-msgstr ""
+msgstr "系统默认浏览器"

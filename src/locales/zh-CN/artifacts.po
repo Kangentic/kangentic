@@ -9,50 +9,50 @@ msgstr ""
 
 #: src/renderer/components/artifacts/ArtifactsChip.tsx
 msgid "{count, plural, one {# artifact} other {# artifacts}}"
-msgstr ""
+msgstr "{count, plural, other {# 个产物}}"
 
 #: src/renderer/components/artifacts/ArtifactsField.tsx
 msgid "A task keeps at most {limit} artifacts. Remove one to add another."
-msgstr ""
+msgstr "每个任务最多保留 {limit} 个产物。请先移除一个再添加。"
 
 #: src/renderer/components/artifacts/ArtifactsField.tsx
 msgid "Add an artifact link"
-msgstr ""
+msgstr "添加产物链接"
 
 #: src/renderer/components/artifacts/ArtifactsField.tsx
 msgid "Add artifact"
-msgstr ""
+msgstr "添加产物"
 
 #: src/renderer/components/artifacts/ArtifactsField.tsx
 msgid "Artifact name"
-msgstr ""
+msgstr "产物名称"
 
 #: src/renderer/components/artifacts/ArtifactsChip.tsx
 #: src/renderer/components/artifacts/ArtifactsField.tsx
 #: src/renderer/components/artifacts/ArtifactsKebabItems.tsx
 msgid "Artifacts"
-msgstr ""
+msgstr "产物"
 
 #: src/renderer/components/artifacts/ArtifactsMenu.tsx
 msgid "Edit artifacts"
-msgstr ""
+msgstr "编辑产物"
 
 #: src/renderer/components/artifacts/ArtifactsChip.tsx
 msgid "Open artifact"
-msgstr ""
+msgstr "打开产物"
 
 #: src/renderer/components/artifacts/ArtifactsField.tsx
 msgid "Paste a link to add an artifact"
-msgstr ""
+msgstr "粘贴链接以添加产物"
 
 #: src/renderer/components/artifacts/ArtifactsField.tsx
 msgid "Remove artifact"
-msgstr ""
+msgstr "移除产物"
 
 #: src/renderer/components/artifacts/ArtifactsField.tsx
 msgid "Rename artifact"
-msgstr ""
+msgstr "重命名产物"
 
 #: src/renderer/components/artifacts/ArtifactsField.tsx
 msgid "That is not a link. Paste one that starts with http or https."
-msgstr ""
+msgstr "这不是链接。请粘贴以 http 或 https 开头的地址。"

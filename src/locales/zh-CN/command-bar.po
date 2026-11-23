@@ -61,7 +61,7 @@ msgstr "关闭浏览器"
 
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 msgid "Close find"
-msgstr ""
+msgstr "关闭查找"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 msgid "Command Terminal"
@@ -141,7 +141,7 @@ msgstr "无法加载「更改」面板"
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 msgid "Find in terminal"
-msgstr ""
+msgstr "在终端中查找"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy

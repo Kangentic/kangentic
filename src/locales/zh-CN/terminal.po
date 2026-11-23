@@ -98,7 +98,7 @@ msgstr "看板配置方案：此任务在各列遵循的智能体、模型和推
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
 msgid "Close find"
-msgstr ""
+msgstr "关闭查找"
 
 #: src/renderer/components/terminal/TerminalPanel.tsx
 msgid "Collapse terminal panel"
@@ -154,7 +154,7 @@ msgstr "查找"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
 msgid "Find in terminal"
-msgstr ""
+msgstr "在终端中查找"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
 #, fuzzy

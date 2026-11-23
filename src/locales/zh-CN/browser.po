@@ -9,7 +9,7 @@ msgstr ""
 
 #: src/renderer/components/browser/annotations/AnnotationComposer.tsx
 msgid "{strokeCount, plural, one {Drawing, # stroke} other {Drawing, # strokes}}"
-msgstr ""
+msgstr "{strokeCount, plural, other {绘制中，# 笔}}"
 
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "{viewportWidth} x {viewportHeight}"
@@ -17,16 +17,16 @@ msgstr "{viewportWidth} x {viewportHeight}"
 
 #: src/renderer/components/browser/annotations/AnnotationComposer.tsx
 msgid "20 annotations is the most one send carries. Send these, then start again."
-msgstr ""
+msgstr "一次最多发送 20 条标注。请先发送这些，再重新开始。"
 
 #: src/renderer/components/browser/annotations/AnnotationComposer.tsx
 msgid "Add a note or a mark to send"
-msgstr ""
+msgstr "添加要发送的备注或标记"
 
 #. reason is the agent's own words, in English, written to follow 'Agent is'
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "Agent is {driveReason}"
-msgstr ""
+msgstr "智能体正在{driveReason}"
 
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "Agent is driving"
@@ -46,11 +46,11 @@ msgstr "智能体将此页面设为以 {viewportWidth} x {viewportHeight} CSS �
 
 #: src/renderer/components/browser/annotations/AnnotationComposer.tsx
 msgid "Annotation {number}"
-msgstr ""
+msgstr "标注 {number}"
 
 #: src/renderer/components/browser/annotations/AnnotationComposer.tsx
 msgid "Annotations"
-msgstr ""
+msgstr "标注"
 
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "at {zoomPercent}%"
@@ -91,7 +91,7 @@ msgstr "绘制"
 
 #: src/renderer/components/browser/annotations/AnnotationBar.tsx
 msgid "Draw on the page"
-msgstr ""
+msgstr "在页面上绘制"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
 msgid "Enter a valid http:// or https:// URL."
@@ -107,7 +107,7 @@ msgstr "加载失败：{finalUrl}"
 
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "Failed to load: {url}"
-msgstr ""
+msgstr "加载失败：{url}"
 
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "Forward"
@@ -131,15 +131,15 @@ msgstr "本地开发服务器、预发布、生产环境或任意 http(s) 页面
 
 #: src/renderer/components/browser/annotations/AnnotationComposer.tsx
 msgid "Made on {madeOn}. Still sent, with the capture taken there."
-msgstr ""
+msgstr "标注于 {madeOn}。仍会发送，并附上当时的截图。"
 
 #: src/renderer/components/browser/annotations/AnnotationBar.tsx
 msgid "Move the annotation bar"
-msgstr ""
+msgstr "移动标注栏"
 
 #: src/renderer/components/browser/annotations/AnnotationComposer.tsx
 msgid "New annotation"
-msgstr ""
+msgstr "新建标注"
 
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "No earlier page"
@@ -151,15 +151,15 @@ msgstr "没有下一页"
 
 #: src/renderer/components/browser/annotations/AnnotationComposer.tsx
 msgid "Not on page"
-msgstr ""
+msgstr "不在此页"
 
 #: src/renderer/components/browser/annotations/AnnotationComposer.tsx
 msgid "Note for annotation {number}"
-msgstr ""
+msgstr "标注 {number} 的备注"
 
 #: src/renderer/components/browser/annotations/AnnotationBar.tsx
 msgid "Nothing marked yet"
-msgstr ""
+msgstr "尚未标记"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
 msgid "On Windows: if your dev server runs in WSL and `localhost` does not connect, run <0>{WSL_HOSTNAME_COMMAND}</0> and use that IP instead."
@@ -197,15 +197,15 @@ msgstr "重新加载"
 
 #: src/renderer/components/browser/annotations/AnnotationComposer.tsx
 msgid "Remove {itemLabel}"
-msgstr ""
+msgstr "移除 {itemLabel}"
 
 #: src/renderer/components/browser/annotations/AnnotationComposer.tsx
 msgid "Remove annotation {number}"
-msgstr ""
+msgstr "移除标注 {number}"
 
 #: src/renderer/components/browser/annotations/AnnotationComposer.tsx
 msgid "Remove this annotation"
-msgstr ""
+msgstr "移除此标注"
 
 #: src/renderer/components/browser/BrowserPane.tsx
 msgctxt "Action"
@@ -238,7 +238,7 @@ msgstr "保存为所有任务的项目默认值"
 
 #: src/renderer/components/browser/annotations/AnnotationBar.tsx
 msgid "Select element"
-msgstr ""
+msgstr "选择元素"
 
 #: src/renderer/components/browser/annotations/AnnotationComposer.tsx
 #: src/renderer/components/browser/BrowserPane.tsx
@@ -247,7 +247,7 @@ msgstr "发送"
 
 #: src/renderer/components/browser/annotations/AnnotationComposer.tsx
 msgid "Send every annotation"
-msgstr ""
+msgstr "发送全部标注"
 
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "Send to agent"
@@ -255,11 +255,11 @@ msgstr "发送给智能体"
 
 #: src/renderer/components/browser/annotations/AnnotationComposer.tsx
 msgid "Start the next annotation. Enter in a note does the same."
-msgstr ""
+msgstr "开始下一条标注。在备注中按 Enter 效果相同。"
 
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "The Kangentic browser opens it for this project."
-msgstr ""
+msgstr "Kangentic 浏览器会在此项目中打开它。"
 
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "This URL is the project default"
@@ -271,7 +271,7 @@ msgstr "撤销"
 
 #: src/renderer/components/browser/annotations/AnnotationBar.tsx
 msgid "Undo the last mark"
-msgstr ""
+msgstr "撤销上一笔标记"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
 msgid "Webpack, generic"
@@ -279,11 +279,11 @@ msgstr "Webpack，通用"
 
 #: src/renderer/components/browser/annotations/AnnotationComposer.tsx
 msgid "What annotation {number} holds"
-msgstr ""
+msgstr "标注 {number} 的内容"
 
 #: src/renderer/components/browser/annotations/AnnotationComposer.tsx
 msgid "What should change here?"
-msgstr ""
+msgstr "这里应该改成什么样？"
 
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "What should the agent do with this?"
