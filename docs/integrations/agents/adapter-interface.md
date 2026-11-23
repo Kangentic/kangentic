@@ -251,7 +251,7 @@ An adapter whose `consoleCloseIsGraceful(platform)` answers true is never typed 
 | Agent | Sequence | Notes |
 |-------|----------|-------|
 | Claude Code | `Esc`, 400 ms, `Ctrl+C`, `/exit` | Windows and Linux: console close or hangup instead, except for a dead Windows shell. Typed on macOS. Esc stops a running turn or declines a permission prompt, so Ctrl+C clears the input rather than interrupting a turn, which would put the prompt back with `/exit` appended and send it as a new turn |
-| Codex CLI | `Ctrl+C` | API-backed sessions, no local state to flush |
+| Codex CLI | `Ctrl+C`, 400 ms pause, `Ctrl+C` | The first exits an empty composer and only clears a draft, so the second finishes it. Measured on 0.171.0; no Enter, so nothing can submit or approve |
 | Gemini CLI | `Ctrl+C`, `/quit` | Triggers clean shutdown |
 | Qwen Code | `Ctrl+C`, `/quit` | Same TUI shutdown as Gemini (fork) |
 | Cursor CLI | `Ctrl+C` | No graceful exit needed |
