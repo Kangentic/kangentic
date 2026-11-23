@@ -64,6 +64,8 @@ interface FakeVerifyUnpackedWorkerCall {
   loadProbeBinary?: string;
   /** Set on the pty host load probe's call: the Electron binary it runs. */
   ptyHostProbeBinary?: string;
+  /** Set on the retrieval checkpoint thread probe's call: the Electron binary it runs. */
+  checkpointThreadProbeBinary?: string;
   /** Set on the host spawn worker probe's call: the Electron binary it runs. */
   spawnWorkerProbeBinary?: string;
   /** Set on the embed runtime load probe's call: the Electron binary it runs. */
@@ -160,6 +162,7 @@ function installFakeVerifyUnpackedWorker(
   loadProbeError?: Error,
   onRetrievalLoadProbe?: () => void,
   onEmbedWorkerProbe?: () => void,
+  checkpointThreadProbeError?: Error,
 ): {
   calls: FakeVerifyUnpackedWorkerCall[];
   restore: () => void;
@@ -175,6 +178,10 @@ function installFakeVerifyUnpackedWorker(
       calls.push({ unpackedRoot, loadProbeBinary: electronBinaryPath });
       onRetrievalLoadProbe?.();
       if (loadProbeError) throw loadProbeError;
+    },
+    verifyRetrievalCheckpointThreadLoads: ({ unpackedRoot, electronBinaryPath }: { unpackedRoot: string; electronBinaryPath: string }): void => {
+      calls.push({ unpackedRoot, checkpointThreadProbeBinary: electronBinaryPath });
+      if (checkpointThreadProbeError) throw checkpointThreadProbeError;
     },
     verifyPtyHostLoads: ({ unpackedRoot, electronBinaryPath }: { unpackedRoot: string; electronBinaryPath: string }): void => {
       calls.push({ unpackedRoot, ptyHostProbeBinary: electronBinaryPath });
@@ -448,6 +455,7 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
         { unpackedRoot, moduleNames: ['sherpa-onnx-node'] },
         { unpackedRoot, moduleNames: ['better-sqlite3'] },
         { unpackedRoot, loadProbeBinary: binary },
+        { unpackedRoot, checkpointThreadProbeBinary: binary },
         { unpackedRoot, moduleNames: ['node-pty'] },
         { unpackedRoot, ptyHostProbeBinary: binary },
         { unpackedRoot, spawnWorkerProbeBinary: binary },
@@ -487,6 +495,7 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
         { unpackedRoot, moduleNames: ['sherpa-onnx-node'] },
         { unpackedRoot, moduleNames: ['better-sqlite3'] },
         { unpackedRoot, loadProbeBinary: path.join(appOutDir, 'Kangentic.exe') },
+        { unpackedRoot, checkpointThreadProbeBinary: path.join(appOutDir, 'Kangentic.exe') },
         { unpackedRoot, moduleNames: ['node-pty'] },
         { unpackedRoot, ptyHostProbeBinary: path.join(appOutDir, 'Kangentic.exe') },
         { unpackedRoot, spawnWorkerProbeBinary: path.join(appOutDir, 'Kangentic.exe') },
@@ -618,6 +627,32 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
     }
   });
 
+  // A thread that cannot checkpoint would leave every WAL checkpoint on the retrieval worker's
+  // request loop, which is what got the worker killed (Sentry DESKTOP-4P).
+  //
+  // Red-green: drop the verifyRetrievalCheckpointThreadLoads call from afterPack.js and the
+  // promise resolves instead of rejecting.
+  it('propagates a failed checkpoint thread probe and never reaches flipFuses', async () => {
+    const fakeFuses = installFakeElectronFuses();
+    const threadError = new Error("[afterPack] the retrieval worker's checkpoint thread cannot checkpoint");
+    const fakeVerify = installFakeVerifyUnpackedWorker(undefined, undefined, undefined, undefined, threadError);
+    const fakeSpawnHelper = installFakeInstallSpawnHelper();
+    try {
+      const afterPack = await importAfterPack();
+      const { appOutDir } = packedAppOutDir('win32', 'x64');
+      await expect(afterPack(buildFakeContext({ platform: 'win32', appOutDir }))).rejects.toBe(threadError);
+      expect(fakeVerify.calls.at(-1)).toEqual({
+        unpackedRoot: path.join(appOutDir, 'resources', 'app.asar.unpacked'),
+        checkpointThreadProbeBinary: path.join(appOutDir, 'Kangentic.exe'),
+      });
+      expect(fakeFuses.calls).toEqual([]);
+    } finally {
+      fakeFuses.restore();
+      fakeVerify.restore();
+      fakeSpawnHelper.restore();
+    }
+  });
+
   // onnxruntime-node ships no darwin x64 binding, so on the Intel leg the embed worker probe would
   // fail the package over a worker the app never forks there (src/shared/embedding-runtime.ts).
   it('on Intel macOS, skips only the embed worker probe, says so, and still runs every other gate', async () => {
@@ -635,6 +670,7 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
         { unpackedRoot, moduleNames: ['sherpa-onnx-node'] },
         { unpackedRoot, moduleNames: ['better-sqlite3'] },
         { unpackedRoot, loadProbeBinary: binary },
+        { unpackedRoot, checkpointThreadProbeBinary: binary },
         { unpackedRoot, moduleNames: ['node-pty'] },
         { unpackedRoot, ptyHostProbeBinary: binary },
         { unpackedRoot, spawnWorkerProbeBinary: binary },
@@ -682,6 +718,7 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
         { unpackedRoot, moduleNames: ['sherpa-onnx-node'] },
         { unpackedRoot, moduleNames: ['better-sqlite3'] },
         { unpackedRoot, loadProbeBinary: binary },
+        { unpackedRoot, checkpointThreadProbeBinary: binary },
         { unpackedRoot, moduleNames: ['node-pty'] },
         { unpackedRoot, ptyHostProbeBinary: binary },
         { unpackedRoot, spawnWorkerProbeBinary: binary },
