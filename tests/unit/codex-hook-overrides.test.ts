@@ -43,8 +43,8 @@ import {
 
 /** The base set: every Codex Kangentic supports lists these. */
 const BASE_HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PermissionRequest', 'Stop', 'PreCompact'];
-/** The extended set, the default: the base set and the subagent hooks codex-cli 0.171.0 lists. */
-const HOOK_EVENTS = [...BASE_HOOK_EVENTS, 'SubagentStart', 'SubagentStop'];
+/** The extended set, the default: the base set and the subagent and end hooks codex-cli 0.171.0 lists. */
+const HOOK_EVENTS = [...BASE_HOOK_EVENTS, 'SubagentStart', 'SubagentStop', 'SessionEnd'];
 
 /** Trust entries shaped like Codex 0.163.0's `hooks/list` answer on Windows. */
 function reportedEntries(events: readonly string[] = HOOK_EVENTS): Array<{ key: string; hash: string }> {
@@ -66,8 +66,11 @@ describe('buildCodexHookOverrides', () => {
 
   it('registers one hook per Codex event Kangentic reads, with an explicit timeout', () => {
     expect(overrides.map((override) => /^hooks\.(\w+)=/.exec(override)?.[1])).toEqual(HOOK_EVENTS);
-    // Codex hashes a hook with its timeout and fills 600 when absent.
-    for (const override of overrides) expect(override).toMatch(/,timeout=10\}\]\}\]$/);
+    // Codex hashes a hook with its timeout and fills 600 when absent. It clamps
+    // SessionEnd's to 3 with a warning, and a warning turns every hook off.
+    for (const override of overrides) {
+      expect(override).toMatch(override.startsWith('hooks.SessionEnd=') ? /,timeout=3\}\]\}\]$/ : /,timeout=10\}\]\}\]$/);
+    }
   });
 
   it('holds no double quote, so quoteArg keeps it whole on every shell', () => {
@@ -197,7 +200,7 @@ describe('trustEntriesOf over the hooks/list answer captured from codex-cli 0.17
   ) as CapturedHooksListMessage;
   const capturedHooks = captured.result.data[0].hooks;
 
-  it('lists all nine hooks with the key and hash Codex computed for the commands Kangentic passes', () => {
+  it('lists all ten hooks with the key and hash Codex computed for the commands Kangentic passes', () => {
     const entries = trustEntriesOf(captured.result, codexHookDefinitions());
     expect(entries).not.toBeNull();
     expect(entries).toHaveLength(HOOK_EVENTS.length);
@@ -270,7 +273,7 @@ describe('readCodexHookTrust', () => {
       : {
         data: [{
           hooks: reportedEntries().map((entry, index) => ({
-            key: entry.key, source: 'sessionFlags', command: definitions[index].command, timeoutSec: 10, currentHash: entry.hash,
+            key: entry.key, source: 'sessionFlags', command: definitions[index].command, timeoutSec: definitions[index].timeoutSeconds, currentHash: entry.hash,
           })),
           warnings: [],
           errors: [],
@@ -635,8 +638,9 @@ describe('CodexCommandBuilder hook wiring', () => {
 
   it('keeps the hook arguments well inside cmd.exe\'s 8191-character line', () => {
     const hookArguments = [...buildCodexHookOverrides(), state!].map((value) => `-c ${quoteArg(value, 'cmd.exe')}`).join(' ');
-    // Under 3,500, so a long task prompt still has more than half the line.
-    expect(hookArguments.length).toBeLessThan(3500);
+    // Under 4,000, so a long task prompt still has more than half the line. The
+    // ten hooks of the extended set came to 3,744.
+    expect(hookArguments.length).toBeLessThan(4000);
   });
 });
 

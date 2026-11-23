@@ -27,6 +27,12 @@ const CODEX_WSL_HOOK_RELATIVE = `.kangentic/${CODEX_WSL_HOOK_COPY_NAME}`;
 /** Seconds each hook may run. Written out because Codex hashes a hook with its timeout, and fills 600 when absent. */
 const CODEX_HOOK_TIMEOUT_SECONDS = 10;
 
+/**
+ * SessionEnd's own limit. Codex clamps that hook's timeout to 3 s and warns,
+ * and any warning in the trust read turns every hook off, so it is written as 3.
+ */
+const CODEX_SESSION_END_TIMEOUT_SECONDS = 3;
+
 /** Characters a token of a Codex hook command may hold: a bare word on sh, PowerShell and cmd, and no TOML quote. */
 const CODEX_HOOK_TOKEN = /^[A-Za-z0-9_./:+=-]+$/;
 
@@ -34,8 +40,8 @@ const CODEX_HOOK_TOKEN = /^[A-Za-z0-9_./:+=-]+$/;
 export type CodexHookRunner = 'node' | 'wsl';
 
 /**
- * Which hooks a session registers. `extended` adds SubagentStart and
- * SubagentStop, which codex-cli 0.171.0 lists and an older Codex may not; the
+ * Which hooks a session registers. `extended` adds SubagentStart, SubagentStop
+ * and SessionEnd, which codex-cli 0.171.0 lists and an older Codex may not; the
  * trust read is all-or-nothing, so `hook-trust.ts` asks for `extended` first
  * and falls back to `base` rather than leaving that Codex with no hooks.
  */
@@ -65,8 +71,14 @@ export const CODEX_QUESTION_TOOL = 'request_user_input';
  * PreToolUse and no PostToolUse; `write_stdin` fires none; an Esc interrupt
  * and a failed model request fire no Stop (the rollout reports both, see
  * session-history-parser.ts). PermissionRequest carries no `tool_use_id`, and
- * the engine awaits the pending tool PreToolUse opened. SessionEnd is left out:
- * Codex clamps its timeout to 3 s before hashing it.
+ * the engine awaits the pending tool PreToolUse opened.
+ *
+ * The end (extended set): SessionEnd fires as Codex exits (measured on 0.171.0
+ * after a Ctrl+C on an empty composer, twice per exit), so a Command Terminal
+ * whose Codex left ends at once rather than at the sweep's next look. Its
+ * timeout is 3 s, the most Codex allows it without a warning. PostCompact is not
+ * wired: PreCompact already marks a compaction, and Kangentic has no event for
+ * its end.
  *
  * The waits (#452): every PermissionRequest is an approval. A question comes
  * from `request_user_input`'s own PreToolUse, whose single entry writes the
@@ -86,13 +98,14 @@ export const CODEX_QUESTION_TOOL = 'request_user_input';
  * tests/fixtures/codex-hooks/). The tool hooks of the spawn and of the parent's
  * `wait_agent` fire around them as for any tool.
  */
-function codexHookCommands(runner: CodexHookRunner, hookSet: CodexHookSet): ReadonlyArray<readonly [event: string, command: string]> {
+function codexHookCommands(runner: CodexHookRunner, hookSet: CodexHookSet): ReadonlyArray<readonly [event: string, command: string, timeoutSeconds?: number]> {
   const command = (eventType: string, ...directives: string[]): string => codexHookCommand(runner, eventType, ...directives);
   const sessionIdOnly = captureHookContextFields(['session_id']);
-  const subagentHooks: ReadonlyArray<readonly [event: string, command: string]> = hookSet === 'extended'
+  const extendedHooks: ReadonlyArray<readonly [event: string, command: string, timeoutSeconds?: number]> = hookSet === 'extended'
     ? [
       ['SubagentStart', command(EventType.SubagentStart, extractDetail(['agent_type']), extractSubagentId(['agent_id']))],
       ['SubagentStop', command(EventType.SubagentStop, extractDetail(['agent_type']), extractSubagentId(['agent_id']))],
+      ['SessionEnd', command(EventType.SessionEnd), CODEX_SESSION_END_TIMEOUT_SECONDS],
     ]
     : [];
   return [
@@ -112,7 +125,7 @@ function codexHookCommands(runner: CodexHookRunner, hookSet: CodexHookSet): Read
       setWaitKind('approval'))],
     ['Stop', command(EventType.Idle, sessionIdOnly)],
     ['PreCompact', command(EventType.Compact)],
-    ...subagentHooks,
+    ...extendedHooks,
   ];
 }
 
@@ -132,10 +145,10 @@ export interface CodexHookDefinition {
  * binary cover every spawn.
  */
 export function codexHookDefinitions(runner: CodexHookRunner = 'node', hookSet: CodexHookSet = 'extended'): CodexHookDefinition[] {
-  return codexHookCommands(runner, hookSet).map(([event, command]) => ({
+  return codexHookCommands(runner, hookSet).map(([event, command, timeoutSeconds = CODEX_HOOK_TIMEOUT_SECONDS]) => ({
     command,
-    timeoutSeconds: CODEX_HOOK_TIMEOUT_SECONDS,
-    override: `hooks.${event}=[{hooks=[{type='command',command='${command}',timeout=${CODEX_HOOK_TIMEOUT_SECONDS}}]}]`,
+    timeoutSeconds,
+    override: `hooks.${event}=[{hooks=[{type='command',command='${command}',timeout=${timeoutSeconds}}]}]`,
   }));
 }
 

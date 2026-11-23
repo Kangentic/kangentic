@@ -32,7 +32,7 @@ import type {
   TranscriptPageReadRequest,
   TranscriptPageReadResult,
 } from '../../agent-adapter';
-import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities, AgentLaunchOptionInfo, RemoteTranscriptSearch, StoredCliTarget, TranscriptUsage, TranscriptToolCounts } from '../../../../shared/types';
+import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities, AgentLaunchOptionInfo, ExitSequenceStep, RemoteTranscriptSearch, StoredCliTarget, TranscriptUsage, TranscriptToolCounts } from '../../../../shared/types';
 import type { AnswerFromContextOptions } from '../../agent-adapter';
 import { ActivityDetection } from '../../../../shared/types';
 
@@ -135,6 +135,14 @@ export class CodexAdapter implements AgentAdapter {
    * that finds it exited. No launch hint, since no hook fires at the yield.
    */
   readonly backgroundCommands = { source: 'session-history', launchHint: false } as const;
+
+  /**
+   * Measured on 0.171.0 in a PTY (task #1182): a bracketed paste of an image's
+   * path, bare, double-quoted (PowerShell's form, a space in the path included)
+   * or single-quoted (a POSIX shell's), becomes an `[Image #1]` chip in the
+   * composer for each of these. A `.txt` path stays text.
+   */
+  readonly pastedImageNativeExtensions = ['png', 'jpg', 'jpeg', 'gif', 'webp'];
 
   /** See `startup-failure.ts`. */
   identifyUserSetupFailure(finalOutput: string): UserSetupMatch | null {
@@ -402,10 +410,18 @@ export class CodexAdapter implements AgentAdapter {
     return false;
   }
 
-  getExitSequence(): string[] {
-    // Codex sessions are API-backed (server-side threads) - no local
-    // conversation state to flush. Ctrl+C is sufficient.
-    return ['\x03'];
+  /**
+   * Ctrl+C, a pause, Ctrl+C. Measured on 0.171.0 in a PTY (task #1182): one
+   * Ctrl+C on an empty composer exits Codex with code 0 about 1.2 s later,
+   * printing its `Session ID`. With a draft the first one only clears the
+   * composer, and the second then exits it the same way. Nothing here is Enter,
+   * so no state can take it as a submit or an approval. A busy turn and an open
+   * approval were not probed (each costs a paid turn); Ctrl+C interrupts or
+   * declines there. A console close is not graceful: Codex dies with
+   * STATUS_CONTROL_C_EXIT and prints nothing, so `consoleCloseIsGraceful` stays off.
+   */
+  getExitSequence(): ExitSequenceStep[] {
+    return ['\x03', { delayMs: 400 }, '\x03'];
   }
 
   detectFirstOutput(data: string): boolean {
@@ -586,7 +602,12 @@ export class CodexAdapter implements AgentAdapter {
    * which `codex exec` takes (`codex exec --help`, codex-cli 0.163.0;
    * https://learn.chatgpt.com/docs/config-file/config-reference), and only a
    * level `model/list` reported reaches it. `low` keeps an answer cheap where
-   * the model offers it. Built from documentation; not yet run signed in.
+   * the model offers it.
+   *
+   * `streaming` stays off by measurement: signed in on 0.171.0 (task #1182),
+   * `codex exec --json` sent `thread.started`, `turn.started`, the whole answer
+   * as one `item.completed` `agent_message`, and `turn.completed`, with no text
+   * deltas. Reading that stream would show the answer no sooner than now.
    */
   readonly answerCapabilities = { streaming: false, search: false, model: true, effort: true, defaultEffort: 'low' };
 
@@ -601,9 +622,9 @@ export class CodexAdapter implements AgentAdapter {
    *
    * `--ephemeral` ("run without persisting session files to disk", codex
    * 0.154's own help): an answer is not a session to resume, and every run
-   * otherwise added one to `~/.codex/sessions`. Streaming (`--json`) and
-   * search (a `-c mcp_servers` override) stay off until a logged-in run
-   * verifies them; this machine's Codex answers 401.
+   * otherwise added one to `~/.codex/sessions`. These flags answered signed in
+   * on 0.171.0 in 2.5 s. Search (a `-c mcp_servers` override) stays off until a
+   * run verifies it.
    *
    * The prompt, its rules and the retrieval budget are all built upstream and
    * handed over whole; this only decides the CLI's flags.

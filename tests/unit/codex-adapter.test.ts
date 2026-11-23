@@ -1598,3 +1598,20 @@ describe('CodexAdapter transcript stats - rollout found by session id', () => {
     await expect(adapter.transcriptToolCounts({ agentSessionId: '019df02a-0000-4000-8000-00000000ffff' })).resolves.toBeNull();
   });
 });
+
+// Measured on 0.171.0 in a PTY (task #1182): one Ctrl+C exits Codex from an
+// empty composer and clears a draft, so the second, after a pause, exits it.
+// Neither key is one any Codex screen takes as a submit or an approval.
+describe('CodexAdapter exit sequence', () => {
+  it('is two Ctrl+C keys a pause apart, with nothing that submits', () => {
+    const sequence = new CodexAdapter().getExitSequence();
+    const keys = sequence.filter((step): step is string => typeof step === 'string');
+    expect(keys).toEqual(['\x03', '\x03']);
+    expect(sequence[1]).toEqual({ delayMs: 400 });
+    expect(keys.join('')).not.toMatch(/[\r\n]/);
+  });
+
+  it('is typed into, since a console close kills Codex rather than ending it', () => {
+    expect(new CodexAdapter().consoleCloseIsGraceful?.('win32') ?? false).toBe(false);
+  });
+});

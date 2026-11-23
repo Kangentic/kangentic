@@ -216,6 +216,10 @@ Each gap against the Claude adapter was checked against Codex's own documentatio
 - `token_usage_record` on a successful turn (its `session_id` equals its `thread_id`), with a new `cache_write_input_tokens` field that `input_tokens` already counts.
 - A repository `.codex/config.toml` Codex cannot parse: it prints `Error: Error parsing project config file <path>: TOML parse error at line N, column M` and exits a few seconds in, under a shell that stays. The sweep retires the shell at the 120 s start ceiling, the card gets the "Agent didn't start" notice (`describeStartupFailure`), and the launch report classifies it `bad_configuration`, the user's own setup, so Sentry gets nothing. The session-id ceiling then sends no capture report for a launch that already reported (`already_reported=yes`). Before, the card went quiet and the run reached Sentry as a missed id: the sweep's kill landed 116 s after the agent ran, past the minute the death-at-start report allows. The ring is `tests/fixtures/codex-0.171.0-project-config-refused.txt`.
 - `codex resume <id>` of a conversation it has no record of, in a PTY: `ERROR: No saved session found with ID <id>. Run \`codex resume\` without an ID to choose from existing sessions.`, exit 1 after 1.9 s (`tests/fixtures/codex-0.171.0-resume-missing.txt`). `namesMissingConversation` reads it, so a lineage with no turns starts fresh, and the card names it.
+- Ending an idle Codex in a PTY. One Ctrl+C on an empty composer exits it with code 0 about 1.2 s later, printing `Session ID: <id>` (not the "press again" hint the source suggests). With a draft, the first Ctrl+C clears the composer and the second exits. The exit sequence is therefore Ctrl+C, 400 ms, Ctrl+C, which holds no Enter. A console close kills Codex with `STATUS_CONTROL_C_EXIT` and no `Session ID`, so `consoleCloseIsGraceful` stays off. A busy turn and an open approval were not probed, since each costs a paid turn.
+- `SessionEnd` fires as Codex exits, twice per exit, and lists with no warning at a 3 s timeout (Codex clamps a longer one and warns, which would turn every hook off). It joins the extended set, so a Command Terminal whose Codex exited ends at once. `PostCompact` is not wired: `PreCompact` already marks a compaction, and Kangentic has no event for its end.
+- A bracketed paste of a png, jpg, jpeg, gif or webp path, bare, double-quoted (a space in it included) or single-quoted, becomes `[Image #1]` in the composer, and a `.txt` path stays text: `pastedImageNativeExtensions`. A dropped bmp now goes in as a PNG copy.
+- `codex exec --json` for an answer: `thread.started`, `turn.started`, the whole answer as one `item.completed` `agent_message`, `turn.completed`, with no text deltas, in 2.5 s. Reading that stream would show nothing sooner, so the answer run's `streaming` stays off, and its flags (`--skip-git-repo-check --sandbox read-only --ephemeral`) answered signed in.
 
 **Built from documentation, not yet run against a signed-in Codex:**
 
@@ -224,20 +228,16 @@ Each gap against the Claude adapter was checked against Codex's own documentatio
 - `transcriptUsage`, `transcriptToolCounts`, `transcriptToolResultTokens` and `scopesTranscriptReadsByTime`.
 - The `custom_tool_call`, `local_shell_call` and `web_search_call` entries in the transcript.
 - `fileChangeTools` for `apply_patch`.
-- The `codex exec` non-interactive form.
 
 `tests/fixtures/codex-0.163.0-rollout-shape.jsonl` is replayed through the usage, tool count, transcript and live readers. Every value in it is invented, so it pins the record shape, not what a real turn writes. Its keys come from local rollouts: `session_meta`, `turn_context`, `token_usage_record`, `function_call` and `token_count` from codex-cli 0.163.0. No local 0.163.0 rollout holds a `custom_tool_call` or a `web_search_call`, so those keys come from 0.141.0 rollouts, and `models.rs` at rust-v0.163.0 still lists the fields the readers use. `local_shell_call` is not in the fixture: none of the local rollouts holds one, so it stays shaped from `models.rs` alone. A capture from a signed-in turn can replace the fixture.
 
 **Supported by the docs, waiting on a live probe:**
 
 - **`proveConversationGone`.** The resume miss is read after the fact (above), so a deleted rollout could also start fresh from a recap before the spawn, as Claude's does. But Codex documents no retention sweep, and the part the 0.158+ SQLite thread index (`thread_history_1.sqlite`) plays in a resume is not settled.
-- **Hook events `PostCompact`, `SessionEnd` and `Interrupt`** (`codex-rs/hooks/src/schema.rs`). The trust read is all-or-nothing, so an event a user's Codex does not know would turn every hook off; `SubagentStart` and `SubagentStop` ship behind the base-set fallback for that reason, and these would go the same way. The same probe should show whether a denied approval fires any hook that ends its wait.
-- **`pastedImageNativeExtensions`:** png, jpg, jpeg, gif and webp, attached by content (`paste_input.rs`, `chat_composer.rs`).
-- **The exit sequence.** One Ctrl+C only shows "press again to quit" (`footer.rs`), while `/quit`, `/exit` and a second Ctrl+C exit. The pty-teardown rule asks for the dialog probe before a sequence changes.
-- **Subagent transcripts and usage.** A child is its own thread (`SubAgentSource.thread_spawn.parent_thread_id` in `protocol.rs`); where its rollout lives is implied, not stated, and no local rollout holds a spawn.
-- **The answer run's streaming, search and usage** (`codex exec --json` `turn.completed`, `exec_events.rs`), and a warm `openAnswerSession` over app-server.
-- **`supportsReadOnlyLaunch` and `supportsReadableDirectories`.** The read-only sandbox reads the whole disk (`has_full_disk_read_access`).
-- **`consoleCloseIsGraceful`, `hungTurn` and a paste verifier.** Codex documents none of these.
+- **The `Interrupt` hook** (`codex-rs/hooks/src/schema.rs`), and whether a denied approval fires any hook that ends its wait.
+- **Subagent transcripts and usage.** A child's rollout sits in the same day folder and cwd as its parent's, marked by `parent_thread_id` and `source.subagent` (measured on 0.171.0; the id capture skips it). Nothing reads it into the viewer or the usage yet.
+- **The answer run's search and usage** (`turn.completed`, `exec_events.rs`), and a warm `openAnswerSession` over app-server.
+- **`hungTurn` and a paste verifier.** Codex documents neither.
 - **Checks on the builds above:**
   - that `codex exec resume` honors `sandbox_mode`, and takes the PTY's folder as its working folder under WSL;
   - that a resumed session's `token_usage_record` lines carry a `session_id` equal to their `thread_id`, as a fresh session's do on 0.171.0. If not, the live filter skips every record and the context bar stops moving.
@@ -249,6 +249,8 @@ Each gap against the Claude adapter was checked against Codex's own documentatio
 - **Cost telemetry.** The rollout has no USD figure.
 
 **Supported, not built, by decision:**
+
+- **`supportsReadOnlyLaunch` and `supportsReadableDirectories`.** The contract asks for an agent with no tool that runs a shell command, and `--sandbox read-only` still runs shell commands, only without writes (it reads the whole disk, `has_full_disk_read_access`). A workflow's Codex agent therefore launches in its own mode and is asked by the prompt to leave files alone.
 
 - **`parseTranscriptWindow`.** The format supports it, but the measured rollouts are at most 0.3 MB against the 16 MB tail cap, so the tail already indexes whole conversations.
 
