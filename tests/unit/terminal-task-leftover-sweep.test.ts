@@ -38,6 +38,7 @@ import type { AutomationRunRepository } from '../../src/main/db/repositories/aut
 import type { TaskMoveRepository } from '../../src/main/db/repositories/task-move-repository';
 import type { SessionManager } from '../../src/main/pty/session-manager';
 import type { LeftoverProcessEntry } from '../../src/main/pty/process-tag/tagged-reap';
+import { NOTHING_LEFT_RUNNING } from '../../src/main/ipc/helpers/reap-verdict';
 
 const PROJECT_PATH = '/mock/project';
 
@@ -239,8 +240,34 @@ describe('sweepTerminalTaskLeftovers', () => {
     const reapTaskProcesses = vi.fn(async () => { throw new Error('host gone'); });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    await expect(sweepTerminalTaskLeftovers(PROJECT_PATH, taskRepo, swimlaneRepo, { reapTaskProcesses }, leftovers())).resolves.toBeUndefined();
+    // Nothing is known, so the Done retry after it still reports a failure.
+    await expect(sweepTerminalTaskLeftovers(PROJECT_PATH, taskRepo, swimlaneRepo, { reapTaskProcesses }, leftovers())).resolves.toBe(NOTHING_LEFT_RUNNING);
     warn.mockRestore();
+  });
+
+  // Sentry DESKTOP-3P on 0.62.0: the Done retry right after the sweep reported the EBUSY of a
+  // folder the sweep had just left a process in. The verdict is what it needs to count it.
+  it('resolves with the tasks it left a process working inside the worktree of', async () => {
+    const { taskRepo, swimlaneRepo } = makeRepos();
+    const keptInWorktree: LeftoverProcessEntry = { taskId: 'archived-1', pid: 4001, startKey: 'k1', label: 'node (vite)', outcome: 'kept', reason: 'shared', place: 'worktree' };
+    const stoppedInWorktree: LeftoverProcessEntry = { ...keptInWorktree, taskId: 'archived-2', pid: 4002, startKey: 'k2', outcome: 'stopped', reason: null };
+    const keptInProject: LeftoverProcessEntry = { ...keptInWorktree, taskId: 'todo-1', pid: 4003, startKey: 'k3', place: 'project' };
+    const reapTaskProcesses = vi.fn(async () => [keptInWorktree, stoppedInWorktree, keptInProject]);
+
+    const verdict = await sweepTerminalTaskLeftovers(PROJECT_PATH, taskRepo, swimlaneRepo, { reapTaskProcesses }, leftovers());
+
+    expect([...verdict.tasksLeftRunningInWorktree]).toEqual(['archived-1']);
+    // A project switch re-runs the cleanup; the latched sweep hands the same verdict to its retry.
+    const again = await sweepTerminalTaskLeftovers(PROJECT_PATH, taskRepo, swimlaneRepo, { reapTaskProcesses }, leftovers());
+    expect(reapTaskProcesses).toHaveBeenCalledTimes(1);
+    expect(again).toBe(verdict);
+  });
+
+  it('resolves with nothing left running when stopping is off, since it scanned nothing', async () => {
+    const { taskRepo, swimlaneRepo } = makeRepos();
+    const reapTaskProcesses = vi.fn(async () => []);
+
+    await expect(sweepTerminalTaskLeftovers(PROJECT_PATH, taskRepo, swimlaneRepo, { reapTaskProcesses }, leftovers(false))).resolves.toBe(NOTHING_LEFT_RUNNING);
   });
 
   it('releases its once-per-launch latch when the sweep fails, so the next open of the project sweeps again', async () => {
@@ -259,6 +286,38 @@ describe('sweepTerminalTaskLeftovers', () => {
 
     expect(reapTaskProcesses).toHaveBeenCalledTimes(1);
     warn.mockRestore();
+  });
+
+  it('releases its latch when the failure is a synchronous throw before the first await', async () => {
+    const { taskRepo, swimlaneRepo } = makeRepos();
+    const reapTaskProcesses = vi.fn(async () => []);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.mocked(taskRepo.listArchived).mockImplementationOnce(() => { throw new Error('database is locked'); });
+
+    await expect(sweepTerminalTaskLeftovers(PROJECT_PATH, taskRepo, swimlaneRepo, { reapTaskProcesses }, leftovers())).resolves.toBe(NOTHING_LEFT_RUNNING);
+    expect(reapTaskProcesses).not.toHaveBeenCalled();
+
+    await sweepTerminalTaskLeftovers(PROJECT_PATH, taskRepo, swimlaneRepo, { reapTaskProcesses }, leftovers());
+    expect(reapTaskProcesses).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
+  it('hands a second open that arrives while the first still reaps the same real verdict, and reaps once', async () => {
+    const { taskRepo, swimlaneRepo } = makeRepos();
+    const keptInWorktree: LeftoverProcessEntry = { taskId: 'archived-1', pid: 4001, startKey: 'k1', label: 'node (vite)', outcome: 'kept', reason: 'shared', place: 'worktree' };
+    let finishReap: (entries: LeftoverProcessEntry[]) => void = () => undefined;
+    const reapTaskProcesses = vi.fn(() => new Promise<LeftoverProcessEntry[]>((resolve) => { finishReap = resolve; }));
+
+    const first = sweepTerminalTaskLeftovers(PROJECT_PATH, taskRepo, swimlaneRepo, { reapTaskProcesses }, leftovers());
+    const second = sweepTerminalTaskLeftovers(PROJECT_PATH, taskRepo, swimlaneRepo, { reapTaskProcesses }, leftovers());
+    expect(second).toBe(first);
+
+    finishReap([keptInWorktree]);
+    const verdict = await second;
+
+    expect([...verdict.tasksLeftRunningInWorktree]).toEqual(['archived-1']);
+    expect(await first).toBe(verdict);
+    expect(reapTaskProcesses).toHaveBeenCalledTimes(1);
   });
 });
 

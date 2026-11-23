@@ -66,7 +66,9 @@ vi.mock('../../src/main/git/zombie-reaper', () => ({
 }));
 vi.mock('../../src/main/git/worktree-head', () => ({ readWorktreeHead: async () => ({ branch: null, sha: null }) }));
 vi.mock('../../src/main/browser/annotation-drafts', () => ({ discardAnnotationDraft: vi.fn(async () => undefined) }));
-vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(), getOpenProjectDb: vi.fn(() => null) }));
+vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(), getOpenProjectDb: vi.fn(() => null), getExistingProjectDb: vi.fn(() => null) }));
+// The cold open's background drain of `removed-worktrees/` is not under test.
+vi.mock('../../src/main/git/removed-worktrees', () => ({ scheduleRemovedWorktreeDeletion: vi.fn() }));
 vi.mock('../../src/main/db/repositories/task-repository', () => ({ TaskRepository: class {} }));
 vi.mock('../../src/main/db/repositories/session-repository', () => ({ SessionRepository: class {} }));
 
@@ -151,6 +153,76 @@ describe('a reset whose reap kept a process in the worktree', () => {
 
     expect(worktreeRemovalReports()).toEqual([]);
     expect(hoisted.trackEvent).toHaveBeenCalledWith('app_error', expect.objectContaining({ source: 'worktree_removal', reason: 'reap_left_running' }));
+  });
+});
+
+/**
+ * A cold open of a project whose Done task's removal failed on an earlier run:
+ * the startup sweep reaps first, then the Done retry removes the worktree
+ * (`cleanupStaleResourcesAsync`). The sweep's reap answers with `entries`, and
+ * the move aside fails, so the retry removes in place. Every other pass finds
+ * nothing to do (no To Do task, the worktree's row is there for the orphan pass).
+ */
+async function coldOpenWhoseSweepLeft(entries: LeftoverProcessEntry[], stoppingEnabled = true): Promise<void> {
+  const { WorktreeManager } = await import('../../src/main/git/worktree-manager');
+  vi.spyOn(WorktreeManager.prototype, 'moveWorktreeAside').mockResolvedValue(false);
+  const { cleanupStaleResourcesAsync, _resetTerminalTaskSweepForTests } = await import('../../src/main/transition-engine/resource-cleanup');
+  const { ownershipOf } = await import('./helpers/verified-ownership');
+  _resetTerminalTaskSweepForTests();
+  const doneTask = { id: 'task-held', title: 'Fix login', worktree_path: worktreePath, session_id: null, swimlane_id: 'lane-done' };
+  const taskRepo = {
+    listArchived: vi.fn(() => [doneTask]),
+    list: vi.fn(() => []),
+    listAllInSwimlane: vi.fn((laneId: string) => (laneId === 'lane-done' ? [doneTask] : [])),
+    getById: vi.fn(() => doneTask),
+    update: vi.fn(),
+  };
+  const swimlaneRepo = { list: vi.fn(() => [{ id: 'lane-todo', role: 'todo' }, { id: 'lane-done', role: 'done' }]) };
+  const sessionRepo = { listAllSessionIds: vi.fn(() => []), deleteByTaskId: vi.fn() };
+  const sessionManager = { reapTaskProcesses: vi.fn(async () => entries), listSessions: vi.fn(() => []) };
+  const automationRunRepo = { markStaleRunsInterrupted: vi.fn(() => 0), pruneTo: vi.fn() };
+  await cleanupStaleResourcesAsync(
+    ownershipOf(projectPath),
+    taskRepo as never,
+    { currentVisit: vi.fn(() => null) },
+    swimlaneRepo as never,
+    sessionRepo as never,
+    sessionManager as never,
+    automationRunRepo as never,
+    () => {},
+    { stoppingEnabled: () => stoppingEnabled, onReport: vi.fn() },
+  );
+  expect(taskRepo.update, 'the held folder was not removed').not.toHaveBeenCalled();
+}
+
+describe('a cold open whose startup sweep kept a process in a Done task\'s worktree', () => {
+  // Sentry DESKTOP-3P on 0.62.0: `caller=startup_retry`, `EBUSY` on `rmdir`, `holders=none`.
+  it('counts the startup retry\'s failed removal and reports nothing', async () => {
+    await coldOpenWhoseSweepLeft([devServer('kept')]);
+
+    expect(worktreeRemovalReports()).toEqual([]);
+    expect(hoisted.trackEvent).toHaveBeenCalledWith('app_error', expect.objectContaining({
+      source: 'worktree_removal',
+      reason: 'reap_left_running',
+      caller: 'startup_retry',
+      errno: 'EBUSY',
+    }));
+  });
+
+  it('still reports it when the sweep stopped everything it found', async () => {
+    await coldOpenWhoseSweepLeft([devServer('stopped')]);
+
+    const reports = worktreeRemovalReports();
+    expect(reports).toHaveLength(1);
+    expect(reports[0][1]).toMatchObject({ caller: 'startup_retry', syscall: 'rmdir', profile: 'fast' });
+  });
+
+  it('still reports it with stopping off, when the sweep scanned nothing', async () => {
+    // The owner's choice: with nothing scanned nothing is known, as after a reap that failed.
+    await coldOpenWhoseSweepLeft([devServer('kept')], false);
+
+    expect(worktreeRemovalReports()).toHaveLength(1);
+    expect(hoisted.trackEvent).not.toHaveBeenCalledWith('app_error', expect.objectContaining({ source: 'worktree_removal' }));
   });
 });
 

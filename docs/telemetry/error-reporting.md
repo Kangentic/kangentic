@@ -536,7 +536,15 @@ in one Sentry org, one triage surface.
     out with nothing watching the host (the 0.60.0 DESKTOP-43 event fired 15.7 h late). The
     wall-clock lateness decides it, not the wake clock, because a wake's overdue timers can run
     before the `resume` event arrives. A host that stays frozen is still reported by the next
-    beat, whose timer fires on time.
+    beat, whose timer fires on time. A beat whose threshold timer fired more than 5 s late
+    reports only when the host's watchdog wrote a line during it. A timer that late means main's
+    own loop did not run, and the watchdog prints once the host's loop is held 5 s, so a late beat
+    with no line measured main, not the host (the 0.62.0 DESKTOP-43 event fired 18.7 s late with
+    an empty stderr tail). The check counts every watchdog line the tail was given, so a trim of
+    the 8 KB tail cannot hide a new one. It waits about a second after the beat ends, because main
+    resumes with its overdue timers, the threshold and the ping's timeout, before it reads the
+    line the host wrote during the hold. A quit inside that second decides at once and writes the
+    stall to disk as below. An on-time beat with no answer still reports, line or not.
     Nothing sent from the quit path lands. So a `shutdown` stall is written to
     `pty-host-stall-at-quit.json` in the config directory, and the next launch reports it, as
     `abandoned-launches.ts` does. Its `pty_host` context lists the other requests in flight and
@@ -1106,6 +1114,17 @@ in one Sentry org, one triage surface.
   on Windows. Its `holders: none` on 11 of them is no evidence against a kept process: the holder
   scan (`findWorktreePathHolders`) reads command lines, and a process holding the folder only as its
   working directory cannot be seen on Windows.
+
+  The cold open's retry of a Done task's removal (`caller: startup_retry`) takes the startup
+  sweep's verdict the same way. The 0.62.0 recurrence of DESKTOP-3P was this retry, before it was
+  given the verdict. The sweep runs just before it, once per launch, and a later open in the same
+  launch gets the same verdict, waiting for it while the first sweep still reaps. So a process the
+  sweep keeps finding in the folder is counted at every launch. The verdict is the first sweep's
+  for the whole launch, by decision: a kept process that exits before a later open leaves that
+  open's failure counted too, the price of not reporting the same held folder on every project
+  switch. With "Stop leftover processes" off the sweep scans nothing, by decision, so nothing is
+  known and a failed startup retry still reports. The cost is one event per launch for a user who
+  keeps a process in a Done task's worktree with stopping off.
 
   What still reports carries three more fixed values to split the rest. `caller` names the path
   that asked: `done_fallback` (a Done move's in-place delete after its move aside failed),

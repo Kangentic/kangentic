@@ -75,6 +75,17 @@ const HEARTBEAT_UNRESPONSIVE_MS = 11_000;
  *  15.7 h late). Four budgets is far above any hold of main the stall report exists to name,
  *  and a host that stays frozen is still caught by the next beat, whose timer fires on time. */
 const HEARTBEAT_UNMEASURED_LATE_MS = 4 * REQUEST_TIMEOUT_MS;
+/** A threshold timer this late says main's own loop did not run for 5 s. A timer on a free loop
+ *  fires within milliseconds, so 5 s is far past jitter. It is the host's watchdog threshold
+ *  (`WATCHDOG_CHECK_INTERVAL_MS` times `WATCHDOG_HELD_CHECKS`, pinned equal by a test, since main
+ *  must not import the watchdog's thread module): a late beat with no new watchdog line measured
+ *  main, not the host, and is voided (Sentry DESKTOP-43 on 0.62.0 fired 18.7 s late with no
+ *  line). A late beat with a line still reports, since the host was held too. */
+export const HEARTBEAT_LATE_TIMER_MS = 5_000;
+/** How long a late beat's end waits before it reads the host's stderr. Main resumes with its
+ *  overdue timers, the threshold and the ping's timeout, before it reads the pipe, so the line
+ *  the watchdog wrote during the hold lands after them. */
+export const LATE_BEAT_SETTLE_MS = 1_000;
 /** Late answers kept waiting at once. A live host whose reap hung never answers,
  *  so past this the oldest entry goes rather than one per reap for the run. */
 const MAX_LATE_RESULTS = 64;
@@ -124,6 +135,9 @@ interface HeartbeatBeat {
   /** Watchdog lines in that tail when the beat was sent, so the report names
    *  only a hold written during this stall. */
   watchdogLinesBefore: number;
+  /** `StderrTail.watchdogLinesSeen` when the beat was sent. Decides a late beat
+   *  (`mainHeldNotHost`), so a trim that drops an old line cannot hide a new one. */
+  watchdogLinesSeenBefore: number;
   /** Set when the ping passed `HEARTBEAT_UNRESPONSIVE_MS`. */
   stalled: boolean;
   /** How late the threshold timer fired on main's own loop. */
@@ -132,6 +146,14 @@ interface HeartbeatBeat {
   inFlight: string[];
   /** The stall was handed to the report once, whichever way it ended first. */
   ended: boolean;
+}
+
+/** A late beat that ended and is waiting out `LATE_BEAT_SETTLE_MS` before it decides. */
+interface SettlingStall {
+  beat: HeartbeatBeat;
+  outcome: PtyHostHeartbeatStallOutcome;
+  answeredAfterMs: number | null;
+  timer: ReturnType<typeof setTimeout>;
 }
 
 export interface UtilityPtyHostTransportOptions {
@@ -173,6 +195,8 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
   private heartbeatInFlight = false;
   /** The beat whose ping has not settled yet, for a quit that ends its stall. */
   private currentBeat: HeartbeatBeat | null = null;
+  /** The late beat waiting out its settle, for a quit that lands inside it. */
+  private settlingStall: SettlingStall | null = null;
   private shuttingDown = false;
   private hadHost = false;
   /** A host exited unexpectedly since the last `ready`, before or after its
@@ -496,7 +520,9 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
    * settles, so the report says how the stall ended: answered late, the host
    * exited, no answer within the ping's budget, or the app quit. A beat whose
    * threshold timer fires over `HEARTBEAT_UNMEASURED_LATE_MS` late spanned a
-   * sleep or a held main loop, and reports nothing.
+   * sleep or a held main loop, and reports nothing. One over
+   * `HEARTBEAT_LATE_TIMER_MS` late reports only when the host's watchdog wrote
+   * a line during it (`mainHeldNotHost`).
    */
   private startHeartbeat(): void {
     this.stopHeartbeat();
@@ -507,6 +533,7 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
         startedAt: Date.now(),
         stderrTail: this.childStderr,
         watchdogLinesBefore: this.childStderr?.watchdogLineCount() ?? 0,
+        watchdogLinesSeenBefore: this.childStderr?.watchdogLinesSeen() ?? 0,
         stalled: false,
         timerLateMs: 0,
         inFlight: [],
@@ -552,13 +579,26 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
    * the host exits, is then the quit's and reports nothing.
    */
   private recordStallAtQuit(): void {
+    // No settle here: the quit path is synchronous, so the tail is read as it stands.
+    // A late beat that ended just before the quit is still waiting out its settle.
+    const settling = this.settlingStall;
+    if (settling) {
+      this.settlingStall = null;
+      clearTimeout(settling.timer);
+      if (!this.mainHeldNotHost(settling.beat)) this.writeStallAtQuit(this.stallOf(settling.beat, settling.outcome, settling.answeredAfterMs));
+    }
     const beat = this.currentBeat;
     if (!beat?.stalled || beat.ended) return;
     beat.ended = true;
+    if (this.mainHeldNotHost(beat)) return;
+    this.writeStallAtQuit(this.stallOf(beat, 'shutdown', null));
+  }
+
+  private writeStallAtQuit(stall: PtyHostHeartbeatStall): void {
     const filePath = this.options.stallAtQuitFilePath;
     if (!filePath) return;
     try {
-      recordPtyHostStallAtQuit(filePath, this.stallOf(beat, 'shutdown', null));
+      recordPtyHostStallAtQuit(filePath, stall);
     } catch (error) {
       // report-ok: a report from the quit path never lands; the disk write was the one way it could.
       console.warn('[pty-host] could not record a heartbeat stall for the next launch:', error);
@@ -583,12 +623,49 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
     beat.ended = true;
     // The host a quit shuts down exits too; that stall is the quit's to record.
     if (this.shuttingDown) return;
-    const send = (): void => reportPtyHostHeartbeatStall(this.stallOf(beat, outcome, answeredAfterMs));
+    const late = beat.timerLateMs > HEARTBEAT_LATE_TIMER_MS;
+    const send = (): void => {
+      if (late) {
+        // A quit during the settle recorded it (`recordStallAtQuit`) and cleared this timer.
+        if (this.shuttingDown) return;
+        if (this.mainHeldNotHost(beat)) {
+          console.info(`[pty-host] a heartbeat timer fired ${Math.round(beat.timerLateMs / 1000)} s late with no hold in the host; main's loop was held, not measured`);
+          return;
+        }
+      }
+      reportPtyHostHeartbeatStall(this.stallOf(beat, outcome, answeredAfterMs));
+    };
     // A host that exited can still be draining its last stderr, the
     // watchdog's line among it (see `StderrTail.whenDrained`).
     const drained = outcome === 'host_exited' && beat.stderrTail ? beat.stderrTail.whenDrained(STDERR_DRAIN_BOUND_MS) : null;
-    if (drained) void drained.then(send);
-    else send();
+    if (drained) {
+      void drained.then(send);
+    } else if (late) {
+      const settling: SettlingStall = {
+        beat,
+        outcome,
+        answeredAfterMs,
+        timer: setTimeout(() => {
+          if (this.settlingStall === settling) this.settlingStall = null;
+          send();
+        }, LATE_BEAT_SETTLE_MS),
+      };
+      settling.timer.unref();
+      this.settlingStall = settling;
+    } else {
+      send();
+    }
+  }
+
+  /**
+   * A beat whose threshold timer fired over `HEARTBEAT_LATE_TIMER_MS` late,
+   * with no watchdog line written in the host since it was sent. Main's own
+   * loop did not run, and the host's did, so the beat says nothing about the
+   * host.
+   */
+  private mainHeldNotHost(beat: HeartbeatBeat): boolean {
+    if (beat.timerLateMs <= HEARTBEAT_LATE_TIMER_MS) return false;
+    return (beat.stderrTail?.watchdogLinesSeen() ?? 0) <= beat.watchdogLinesSeenBefore;
   }
 
   /** The methods of the requests waiting on the host, the heartbeat's own ping left out. */
