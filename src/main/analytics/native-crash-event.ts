@@ -190,6 +190,24 @@ export const FOREIGN_CRASH_MESSAGE = "Foreign process crash reached Kangentic's 
 /** Fixed, so every foreign crash lands in that one issue whatever program it was. */
 export const FOREIGN_CRASH_FINGERPRINT = ['foreign-process-crash'];
 
+/**
+ * The fingerprint of a crash of ours in a run that had begun quitting. `{{ default }}`
+ * keeps Sentry's own stack grouping, and the second entry splits it from the same
+ * stack mid-run.
+ *
+ * DESKTOP-W's `LOG(FATAL)` reaches us two ways. Mid-run it kills a working app (the
+ * Ubuntu, NixOS and CachyOS events in docs/platforms/gpu-failures.md). At a Linux
+ * quit the GPU's zygote can be gone first, every relaunch fails and the same fatal
+ * fires while the app is already closing. Every 0.58.0 and 0.62.0 event read
+ * `quit_begun: true`, so a mid-run recurrence would hide among them.
+ *
+ * Only the grouping changes. A quit-time crash in our own code is still a defect
+ * (DESKTOP-C, node-pty's exit callback after `node::Stop()`), so its level, its
+ * stack and its dump all stay. The foreign-crash warning's fixed fingerprint is the
+ * precedent for deciding grouping here rather than on Sentry.
+ */
+export const QUIT_BEGUN_CRASH_FINGERPRINT = ['{{ default }}', 'quit-begun'];
+
 /** The prefix the SDK gives the dump's own Crashpad annotation objects in `contexts.electron`. */
 const CRASHPAD_ANNOTATION_KEY_PREFIX = 'crashpad.';
 
@@ -730,6 +748,11 @@ export function correctNativeCrashEvent(
   }
 
   const quitState = resolveQuitState(foundAtStartup, identity.crashTime, context);
+  // Only a definite `true`. Unknown keeps default grouping, so a dump the run
+  // record cannot place stays with the mid-run issue rather than hiding.
+  if (quitState.quitBegun === true) {
+    event.fingerprint = [...QUIT_BEGUN_CRASH_FINGERPRINT];
+  }
 
   event.contexts = {
     ...event.contexts,

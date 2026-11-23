@@ -46,6 +46,7 @@ sources:
   - resource: src/main/analytics/handled-report.ts
   - resource: src/main/browser/wake-clock.ts
   - resource: src/main/browser/display-server.ts
+  - resource: src/main/browser/cpu-speed-limit.ts
   - resource: src/main/analytics/ipc-handler-report.ts
   - resource: src/shared/handled-error-copy.ts
   - resource: src/shared/ipc-rejection.ts
@@ -324,6 +325,36 @@ in one Sentry org, one triage surface.
     the comparison crosses from Aptabase to Sentry once. On a release with the change, expect a
     one-time tail from dumps written before the upgrade and uploaded at its first launch
     (`native_crash.crash_time` separates it), then only the residue.
+- **A crash of ours while quitting groups apart from the same crash mid-run.** The rule for code
+  defects is to leave grouping to the stack. The foreign-crash and Browser-guest warnings above
+  replace the stack with a fixed fingerprint, and this is the only native crash that gets a client
+  fingerprint and keeps its stack grouping. When
+  `native_crash.quit_begun` is `true` (below), `correctNativeCrashEvent` sets the fingerprint
+  `['{{ default }}', 'quit-begun']` (`QUIT_BEGUN_CRASH_FINGERPRINT` in `native-crash-event.ts`).
+  `{{ default }}` keeps Sentry's own stack grouping, so a quit-time crash still groups by its
+  frames, only apart from the same frames mid-run. Its level, stack and dump are unchanged: a
+  quit-time crash in our own code is still a defect (DESKTOP-C, node-pty's exit callback after
+  `node::Stop()`), so nothing is downgraded or dropped. A `quit_begun` that is `false` or absent
+  sets no fingerprint, so a dump the run record cannot place stays with the mid-run issue.
+  - **Why.** DESKTOP-W's `LOG(FATAL)` arrives two ways ([GPU process
+    failures](../platforms/gpu-failures.md)). Mid-run it kills a working app. At a Linux quit the
+    GPU's zygote can be gone first, every relaunch fails with exit code 1002 and the same fatal
+    fires while the app is already closing. On 0.62.0 both events, and the 0.58.0 one from another
+    install, read `quit_begun: true`, so a mid-run recurrence would have hidden among quit-time
+    dumps. The foreign-crash warning's fixed fingerprint above is the precedent for deciding
+    grouping on the client.
+  - **What it costs.** The first quit-time fatal after the change opens a new issue with the same
+    `HandleFatal` title. That issue is the quit-time half; DESKTOP-W from then on is the mid-run
+    one. Existing events keep their grouping.
+  - **How it is checked.** `tests/unit/native-crash-event.test.ts` pins which runs get the
+    fingerprint, and `tests/unit/foreign-crash-real-client.test.ts` pins that the real client's
+    envelope carries it in the same envelope as the `event.minidump` attachment. Sentry's native
+    SDK docs use `{{ default }}` fingerprints, but nothing found says the server keeps a client
+    fingerprint on an event whose stack it builds from an attached dump. The first quit-time
+    fatal after release settles it: its event JSON shows the fingerprint and the issue it opened.
+    If Sentry ignored it, the fallback is a `quit_begun` tag plus a project fingerprint rule
+    `tags.quit_begun:true -> {{ default }}, quit-begun`, since a fingerprint rule cannot match a
+    context.
 
 ## Tags, sessions and breadcrumbs
 
@@ -367,7 +398,15 @@ in one Sentry org, one triage surface.
     their values (`[title]`), and `type` keeps its value. A crumb with any other quoted value left
     is dropped.
   - `electron`: the lifecycle message and the webContents id stay. A URL stays only when it is the
-    app's own `app:///` page, without its query.
+    app's own `app:///` page, without its query. `powerMonitor.speed-limit-change` is never
+    recorded. Main replaces the SDK's Electron breadcrumbs integration with one whose
+    `powerMonitor` option skips it (`keepPowerMonitorBreadcrumb`), so the crumb is never built and
+    takes no slot. On a CPU the OS keeps throttling it fires every 1 to 2 s, and on Sentry
+    DESKTOP-46's 0.62.0 event about 100 of them were the whole of main's trail. The latest limit
+    rides that report as `cpu_speed_limit` instead (the `browser_driver` bullet below). Every other
+    power event (suspend, resume, lock and unlock, AC and battery) is kept.
+    `tests/unit/sentry-power-monitor-breadcrumbs.test.ts` runs the installed integration against
+    a real client's ring.
   - Request crumbs (`http`, `electron.net`, `fetch`, `xhr`): method and status stay. The URL stays
     only under a Kangentic prefix (our GitHub repository and release assets, Aptabase), without its
     query. Main's fetch also reaches the board adapters and the webhook automation, whose URLs can
@@ -482,7 +521,7 @@ in one Sentry org, one triage surface.
     classes and the attach, capture and composite failures only), `browser_passkey_guard` (tag
     `surface`: `lane`, `drive` or `created`, for a virtual passkey authenticator a guest refused;
     `src/main/browser/passkey-guard.ts`, no new data class). A `ScreenshotNotComposited`
-    report also carries seven fixed tags, so it can say why the capture got no frame (Sentry
+    report also carries eight fixed tags, so it can say why the capture got no frame (Sentry
     DESKTOP-46, a timeout 18 s after an unlock that could not say whether the capture hold armed):
     `surface` (`pane`, `hidden`, `parked`, `popout`, `lane`), `host_window` (`visible`,
     `minimized`, `hidden`, `none`) and `hold` (`armed`, `skipped_hidden`, `no_host`), both read
@@ -499,10 +538,18 @@ in one Sentry org, one triage surface.
     from an env value (`src/main/browser/display-server.ts`). It is `other` off Linux and for any
     other backend. It came after two 0.61.0 events from one Debian install timed out on a parked
     pane. On Wayland a minimized app still reads `host_window: visible`, so `host_window` alone
-    cannot say whether the app was on screen. None is a new data class: the `electron` breadcrumbs
-    already carry power events and window focus with their timestamps, the two hold tags describe
-    Kangentic's own calls, and the display server is a three-value fact about the machine, the
-    same class as `host_window`. A `CaptureExceedsSurface` report carries five, so it can say what
+    cannot say whether the app was on screen. The eighth, `cpu_speed_limit` (`100`, `75-99`,
+    `50-74`, `<50`, `unknown`), is the latest CPU speed limit the OS advertised through
+    powerMonitor's `speed-limit-change`, in percent, bucketed (`src/main/browser/cpu-speed-limit.ts`).
+    Electron emits that event on Windows and macOS only, so Linux always reads `unknown`, and so
+    does a run whose limit never changed. `unknown` never means unthrottled. It came after the
+    0.62.0 Windows event, whose trail was about 100 `speed-limit-change` crumbs, one every 1 to
+    2 s, that filled main's ring and evicted every other crumb (see the breadcrumbs section). None
+    is a new data class: the `electron` breadcrumbs already carry power events and window focus
+    with their timestamps (the speed-limit crumb included, until this change), the two hold tags
+    describe Kangentic's own calls, and the display server and the speed-limit bucket are
+    few-value facts about the machine, the same class as `host_window`. A `CaptureExceedsSurface`
+    report carries five, so it can say what
     the refused request looked like (Sentry DESKTOP-48, a refusal that could not say which of the
     bound's inputs was wrong): `surface` as above, `target` (`viewport`, `full_page`, `element`),
     `clipped` (`yes`, `no`), `emulated` (`yes`, `no`, and `unknown` when no CDP session was
@@ -1576,6 +1623,7 @@ in one Sentry org, one triage surface.
   holds whole seconds); `failsafe` leaves it out, because
   that `at` is the kill, not the quit's start. `previous_run_exit` names the exit kind whenever the
   dump was placed in the previous run. An absent `quit_begun` means unknown, never `false`.
+  A `true` also sets the `quit-begun` fingerprint (see "Native and guest crashes").
   Note the SDK decrements its 10-minidumps-per-session budget at capture time, before `beforeSend`
   runs, so foreign dumps consume it too, even though their dumps never upload.
 - **Native debug files** ride the same gate: the Windows release build (`scripts/build.js`) also

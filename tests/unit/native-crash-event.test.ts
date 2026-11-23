@@ -4,6 +4,7 @@ import {
   correctNativeCrashEvent,
   FOREIGN_CRASH_FINGERPRINT,
   FOREIGN_CRASH_MESSAGE,
+  QUIT_BEGUN_CRASH_FINGERPRINT,
   readMinidumpIdentity,
   restoreOwnRendererProcessTag,
   type NativeCrashContext,
@@ -938,6 +939,60 @@ describe('correctNativeCrashEvent: whether the crashed run had begun quitting', 
       shuttingDown: false,
     });
     expect(running.event.contexts?.native_crash?.quit_begun).toBe(false);
+  });
+});
+
+/**
+ * DESKTOP-W: a quit-time fatal groups apart from the same stack mid-run, so a
+ * mid-run recurrence (the one that kills a working app) does not hide among
+ * quit-time dumps. Only a definite `quit_begun: true` splits it; the level stays.
+ */
+describe('correctNativeCrashEvent: a crash while quitting groups apart', () => {
+  const linuxDumpIdentity = () =>
+    readMinidumpIdentity(
+      buildMinidump({ modules: LINUX_APP_MODULES, simpleAnnotations: { _version: '0.57.0' }, timeDateStamp: CRASH_TIME_STAMP })
+    );
+
+  function decide(previousRun: NativeCrashContext['previousRun'], shuttingDown = false, event = nativeEvent()) {
+    const decision = correctNativeCrashEvent(event, linuxDumpIdentity(), { ...LINUX_CONTEXT, previousRun, shuttingDown });
+    expect(decision.action).toBe('keep');
+    return decision.event;
+  }
+
+  const liveEvent = () =>
+    nativeEvent({ tags: { 'event.environment': 'native', 'event.process': 'GPU', 'exit.reason': 'crashed' } });
+
+  it('fingerprints a startup-found dump from a run that had begun a clean quit, and keeps it fatal', () => {
+    const event = decide({ exit: 'clean', uptimeSeconds: 600, lastAliveAt: '2026-09-08T14:46:40.000Z' });
+    expect(event.contexts?.native_crash?.quit_begun).toBe(true);
+    expect(event.fingerprint).toEqual(['{{ default }}', 'quit-begun']);
+    expect(event.fingerprint).toEqual(QUIT_BEGUN_CRASH_FINGERPRINT);
+    expect(event.level).toBe('fatal');
+  });
+
+  it('fingerprints a live crash in a session that is shutting down', () => {
+    const event = decide(null, true, liveEvent());
+    expect(event.contexts?.native_crash?.quit_begun).toBe(true);
+    expect(event.fingerprint).toEqual(QUIT_BEGUN_CRASH_FINGERPRINT);
+    expect(event.level).toBe('fatal');
+  });
+
+  // A live event decides from the shutdown flag alone, so the mid-run case is the
+  // live event with the flag down. Every other case is a startup-found dump, judged
+  // by the run record.
+  it.each([
+    { label: 'a live crash mid-run', previousRun: null, live: true },
+    { label: 'an abrupt run', previousRun: { exit: 'abrupt', uptimeSeconds: 1200, lastAliveAt: '2026-09-08T14:46:00.000Z' }, live: false },
+    { label: 'a failsafe exit', previousRun: { exit: 'failsafe', uptimeSeconds: 600, lastAliveAt: '2026-09-08T14:46:50.000Z' }, live: false },
+    { label: 'a crash before a clean quit began', previousRun: { exit: 'clean', uptimeSeconds: 3600, lastAliveAt: '2026-09-08T14:50:00.000Z' }, live: false },
+    { label: 'a dump older than the recorded run', previousRun: { exit: 'clean', uptimeSeconds: 300, lastAliveAt: '2026-09-08T15:30:00.000Z' }, live: false },
+    { label: 'no run record', previousRun: null, live: false },
+    { label: 'an unparseable record time', previousRun: { exit: 'clean', uptimeSeconds: 600, lastAliveAt: 'not-a-date' }, live: false },
+  ] as const)('sets no fingerprint for $label', ({ previousRun, live }) => {
+    const event = live ? decide(previousRun, false, liveEvent()) : decide(previousRun);
+    expect(event.contexts?.native_crash?.quit_begun).not.toBe(true);
+    expect(event.fingerprint).toBeUndefined();
+    expect(event.level).toBe('fatal');
   });
 });
 

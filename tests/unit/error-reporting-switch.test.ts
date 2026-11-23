@@ -43,6 +43,10 @@ const mocks = vi.hoisted(() => {
     setFingerprintSpy,
     sentryMock: {
       init: vi.fn(),
+      // Stands in for the SDK's factory, so the integrations case below can see
+      // which options main passed. The real integration runs in
+      // sentry-power-monitor-breadcrumbs.test.ts.
+      electronBreadcrumbsIntegration: vi.fn((options: Record<string, unknown>) => ({ name: 'ElectronBreadcrumbs', options })),
       setUser: vi.fn(),
       // Top-level Sentry.setContext, distinct from the scope-level setContextSpy
       // passed into withScope's callback below (used only by reportHandledError's
@@ -417,8 +421,12 @@ describe('error reporting runtime behavior (module-state gated)', () => {
   });
 
   describe('initErrorReporting Sentry.init option shape', () => {
-    it('turns every dataCollection field off, filters MainProcessSession out of integrations while keeping others, and ignores the known-benign write errors', async () => {
+    it('turns every dataCollection field off, filters MainProcessSession out of integrations, swaps in an ElectronBreadcrumbs that skips speed-limit-change while keeping others, and ignores the known-benign write errors', async () => {
       const errorReporting = await importFreshErrorReporting();
+      // Imported after the reset, so it is the same module instance
+      // error-reporting.ts just loaded.
+      const { keepPowerMonitorBreadcrumb } = await import('../../src/shared/sentry-breadcrumbs');
+      mocks.sentryMock.electronBreadcrumbsIntegration.mockClear();
       errorReporting.initErrorReporting();
 
       expect(mocks.sentryMock.init).toHaveBeenCalledTimes(1);
@@ -509,16 +517,25 @@ describe('error reporting runtime behavior (module-state gated)', () => {
       ).toBe(true);
       expect(matches('TypeError: cannot read properties of undefined')).toBe(false);
 
+      const defaultElectronBreadcrumbs = { name: 'ElectronBreadcrumbs' };
       const syntheticDefaultIntegrations = [
         { name: 'MainProcessSession' },
         { name: 'Console' },
+        defaultElectronBreadcrumbs,
         { name: 'FunctionToString' },
       ];
       const filtered = options.integrations(syntheticDefaultIntegrations);
       expect(filtered.map((integration) => integration.name)).toEqual([
         'Console',
         'FunctionToString',
+        'ElectronBreadcrumbs',
       ]);
+      // The default is replaced, not kept beside a second copy, and the copy
+      // skips speed-limit-change through the shared policy's predicate.
+      expect(filtered).not.toContain(defaultElectronBreadcrumbs);
+      expect(mocks.sentryMock.electronBreadcrumbsIntegration).toHaveBeenCalledWith({
+        powerMonitor: keepPowerMonitorBreadcrumb,
+      });
     });
 
     it('installs the shared breadcrumb policy as beforeBreadcrumb', async () => {
