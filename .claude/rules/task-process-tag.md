@@ -3,6 +3,7 @@ paths:
   - "src/main/pty/process-tag/**"
   - "src/main/pty/lifecycle/session-spawn-flow.ts"
   - "src/main/ipc/helpers/task-cleanup.ts"
+  - "src/main/ipc/helpers/reap-verdict.ts"
   - "src/main/ipc/handlers/task-move.ts"
   - "src/main/ipc/handlers/projects.ts"
   - "src/main/agent/mcp-project-context.ts"

@@ -91,6 +91,33 @@ describe('StderrTail', () => {
     tail.clear();
     expect(tail.snapshot()).toBe('');
   });
+
+  describe('watchdogLinesSeen', () => {
+    const LINE = '[pty-host] event loop held 5 s in a\n';
+
+    it('never goes down when a trim drops a watchdog line, so a new line still reads as new', () => {
+      const tail = makeTail(64);
+      tail.append(LINE);
+      expect(tail.watchdogLinesSeen()).toBe(1);
+
+      tail.append(`${'z'.repeat(60)}\n`);
+      expect(tail.watchdogLineCount(), 'the retained text lost the line').toBe(0);
+      expect(tail.watchdogLinesSeen()).toBe(1);
+
+      tail.append(LINE);
+      expect(tail.watchdogLinesSeen()).toBe(2);
+    });
+
+    it('keeps the count across clear()', () => {
+      const tail = makeTail();
+      tail.append(LINE);
+      tail.clear();
+      expect(tail.watchdogLineCount()).toBe(0);
+      expect(tail.watchdogLinesSeen()).toBe(1);
+      tail.append(LINE);
+      expect(tail.watchdogLinesSeen()).toBe(2);
+    });
+  });
 });
 
 describe('redactHomeDirectory', () => {
