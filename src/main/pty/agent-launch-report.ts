@@ -1123,6 +1123,15 @@ export function reportSessionIdCaptureOutcome(
       reportExitedWithNoConversation(session, captureTags);
       return;
     }
+    if (outcome.kind === 'never' && session.launchFailureNoted === true && idStore !== 'present') {
+      // Its launch report already said why it never started (a failure its CLI
+      // named, or a shell that never ran it), so there was no id to capture. The
+      // sweep can end such a shell long after its agent died: Codex 0.171.0 dead
+      // 6 s in under PowerShell was retired at the 120 s start ceiling.
+      // breadcrumb-ok: a session id and an agent from a fixed list.
+      console.warn(`[AGENT-LAUNCH] session=${sessionId.slice(0, 8)} stage=agent_exited cause=no_conversation agent=${pending.agent} already_reported=yes`);
+      return;
+    }
     if (explainedByUntouchedTerminal(session, outcome.kind, idStore)) {
       // The local log still says so: nobody used it, and no event will.
       console.warn(`[session-manager] ${pending.agent} gave no session ID for session ${sessionId.slice(0, 8)}: no prompt reached it and it wrote no session, so nothing is reported.`);

@@ -1,4 +1,4 @@
-import { identifyCodexUserSetupFailure } from './startup-failure';
+import { codexNamesMissingConversation, describeCodexStartupFailure, identifyCodexUserSetupFailure } from './startup-failure';
 import type { UserSetupMatch } from '../../../../shared/user-configuration-error';
 import { CodexDetector } from './detector';
 import { CodexCommandBuilder } from './command-builder';
@@ -139,6 +139,16 @@ export class CodexAdapter implements AgentAdapter {
   /** See `startup-failure.ts`. */
   identifyUserSetupFailure(finalOutput: string): UserSetupMatch | null {
     return identifyCodexUserSetupFailure(finalOutput);
+  }
+
+  /** See `startup-failure.ts`. */
+  describeStartupFailure(finalOutput: string, exitCode: number): string | null {
+    return describeCodexStartupFailure(finalOutput, exitCode);
+  }
+
+  /** See `startup-failure.ts`. */
+  namesMissingConversation(finalOutput: string, agentSessionId: string): boolean {
+    return codexNamesMissingConversation(finalOutput, agentSessionId);
   }
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {
