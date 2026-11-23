@@ -22,8 +22,12 @@ export function multiAccountAgents(accounts: readonly AgentAccount[]): Set<strin
  * window with no reset time (`resetsAt` 0, a CLI that reports none) never expires by the clock:
  * it counts until a later report replaces it.
  */
+function isLive(limitWindow: RateLimitWindow, nowSeconds: number): boolean {
+  return limitWindow.resetsAt <= 0 || limitWindow.resetsAt > nowSeconds;
+}
+
 function liveWindows(account: AgentAccount, nowSeconds: number): RateLimitWindow[] {
-  return (account.lastUsage ?? []).filter((limitWindow) => limitWindow.resetsAt <= 0 || limitWindow.resetsAt > nowSeconds);
+  return (account.lastUsage ?? []).filter((limitWindow) => isLive(limitWindow, nowSeconds));
 }
 
 /**
@@ -82,16 +86,21 @@ export function hasRoom(account: AgentAccount, nowSeconds: number): boolean {
 /**
  * The reset that orders an account under Automatic: the longest window the CLI reports (7d weekly
  * before 5h session), because that is the allowance a reset hands back the most of. Null when the
- * account reports no live window.
+ * account reports no live window of that length. Once every longest window has reset since the
+ * reading, the next reset is unknown until a read, so the account orders with the accounts that
+ * have no reading. A shorter window never stands in, since its reset is hours away while a week
+ * that just rolled over resets in about 7 days.
  */
 export function orderingReset(account: AgentAccount, nowSeconds: number): number | null {
-  // A window with no reset time has nothing to order by.
-  const windows = liveWindows(account, nowSeconds).filter((limitWindow) => limitWindow.resetsAt > 0);
-  if (windows.length === 0) return null;
-  const longest = windows.reduce((best, window) =>
-    (window.windowDurationSeconds ?? 0) > (best.windowDurationSeconds ?? 0) ? window : best,
+  // A window with no reset time has nothing to order by. Expired windows still say which length
+  // is the longest the account reports. A window with no length counts as the shortest.
+  const dated = (account.lastUsage ?? []).filter((limitWindow) => limitWindow.resetsAt > 0);
+  if (dated.length === 0) return null;
+  const longestDuration = Math.max(...dated.map((limitWindow) => limitWindow.windowDurationSeconds ?? 0));
+  const liveLongest = dated.find((limitWindow) =>
+    (limitWindow.windowDurationSeconds ?? 0) === longestDuration && isLive(limitWindow, nowSeconds),
   );
-  return longest.resetsAt;
+  return liveLongest?.resetsAt ?? null;
 }
 
 /**

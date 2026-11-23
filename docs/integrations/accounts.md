@@ -280,7 +280,10 @@ same holds for an account a continuation or a Switch to named: it is taken only 
 is `ok`, and Switch to refuses an account that is not.
 
 Automatic order sorts by the longest window each account reports, soonest reset first, so an
-allowance is used before it resets. A drag or Switch to sets Manual, which keeps the saved order.
+allowance is used before it resets. When an account's longest window has reset since its last
+reading, a shorter window does not stand in. For a Claude account, the 5h reset is hours away, but
+a week that just rolled over resets in about 7 days. That account orders with the accounts that
+have no reading until the next read. A drag or Switch to sets Manual, which keeps the saved order.
 Saving the accounts settings (Order or the auto-switch switch) pushes `accounts:changed` from
 `CONFIG_SET` (`accounts-config-changed.ts`), so the tab lists again once the write has landed. Lists overlap, because each one detects every
 agent's CLI, so the store applies only the answer to its latest request.

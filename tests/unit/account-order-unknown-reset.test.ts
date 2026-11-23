@@ -60,6 +60,24 @@ describe('a window whose reset has passed', () => {
     expect(topAccountWithRoom([lapsed], NOW)?.id).toBe('lapsed');
   });
 
+  it('does not hide a live window of the same length when ordering', () => {
+    const twoWeekly = account('two-weekly', 1, [window(30, NOW - 3_600, 604_800), window(40, NOW + 86_400, 604_800)]);
+    expect(orderingReset(twoWeekly, NOW)).toBe(NOW + 86_400);
+  });
+
+  it('treats a longest window resetting this second as reset, as room does', () => {
+    const resettingNow = account('resetting-now', 1, [window(30, NOW, 604_800), window(20, NOW + 7_200, 18_000)]);
+    expect(orderingReset(resettingNow, NOW)).toBeNull();
+  });
+
+  it('lets no window of unknown length stand in for an expired longest window', () => {
+    const unknownLength = account('unknown-length', 1, [
+      window(30, NOW - 3_600, 604_800),
+      { ...window(20, NOW + 7_200), windowDurationSeconds: undefined },
+    ]);
+    expect(orderingReset(unknownLength, NOW)).toBeNull();
+  });
+
   it('still counts one second before the reset', () => {
     expect(hasRoom(account('soon', 1, [window(100, NOW + 1)]), NOW)).toBe(false);
   });
