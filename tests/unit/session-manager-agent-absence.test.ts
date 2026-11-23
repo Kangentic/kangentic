@@ -99,6 +99,8 @@ vi.mock('../../src/main/activity-engine/session-telemetry', () => {
     // suspend() closes the session's telemetry, and skips its scrollback scan once the id is known.
     emitSessionEnd(): void {}
     clearSessionTracking(): void {}
+    // A host's link coming back tells the telemetry which sessions it held.
+    noteLinkRestored(): void {}
     hasAgentSessionId(): boolean {
       return true;
     }
@@ -128,6 +130,13 @@ const SPAWN_GRACE_MS = 30_000;
  * A's launches before the start bound (DESKTOP-2E).
  */
 const insideStartBound = (): string => new Date(Date.now() - (SPAWN_GRACE_MS + 4_000)).toISOString();
+/**
+ * A PTY on an SSH host: no pid on this machine (`PtyHandle.pid` is null), and a
+ * kill is a command the host carries out, counted through `onKill`.
+ */
+function hostPty(onKill: () => void = () => {}): ManagedSession['pty'] {
+  return { pid: null, kill: onKill, sealUserInput: () => {} } as unknown as ManagedSession['pty'];
+}
 /** Mirrors COMMAND_TERMINAL_AGENT_END_SETTLE_MS in session-manager.ts. */
 const END_SETTLE_MS = 5_000;
 
@@ -876,6 +885,22 @@ describe('SessionManager agent-absence wiring', () => {
       expect(reportHandledError.mock.calls[0][1]).toMatchObject({ judge: 'timer', shell: 'other' });
     });
 
+    it('reports a launch on an SSH host, which the sweep has no tree for', () => {
+      seedSession({ reportsAgentStart: true, hostId: 'host-1', shell: '/bin/bash', pty: hostPty() });
+      armCheck();
+      vi.advanceTimersByTime(AGENT_START_CEILING_MS);
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({ judge: 'timer' });
+    });
+
+    it('reports nothing for a host launch while its link is down, since its hooks are held', () => {
+      seedSession({ reportsAgentStart: true, hostId: 'host-1', shell: '/bin/bash', pty: hostPty() });
+      armCheck();
+      (manager as unknown as { hostsWithLinkDown: Set<string> }).hostsWithLinkDown.add('host-1');
+      vi.advanceTimersByTime(AGENT_START_CEILING_MS);
+      expect(reportHandledError).not.toHaveBeenCalled();
+    });
+
     it('stays quiet once the agent showed it ran', () => {
       sweep.available = false;
       const session = seedSession({ reportsAgentStart: true });
@@ -1201,6 +1226,310 @@ describe('SessionManager agent-absence wiring', () => {
 
       expect(read).not.toHaveBeenCalled();
       expect(requestAgentAbsenceCheck).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('a launch on an SSH host, whose PTY has no pid here (DESKTOP-4Y)', () => {
+    /**
+     * The watcher never registers a host session (`getSessionRootPid` has no
+     * pid to give it), so a request for the sweep to look goes nowhere. A host
+     * launch is judged at the grace on its output alone, and only when that
+     * output names a cause.
+     */
+    const namesMiss = {
+      namesMissingConversation: (output: string, id: string) => output.includes(`No conversation found with session ID: ${id}`),
+    } as unknown as AgentParser;
+    const MISSING_CONVERSATION_OUTPUT = 'No conversation found with session ID: conversation-1\r\n[dev@host project]$ ';
+
+    let hostKills: number;
+
+    /** A resume of a conversation that never took a turn, past the grace, on host `host-1`. */
+    function seedHostResume(overrides: Partial<ManagedSession> = {}): ManagedSession {
+      return seedSession({
+        pty: hostPty(() => { hostKills += 1; }),
+        hostId: 'host-1',
+        shell: '/bin/bash',
+        reportsAgentStart: true,
+        resuming: true,
+        agentSessionId: 'conversation-1',
+        agentParser: namesMiss,
+        startedAt: insideStartBound(),
+        firstOutputAt: Date.now() - (SPAWN_GRACE_MS + 3_000),
+        ...overrides,
+      });
+    }
+
+    function outputSeen(sessionId = 'session-1'): void {
+      (manager as unknown as { handleHostEvent(event: { type: 'outputSeen'; sessionId: string; chunks: number }): void })
+        .handleHostEvent({ type: 'outputSeen', sessionId, chunks: 1 });
+    }
+
+    function armStartBound(sessionId = 'session-1'): void {
+      (manager as unknown as { armLaunchStartBound(id: string): void }).armLaunchStartBound(sessionId);
+    }
+
+    function setLinkDown(hostId: string): void {
+      (manager as unknown as { hostsWithLinkDown: Set<string> }).hostsWithLinkDown.add(hostId);
+    }
+
+    beforeEach(() => {
+      hostKills = 0;
+      reportHandledError.mockClear();
+    });
+
+    it('pauses a resume whose output says the conversation is missing, at the grace, through agent-never-started', async () => {
+      const neverStarted = vi.fn();
+      manager.on('agent-never-started', neverStarted);
+      seedHostResume();
+      vi.spyOn(manager, 'getLaunchOutput').mockResolvedValue(MISSING_CONVERSATION_OUTPUT);
+
+      outputSeen();
+
+      await vi.waitFor(() => expect(neverStarted).toHaveBeenCalledTimes(1));
+      expect(neverStarted.mock.calls[0][0]).toBe('session-1');
+      // The sweep has no tree for a host session, so a request to it would go nowhere.
+      expect(requestAgentAbsenceCheck).not.toHaveBeenCalled();
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({ stage: 'never_started' });
+    });
+
+    it('retires the row when nothing takes the pause, so the task is not left running', async () => {
+      const session = seedHostResume();
+      vi.spyOn(manager, 'getLaunchOutput').mockResolvedValue(MISSING_CONVERSATION_OUTPUT);
+
+      outputSeen();
+
+      await vi.waitFor(() => expect(session.status).toBe('exited'));
+      expect(hostKills).toBe(1);
+    });
+
+    it('reads the output at the grace from the start bound, as it does for a local launch', async () => {
+      vi.useFakeTimers();
+      const neverStarted = vi.fn();
+      manager.on('agent-never-started', neverStarted);
+      seedHostResume({ startedAt: new Date().toISOString(), firstOutputAt: Date.now() });
+      const read = vi.spyOn(manager, 'getLaunchOutput').mockResolvedValue(MISSING_CONVERSATION_OUTPUT);
+
+      armStartBound();
+      await vi.advanceTimersByTimeAsync(SPAWN_GRACE_MS - 1);
+      expect(read).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+
+      // The start bound's read, then the launch report's own read for its output class.
+      expect(read).toHaveBeenCalledTimes(2);
+      expect(neverStarted).toHaveBeenCalledTimes(1);
+    });
+
+    it('reads a host launch\'s output inside the bound and keeps it running when the output names no cause', async () => {
+      const neverStarted = vi.fn();
+      manager.on('agent-never-started', neverStarted);
+      const session = seedHostResume();
+      const read = vi.spyOn(manager, 'getLaunchOutput').mockResolvedValue('[dev@host project]$ ');
+
+      outputSeen();
+      await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(session.launchFailureIdentifiedAt).toBeUndefined();
+      expect(isCandidate()).toBe(false);
+      retire();
+      expect(neverStarted).not.toHaveBeenCalled();
+      expect(reportHandledError).not.toHaveBeenCalled();
+      expect(session.status).toBe('running');
+      expect(hostKills).toBe(0);
+    });
+
+    it('never judges a host launch past the ceiling on silence, where a local one is judged by the tree', async () => {
+      const neverStarted = vi.fn();
+      manager.on('agent-never-started', neverStarted);
+      const session = seedHostResume({ startedAt: new Date(Date.now() - (AGENT_START_CEILING_MS + 5_000)).toISOString() });
+      const read = vi.spyOn(manager, 'getLaunchOutput').mockResolvedValue('[dev@host project]$ ');
+
+      outputSeen();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      // Past the ceiling a local launch is judged by the tree; a host has no tree to judge by.
+      expect(read).not.toHaveBeenCalled();
+      expect(isCandidate()).toBe(false);
+      retire();
+      expect(neverStarted).not.toHaveBeenCalled();
+      expect(session.status).toBe('running');
+    });
+
+    it('judges nothing while its link is down', async () => {
+      const neverStarted = vi.fn();
+      manager.on('agent-never-started', neverStarted);
+      const session = seedHostResume({ launchFailureIdentifiedAt: Date.now() });
+      setLinkDown('host-1');
+
+      expect(isCandidate()).toBe(false);
+      retire();
+
+      expect(neverStarted).not.toHaveBeenCalled();
+      expect(session.status).toBe('running');
+    });
+
+    it('judges nothing for a host launch whose agent showed it ran', () => {
+      seedHostResume({ launchFailureIdentifiedAt: Date.now(), agentStartObservedAt: Date.now() - 10_000 });
+      expect(isCandidate()).toBe(false);
+    });
+
+    describe('what makes a session count as on an SSH host', () => {
+      function treeCanJudge(): boolean {
+        const internals = manager as unknown as {
+          canTreeJudgeAgent(session: ManagedSession): boolean;
+          registry: { get(id: string): ManagedSession | undefined };
+        };
+        return internals.canTreeJudgeAgent(internals.registry.get('session-1') as ManagedSession);
+      }
+
+      it('counts a session with a host id as on a host even when its PTY has a pid', () => {
+        seedSession({ hostId: 'host-1', shell: '/bin/bash', pty: fakePty(4242) });
+        expect(treeCanJudge()).toBe(false);
+      });
+
+      it('counts a live PTY with no pid as on a host even with no host id', () => {
+        seedSession({ shell: '/bin/bash', pty: hostPty() });
+        expect(treeCanJudge()).toBe(false);
+      });
+
+      it('leaves a local session with a pid and no host id to the tree', () => {
+        seedSession({ shell: '/bin/bash', pty: fakePty(4242) });
+        expect(treeCanJudge()).toBe(true);
+      });
+    });
+
+    describe('the guards on a host launch whose output named a cause', () => {
+      it.each([
+        { label: 'exited', mutate: (session: ManagedSession) => { session.status = 'exited'; } },
+        { label: 'suspended', mutate: (session: ManagedSession) => { session.status = 'suspended'; } },
+        { label: 'with no PTY', mutate: (session: ManagedSession) => { session.pty = null; } },
+      ])('is not a candidate once the session is $label', ({ mutate }) => {
+        const session = seedHostResume({ launchFailureIdentifiedAt: Date.now() });
+        expect(isCandidate()).toBe(true);
+        mutate(session);
+        expect(isCandidate()).toBe(false);
+      });
+
+      it('is not a candidate inside the spawn grace', () => {
+        seedHostResume({
+          launchFailureIdentifiedAt: Date.now(),
+          startedAt: new Date(Date.now() - 10_000).toISOString(),
+          firstOutputAt: Date.now() - 10_000,
+        });
+        expect(isCandidate()).toBe(false);
+      });
+    });
+
+    it('arms no ceiling look for a host launch, whose silence nothing judges', async () => {
+      vi.useFakeTimers();
+      const read = vi.spyOn(manager, 'getLaunchOutput').mockResolvedValue('[dev@host project]$ ');
+      seedHostResume({ startedAt: new Date().toISOString(), firstOutputAt: Date.now() });
+
+      armStartBound();
+      await vi.advanceTimersByTimeAsync(SPAWN_GRACE_MS);
+      expect(read).toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(AGENT_START_CEILING_MS);
+
+      expect(requestAgentAbsenceCheck).not.toHaveBeenCalled();
+    });
+
+    describe('when the launch changes during the output read', () => {
+      let resolveRead: (output: string) => void;
+      let read: { mock: unknown };
+      const neverStarted = vi.fn();
+
+      async function startRead(): Promise<void> {
+        neverStarted.mockClear();
+        manager.on('agent-never-started', neverStarted);
+        read = vi.spyOn(manager, 'getLaunchOutput').mockReturnValue(new Promise<string>((resolve) => { resolveRead = resolve; }));
+        outputSeen();
+        await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+      }
+
+      async function finishRead(output: string): Promise<void> {
+        resolveRead(output);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+
+      it('retires nothing when the agent showed it ran while the read was out', async () => {
+        const session = seedHostResume();
+        await startRead();
+        session.agentStartObservedAt = Date.now();
+
+        await finishRead(MISSING_CONVERSATION_OUTPUT);
+
+        expect(session.launchFailureIdentifiedAt).toBeUndefined();
+        expect(neverStarted).not.toHaveBeenCalled();
+        expect(session.status).toBe('running');
+        expect(hostKills).toBe(0);
+      });
+
+      it('retires nothing when the row left the registry while the read was out', async () => {
+        const session = seedHostResume();
+        await startRead();
+        (manager as unknown as { registry: { delete(id: string): boolean } }).registry.delete('session-1');
+
+        await finishRead(MISSING_CONVERSATION_OUTPUT);
+
+        expect(session.launchFailureIdentifiedAt).toBeUndefined();
+        expect(neverStarted).not.toHaveBeenCalled();
+        expect(hostKills).toBe(0);
+      });
+
+      it('retires a stamped launch when its link comes back, since a drop during the read left it unretired', async () => {
+        const session = seedHostResume();
+        await startRead();
+        setLinkDown('host-1');
+
+        await finishRead(MISSING_CONVERSATION_OUTPUT);
+
+        expect(typeof session.launchFailureIdentifiedAt).toBe('number');
+        expect(neverStarted).not.toHaveBeenCalled();
+        expect(session.status).toBe('running');
+
+        (manager as unknown as { handleHostEvent(event: { type: 'remoteLink'; hostId: string; state: 'connected' }): void })
+          .handleHostEvent({ type: 'remoteLink', hostId: 'host-1', state: 'connected' });
+
+        await vi.waitFor(() => expect(neverStarted).toHaveBeenCalledTimes(1));
+        expect(neverStarted.mock.calls[0][0]).toBe('session-1');
+      });
+    });
+
+    it('never judges an adapter that reports no start on its output, which could be the live agent\'s own', async () => {
+      const neverStarted = vi.fn();
+      manager.on('agent-never-started', neverStarted);
+      const session = seedHostResume({ reportsAgentStart: false });
+      const read = vi.spyOn(manager, 'getLaunchOutput').mockResolvedValue(MISSING_CONVERSATION_OUTPUT);
+
+      outputSeen();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(read).not.toHaveBeenCalled();
+      session.launchFailureIdentifiedAt = Date.now();
+      expect(isCandidate()).toBe(false);
+      retire();
+      expect(neverStarted).not.toHaveBeenCalled();
+      expect(session.status).toBe('running');
+      expect(hostKills).toBe(0);
+    });
+
+    it('still judges a local launch with a pid through the tree, as before', async () => {
+      seedSession({
+        reportsAgentStart: true,
+        resuming: true,
+        agentSessionId: 'conversation-1',
+        agentParser: namesMiss,
+        startedAt: insideStartBound(),
+        firstOutputAt: Date.now() - (SPAWN_GRACE_MS + 3_000),
+      });
+      vi.spyOn(manager, 'getLaunchOutput').mockResolvedValue(MISSING_CONVERSATION_OUTPUT);
+
+      outputSeen();
+
+      await vi.waitFor(() => expect(requestAgentAbsenceCheck).toHaveBeenCalledWith('session-1'));
+      expect(isCandidate()).toBe(true);
+      expect(reportHandledError).not.toHaveBeenCalled();
     });
   });
 
@@ -1664,6 +1993,29 @@ describe('SessionManager agent-absence wiring', () => {
       expect(removed).toEqual([]);
       expect(session.agentEndSignaledAt).toBeNull();
       expect(manager.getSession('session-1')).toBeDefined();
+    });
+
+    it('ends a terminal on an SSH host through the settle, as the sweep has no tree for its PTY', () => {
+      // A host PTY has no pid here, so the watcher never registers it and a
+      // request for the sweep to look would go nowhere (DESKTOP-4Y).
+      vi.useFakeTimers();
+      let hostKills = 0;
+      seedMatureTerminal({
+        hostId: 'host-1',
+        shell: '/bin/bash',
+        pty: hostPty(() => { hostKills += 1; }),
+      });
+      const { removed, absent } = recordEnd();
+
+      sendAgentEvent('session_end');
+      expect(requestAgentAbsenceCheck).not.toHaveBeenCalled();
+      expect(settleTimerCount()).toBe(1);
+      vi.advanceTimersByTime(END_SETTLE_MS);
+
+      expect(absent).toEqual(['session-1']);
+      expect(removed).toEqual(['session-1']);
+      expect(manager.getSession('session-1')).toBeUndefined();
+      expect(hostKills).toBe(1);
     });
 
     it('ends a terminal on any shell when the watcher, and so the sweep, is off', () => {

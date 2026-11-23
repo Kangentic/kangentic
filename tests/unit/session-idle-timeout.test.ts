@@ -544,6 +544,26 @@ describe('agent-never-started listener', () => {
       expect(mockResumeTaskSession).toHaveBeenCalledWith(expect.anything(), 'task-never', expect.objectContaining({ startPath: 'retry' }));
       expect(notifySpawnBlocked).not.toHaveBeenCalled();
     });
+
+    // DESKTOP-4Y: on an SSH host only the host shows whether the conversation
+    // had turns, so the miss stays unmarked, the task gets the notice, and the
+    // next Resume runs the same `--resume` again. Pinned as the owner decided
+    // it: a check of the transcript on the host before a resume is what would
+    // change this, not the CLI's own line.
+    it('raises the notice, marks nothing and runs no retry for a record on an SSH host, even with no turns', async () => {
+      arrangeMiss({ total_output_tokens: 0 });
+      const hostTarget = JSON.stringify({ kind: 'ssh', hostId: 'host-a', home: '/home/dev', shellName: 'bash', localHome: '', roots: [] });
+      // The same record `arrangeMiss` set up, now on a host. The test above is the same miss off a host.
+      const resumeRecord = mockGetLatestForTask() as SessionRecord;
+      mockGetLatestForTask.mockReturnValue({ ...resumeRecord, cli_target: hostTarget });
+
+      await fireResumeMiss();
+
+      await vi.waitFor(() => expect(notifySpawnBlocked).toHaveBeenCalledTimes(1));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(mockMarkLaunchFailed).not.toHaveBeenCalled();
+      expect(mockResumeTaskSession).not.toHaveBeenCalled();
+    });
   });
 
   describe('a fresh launch whose miss is left unmarked', () => {

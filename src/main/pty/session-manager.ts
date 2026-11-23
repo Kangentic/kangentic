@@ -500,9 +500,18 @@ function launchElapsedMs(session: ManagedSession): number | null {
 }
 
 /**
- * How long a Command Terminal the process tree cannot judge (a WSL shell, or
- * the bg-shell watcher off) waits after its agent's SessionEnd for a
- * SessionStart before it ends. `/clear` and a `/resume` choice each send
+ * True for a session whose PTY runs on an SSH host (#913). Read from `hostId`,
+ * which the row keeps after its PTY is gone, and from a live PTY with no pid
+ * here, which is how a host PTY's handle says the same thing.
+ */
+function isOnSshHost(session: ManagedSession): boolean {
+  return typeof session.hostId === 'string' || (session.pty !== null && session.pty.pid === null);
+}
+
+/**
+ * How long a Command Terminal the process tree cannot judge (a WSL shell, a
+ * session on an SSH host, or the bg-shell watcher off) waits after its
+ * agent's SessionEnd for a SessionStart before it ends. `/clear` and a `/resume` choice each send
  * SessionEnd then SessionStart with the agent still running, and this path has
  * no tree to tell that from an exit, so the settle must outlast the gap.
  *
@@ -1297,6 +1306,13 @@ export class SessionManager extends EventEmitter {
       if (session.hostId === hostId && session.status === 'running') sessionIds.push(session.id);
     }
     this.telemetry.noteLinkRestored(sessionIds);
+    // A host launch whose output named a cause while its link went down was
+    // stamped and not retired (`isHostLaunchFailureIdentified` refuses a down
+    // link), and the stamp stops any further read, so nothing else would ever
+    // retire it. The retirement re-checks the candidate guard itself.
+    for (const sessionId of sessionIds) {
+      if (typeof this.registry.get(sessionId)?.launchFailureIdentifiedAt === 'number') this.retireAgentlessSession(sessionId);
+    }
   }
 
   /**
@@ -1813,6 +1829,9 @@ export class SessionManager extends EventEmitter {
       if (this.registry.get(sessionId) !== session) return;
       if (session.status !== 'running' || session.pty === null) return;
       if (this.isHiddenUntilAdopted(sessionId) || !launchNeverStarted(session)) return;
+      // A host's hooks wait on the host while its link is down, so a healthy
+      // agent there shows no evidence it ran. Its silence is the link's.
+      if (this.isOnHostWithLinkDown(session)) return;
       this.reportLaunchOf(session, 'never_started', { extraTags: { judge: 'timer' } });
     }, AGENT_START_CEILING_MS);
     if (typeof timer.unref === 'function') timer.unref();
@@ -4363,6 +4382,11 @@ export class SessionManager extends EventEmitter {
    *   failed in words nobody classified), which would otherwise stay a bare
    *   shell forever. The cost is that such an adapter's agent, exiting inside
    *   its first two minutes, is counted until the ceiling.
+   * - a session on an SSH host: the watcher has no tree for it, so it is a
+   *   candidate only when its adapter reports its start and showed none, and
+   *   its output names a cause, past the grace, with its link up
+   *   (`isHostLaunchFailureIdentified`). Its silence never makes it one, so an
+   *   agent there that exits after it ran keeps a `running` row.
    */
   private isAgentAbsenceCandidate(sessionId: string): boolean {
     const session = this.registry.get(sessionId);
@@ -4379,8 +4403,11 @@ export class SessionManager extends EventEmitter {
     // failure direction; refusing to judge it only leaves the pre-existing
     // phantom, which is the status quo. `canTreeJudgeAgent` holds that test
     // through `parseWslShellSpec`, the same detector the spawn uses, so the end
-    // settle covers exactly the shells this arm refuses. Its watcher half is
+    // settle covers the WSL shells this arm refuses. Its watcher half is
     // always true here: only the sweep, which lives in the watcher, asks.
+    // A session on an SSH host has no tree here either. The end settle covers
+    // it too, and it is judged on its output alone (`judgesByIdentifiedOutput`).
+    if (this.judgesByIdentifiedOutput(session)) return this.isHostLaunchFailureIdentified(session);
     if (!this.canTreeJudgeAgent(session)) return false;
     if (session.status !== 'running' || session.pty === null) return false;
     // The agent said it is ending, so it demonstrably ran: the grace, which
@@ -4403,20 +4430,27 @@ export class SessionManager extends EventEmitter {
     if (hasAgentRunEvidence(session) || typeof session.launchFailureIdentifiedAt === 'number') return false;
     const elapsedMs = launchElapsedMs(session);
     if (elapsedMs === null || elapsedMs < AGENT_SPAWN_GRACE_MS || elapsedMs >= AGENT_START_CEILING_MS) return false;
-    return this.canTreeJudgeAgent(session);
+    return this.canTreeJudgeAgent(session) || this.judgesByIdentifiedOutput(session);
   }
 
   /**
-   * Arm the start bound's two looks for a launch the sweep can judge (the
-   * unjudged-launch check covers the rest). At the grace, read its output once,
+   * Arm the start bound's two looks for a launch the sweep can judge, or the
+   * first of them for a host launch judged on its output (the unjudged-launch
+   * check covers the rest). At the grace, read its output once,
    * since a shell that failed early may print nothing after it. At the
    * ceiling, ask the sweep to look now, so a launch that never showed its agent
    * is judged within seconds of the bound rather than at the 60 s cadence.
    * Both re-check the row, which a respawn or removal may have replaced.
+   *
+   * A launch on an SSH host gets the grace read too, since its output is all
+   * that can judge it, and no ceiling look: the sweep has no tree for it, and
+   * the unjudged-launch check reports it at the ceiling instead.
    */
   private armLaunchStartBound(sessionId: string): void {
     const session = this.registry.get(sessionId);
-    if (!session?.agentParser || !this.canTreeJudgeAgent(session) || hasAgentRunEvidence(session)) return;
+    if (!session?.agentParser || hasAgentRunEvidence(session)) return;
+    const treeJudged = this.canTreeJudgeAgent(session);
+    if (!treeJudged && !this.judgesByIdentifiedOutput(session)) return;
     const startedAtMs = launchStartedAtMs(session);
     if (startedAtMs === null) return;
     // A timer can fire a few ms before `Date.now()` reaches its target (Node
@@ -4435,6 +4469,7 @@ export class SessionManager extends EventEmitter {
       if (typeof timer.unref === 'function') timer.unref();
     };
     arm(AGENT_SPAWN_GRACE_MS, () => this.checkPendingLaunchOutput(sessionId));
+    if (!treeJudged) return;
     arm(AGENT_START_CEILING_MS, () => {
       if (session.status !== 'running' || session.pty === null) return;
       if (!hasAgentRunEvidence(session)) this.telemetry.requestAgentAbsenceCheck(sessionId);
@@ -4458,6 +4493,15 @@ export class SessionManager extends EventEmitter {
    * It reads `getLaunchOutput`, not the whole ring: a retry or a resume opens
    * with its predecessor's bytes (the host's carry-over), and the last launch's
    * failure line would otherwise judge this one at the grace.
+   *
+   * A launch on an SSH host is the exception to "it only looks". The watcher
+   * never registers it (its PTY has no pid here), so a request to the sweep
+   * would go nowhere and the task would keep a bare remote shell (DESKTOP-4Y).
+   * It is judged here instead, through the sweep's own retirement and its
+   * `agent-never-started` pause. Only a line that names a cause does this,
+   * never silence, since nothing here saw the agent's process gone. A link
+   * that drops during the read leaves the stamp unretired, and
+   * `noteLinkRestored` retires it when the link returns.
    */
   private checkPendingLaunchOutput(sessionId: string): void {
     const session = this.registry.get(sessionId);
@@ -4485,6 +4529,14 @@ export class SessionManager extends EventEmitter {
         if (this.registry.get(sessionId) !== session || !this.awaitsLaunchStart(session)) return;
         if (!isIdentifiedFailureClass(classifySessionOutput(session, rawScrollback))) return;
         session.launchFailureIdentifiedAt = Date.now();
+        if (this.judgesByIdentifiedOutput(session)) {
+          // Its report carries `judge: sweep` though no sweep ran: the path is
+          // the sweep's own retirement, and the launch report takes no new tag
+          // value here. A host session's other tags (`agent_process=unknown`,
+          // `typed_line_bytes=0`) are what tell it apart in Sentry.
+          this.retireAgentlessSession(sessionId);
+          return;
+        }
         this.telemetry.requestAgentAbsenceCheck(sessionId);
       })
       .catch((error: unknown) => {
@@ -4498,11 +4550,44 @@ export class SessionManager extends EventEmitter {
 
   /**
    * Can the agent-absence sweep's process tree judge this session? Not with
-   * the bg-shell watcher off (the sweep lives in it), and not under a WSL
-   * shell (see the WSL arm in `isAgentAbsenceCandidate`).
+   * the bg-shell watcher off (the sweep lives in it), not under a WSL shell
+   * (see the WSL arm in `isAgentAbsenceCandidate`), and not on an SSH host:
+   * its PTY has no pid here, so the watcher never registers it and has no tree
+   * to list (`getSessionRootPid`). The host's own core can list its processes,
+   * but nothing routes that request to a host yet (`REQUEST_ROUTES`), and the
+   * watcher keys every session on a local root pid.
    */
   private canTreeJudgeAgent(session: ManagedSession): boolean {
-    return this.telemetry.hasAgentAbsenceSweep && parseWslShellSpec(session.shell) === null;
+    return this.telemetry.hasAgentAbsenceSweep && parseWslShellSpec(session.shell) === null && !isOnSshHost(session);
+  }
+
+  /**
+   * Is this session judged on its launch output alone, where the tree cannot
+   * judge it? Only a session on an SSH host whose adapter reports its start
+   * (`reportsAgentStart`). For any other adapter a classified line can be the
+   * live agent's own output (a tool's "command not found"), and with no tree to
+   * confirm the agent gone, a retirement would end it. A WSL shell and a
+   * watcher that is off keep their own paths: the unjudged-launch report and
+   * the end settle.
+   */
+  private judgesByIdentifiedOutput(session: ManagedSession): boolean {
+    return isOnSshHost(session) && session.reportsAgentStart === true;
+  }
+
+  /**
+   * The one way a host session is a candidate: a launch past its grace whose
+   * output named a cause (`launchFailureIdentifiedAt`), from an adapter that
+   * reports its start and showed none (`launchNeverStarted`), with its link up. Never silence and never the ceiling, since no process
+   * check backs it: a wrong read here would end a live agent on the host.
+   * Its running, evidence and grace guards mirror the tree arm of
+   * `isAgentAbsenceCandidate` on purpose, so a change to one is owed the other.
+   */
+  private isHostLaunchFailureIdentified(session: ManagedSession): boolean {
+    if (session.status !== 'running' || session.pty === null) return false;
+    if (this.isOnHostWithLinkDown(session) || !launchNeverStarted(session)) return false;
+    if (typeof session.launchFailureIdentifiedAt !== 'number') return false;
+    const elapsedMs = launchElapsedMs(session);
+    return elapsedMs !== null && elapsedMs >= AGENT_SPAWN_GRACE_MS;
   }
 
   /**
@@ -4521,8 +4606,8 @@ export class SessionManager extends EventEmitter {
    * SessionStart inside `COMMAND_TERMINAL_AGENT_END_SETTLE_MS`, the terminal
    * ends (`endCommandTerminalAfterAgentEndSettle`). There is no process-tree
    * backstop on that path, which is why it never replaces the sweep where the
-   * sweep works. An agent with no SessionEnd hook, under WSL or with the
-   * watcher off, still outlives its agent until its PTY exits.
+   * sweep works. An agent with no SessionEnd hook, under WSL, on an SSH host or
+   * with the watcher off, still outlives its agent until its PTY exits.
    *
    * Task sessions and a workflow's own agent are untouched: the sweep's slower
    * cadence is fine for a row that only needs its status corrected.
@@ -4639,7 +4724,8 @@ export class SessionManager extends EventEmitter {
     // its window closes as it does on Stop, and no shell is left for a phone's
     // `interactive-terminal` to type into. It has no task record to resume or
     // report on, so the exit-code override and the kept `exited` row
-    // below do not apply. Immediate, since the tree saw the agent gone. A
+    // below do not apply. Immediate, since the tree saw the agent gone (or, on
+    // an SSH host, its output named why it never started). A
     // workflow's own agent takes the task path: its exited row is how the pane
     // notices a resume that failed and starts it over.
     if (isCommandTerminalSession(session)) {

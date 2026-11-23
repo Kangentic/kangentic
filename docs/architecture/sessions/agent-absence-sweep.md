@@ -1,13 +1,13 @@
 ---
 type: Reference
 title: Agent absence sweep
-description: How the bg-shell watcher's process-tree sweep retires a session whose agent exited under a surviving shell, the start bound a launch with no sign its agent ran waits for (and the slow-shell measurement behind it), why a Command Terminal ends but a task stays resumable, the WSL exclusion, and the measured Claude exit paths (console close, hangup, Esc sequence).
+description: How the bg-shell watcher's process-tree sweep retires a session whose agent exited under a surviving shell, the start bound a launch with no sign its agent ran waits for (and the slow-shell measurement behind it), why a Command Terminal ends but a task stays resumable, the WSL exclusion, how a session on an SSH host is judged without a tree, and the measured Claude exit paths (console close, hangup, Esc sequence).
 tags: [sessions, agent-exit, process-tree, command-terminal, claude]
 sources:
   - resource: src/main/activity-engine/background-shell/watcher.ts
   - resource: src/main/activity-engine/background-shell/process-tree.ts
   - resource: src/main/pty/session-manager.ts
-    title: isAgentAbsenceCandidate, retireAgentlessSession, armLaunchStartBound, checkPendingLaunchOutput, getLaunchOutput and noteAgentProcessBeforeEnd
+    title: isAgentAbsenceCandidate, retireAgentlessSession, armLaunchStartBound, checkPendingLaunchOutput, canTreeJudgeAgent, judgesByIdentifiedOutput, isHostLaunchFailureIdentified, isOnSshHost, armUnjudgedLaunchCheck, noteLinkRestored, getLaunchOutput and noteAgentProcessBeforeEnd
   - resource: src/main/pty/session-registry.ts
     title: launchFailureIdentifiedAt, agentCliPath and agentProcessAtEnd
   - resource: src/main/pty/agent-launch-report.ts
@@ -64,7 +64,8 @@ capability and no agent-name branching. Two things make it correct rather than m
 
 `SessionManager.isAgentAbsenceCandidate` owns every session-shaped arm, so the watcher needs no
 session knowledge. It requires a `running` session with a live PTY, an agent adapter, a non-WSL
-shell (`parseWslShellSpec`, the same detector the spawn uses), an elapsed spawn grace, and, for a
+shell (`parseWslShellSpec`, the same detector the spawn uses), a session not on an SSH host (that
+session has its own arm, [below](#a-session-on-an-ssh-host)), an elapsed spawn grace, and, for a
 launch that never showed its agent ran, the start bound (below). A slow-STARTING agent is not
 excluded by the grace and does not need to be - its process exists, it just has not drawn yet,
 which is exactly why the process tree is a safer signal than a first-output timeout. A
@@ -161,8 +162,9 @@ process stays alive, and the SessionStart that follows clears the stamp and with
 (`cancelAgentAbsenceCheck`), so the terminal is kept and the remaining fast looks are not spent. An
 agent with no SessionEnd hook falls back to the plain sweep.
 
-Where the tree cannot judge, the SessionEnd is the only signal. That is a WSL shell, and any shell
-while the bg-shell watcher is off (`SessionTelemetry.hasAgentAbsenceSweep`). There the SessionEnd
+Where the tree cannot judge, the SessionEnd is the only signal. That is a WSL shell, a session on
+an SSH host ([below](#a-session-on-an-ssh-host)), and any shell while the bg-shell watcher is off
+(`SessionTelemetry.hasAgentAbsenceSweep`). There the SessionEnd
 arms `COMMAND_TERMINAL_AGENT_END_SETTLE_MS` (5s) instead of asking the sweep. A SessionStart inside
 it cancels the end; otherwise the terminal emits `agent-absent` and is ended through
 `endCommandTerminal` without `immediate`, since nothing saw the agent's process gone, so `kill()`
@@ -176,8 +178,8 @@ Claude Code 2.1.294, `/clear` ran SessionEnd (reason `clear`) at 574 ms and Sess
 `resume`) and SessionStart (source `resume`) 116 ms apart. Gemini CLI's hooks reference documents
 a SessionEnd and a SessionStart for `/clear` as well, with no stated gap.
 
-An agent with no SessionEnd hook, under WSL or with the watcher off, still outlives its agent
-until its PTY exits.
+An agent with no SessionEnd hook, under WSL, on an SSH host or with the watcher off, still
+outlives its agent until its PTY exits.
 
 A Command Terminal whose PTY exits on its own (a crash, or the shell killed) also ends: after the
 `exit` emit, the spawn flow's `onPtyExited` hook removes the row and deletes the directory, so a
@@ -368,6 +370,50 @@ safe to the pre-existing phantom instead. Note this arm is a DENYLIST and closes
 case; an allowlist (require that the tree showed a non-console descendant at least once before
 absence can be concluded) would close the whole class of structurally invisible subtrees.
 
+## A session on an SSH host
+
+A session on an SSH host (#913) has no tree here at all. Its PTY handle carries no pid on this
+machine (`PtyHandle.pid` is null), so `getSessionRootPid` gives the watcher nothing,
+`registerSession` returns, and a `requestAgentAbsenceCheck` for that id goes nowhere. Before the
+fix for DESKTOP-4Y, `canTreeJudgeAgent` still said yes for it, so the start bound asked the sweep to look and
+nothing ever did. A host resume whose conversation never took a turn printed Claude's "No
+conversation found", Claude exited, and the task kept a bare remote shell until a person or the idle
+timeout paused it. The same gap kept a host Command Terminal open after its agent's `/exit`.
+
+`canTreeJudgeAgent` now answers no for a session on a host (`hostId` set, or a live PTY with no
+pid). That gives a host Command Terminal the end settle above, and a host launch with no evidence
+the unjudged-launch timer below, which also skips its report while the host's link is down (its
+hooks are held on the host, so a healthy agent looks evidence-less).
+
+A host launch of an adapter that reports its start is also judged on its output alone, at the
+grace. The start bound still reads its output (`judgesByIdentifiedOutput`), and when that output
+names a cause (`launchFailureIdentifiedAt`), `checkPendingLaunchOutput` calls
+`retireAgentlessSession` itself instead of asking the sweep. The sweep's own path runs from there:
+the `never_started` report, the `agent-never-started` pause, `markResumeMiss`, and the retry
+decision. The report keeps `judge: sweep` though no sweep ran, since the path is the sweep's
+retirement; its `agent_process=unknown` and `typed_line_bytes=0` tags tell it apart. The candidate
+arm for a host (`isHostLaunchFailureIdentified`) needs the session running, past the grace, with
+its link up, an adapter that reports its start and no evidence its agent ran, and that stamp. An
+adapter with no start signal is never judged this way: a line the classifier names can be its live
+agent's own output, and no tree would catch the mistake. Silence never makes a host session a
+candidate, and neither does the ceiling. This is the direction the rest of this page calls severe,
+since no process check backs it, so it is limited to a line the classifier names.
+
+A link that drops while that output is read leaves the stamp in place and the retirement refused,
+and the stamp stops any further read. `noteLinkRestored` retires such a session when its link
+returns, through the same candidate check.
+
+**Known gaps.** A host launch whose output names no cause is reported at the ceiling and left
+running. A host agent that exits after it ran keeps a `running` row, since only the sweep notices
+that. A host resume that found no conversation is not marked (`markResumeMiss` leaves a host
+record unmarked: only the host shows whether the conversation had turns), so the next Resume runs
+the same `--resume` and pauses again with the notice. The host's own pty core can list its
+processes (`listProcesses`, `ps`), but nothing routes that request to a host
+(`REQUEST_ROUTES.listProcesses` is `core`), the handle drops the host's pid at spawn, and the
+watcher keys every session on a local root pid. A per-host listing with the link-down hold is what
+would let the two-observation rule judge a host session, and a check of the transcript on the host
+before a resume is what would stop the repeat.
+
 ## Cadence and what a retirement does
 
 **Cadence.** The sweep runs on its own 60s clock (`AGENT_ABSENCE_SWEEP_INTERVAL_MS`), decoupled from
@@ -448,10 +494,10 @@ class `login_required` or `bad_configuration`. That report ends at `reportHandle
 in Aptabase ([Error reporting](../../telemetry/error-reporting.md)). A task whose launch failed this
 way still pauses, so it keeps its Resume for after the user signs in.
 
-**A shell the sweep cannot judge gets a timer.** Where `canTreeJudgeAgent` is false (a WSL shell, or
-the watcher off), a one-shot timer at the start ceiling, 120 s, reports
+**A shell the sweep cannot judge gets a timer.** Where `canTreeJudgeAgent` is false (a WSL shell, a
+session on an SSH host, or the watcher off), a one-shot timer at the start ceiling, 120 s, reports
 `never_started` with `judge: timer` for a launch with no evidence. It only reports. Nothing here saw
-the agent gone, so it pauses nothing.
+the agent gone, so it pauses nothing. It reports nothing for a host session whose link is down.
 
 **A launch that ended early reports from the PTY's exit.** The spawn flow's exit listener is the one
 place every ending but a quit reaches, so `noteLaunchEnded` runs there, ahead of the synthetic
