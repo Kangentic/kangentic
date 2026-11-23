@@ -11,7 +11,7 @@
  */
 export const UNREPORTED_CATCH_SITES: Readonly<Record<string, number>> = {
   'src/main/accounts/account-background-stop.ts': 1,
-  'src/main/accounts/account-folder.ts': 18,
+  'src/main/accounts/account-folder.ts': 17,
   'src/main/accounts/account-login.ts': 1,
   'src/main/accounts/account-service.ts': 6,
   'src/main/accounts/key-file.ts': 1,
