@@ -639,10 +639,23 @@ function delayBeforeRetry(retryAfterSeconds: number | null, attempt: number, sig
     }, backoffMs);
     function onAbort(): void {
       clearTimeout(timer);
-      reject(signal.reason instanceof Error ? signal.reason : new Error('Aborted'));
+      reject(signal.reason instanceof Error ? signal.reason : abortErrorFor(signal.reason));
     }
     signal.addEventListener('abort', onAbort, { once: true });
   });
+}
+
+/**
+ * An abort whose reason is not an Error (a follow-up's controller aborts with a
+ * string). Named `AbortError` so the caller's reporter skips it as the move it
+ * is, rather than reporting a plain Error as a defect (Sentry DESKTOP-4X). A
+ * plain Error, not a DOMException, for the reason the run-script adapter's
+ * `supersededError` gives.
+ */
+function abortErrorFor(reason: unknown): Error {
+  const error = new Error('Aborted', { cause: reason });
+  error.name = 'AbortError';
+  return error;
 }
 
 function messageOf(error: unknown): string {

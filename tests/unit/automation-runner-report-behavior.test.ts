@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const { reportHandledError } = vi.hoisted(() => ({ reportHandledError: vi.fn() }));
 vi.mock('../../src/main/analytics/error-reporting', () => ({ reportHandledError }));
 
+import { createChokepointReporter, isExpectedFailure } from '../../src/main/analytics/handled-report';
 import { automationRunReporter, runAutomations } from '../../src/main/automations/automation-runner';
 import { AutomationRegistry } from '../../src/main/automations/automation-registry';
 import { runScriptAdapter } from '../../src/main/automations/adapters/run-script';
@@ -25,6 +26,9 @@ import type { AutomationRunRepository } from '../../src/main/db/repositories/aut
 import type { ColumnAutomation, Swimlane, Task } from '../../src/shared/types';
 
 const COLUMN = { id: 'lane-executing', name: 'Executing', position: 1 } as Swimlane;
+
+// A shell every runner has, in its non-interactive form (run-script-adapter.test.ts).
+const SHELL = process.platform === 'win32' ? 'cmd.exe' : '/bin/sh';
 
 const ROW: ColumnAutomation = {
   id: 'a1',
@@ -68,7 +72,7 @@ function context(): Omit<AutomationContext, 'runId' | 'signal'> {
 async function runRow(execute: AutomationAdapter['execute']): Promise<void> {
   const adapter: AutomationAdapter = {
     id: 'webhook',
-    manifest: { ...AUTOMATION_MANIFEST.webhook, retry: { attempts: 3 } as never },
+    manifest: { ...AUTOMATION_MANIFEST.webhook, retry: { attempts: 3, on: 'network-or-retryable-status' } },
     describe: () => 'test',
     execute,
   };
@@ -145,15 +149,44 @@ describe('automationRunReporter in a real run', () => {
     expect(attempts).toBe(3);
     expect(reportHandledError).not.toHaveBeenCalled();
   });
+
+  // A move that lands in the backoff aborts with whatever reason its caller
+  // gave, and a follow-up's controller gives a string. The rejection must
+  // still read as the abort it is to the caller's reporter.
+  it('rejects a move aborted during the backoff with an abort, whatever the abort reason', async () => {
+    const adapter: AutomationAdapter = {
+      id: 'webhook',
+      manifest: { ...AUTOMATION_MANIFEST.webhook, retry: { attempts: 3, on: 'network-or-retryable-status' } },
+      describe: () => 'test',
+      execute: async () => {
+        throw new AutomationRetryableError('HTTP 503');
+      },
+    };
+    const registry = new AutomationRegistry();
+    registry.register(adapter);
+    const move = new AbortController();
+    const run = runAutomations({
+      automations: [ROW],
+      column: COLUMN,
+      context: context(),
+      runs,
+      signal: move.signal,
+      registry,
+    });
+    const settled = run.then(() => null, (rejection: unknown) => rejection);
+    await vi.advanceTimersByTimeAsync(100);
+    move.abort('superseded by a newer move');
+    const rejection = await settled;
+
+    expect(rejection).toMatchObject({ name: 'AbortError', cause: 'superseded by a newer move' });
+    expect(isExpectedFailure(rejection)).toBe(true);
+  });
 });
 
 // Sentry DESKTOP-49: the adapter threw a plain Error for a non-zero exit, so
 // every script a user wrote that failed reached Sentry as a defect of ours.
 // The real adapter and a real shell, on real timers: the child's exit is I/O.
 describe('a run_script row whose script exits non-zero', () => {
-  // A shell every runner has, in its non-interactive form (run-script-adapter.test.ts).
-  const SHELL = process.platform === 'win32' ? 'cmd.exe' : '/bin/sh';
-
   beforeEach(() => {
     reportHandledError.mockClear();
     automationRunReporter.reset();
@@ -184,5 +217,90 @@ describe('a run_script row whose script exits non-zero', () => {
 
     expect(runs.finish).toHaveBeenCalledWith(expect.any(String), 'failed', 'Script exited with code 1.', 1);
     expect(reportHandledError).not.toHaveBeenCalled();
+  });
+});
+
+// Sentry DESKTOP-4X: a turn-end pass was running a Run script row when the
+// user moved the task. The move aborted the pass, the script's tree was killed,
+// and the adapter rejected a plain Error, which the runner rethrows and the
+// turn-end pass reported as a defect. The runner's own reporter never sees an
+// abort, so the report under test is the caller's: the turn-end pass's
+// chokepoint, built the way `turnEndReporter` is.
+describe('a row whose move is superseded mid-run', () => {
+  const SLEEP = process.platform === 'win32' ? 'ping -n 30 127.0.0.1 > nul' : 'sleep 30';
+  const turnEndPassReporter = createChokepointReporter('turn_end');
+
+  beforeEach(() => {
+    reportHandledError.mockClear();
+    turnEndPassReporter.reset();
+    vi.mocked(runs.start).mockClear();
+    vi.mocked(runs.finish).mockClear();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /** Runs `row` under a move the test aborts once `abortWhen` resolves, and returns what the run rejected with. */
+  async function supersededRun(registry: AutomationRegistry, row: ColumnAutomation, abortWhen: Promise<void>): Promise<unknown> {
+    const move = new AbortController();
+    const run = runAutomations({
+      automations: [row],
+      column: COLUMN,
+      context: {
+        ...context(),
+        cwd: os.tmpdir(),
+        sessionHost: { getShell: async () => SHELL },
+      } as unknown as Omit<AutomationContext, 'runId' | 'signal'>,
+      runs,
+      signal: move.signal,
+      registry,
+    });
+    const settled = run.then(() => null, (rejection: unknown) => rejection);
+    await abortWhen;
+    move.abort();
+    return settled;
+  }
+
+  it('closes a real sleeping script interrupted, and the turn-end pass reports nothing', async () => {
+    const registry = new AutomationRegistry();
+    registry.register(runScriptAdapter);
+    const scriptRow: ColumnAutomation = { ...ROW, name: 'Build', type: 'run_script', config: { script: SLEEP } };
+    // Past the shell lookup and the spawn: the script is running when the move lands.
+    const scriptStarted = vi.waitFor(() => expect(runs.start).toHaveBeenCalled()).then(
+      () => new Promise<void>((resolve) => setTimeout(resolve, 300)),
+    );
+
+    const rejection = await supersededRun(registry, scriptRow, scriptStarted);
+
+    expect(runs.finish).toHaveBeenCalledWith(expect.any(String), 'interrupted', 'The move was superseded.', 1);
+    expect(rejection).toMatchObject({ name: 'AbortError', message: 'The move was superseded before the script finished.' });
+    expect(isExpectedFailure(rejection)).toBe(true);
+    turnEndPassReporter.report(rejection, { tags: { stage: 'pass' } });
+    expect(reportHandledError).not.toHaveBeenCalled();
+  }, 20_000);
+
+  it('still reports a defect an adapter throws while the move aborts', async () => {
+    const adapter: AutomationAdapter = {
+      id: 'webhook',
+      manifest: AUTOMATION_MANIFEST.webhook,
+      describe: () => 'test',
+      execute: (_config, adapterContext) => new Promise((_resolve, reject) => {
+        adapterContext.signal.addEventListener('abort', () => {
+          reject(new TypeError("Cannot read properties of undefined (reading 'Ping')"));
+        }, { once: true });
+      }),
+    };
+    const registry = new AutomationRegistry();
+    registry.register(adapter);
+
+    const rejection = await supersededRun(registry, ROW, vi.waitFor(() => expect(runs.start).toHaveBeenCalled()).then(() => undefined));
+
+    expect(runs.finish).toHaveBeenCalledWith(expect.any(String), 'interrupted', 'The move was superseded.', 1);
+    expect(rejection).toBeInstanceOf(TypeError);
+    expect(isExpectedFailure(rejection)).toBe(false);
+    turnEndPassReporter.report(rejection, { tags: { stage: 'pass' } });
+    expect(reportHandledError).toHaveBeenCalledTimes(1);
+    expect(reportHandledError.mock.calls[0][1]).toMatchObject({ source: 'turn_end', stage: 'pass', error_name: 'TypeError' });
   });
 });

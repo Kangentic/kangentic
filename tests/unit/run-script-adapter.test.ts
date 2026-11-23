@@ -15,7 +15,9 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import fs from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
 import { runScriptAdapter } from '../../src/main/automations/adapters/run-script';
 import { resolveScriptInvocation } from '../../src/main/pty/spawn/script-invocation';
 import type { AutomationContext } from '../../src/main/automations/shared/automation-adapter';
@@ -25,6 +27,8 @@ import type { Task } from '../../src/shared/types';
 // A shell that exists on every runner: Windows CI and dev machines have
 // cmd.exe, Linux and macOS have /bin/sh. Both take the non-interactive form.
 const SHELL = process.platform === 'win32' ? 'cmd.exe' : '/bin/sh';
+// A sleep long enough to be killed, short enough not to hang CI.
+const SLEEP = process.platform === 'win32' ? 'ping -n 30 127.0.0.1 > nul' : 'sleep 30';
 
 function makeContext(overrides: { signal?: AbortSignal; templateVars?: Record<string, string> } = {}): AutomationContext {
   return {
@@ -63,27 +67,85 @@ describe('run_script', () => {
   it('rejects with a typed timeout when the script outlives its budget', async () => {
     // The smallest budget the field allows is 1 minute, but `resolveTimeoutMs`
     // only floors at zero, so a fractional value exercises the real path
-    // quickly. A sleep long enough to be killed, short enough not to hang CI.
-    const sleep = process.platform === 'win32'
-      ? 'ping -n 30 127.0.0.1 > nul'
-      : 'sleep 30';
+    // quickly.
     await expect(
-      runScriptAdapter.execute({ script: sleep, timeoutMinutes: 0.01 }, makeContext()),
+      runScriptAdapter.execute({ script: SLEEP, timeoutMinutes: 0.01 }, makeContext()),
     ).rejects.toBeInstanceOf(AutomationTimeoutError);
   }, 20_000);
 
-  it('rejects when the move is superseded mid-script', async () => {
+  // Sentry DESKTOP-4X: the plain Error this used to be reached Sentry as a
+  // defect. Named AbortError, the reporters skip it as the abort it is.
+  it('rejects a move superseded mid-script with an abort that keeps the move\'s reason as its cause', async () => {
     const controller = new AbortController();
-    const sleep = process.platform === 'win32'
-      ? 'ping -n 30 127.0.0.1 > nul'
-      : 'sleep 30';
     const pending = runScriptAdapter.execute(
-      { script: sleep, timeoutMinutes: 1 },
+      { script: SLEEP, timeoutMinutes: 1 },
       makeContext({ signal: controller.signal }),
     );
-    setTimeout(() => controller.abort(), 100);
-    await expect(pending).rejects.toThrow('superseded');
+    setTimeout(() => controller.abort('moved'), 100);
+    await expect(pending).rejects.toMatchObject({
+      name: 'AbortError',
+      message: 'The move was superseded before the script finished.',
+      cause: 'moved',
+    });
   }, 20_000);
+
+  it('names a superseded run on the project\'s host an abort', async () => {
+    const controller = new AbortController();
+    const context = makeContext({ signal: controller.signal });
+    // A host run that never answers: only the move ends the wait.
+    (context as { runOnHost?: unknown }).runOnHost = () => new Promise(() => undefined);
+    const pending = runScriptAdapter.execute({ script: 'exit 0', timeoutMinutes: 1 }, context);
+    controller.abort('moved');
+    await expect(pending).rejects.toMatchObject({
+      name: 'AbortError',
+      message: 'The move was superseded before the script finished.',
+      cause: 'moved',
+    });
+  });
+
+  it('names a host run an abort when the move was superseded before the run started', async () => {
+    const controller = new AbortController();
+    controller.abort('moved');
+    const context = makeContext({ signal: controller.signal });
+    // A host run that never answers: only the already-aborted signal ends the wait.
+    (context as { runOnHost?: unknown }).runOnHost = () => new Promise(() => undefined);
+    await expect(
+      runScriptAdapter.execute({ script: 'exit 0', timeoutMinutes: 1 }, context),
+    ).rejects.toMatchObject({ name: 'AbortError', cause: 'moved' });
+  }, 5_000);
+
+  // The move can land while the adapter is still asking for the shell. The
+  // abort listener did not exist yet, so the script ran to its end anyway.
+  it('starts no script when the move is superseded before the spawn', async () => {
+    const markerFolder = fs.mkdtempSync(path.join(os.tmpdir(), 'run-script-superseded-'));
+    // A relative path in the script's own cwd, so no quoting differs by shell.
+    const writeMarker = { script: 'echo ran > ran.txt', timeoutMinutes: 1 };
+    const marker = path.join(markerFolder, 'ran.txt');
+    try {
+      // The control: unaborted, this script does write the marker on this shell.
+      const control = makeContext();
+      (control as { cwd: string }).cwd = markerFolder;
+      await runScriptAdapter.execute(writeMarker, control);
+      expect(fs.existsSync(marker)).toBe(true);
+      fs.rmSync(marker, { force: true });
+
+      const controller = new AbortController();
+      const context = makeContext({ signal: controller.signal });
+      (context as { cwd: string }).cwd = markerFolder;
+      (context as { sessionHost: unknown }).sessionHost = {
+        getShell: async () => {
+          controller.abort();
+          return SHELL;
+        },
+      };
+      await expect(runScriptAdapter.execute(writeMarker, context)).rejects.toMatchObject({ name: 'AbortError' });
+      // Long enough for a shell that did start to have written the file.
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      expect(fs.existsSync(marker)).toBe(false);
+    } finally {
+      fs.rmSync(markerFolder, { recursive: true, force: true });
+    }
+  });
 
   it('rejects rather than hangs when the shell cannot be started', async () => {
     const context = makeContext();

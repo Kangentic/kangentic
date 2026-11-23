@@ -238,6 +238,10 @@ missed `stop` leaves the card thinking until the stale-thinking reclaim.
   `cursor-agent create-chat` in the working directory (measured: it prints the bare UUID and writes
   nothing under `~/.cursor`), and the start opens that chat with `--resume=<id>`. A print start
   (`-p` and `stream-json`) still takes the id from the init event and does not create a chat first.
+  A print run can print nothing for about a minute before that event: observed once on
+  2026.11.19 (Sentry DESKTOP-4W), not measured. Why is Cursor's own startup, which Kangentic cannot
+  see. The id comes with that first line, so the session-id report counts it from the agent's
+  first output and sends nothing.
   A workflow's agent creates one on every fresh start, print included. Whether `--resume` of a chat
   made this way keeps the interactive session across a Pause has not been run live yet.
 - A task that leaves its column before that chat's first turn lands (a confirm-changes start

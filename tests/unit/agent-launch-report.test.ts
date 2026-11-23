@@ -912,7 +912,9 @@ describe('the session id capture reports', () => {
   // whether a single agy hook had fired, or which path finally gave the id.
   describe('a late capture says which path delivered it, and whether a real hook fired', () => {
     it.each(SESSION_ID_CAPTURE_SOURCES)('sends captured_by %s', async (capturedBy) => {
-      await settle({ agentName: 'antigravity' }, { ...late, capturedBy });
+      // Output seen at 2 s, 40 s before the id: late by the output too, and an
+      // id the output gave waits on no output still to come.
+      await settle({ agentName: 'antigravity', agentOutputAt: STARTED_AT_MS + 2_000 }, { ...late, capturedBy });
       expect(reportHandledError.mock.calls[0][1]).toMatchObject({ captured_by: capturedBy });
     });
 
@@ -1096,6 +1098,121 @@ describe('the session id capture reports', () => {
     it.each(['command_line', 'typed'] as const)('still reports a session whose opening prompt was %s, however close its prompt is', async (openingPrompt) => {
       await settle({ agentName: 'codex', openingPrompt, promptObservedAt: PROMPT_AT }, capturedAt(PROMPT_AT + 3_000));
       expect(reportHandledError.mock.calls[0][1]).toMatchObject({ opening_prompt: openingPrompt, after_prompt_s: '1-5' });
+    });
+  });
+
+  // Sentry DESKTOP-4W: a Cursor print run (`-p`, stream-json) printed nothing
+  // visible for about a minute, and its session id came with its first line.
+  // No capture path could have been faster, so the window is counted from that
+  // output. An agent that drew early and gave its id late still reports.
+  describe('a late capture, counted from the agent\'s first output', () => {
+    const silentPrintRun = {
+      agentName: 'cursor',
+      agentCliVersion: '2026.11.19-f005e9d',
+      shell: 'bash',
+      openingPrompt: 'command_line',
+      sessionIdCreation: 'not_asked',
+      firstOutputAt: STARTED_AT_MS + 400,
+      agentRanAt: STARTED_AT_MS + 4_000,
+    } as const satisfies Partial<ManagedSession>;
+    const capturedAt = (at: number) => ({ kind: 'late', capturedAfterMs: at - STARTED_AT_MS, capturedAt: at, capturedBy: 'output', filesystemScan: 'none' } as const);
+
+    it('sends nothing for an id that came with the agent\'s first output a minute in, and keeps the agent\'s one late report', async () => {
+      const silent = session({ ...silentPrintRun, resuming: false, agentOutputAt: STARTED_AT_MS + 63_000 });
+      noteSessionIdCaptureWindowPassed(silent, null);
+      reportSessionIdCaptureOutcome(silent.id, capturedAt(STARTED_AT_MS + 64_000), 'running');
+      await flushReportChain();
+      expect(reportHandledError).not.toHaveBeenCalled();
+      expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('on time by that output'));
+
+      // Not spent on it: the same agent's id a minute after output it drew at 4 s still reports.
+      await settle(
+        { ...silentPrintRun, id: 'session-2-long-id', agentOutputAt: STARTED_AT_MS + 4_000 },
+        capturedAt(STARTED_AT_MS + 64_000),
+      );
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+      expect((reportHandledError.mock.calls[0][0] as Error).name).toBe('AgentSessionIdCapturedLateError');
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({
+        agent: 'cursor',
+        opening_prompt: 'command_line',
+        create_chat: 'not_asked',
+        prompt_seen: 'no',
+        captured_by: 'output',
+        captured_after_s: '60-300',
+        after_prompt_s: 'none',
+        after_output_s: '60-300',
+      });
+    });
+
+    it('tags a late id with no output seen as after_output_s none', async () => {
+      await settle({ agentName: 'codex' }, { kind: 'late', capturedAfterMs: 64_000, capturedAt: STARTED_AT_MS + 64_000, capturedBy: 'hook', filesystemScan: 'none' });
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({ after_output_s: 'none' });
+    });
+
+    // On time is "no more than the window", so the edge itself is still on time.
+    it('counts a capture exactly one window after the output as on time, and one millisecond more as late', async () => {
+      const outputAt = STARTED_AT_MS + 40_000;
+      const atEdge = session({ ...silentPrintRun, resuming: false, agentOutputAt: outputAt });
+      noteSessionIdCaptureWindowPassed(atEdge, null);
+      reportSessionIdCaptureOutcome(atEdge.id, capturedAt(outputAt + 30_000), 'running');
+      await flushReportChain();
+      expect(reportHandledError).not.toHaveBeenCalled();
+
+      await settle({ ...silentPrintRun, id: 'session-2-long-id', agentOutputAt: outputAt }, capturedAt(outputAt + 30_001));
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({ after_output_s: '30-60' });
+    });
+
+    // The host's output event and the id scanner read the same chunk, and
+    // either can reach main first.
+    it('waits for output that lands just after an id the output gave, and reports when none does', async () => {
+      vi.useFakeTimers();
+      try {
+        const outputFollows = session({ ...silentPrintRun, resuming: false });
+        noteSessionIdCaptureWindowPassed(outputFollows, null);
+        reportSessionIdCaptureOutcome(outputFollows.id, capturedAt(STARTED_AT_MS + 64_000), 'running');
+        outputFollows.agentOutputAt = STARTED_AT_MS + 64_300;
+        await vi.advanceTimersByTimeAsync(2_000);
+        expect(reportHandledError).not.toHaveBeenCalled();
+
+        const noOutput = session({ ...silentPrintRun, resuming: false, id: 'session-2-long-id' });
+        noteSessionIdCaptureWindowPassed(noOutput, null);
+        reportSessionIdCaptureOutcome(noOutput.id, capturedAt(STARTED_AT_MS + 64_000), 'running');
+        await vi.advanceTimersByTimeAsync(1_999);
+        expect(reportHandledError).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(reportHandledError).toHaveBeenCalledTimes(1);
+        expect(reportHandledError.mock.calls[0][1]).toMatchObject({ after_output_s: 'none' });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    // Output up to the settle after the id is still the output that carried it.
+    // Past that it is a later line, so the id was late against it too. The opening
+    // prompt is a command line so the prompt rule cannot be what makes it on time.
+    it('counts output up to 2 s after the id as the output that carried it, and output 1 ms later as not', async () => {
+      vi.useFakeTimers();
+      try {
+        const captureAt = STARTED_AT_MS + 64_000;
+        const atSettleEdge = session({ ...silentPrintRun, resuming: false });
+        noteSessionIdCaptureWindowPassed(atSettleEdge, null);
+        reportSessionIdCaptureOutcome(atSettleEdge.id, capturedAt(captureAt), 'running');
+        atSettleEdge.agentOutputAt = captureAt + 2_000;
+        await vi.advanceTimersByTimeAsync(2_000);
+        expect(reportHandledError).not.toHaveBeenCalled();
+
+        const pastSettleEdge = session({ ...silentPrintRun, resuming: false, id: 'session-2-long-id' });
+        noteSessionIdCaptureWindowPassed(pastSettleEdge, null);
+        reportSessionIdCaptureOutcome(pastSettleEdge.id, capturedAt(captureAt), 'running');
+        pastSettleEdge.agentOutputAt = captureAt + 2_001;
+        await vi.advanceTimersByTimeAsync(2_000);
+        expect(reportHandledError).toHaveBeenCalledTimes(1);
+        // The output is after the id, so the distance clamps to zero: the lowest bucket, not 'none'.
+        expect(reportHandledError.mock.calls[0][1]).toMatchObject({ after_output_s: '<1' });
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
