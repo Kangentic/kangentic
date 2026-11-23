@@ -50,6 +50,7 @@ const KNOWN_KINDS = new Set([
   'setWaitKind',
   'setWaitKindWhen',
   'appendPermissionWaitForTool',
+  'captureHookContextFields',
   'replyJson',
 ]);
 
