@@ -53,7 +53,7 @@ msgstr "{label} 已完成，等待它不会产生任何变化。"
 
 #: src/shared/workflow-refusals.ts
 msgid "{label} is in {workflowTitle}, so its automations cannot be paused. To review its plan, set planApproval to manual. To wait on something outside, end a turn on the \"Needs owner:\" line. If it must never start on its own, leave it out of the workflow. To stop work, pause the workflow."
-msgstr "{label} 位于 {workflowTitle} 中，因此无法暂停其自动化。要审阅其计划，将 planApproval 设为 manual。要等待外部事项，在 “Needs owner:” 行结束一轮。若它绝不能自行启动，请勿放入工作流。要停止工作，请暂停工作流。"
+msgstr "{label} 位于 {workflowTitle} 中，因此无法暂停其自动化。要审阅其计划，将 planApproval 设为 manual。要等待外部事项，在「Needs owner:」行结束一轮。若它绝不能自行启动，请勿放入工作流。要停止工作，请暂停工作流。"
 
 #: src/shared/workflow-refusals.ts
 msgid "{label} is in {workflowTitle}, which is paused. Resume it to move its tasks."
@@ -683,7 +683,7 @@ msgstr "任务退出时"
 
 #: src/shared/task-template-vars.ts
 msgid "One line per column between To Do and Done: what it runs, its purpose, any sign-off gate, and recent use."
-msgstr "To Do 与 Done 之间每列一行：运行内容、用途、签核门槛及近期使用。"
+msgstr "To Do 与 Done 之间每列一行：运行内容、用途、审批门槛及近期使用。"
 
 #: src/shared/automation-manifest.ts
 msgid "One per line, as Name: Value."
@@ -1095,15 +1095,15 @@ msgstr "启动智能体。"
 
 #: src/shared/final-line-match.ts
 msgid "Starts with \"Ready for\""
-msgstr "以 “Ready for” 开头"
+msgstr "以「Ready for」开头"
 
 #: src/shared/final-line-match.ts
 msgid "Starts with \"Ready for\", but is not \"Ready for review\""
-msgstr "以 “Ready for” 开头，但不是 “Ready for review”"
+msgstr "以「Ready for」开头，但不是「Ready for review」"
 
 #: src/shared/final-line-match.ts
 msgid "Starts with \"Ready for\", or is \"Done\""
-msgstr "以 “Ready for” 开头，或是 “Done”"
+msgstr "以「Ready for」开头，或是「Done」"
 
 #: src/shared/keybindings.ts
 msgid "Switch board / backlog"
@@ -1187,7 +1187,7 @@ msgstr "任务的 #N，即人们口头称呼的编号。"
 
 #: src/shared/task-template-vars.ts
 msgid "The task's artifact links, one per line with its name. '{{task_xml}}' already includes them."
-msgstr "任务的产物链接，每行一个名称。'{{task_xml}}' 已包含它们。"
+msgstr "任务的产物链接，每行一个并附上名称。'{{task_xml}}' 已包含它们。"
 
 #: src/shared/task-template-vars.ts
 msgid "The task's labels, comma-separated."

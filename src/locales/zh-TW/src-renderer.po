@@ -316,7 +316,7 @@ msgstr "#{displayId} 仍留在待辦。{reason}"
 
 #: src/renderer/lib/pr-state.ts
 msgid "A check or build failed as of the last PR refresh"
-msgstr "上次重新整理提取要求時，有檢查或建置失敗"
+msgstr "上次重新整理 PR 時，有檢查或建置失敗"
 
 #: src/renderer/App.tsx
 msgid "A project"
@@ -451,7 +451,7 @@ msgstr "清除搜尋"
 #: src/renderer/utils/keybindings.ts
 msgctxt "mouse button, drawn as a key chip after Ctrl or Cmd"
 msgid "Click"
-msgstr "點一下"
+msgstr "按一下"
 
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
 msgid "Close"
@@ -967,7 +967,7 @@ msgstr "最大化"
 
 #: src/renderer/lib/pr-state.ts
 msgid "Merge blocked by reviews or branch rules as of the last PR refresh"
-msgstr "上次重新整理提取要求時，合併被審查或分支規則阻擋"
+msgstr "上次重新整理 PR 時，合併被審查或分支規則阻擋"
 
 #: src/renderer/lib/pr-state.ts
 msgid "Merge conflicts with the base branch as of the last PR refresh"

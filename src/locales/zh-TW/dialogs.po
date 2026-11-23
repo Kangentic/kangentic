@@ -191,7 +191,7 @@ msgstr "第 {position} 個，共 {total} 個"
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "{prFixes, plural, one {# thing on the PR to fix} other {# things on the PR to fix}}"
-msgstr "{prFixes, plural, other {提取要求上有 # 項待修復}}"
+msgstr "{prFixes, plural, other {PR 上有 # 項待修復}}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "{reason} Saved {savedBeforeFailing} before failing."
@@ -276,7 +276,7 @@ msgstr "* 表示任意文字，可放在任何位置。沒有 * 時，模式必�
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "<0>Any case.</0> Punctuation is ignored too, so \"READY for review.\" matches."
-msgstr "<0>不區分大小寫。</0>標點也會忽略，因此 “READY for review.” 也能符合。"
+msgstr "<0>不區分大小寫。</0>標點也會忽略，因此「READY for review.」也能符合。"
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "<0>Any text.</0> Use it anywhere. Without one, a pattern must match the whole line."
@@ -288,7 +288,7 @@ msgstr "<0>非。</0>放在最開頭時，僅當最後一行不符合才執行�
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "<0>One per line.</0> Runs on any plain line, never on a ! line."
-msgstr "<0>每行一條。</0>作用於普通列，從不作用於以 ! 開頭的列。"
+msgstr "<0>每行一條。</0>作用於普通行，從不作用於以 ! 開頭的行。"
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "A folder inside your home on the host, such as ~/code/api"
@@ -1871,7 +1871,7 @@ msgstr "一次一個"
 
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "One pattern per line. Runs on any plain line, never on a ! line."
-msgstr "每行一條模式。作用於普通列，從不作用於以 ! 開頭的列。"
+msgstr "每行一條模式。作用於普通行，從不作用於以 ! 開頭的行。"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 msgid "Only one agent CLI detected - install another to choose"
@@ -2104,7 +2104,7 @@ msgstr "優先順序"
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgctxt "condition kind"
 msgid "Priority"
-msgstr "優先級"
+msgstr "優先順序"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #: src/renderer/components/dialogs/board-manager/ProfileBar.tsx
@@ -2705,11 +2705,11 @@ msgstr "文字比對"
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgctxt "condition group"
 msgid "Text match"
-msgstr "文字符合"
+msgstr "文字比對"
 
 #: src/renderer/components/dialogs/board-manager/PatternLinesField.tsx
 msgid "Text match, line {lineNumber}"
-msgstr "文字符合，第 {lineNumber} 列"
+msgstr "文字比對，第 {lineNumber} 行"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 msgid "The agent CLI this task runs on"
@@ -2717,7 +2717,7 @@ msgstr "此任務使用的代理 CLI"
 
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgid "The agent's last line"
-msgstr "代理的最後一列"
+msgstr "代理的最後一行"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "The base is the commit {baseLabel}, which does not move."
@@ -2773,7 +2773,7 @@ msgstr "任務的標籤"
 
 #: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgid "The task's priority level"
-msgstr "任務的優先級"
+msgstr "任務的優先順序"
 
 #: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 msgid "The window could not be created."

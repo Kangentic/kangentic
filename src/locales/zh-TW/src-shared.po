@@ -53,7 +53,7 @@ msgstr "{label} 已完成。等待它不會有任何改變。"
 
 #: src/shared/workflow-refusals.ts
 msgid "{label} is in {workflowTitle}, so its automations cannot be paused. To review its plan, set planApproval to manual. To wait on something outside, end a turn on the \"Needs owner:\" line. If it must never start on its own, leave it out of the workflow. To stop work, pause the workflow."
-msgstr "{label} 位於 {workflowTitle} 中，因此無法暫停其自動化。要審閱其計畫，將 planApproval 設為 manual。要等待外部事項，在 “Needs owner:” 列結束一輪。若它絕不能自行啟動，請勿放入工作流程。要停止工作，請暫停工作流程。"
+msgstr "{label} 位於 {workflowTitle} 中，因此無法暫停其自動化。要審閱其計畫，將 planApproval 設為 manual。要等待外部事項，在「Needs owner:」行結束一輪。若它絕不能自行啟動，請勿放入工作流程。要停止工作，請暫停工作流程。"
 
 #: src/shared/workflow-refusals.ts
 msgid "{label} is in {workflowTitle}, which is paused. Resume it to move its tasks."
@@ -129,7 +129,7 @@ msgstr "代理監控"
 
 #: src/shared/final-line-match.ts
 msgid "Any line but this one"
-msgstr "除此列以外的任意列"
+msgstr "除此行以外的任意行"
 
 #: src/shared/transcript-format.ts
 msgid "Approved automatically"
@@ -380,7 +380,7 @@ msgstr "標籤為 {labels}"
 
 #: src/shared/automation-describe.ts
 msgid "for priority {levels}"
-msgstr "優先級為 {levels}"
+msgstr "優先順序為 {levels}"
 
 #: src/shared/dictation-languages.ts
 msgctxt "spoken language"
@@ -699,11 +699,11 @@ msgstr "僅在 {condition} 時。"
 
 #: src/shared/automation-describe.ts
 msgid "only if the last line {rule}"
-msgstr "僅當最後一列 {rule}"
+msgstr "僅當最後一行 {rule}"
 
 #: src/shared/automation-describe.ts
 msgid "Only if the last line {rule}."
-msgstr "僅當最後一列 {rule}。"
+msgstr "僅當最後一行 {rule}。"
 
 #: src/shared/automation-describe.ts
 msgid "only if your message {rule}"
@@ -1095,15 +1095,15 @@ msgstr "啟動代理。"
 
 #: src/shared/final-line-match.ts
 msgid "Starts with \"Ready for\""
-msgstr "以 “Ready for” 開頭"
+msgstr "以「Ready for」開頭"
 
 #: src/shared/final-line-match.ts
 msgid "Starts with \"Ready for\", but is not \"Ready for review\""
-msgstr "以 “Ready for” 開頭，但不是 “Ready for review”"
+msgstr "以「Ready for」開頭，但不是「Ready for review」"
 
 #: src/shared/final-line-match.ts
 msgid "Starts with \"Ready for\", or is \"Done\""
-msgstr "以 “Ready for” 開頭，或是 “Done”"
+msgstr "以「Ready for」開頭，或是「Done」"
 
 #: src/shared/keybindings.ts
 msgid "Switch board / backlog"
@@ -1187,7 +1187,7 @@ msgstr "任務的 #N，也就是大家口頭說的編號。"
 
 #: src/shared/task-template-vars.ts
 msgid "The task's artifact links, one per line with its name. '{{task_xml}}' already includes them."
-msgstr "任務的產物連結，每列一個名稱。'{{task_xml}}' 已包含它們。"
+msgstr "任務的產物連結，每行一個並附上名稱。'{{task_xml}}' 已包含它們。"
 
 #: src/shared/task-template-vars.ts
 msgid "The task's labels, comma-separated."

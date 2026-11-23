@@ -28,7 +28,7 @@ msgstr "请检查站点地址。"
 #. The highlighted phrase is a button label in Atlassian's own English interface. Keep it as written.
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Click <0>Create API token</0>, name it \"Kangentic\", and copy it."
-msgstr "点击 <0>Create API token</0>，命名为 “Kangentic”，然后复制。"
+msgstr "点击 <0>Create API token</0>，命名为「Kangentic」，然后复制。"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Connect Jira"
