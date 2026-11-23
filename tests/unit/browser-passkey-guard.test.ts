@@ -74,7 +74,8 @@ import {
   releaseAgentControl,
   resetPasskeyGuardForTests,
 } from '../../src/main/browser/passkey-guard';
-import { browserPartitionForOwner } from '../../src/shared/browser-partition';
+import { browserPartitionForCommandTerminals, browserPartitionForOwner } from '../../src/shared/browser-partition';
+import { commandTerminalBrowserOwner } from '../../src/shared/browser-owner';
 
 interface SentCommand {
   method: string;
@@ -258,6 +259,33 @@ describe('passkey guard', () => {
     markAgentControl(projectId, taskId);
     expect(isUnderAgentControl(guest.session)).toBe(true);
     expect(isUnderAgentControl(other.guest.session)).toBe(false);
+  });
+
+  // A user loses the passkey cover on a Command Terminal's Browser surface: its owner key is not a
+  // task id, so a mark keyed like a task's would name a jar no guest uses and its sign-in page would
+  // open the OS dialog on an unattended run.
+  it('marks a Command Terminal owner by the project\'s shared terminals jar, and a task ending leaves it', () => {
+    const terminalOwner = commandTerminalBrowserOwner(projectId, 'slot-1');
+    const terminalGuest = fakeGuest({ partition: browserPartitionForCommandTerminals(projectId) });
+    const otherProjectGuest = fakeGuest({ partition: browserPartitionForCommandTerminals('project-2') });
+    markAgentControl(projectId, terminalOwner);
+    expect(isUnderAgentControl(terminalGuest.guest.session)).toBe(true);
+    expect(isUnderAgentControl(otherProjectGuest.guest.session)).toBe(false);
+
+    forgetAgentControl(projectId, taskId);
+    expect(isUnderAgentControl(terminalGuest.guest.session)).toBe(true);
+  });
+
+  // A user loses another project's pane to the guard (or this project's to the OS dialog): the same
+  // task id can exist in two projects, and only the partition tells them apart.
+  it('keeps one task id in two projects apart', () => {
+    const here = fakeGuest({ partition });
+    const there = fakeGuest({ partition: browserPartitionForOwner('project-2', taskId) });
+    markAgentControl(projectId, taskId);
+    expect(isUnderAgentControl(here.guest.session)).toBe(true);
+    expect(isUnderAgentControl(there.guest.session)).toBe(false);
+    forgetAgentControl('project-2', taskId);
+    expect(isUnderAgentControl(here.guest.session)).toBe(true);
   });
 
   it('ignores a mark with no project or owner', () => {
