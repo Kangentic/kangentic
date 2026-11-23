@@ -1,5 +1,5 @@
-<!-- readme-translation source-blob=addf4d308ea2879895590819a96e54c47a323ac9 -->
-> Questa è una traduzione automatica di [README.md](../README.md) alla revisione `addf4d3`. La versione inglese è quella di riferimento.
+<!-- readme-translation source-blob=ded000bed8af5253da7d62f8cafb9a8369f243a4 -->
+> Questa è una traduzione automatica di [README.md](../README.md) alla revisione `ded000b`. La versione inglese è quella di riferimento.
 
 <p align="center">
   <a href="https://www.kangentic.com"><img src="https://raw.githubusercontent.com/Kangentic/branding/main/resources/web/logo.png" alt="Logo di Kangentic" width="96" /></a>
@@ -21,9 +21,9 @@
 <p align="center">
   <a href="https://kangentic.github.io/kangentic/">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-dark.png" />
-      <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-light.png" />
-      <img src="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-dark.png" alt="La bacheca di Kangentic con attività in To Do, Planning, Executing e Code Review. Ogni scheda in esecuzione mostra l'ultimo messaggio del suo agente e il terminale dell'agente selezionato è aperto sotto la bacheca. Apre la demo dal vivo." width="900" />
+      <source media="(prefers-color-scheme: dark)" srcset="https://kangentic.github.io/kangentic/readme/board-dark.png" />
+      <source media="(prefers-color-scheme: light)" srcset="https://kangentic.github.io/kangentic/readme/board-light.png" />
+      <img src="https://kangentic.github.io/kangentic/readme/board-dark.png" alt="La bacheca di Kangentic con attività in To Do, Planning, Executing e Code Review. Ogni scheda in esecuzione mostra l'ultimo messaggio del suo agente e il terminale dell'agente selezionato è aperto sotto la bacheca. Apre la demo dal vivo." width="900" />
     </picture>
   </a>
 </p>

@@ -1,5 +1,5 @@
-<!-- readme-translation source-blob=addf4d308ea2879895590819a96e54c47a323ac9 -->
-> Ez a(z) [README.md](../README.md) gépi fordítása a(z) `addf4d3` állapot szerint. Az angol változat a mérvadó.
+<!-- readme-translation source-blob=ded000bed8af5253da7d62f8cafb9a8369f243a4 -->
+> Ez a(z) [README.md](../README.md) gépi fordítása a(z) `ded000b` állapot szerint. Az angol változat a mérvadó.
 
 <p align="center">
   <a href="https://www.kangentic.com"><img src="https://raw.githubusercontent.com/Kangentic/branding/main/resources/web/logo.png" alt="Kangentic logó" width="96" /></a>
@@ -21,9 +21,9 @@
 <p align="center">
   <a href="https://kangentic.github.io/kangentic/">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-dark.png" />
-      <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-light.png" />
-      <img src="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-dark.png" alt="A Kangentic tábla a To Do, Planning, Executing és Code Review oszlopban lévő feladatokkal. Minden futó kártya az ágense legutóbbi üzenetét mutatja, a kiválasztott ágens terminálja pedig a tábla alatt látható. Megnyitja az élő demót." width="900" />
+      <source media="(prefers-color-scheme: dark)" srcset="https://kangentic.github.io/kangentic/readme/board-dark.png" />
+      <source media="(prefers-color-scheme: light)" srcset="https://kangentic.github.io/kangentic/readme/board-light.png" />
+      <img src="https://kangentic.github.io/kangentic/readme/board-dark.png" alt="A Kangentic tábla a To Do, Planning, Executing és Code Review oszlopban lévő feladatokkal. Minden futó kártya az ágense legutóbbi üzenetét mutatja, a kiválasztott ágens terminálja pedig a tábla alatt látható. Megnyitja az élő demót." width="900" />
     </picture>
   </a>
 </p>

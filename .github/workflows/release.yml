@@ -996,9 +996,19 @@ jobs:
   # A failure here (Pages not enabled, the github-pages environment refusing a
   # tag ref) marks the run red AFTER the release is already published. That is
   # deliberate: the release stands, and the run says the demo is stale.
+  #
+  # After demo-posters, because the same site serves every README's board image,
+  # taken from the release's poster zip (deploy-demo.yml, "Add the README board
+  # stills"). Deploying ahead of the shoot would publish the previous release's
+  # image until the next deploy. So the demo goes live when the shoot ends, up to
+  # 40 minutes after publish, and the demo and its poster zip carry one version.
+  # A FAILED shoot still deploys the demo: the step falls back to the newest older
+  # release with a zip, so the README keeps its previous image, and demo-posters
+  # has already turned the run red. Hence success OR failure in the if:, not
+  # success alone.
   deploy-demo:
-    needs: [publish-release]
-    if: ${{ !cancelled() && needs.publish-release.result == 'success' }}
+    needs: [publish-release, demo-posters]
+    if: ${{ !cancelled() && needs.publish-release.result == 'success' && (needs.demo-posters.result == 'success' || needs.demo-posters.result == 'failure') }}
     uses: ./.github/workflows/deploy-demo.yml
     with:
       ref: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref }}
@@ -1018,12 +1028,13 @@ jobs:
   # symbols, scripts/lib/demo-fonts.mjs), so the runner needs no font of its own.
   # It hands the set and the build it was shot from to poster-gate as an artifact.
   #
-  # After publish-release on purpose, beside deploy-demo: the release stands, and
-  # a failure here marks the run red while the site's own sync fails loudly on the
-  # missing asset. It is NOT in scripts/release-assets.js: that manifest is checked
-  # before this job runs (in publish-release, and in create-draft-release's re-run
-  # check), so listing the zip there as one more expected asset would fail every
-  # release.
+  # After publish-release on purpose: the release stands, and a failure here marks
+  # the run red while the site's own sync fails loudly on the missing asset.
+  # deploy-demo waits for this job, since the web demo's site serves the README's
+  # board image out of this zip. It is NOT in scripts/release-assets.js: that
+  # manifest is checked before this job runs (in publish-release, and in
+  # create-draft-release's re-run check), so listing the zip there as one more
+  # expected asset would fail every release.
   #
   # The version chain is three links, none redundant: the tag must match
   # package.json (the gate below), package.json must match dist/demo/scenes.json

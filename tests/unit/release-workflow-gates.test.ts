@@ -94,10 +94,14 @@ const jobs = parseJobs(workflowSource);
  *
  * Throws rather than returning empty on a miss: a renamed step would otherwise silently turn
  * every assertion below into `expect('').not.toContain(...)`, which passes.
+ *
+ * `fromJobs` is another workflow file's parsed jobs (deploy-demo.yml), defaulting to release.yml's.
+ * `fileName` is the name the miss error prints, so a failure about deploy-demo.yml does not blame
+ * release.yml.
  */
-function stepBody(jobName: string, stepName: string): string {
-  const job = jobs.find((candidate) => candidate.name === jobName);
-  if (!job) throw new Error(`release.yml has no job named ${jobName}`);
+function stepBody(jobName: string, stepName: string, fromJobs: WorkflowJob[] = jobs, fileName = 'release.yml'): string {
+  const job = fromJobs.find((candidate) => candidate.name === jobName);
+  if (!job) throw new Error(`${fileName} has no job named ${jobName}`);
   const lines = job.body.split('\n');
   const startIndex = lines.findIndex((line) => line === `      - name: ${stepName}`);
   if (startIndex === -1) {
@@ -357,6 +361,25 @@ describe('release.yml job graph', () => {
     const checkoutRef = publishRelease?.body.match(/^ {10}ref: (.+)$/m)?.[1];
     expect(checkoutRef).toBeDefined();
     expect(deployDemo?.body).toContain(`      ref: ${checkoutRef}`);
+  });
+
+  // The demo's site serves every README's board image out of the release's poster zip, so the
+  // deploy waits for the shoot: ahead of it, the README would show the previous release until the
+  // next deploy. A FAILED shoot must still deploy the demo (the stills step falls back to an older
+  // zip and the run is already red from demo-posters), so the condition admits failure, and a
+  // condition that only admitted success would leave the demo stale on every failed shoot.
+  it('deploys the web demo after the poster shoot, whether the shoot passed or failed', () => {
+    const deployDemo = jobs.find((job) => job.name === 'deploy-demo');
+    expect(deployDemo?.needs).toEqual(['publish-release', 'demo-posters']);
+    expect(deployDemo?.condition).toContain("needs.publish-release.result == 'success'");
+    expect(deployDemo?.condition).toContain("needs.demo-posters.result == 'success'");
+    expect(deployDemo?.condition).toContain("needs.demo-posters.result == 'failure'");
+    // The three clauses above pass in any grouping. Without the parentheses, && binds tighter than
+    // ||, so the job would deploy for a failed publish whenever the shoot also failed. The exact
+    // string is the only thing that pins the grouping.
+    expect(deployDemo?.condition).toBe(
+      "${{ !cancelled() && needs.publish-release.result == 'success' && (needs.demo-posters.result == 'success' || needs.demo-posters.result == 'failure') }}",
+    );
   });
 
   // The poster set kangentic.com's figures read is attached AFTER the release is published, from
@@ -951,6 +974,192 @@ describe.runIf(!HAS_JQ)('release.yml upgrade baseline program, executed (skipped
 describe.runIf(RUNNING_ON_CI)('release.yml upgrade baseline program, executed (CI invariant)', () => {
   it('finds jq on PATH, so CI never skips the executed block', () => {
     expect(HAS_JQ).toBe(true);
+  });
+});
+
+// Every README's hero is the board poster served from the web demo's Pages site, which each deploy
+// writes from a release's poster zip (#1180). A Pages deploy replaces the whole site, so a deploy
+// that skipped the step, or wrote another path, would break the README on every redeploy. The
+// release it reads from has the upgrade gates' trap: /releases/latest is the release under
+// construction, and a release is latest about 40 minutes before its posters exist.
+const DEPLOY_DEMO_PATH = path.join(REPO_ROOT, '.github', 'workflows', 'deploy-demo.yml');
+const deployDemoJobs = parseJobs(fs.readFileSync(DEPLOY_DEMO_PATH, 'utf8'));
+const STILLS_STEP = 'Add the README board stills';
+const stillsBody = stepBody('build', STILLS_STEP, deployDemoJobs, 'deploy-demo.yml');
+
+const README_FILES = [
+  'README.md',
+  path.join('packages', 'launcher', 'README.md'),
+  ...fs.readdirSync(path.join(REPO_ROOT, 'i18n'))
+    .filter((name) => /^README\..+\.md$/.test(name))
+    .map((name) => path.join('i18n', name)),
+];
+
+describe('deploy-demo.yml carries the README board stills in every Pages deploy', () => {
+  it('adds them after the smoke and before the Pages artifact is uploaded', () => {
+    const buildBody = deployDemoJobs.find((job) => job.name === 'build')?.body ?? '';
+    const smokeAt = buildBody.indexOf('      - name: Smoke-test the built demo');
+    const stillsAt = buildBody.indexOf(`      - name: ${STILLS_STEP}`);
+    const uploadAt = buildBody.indexOf('uses: actions/upload-pages-artifact@');
+    expect(smokeAt).toBeGreaterThan(-1);
+    expect(uploadAt).toBeGreaterThan(-1);
+    expect(stillsAt).toBeGreaterThan(smokeAt);
+    expect(stillsAt).toBeLessThan(uploadAt);
+  });
+
+  it('fails rather than deploying without them, and never reads /releases/latest', () => {
+    expect(stillsBody).toContain('set -euo pipefail');
+    expect(stillsBody).toContain('::error::');
+    expect(stillsBody).toContain('exit 1');
+    expect(stillsBody).not.toContain('releases/latest');
+    // The ref is free text on a dispatch: env plus --arg, never spliced into the script or program.
+    expect(stillsBody).not.toContain('${{ inputs.ref }}"');
+    expect(stillsBody).toContain('REF: ${{ inputs.ref }}');
+    expect(stillsBody).toContain('--arg self "$self"');
+    // Quoted or not, a splice is the hole: the only occurrence is the env line, and nothing after
+    // `run: |` carries an expression at all.
+    expect(stillsBody.split('${{ inputs.ref }}')).toHaveLength(2);
+    const scriptText = stillsBody.slice(stillsBody.indexOf('run: |'));
+    expect(scriptText.length).toBeGreaterThan('run: |'.length);
+    expect(scriptText).not.toContain('${{');
+  });
+
+  it('strips refs/tags/ and guards a v<digit> ref to a plain vX.Y.Z version', () => {
+    expect(stillsBody).toContain('tag="${REF#refs/tags/}"');
+    expect(stillsBody).toContain("grep -qE '^v[0-9]+[.][0-9]+[.][0-9]+$'");
+    expect(stillsBody).toContain('not a plain vX.Y.Z version');
+    expect(stillsBody).toContain('self="$tag"');
+  });
+
+  it('refuses a still that is not a PNG, and downloads exactly the zip it unzips', () => {
+    expect(stillsBody).toContain('"89504e470d0a1a0a"');
+    expect(stillsBody).toContain('is not a PNG');
+    expect(stillsBody).toContain('--pattern "demo-posters-$version.zip"');
+    expect(stillsBody).toContain('zip="$RUNNER_TEMP/readme-stills/demo-posters-$version.zip"');
+    expect(stillsBody).toContain('unzip -p "$zip"');
+  });
+
+  it('gives each failure branch its own error and exit', () => {
+    // Plain-version guard, no source release, bad PNG signature.
+    expect(stillsBody.match(/exit 1/g)?.length ?? 0).toBeGreaterThanOrEqual(3);
+    expect(stillsBody.match(/::error::/g)?.length ?? 0).toBeGreaterThanOrEqual(3);
+    expect(stillsBody).toContain('No published release');
+    for (const errorLine of stillsBody.split('\n').filter((line) => line.includes('::error::'))) {
+      expect(errorLine.trim().startsWith('echo "::error::')).toBe(true);
+    }
+    const lines = stillsBody.split('\n');
+    lines.forEach((line, index) => {
+      if (line.includes('::error::')) expect(lines[index + 1].trim()).toBe('exit 1');
+    });
+  });
+
+  it('says which release it took on every branch', () => {
+    expect(stillsBody).toContain('not a release tag');
+    expect(stillsBody).toContain('own poster set');
+    expect(stillsBody).toContain('::warning::');
+  });
+
+  it('writes the dark README image from the rust poster and the light one from the clay poster', () => {
+    expect(stillsBody).toContain('unzip -p "$zip" board.rust.frame.png > dist/demo/readme/board-dark.png');
+    expect(stillsBody).toContain('unzip -p "$zip" board.clay.frame.png > dist/demo/readme/board-light.png');
+  });
+
+  it('is what every README loads its board image from, and no README loads a committed copy', () => {
+    expect(README_FILES.length).toBeGreaterThan(2);
+    for (const readmeFile of README_FILES) {
+      const text = fs.readFileSync(path.join(REPO_ROOT, readmeFile), 'utf8');
+      expect(text, `${readmeFile} still loads a hand-committed board image`).not.toContain('docs/images/readme-board');
+      const servedPaths = [...text.matchAll(/https:\/\/kangentic\.github\.io\/kangentic\/(readme\/[\w.-]+\.png)/g)].map((match) => match[1]);
+      expect(servedPaths.length, `${readmeFile} shows no board image from the demo site`).toBeGreaterThan(0);
+      for (const servedPath of servedPaths) {
+        expect(stillsBody, `${readmeFile} loads ${servedPath}, which no deploy writes`).toContain(`> dist/demo/${servedPath}`);
+      }
+    }
+    expect(fs.existsSync(path.join(REPO_ROOT, 'docs', 'images', 'readme-board-dark.png'))).toBe(false);
+    expect(fs.existsSync(path.join(REPO_ROOT, 'docs', 'images', 'readme-board-light.png'))).toBe(false);
+  });
+
+  // The stills step writes the dark image from the rust poster, so a README that swapped the two
+  // sources would show a light board to a dark reader while every path above still resolved.
+  it('loads the dark image for the dark scheme and the light image for the light scheme', () => {
+    let pictureCount = 0;
+    for (const readmeFile of README_FILES) {
+      const text = fs.readFileSync(path.join(REPO_ROOT, readmeFile), 'utf8');
+      if (!text.includes('<picture>')) {
+        // The npm launcher README has a markdown image and no picture, so it carries the dark one.
+        expect(readmeFile, `${readmeFile} has a markdown image only, which is the launcher's`).toBe(path.join('packages', 'launcher', 'README.md'));
+        expect(text).toContain('https://kangentic.github.io/kangentic/readme/board-dark.png');
+        continue;
+      }
+      pictureCount += 1;
+      expect(text, readmeFile).toMatch(/<source media="\(prefers-color-scheme: dark\)" srcset="https:\/\/kangentic\.github\.io\/kangentic\/readme\/board-dark\.png"/);
+      expect(text, readmeFile).toMatch(/<source media="\(prefers-color-scheme: light\)" srcset="https:\/\/kangentic\.github\.io\/kangentic\/readme\/board-light\.png"/);
+    }
+    expect(pictureCount).toBeGreaterThan(2);
+  });
+
+  it('uploads dist/demo as the Pages artifact, the directory the stills are written into', () => {
+    const buildBody = deployDemoJobs.find((job) => job.name === 'build')?.body ?? '';
+    const uploadAt = buildBody.indexOf('uses: actions/upload-pages-artifact@');
+    expect(uploadAt).toBeGreaterThan(-1);
+    expect(buildBody.slice(uploadAt)).toMatch(/^\s+path: dist\/demo$/m);
+    expect(stillsBody).toContain('> dist/demo/readme/board-dark.png');
+  });
+});
+
+describe.runIf(HAS_JQ)('deploy-demo.yml README stills release choice, executed', () => {
+  const program = extractProgram(stillsBody, 'source_tag=$(', 'max_by');
+  const sourceFor = (self: string, releases: ReleaseRow[]): string => runJq(program, releases, ['--arg', 'self', self]);
+  const withPosters = (tagName: string): ReleaseRow => published(tagName, [`kangentic-${tagName.slice(1)}.dmg`, `demo-posters-${tagName.slice(1)}.zip`]);
+
+  it('takes a release tag\'s own poster set when it is attached', () => {
+    expect(sourceFor('v0.63.0', [withPosters('v0.63.0'), withPosters('v0.62.0')])).toBe('v0.63.0');
+  });
+
+  it('keeps the previous release\'s stills when the shoot left no zip on this one', () => {
+    expect(sourceFor('v0.63.0', [published('v0.63.0', ['kangentic-0.63.0.dmg']), withPosters('v0.62.0')])).toBe('v0.62.0');
+  });
+
+  it('never takes a newer release\'s stills for a redeploy of an older tag', () => {
+    const releases = [withPosters('v0.63.0'), withPosters('v0.62.0'), withPosters('v0.61.0')];
+    expect(sourceFor('v0.61.0', releases)).toBe('v0.61.0');
+  });
+
+  it('counts only a zip named for its own release', () => {
+    const releases = [published('v0.63.0', ['demo-posters-0.62.0.zip']), withPosters('v0.61.0')];
+    expect(sourceFor('v0.63.0', releases)).toBe('v0.61.0');
+  });
+
+  it('takes the newest release, by number, for a ref that is not a release tag', () => {
+    expect(sourceFor('', [withPosters('v0.9.0'), withPosters('v0.10.0')])).toBe('v0.10.0');
+  });
+
+  it('falls back past a newer release and a missing own zip to the next older one with a zip', () => {
+    const releases = [withPosters('v0.63.0'), published('v0.62.0'), withPosters('v0.61.0')];
+    expect(sourceFor('v0.62.0', releases)).toBe('v0.61.0');
+  });
+
+  it('compares versions by number on the self side too, so v0.10.0 is above v0.9.0', () => {
+    expect(sourceFor('v0.10.0', [published('v0.10.0'), withPosters('v0.9.0')])).toBe('v0.9.0');
+  });
+
+  it('skips drafts, prereleases and tags that are not plain versions', () => {
+    const releases = [
+      { ...withPosters('v0.64.0'), draft: true },
+      { ...withPosters('v0.63.1'), prerelease: true },
+      published('v0.63.0-rc1', ['demo-posters-0.63.0-rc1.zip']),
+      // A zip named for it, so the tag-shape filter is what drops it, not a missing asset.
+      published('protocol-v1.2.0', ['demo-posters-1.2.0.zip']),
+      // No `assets` key at all, which the program's `.assets[]?` has to tolerate.
+      { tag_name: 'v0.62.5', draft: false, prerelease: false } satisfies ReleaseRow,
+      withPosters('v0.62.0'),
+    ];
+    expect(sourceFor('', releases)).toBe('v0.62.0');
+  });
+
+  it('returns nothing when no release carries a poster set, which the step fails on', () => {
+    expect(sourceFor('v0.63.0', [published('v0.63.0'), published('v0.62.0')])).toBe('');
+    expect(sourceFor('', [])).toBe('');
   });
 });
 

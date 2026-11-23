@@ -69,8 +69,9 @@ while exiting 0 (measured: the react-vendor chunk doubled to 383 KB).
 ## Where it runs
 
 `.github/workflows/deploy-demo.yml` builds and deploys `dist/demo/` to GitHub Pages. The release
-workflow calls it after `publish-release`, so the web build always shows the shipped app; a
-`workflow_dispatch` redeploys any ref by hand. The page lives at
+workflow calls it after `publish-release` and the poster shoot, so the web build always shows the
+shipped app; a `workflow_dispatch` redeploys any ref by hand. Every deploy also writes the README
+hero (The poster set, below). The page lives at
 `https://kangentic.github.io/kangentic/` and the site and docs embed it as an iframe:
 
 ```html
@@ -1095,12 +1096,25 @@ rig writes `<scene>.<theme>.frame.layout.json` (`tests/captures/helpers/frame-me
 text node's wraps and line boxes and every terminal's grid and rect, which the poster gate
 compares the live frame against. The zip leaves it out.
 
-`release.yml`'s `demo-posters` job runs it after `publish-release`, beside `deploy-demo`, and
-attaches the zip with `gh release upload --clobber`, so a re-run of a finished release replaces
-the asset in place. It is deliberately not in `scripts/release-assets.js`: that manifest is
-verified before the job runs, and listing the zip there would fail every release. Being after
-publish also means the release stands when the job fails; the run goes red and the site's own
-sync fails on the missing asset.
+`release.yml`'s `demo-posters` job runs it after `publish-release` and attaches the zip with
+`gh release upload --clobber`, so a re-run of a finished release replaces the asset in place. It
+is deliberately not in `scripts/release-assets.js`: that manifest is verified before the job
+runs, and listing the zip there would fail every release. Being after publish also means the
+release stands when the job fails; the run goes red and the site's own sync fails on the missing
+asset.
+
+The set is also the README's hero. `deploy-demo` runs after this job, and its "Add the README
+board stills" step copies `board.rust.frame.png` and `board.clay.frame.png` as shot into the
+Pages site at `readme/board-dark.png` and `readme/board-light.png`. `README.md`, the translations
+in `i18n/`, and `packages/launcher/README.md` (the npm page) all load those two URLs, so the hero
+changes with each release and nothing in the repo holds a copy. Pages serves them with
+`Cache-Control: max-age=600`, and GitHub's image proxy takes its caching from that header
+(GitHub Docs, "About anonymized URLs"). The step takes the deployed tag's own zip. When that zip
+is missing because the shoot failed, it takes the newest older release that has one, so the
+README keeps its last image. It never reads `/releases/latest`, which names a release before its
+posters exist. A deploy with no zip to take from fails, since Pages would otherwise publish a
+site the README cannot load from. `tests/unit/release-workflow-gates.test.ts` runs the choice
+through jq and holds every README to those paths.
 
 The posters are shot in the faces the demo ships (Fonts, below), so the runner needs none of its
 own and a set shot on Windows lays out like the release set. The release job used to install
