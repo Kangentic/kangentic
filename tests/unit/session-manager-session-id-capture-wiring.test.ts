@@ -62,6 +62,13 @@ import { EventType, PromptReason } from '../../src/shared/types';
 import type { AgentParser, OpeningPromptDelivery, SessionIdLoginEvidence, SessionIdStoreEvidence, StoredCliTarget } from '../../src/shared/types';
 
 const WINDOW_MS = 30_000;
+/**
+ * How long a late id read from the output waits for the agent's first output to
+ * be noted, since the id and the output come from one chunk in either order.
+ * `reportAgentSessionId` captures with source `output`, so every late report
+ * below is sent this long after its capture.
+ */
+const OUTPUT_SETTLE_MS = 2_000;
 
 let tmpDir: string;
 let nextPid = 700;
@@ -184,6 +191,9 @@ describe('a session whose id the capture window did not see', () => {
 
     reportAgentSessionId(manager, sessionId, 'agent-session-0001');
     await vi.advanceTimersByTimeAsync(10);
+    // Sent only once the agent's first output has had its chance to be noted (DESKTOP-4W).
+    expect(reportsNamed('AgentSessionIdCapturedLateError')).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(OUTPUT_SETTLE_MS);
 
     expect(reportsNamed('AgentSessionIdCapturedLateError')).toHaveLength(1);
     expect(reportsNamed('AgentSessionIdCapturedLateError')[0].tags).toMatchObject({
@@ -218,7 +228,7 @@ describe('a session whose id the capture window did not see', () => {
 
     await passTheWindow();
     reportAgentSessionId(manager, sessionId, 'agent-session-0003');
-    await vi.advanceTimersByTimeAsync(10);
+    await vi.advanceTimersByTimeAsync(OUTPUT_SETTLE_MS + 10);
 
     expect(storeEvidence).toHaveBeenCalledTimes(1);
     // A local session names no CLI target, and its folder is the one it was started in. The check is
@@ -257,7 +267,7 @@ describe('a session whose id the capture window did not see', () => {
 
     await passTheWindow();
     reportAgentSessionId(manager, session.id, 'agent-session-0004');
-    await vi.advanceTimersByTimeAsync(10);
+    await vi.advanceTimersByTimeAsync(OUTPUT_SETTLE_MS + 10);
 
     expect(reportsNamed('AgentSessionIdCapturedLateError')[0].tags.id_store).toBe('unknown');
   });
@@ -528,7 +538,7 @@ describe('what a late report says about the hooks and the path', () => {
     await passTheWindow();
 
     reportAgentSessionId(manager, sessionId, 'agent-session-0008');
-    await vi.advanceTimersByTimeAsync(10);
+    await vi.advanceTimersByTimeAsync(OUTPUT_SETTLE_MS + 10);
 
     expect(registryRowOf(manager, sessionId).agentHookObservedAt).toEqual(expect.any(Number));
     expect(reportsNamed('AgentSessionIdCapturedLateError')[0].tags).toMatchObject({ hook_seen: 'no', captured_by: 'output' });
@@ -624,7 +634,7 @@ describe('an id a host reports that is no plain name', () => {
     await passTheWindow();
 
     reportAgentSessionId(manager, sessionId, 'agent-session-0005');
-    await vi.advanceTimersByTimeAsync(10);
+    await vi.advanceTimersByTimeAsync(OUTPUT_SETTLE_MS + 10);
 
     expect(reportsNamed('AgentSessionIdCapturedLateError')).toHaveLength(1);
   });
