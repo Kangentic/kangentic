@@ -102,7 +102,7 @@ Runs a script as an ordinary child process, in the task's worktree when it has o
 | `script` | string | The script body, with `{{placeholders}}`. Escaping is `shell` |
 | `timeoutMinutes` | number | Give up after this long. Default 10, range 1 to 120. Set in `kangentic.json` only, not in the Column Manager: an exit group is capped at 60 seconds in aggregate whatever this says, so the control could not tell the truth on half the rows it appeared on. The bound itself is not optional, because enter automations hold the task lock and `withTaskLock` has no timeout of its own |
 
-Not a PTY. An interactive shell runs the script and then returns to its prompt and lives forever, so completion is unobservable and the exit code unobtainable; this adapter awaits the exit and records the code. A non-zero exit fails the run with an `AutomationPermanentError`: it is the script's own answer, so the run log carries it and error reporting skips it. The timeout kills the process TREE, because a bare kill reaches the shell only and leaves whatever it spawned running. No retry: a half-run script is not safe to repeat.
+Not a PTY. An interactive shell runs the script and then returns to its prompt and lives forever, so completion is unobservable and the exit code unobtainable; this adapter awaits the exit and records the code. A non-zero exit fails the run with an `AutomationPermanentError`: it is the script's own answer, so the run log carries it and error reporting skips it. The timeout kills the process TREE, because a bare kill reaches the shell only and leaves whatever it spawned running. A move that supersedes the row kills the tree the same way and rejects an error named `AbortError` whose cause is the move's reason, so the run closes `interrupted` and error reporting skips it (a plain `Error` here was reported as a defect, Sentry DESKTOP-4X). A move that landed before the script started starts nothing. No retry: a half-run script is not safe to repeat.
 
 On a project on an SSH host the task's folder is on the host, so the script runs there, through `sh` (`remote/host-script.ts`, reached through `AutomationContext.runOnHost`), and the variables hold the host's paths. See [What runs where](../../platforms/ssh-remote.md#what-runs-where).
 
@@ -117,7 +117,7 @@ Every variable also arrives as a `KANGENTIC_*` environment variable, which is th
 | `body` | string | Request body. Escaping is `json`. Empty means the default JSON envelope |
 | `headers` | Record<string, string> | Extra headers, authored one per line as `Name: Value` |
 
-30 second timeout via `AbortSignal.timeout`, a `response.ok` check, and 3 attempts on a transport error, 408, 429 or 5xx through the runner's retry loop (`delayBeforeRetry` in `src/main/automations/automation-runner.ts`), honoring `Retry-After`. Every attempt sends an `Idempotency-Key` built from the run id, so a retry cannot double-create downstream. `attempts` is written to the run row.
+30 second timeout via `AbortSignal.timeout`, a `response.ok` check, and 3 attempts on a transport error, 408, 429 or 5xx through the runner's retry loop (`delayBeforeRetry` in `src/main/automations/automation-runner.ts`), honoring `Retry-After`. A move that supersedes the row during a backoff rejects an `AbortError` whatever the abort reason was, a string included. Every attempt sends an `Idempotency-Key` built from the run id, so a retry cannot double-create downstream. `attempts` is written to the run row.
 
 ### `notify`: Notify me
 

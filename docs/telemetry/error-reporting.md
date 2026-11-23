@@ -577,8 +577,8 @@ in one Sentry org, one triage surface.
     `vec_file_exists` says only whether Kangentic's own bundled extension file was at the path
     Kangentic resolved for it. It describes the install, not anything the user made or opened, so
     it is part of that failure code rather than a new data class.
-  - `agent_session_id`: a session whose id no capture path found within the 30 s window
-    (`SessionIdManager`), reported once its outcome is known, never at the window (Sentry
+  - `agent_session_id`: a session whose id no capture path found within 30 s of its spawn
+    (`SessionIdManager`'s window), reported once its outcome is known, never at the window (Sentry
     DESKTOP-36 reported there and could not tell late from never). An id that arrives later sends
     `AgentSessionIdCapturedLateError` with `captured_after_s` (a seconds bucket, counted to when
     Kangentic noticed the id, so an upper bound: an id the suspend-time scrollback scan finds

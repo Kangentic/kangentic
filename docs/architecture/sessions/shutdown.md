@@ -11,6 +11,8 @@ sources:
   - resource: src/main/pty/shutdown/signal-exit.ts
   - resource: src/main/app-relaunch.ts
   - resource: src/main/db/repositories/session-own-record.ts
+  - resource: src/main/quit-cause.ts
+  - resource: src/main/pty/abandoned-launches.ts
 ---
 # Shutdown
 
@@ -27,6 +29,8 @@ The actual shutdown sequence (`syncShutdownCleanup()` in `src/main/shutdown.ts`)
 7. Delete ephemeral project from index (if applicable), except on a restart the app asked for (`isRestartRequested` in `app-relaunch.ts`): dev.js then respawns Electron on the same data dir, the boot adopts the project row by path, and the sessions suspended in step 4 resume into it. The boot's working-tree fill also runs once per clone (a marker in the clone's `.git`), so the restart does not reset a resumed agent's uncommitted work
 8. Close all database connections via `closeAll()`
 9. Return the `PtyKillReport` for what `killAll()` killed, the host included: the probe-able pids, the total kill count, and `deferredCount` (how many ride the grace timer)
+
+Between step 1 and step 2, while the rows still read `running`, the quit writes the launches it is about to end that had shown nothing for a minute or more to `abandoned-launches.json` (`recordAbandonedLaunches`, `src/main/pty/abandoned-launches.ts`), for the next start to report. Nothing sent from the quit lands, so this is a synchronous disk write. Each launch carries `quit_by`, what began the quit (`update`, `os` or `user`), read from `quitByNoted()` in `src/main/quit-cause.ts`: the updater's install, the Windows `session-end` route and the macOS and Linux `powerMonitor` shutdown route each note it just before they quit. A signal reads `user`. See [Error reporting](../../telemetry/error-reporting.md).
 
 Before those steps, beside the browser, pop-out and headless CLI teardowns, `spareWorktreePool.abortAllBuilds()` stops any spare worktree build, whose init script runs outside every session so no PTY kill reaches it. The abort kills the script's tree in place, and the half-built spare it leaves is deleted by the next project open (see [The spare worktree](../worktrees/worktree-creation.md#the-spare-worktree)).
 
