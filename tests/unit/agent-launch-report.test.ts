@@ -1382,12 +1382,9 @@ describe('the session id capture reports', () => {
       expect(reportHandledError).not.toHaveBeenCalled();
     });
 
-    // Measured on Codex 0.171.0 (task #1182): a project config it refused ended it
-    // 6 s in under PowerShell, and the sweep retired the shell at its 120 s start
-    // ceiling, so the PTY's exit landed 116 s after the agent ran, past the
-    // minute above. Its launch report had already named the failure.
-    // The same run with no failure named: the sweep's kill landed 116 s after the
-    // agent ran, and the shell's prompt, the last output, 0.5 s after it died.
+    // Measured on Codex 0.171.0 (task #1182), with no failure named: the sweep's
+    // kill landed 116 s after the agent ran, and the shell's prompt, the last
+    // output, 0.5 s after it died.
     it('times a session the sweep retired by its last output, not by the sweep\'s kill', async () => {
       await settleAtCeiling({
         agentRanAt: STARTED_AT_MS + 6_000,
@@ -1402,11 +1399,17 @@ describe('the session id capture reports', () => {
     it.each<[string, Partial<ManagedSession>]>([
       ['printed for a minute before the sweep found it gone', { lastOutputAt: STARTED_AT_MS + 70_000, intentionalExit: true, overrideExitCode: 0 }],
       ['ended on its own, whatever it printed last', { lastOutputAt: STARTED_AT_MS + 6_500 }],
+      // Its last output came before the agent ran, so it says nothing of the agent's end.
+      ['printed nothing after its agent ran before the sweep found it gone', { lastOutputAt: STARTED_AT_MS + 5_000, intentionalExit: true, overrideExitCode: 0 }],
     ])('keeps the capture report for a session that %s', async (_label, overrides) => {
       await settleAtCeiling({ agentRanAt: STARTED_AT_MS + 6_000, exitedAt: STARTED_AT_MS + 122_000, ...overrides });
       expect(sentNames()).toEqual(['AgentSessionIdNotCapturedError']);
     });
 
+    // Measured on Codex 0.171.0 (task #1182): a project config it refused ended it
+    // 6 s in under PowerShell, and the sweep retired the shell at its 120 s start
+    // ceiling, so the PTY's exit landed 116 s after the agent ran, past the
+    // minute above. Its launch report had already named the failure.
     it('sends no capture report for a launch that already reported, however late the sweep ended it', async () => {
       await settleAtCeiling({
         agentCliVersion: '0.171.0 (Codex CLI)',

@@ -413,12 +413,19 @@ export class CodexAdapter implements AgentAdapter {
   /**
    * Ctrl+C, a pause, Ctrl+C. Measured on 0.171.0 in a PTY (task #1182): one
    * Ctrl+C on an empty composer exits Codex with code 0 about 1.2 s later,
-   * printing its `Session ID`. With a draft the first one only clears the
-   * composer, and the second then exits it the same way. Nothing here is Enter,
-   * so no state can take it as a submit or an approval. A busy turn and an open
-   * approval were not probed (each costs a paid turn); Ctrl+C interrupts or
-   * declines there. A console close is not graceful: Codex dies with
+   * printing `codex resume <id>` to reconnect. With a draft the first one only
+   * clears the composer, and the second then exits it the same way. Nothing here
+   * is Enter, so no state can take it as a submit or an approval. A busy turn and
+   * an open approval were not probed (each costs a paid turn); Ctrl+C interrupts
+   * or declines there. A console close is not graceful: Codex dies with
    * STATUS_CONTROL_C_EXIT and prints nothing, so `consoleCloseIsGraceful` stays off.
+   *
+   * The pause is 400 ms by measurement (Windows, this sequence whole): on an
+   * empty composer it exited with code 0 in 7 of 7 runs, where 150 ms let the
+   * second Ctrl+C reach a console Codex had already handed back, which killed it
+   * with STATUS_CONTROL_C_EXIT in 1 of 2. The cost is a draft: Codex exits about
+   * 1.6 s after the first key, so a young session's 1.5 s kill grace can end it
+   * that much short. The single Ctrl+C before this never exited a draft at all.
    */
   getExitSequence(): ExitSequenceStep[] {
     return ['\x03', { delayMs: 400 }, '\x03'];

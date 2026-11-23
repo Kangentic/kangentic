@@ -19,7 +19,7 @@ import { codexHookDefinitions, codexHookStateOverride, type CodexHookDefinition,
  * the exact overrides it passes, and wires hooks only when that answer is whole.
  * Anything else (a failed run, a timeout, an error or warning, a hook missing
  * from the list) leaves the session without hooks, on the PTY tracker, as
- * before. Measured: the formula held from 0.154.0 to 0.163.0 and Codex clamps
+ * before. Measured: the formula held from 0.154.0 to 0.171.0 and Codex clamps
  * a SessionEnd timeout to 3 s before hashing, which is the kind of change this
  * read absorbs.
  *
@@ -297,6 +297,13 @@ interface TrustRead {
   hookSet: CodexHookSet;
   /** When the read failed to run (the read rejected); null for an answer or a read in flight. */
   failedAt: number | null;
+  /**
+   * When the base set stands in for an extended read that failed to run (a
+   * timeout, a slow cold start), the time that read failed: a later `start`
+   * past `FAILED_READ_RETRY_MS` asks for the extended set again. Null
+   * otherwise, and while that retry runs.
+   */
+  extendedFailedAt: number | null;
 }
 
 /** A Codex installed in a WSL distro, for a trust read run there. */
@@ -310,7 +317,12 @@ export interface CodexTrustReadTarget {
 interface ConfirmedHooks {
   entries: CodexHookTrustEntry[];
   hookSet: CodexHookSet;
+  /** True when the base set stands in for an extended read that failed to run, not one Codex answered without. */
+  extendedReadFailed: boolean;
 }
+
+/** One trust read of the given hook definitions, for one binary or host. */
+type HookTrustRead = (definitions: readonly CodexHookDefinition[]) => Promise<CodexHookTrustEntry[] | null>;
 
 /**
  * Read the extended hooks, and the base seven when Codex does not confirm the
@@ -318,20 +330,21 @@ interface ConfirmedHooks {
  * the subagent hooks would otherwise run with none (Sentry shows 0.163 to 0.171
  * in use at once). A run of the extended read that failed outright is tried
  * with the base set too, since an unknown event may stop the app-server rather
- * than list a warning; only a base read that also fails is a failed read.
+ * than list a warning; only a base read that also fails is a failed read. A
+ * base set confirmed after such a failure says so (`extendedReadFailed`), so a
+ * later `start` can ask for the extended set again.
  */
-async function readWithFallback(
-  read: (definitions: readonly CodexHookDefinition[]) => Promise<CodexHookTrustEntry[] | null>,
-  runner: CodexHookRunner,
-): Promise<ConfirmedHooks | null> {
+async function readWithFallback(read: HookTrustRead, runner: CodexHookRunner): Promise<ConfirmedHooks | null> {
+  let extendedReadFailed = false;
   try {
     const extended = await read(codexHookDefinitions(runner, 'extended'));
-    if (extended) return { entries: extended, hookSet: 'extended' };
+    if (extended) return { entries: extended, hookSet: 'extended', extendedReadFailed };
   } catch {
     // report-ok: the base read below answers; its own failure is the one that counts.
+    extendedReadFailed = true;
   }
   const base = await read(codexHookDefinitions(runner, 'base'));
-  return base ? { entries: base, hookSet: 'base' } : null;
+  return base ? { entries: base, hookSet: 'base', extendedReadFailed } : null;
 }
 
 /**
@@ -364,13 +377,13 @@ export class CodexHookTrustCheck {
   start(codexPath: string, wsl: CodexTrustReadTarget | null = null): void {
     const stamp = wsl ? `version:${wsl.version}` : this.stampOf(codexPath);
     if (!stamp) return;
-    const runner: CodexHookRunner = wsl ? 'wsl' : 'node';
     this.begin(
       shimFamilyKey(codexPath),
       codexPath,
       stamp,
       wsl !== null,
-      () => readWithFallback((definitions) => this.read(codexPath, definitions, wsl?.target ?? null), runner),
+      (definitions) => this.read(codexPath, definitions, wsl?.target ?? null),
+      wsl ? 'wsl' : 'node',
     );
   }
 
@@ -380,7 +393,7 @@ export class CodexHookTrustCheck {
    * transport script's, as in a distro. Nothing is read when the host has no Codex.
    */
   startOnHost(place: SshCliPlace, version: string): void {
-    this.begin(hostReadKey(place.hostId), HOST_CODEX_PROGRAM, `version:${version}`, true, () => readWithFallback((definitions) => this.readOnHost(place, definitions), 'wsl'));
+    this.begin(hostReadKey(place.hostId), HOST_CODEX_PROGRAM, `version:${version}`, true, (definitions) => this.readOnHost(place, definitions), 'wsl');
   }
 
   /** The `hooks.state` override confirmed for the Codex on this host, or null when it is not. */
@@ -403,17 +416,22 @@ export class CodexHookTrustCheck {
     detectedPath: string,
     stamp: string,
     stampedByVersion: boolean,
-    run: () => Promise<ConfirmedHooks | null>,
+    read: HookTrustRead,
+    runner: CodexHookRunner,
   ): void {
     const existing = this.reads.get(key);
-    if (existing && existing.detectedPath === detectedPath && existing.stamp === stamp && !this.failedLongAgo(existing)) return;
+    if (existing && existing.detectedPath === detectedPath && existing.stamp === stamp && !this.failedLongAgo(existing)) {
+      if (this.extendedRetryDue(existing)) this.retryExtended(existing, read, runner);
+      return;
+    }
     const trustRead: TrustRead = {
-      detectedPath, stamp, stampedByVersion, pending: Promise.resolve(), stateOverride: undefined, hookSet: 'base', failedAt: null,
+      detectedPath, stamp, stampedByVersion, pending: Promise.resolve(), stateOverride: undefined, hookSet: 'base', failedAt: null, extendedFailedAt: null,
     };
-    trustRead.pending = run()
+    trustRead.pending = readWithFallback(read, runner)
       .then((confirmed) => {
         if (!confirmed) return null;
         trustRead.hookSet = confirmed.hookSet;
+        if (confirmed.extendedReadFailed) trustRead.extendedFailedAt = this.now();
         return codexHookStateOverride(confirmed.entries);
       })
       .catch(() => {
@@ -431,6 +449,31 @@ export class CodexHookTrustCheck {
   /** A read that failed to run long enough ago to try again. */
   private failedLongAgo(trustRead: TrustRead): boolean {
     return trustRead.failedAt !== null && this.now() - trustRead.failedAt >= FAILED_READ_RETRY_MS;
+  }
+
+  /** A base set standing in for an extended read that failed to run, long enough ago to ask again. */
+  private extendedRetryDue(trustRead: TrustRead): boolean {
+    return trustRead.extendedFailedAt !== null && this.now() - trustRead.extendedFailedAt >= FAILED_READ_RETRY_MS;
+  }
+
+  /**
+   * Ask for the extended set again. The confirmed base set stays in place until
+   * Codex confirms the extended one, so no spawn in between loses its hooks.
+   */
+  private retryExtended(trustRead: TrustRead, read: HookTrustRead, runner: CodexHookRunner): void {
+    trustRead.extendedFailedAt = null;
+    void read(codexHookDefinitions(runner, 'extended'))
+      .then((entries) => {
+        const stateOverride = entries ? codexHookStateOverride(entries) : null;
+        if (!stateOverride) return;
+        trustRead.stateOverride = stateOverride;
+        trustRead.hookSet = 'extended';
+        console.log('[codex] hook trust read from Codex on a retry; sessions run with the extended hooks');
+      })
+      .catch(() => {
+        // report-ok: the base set stays confirmed, and a later start asks for the extended set again.
+        trustRead.extendedFailedAt = this.now();
+      });
   }
 
   /** Wait, at most `timeoutMs`, for every read in flight. */
