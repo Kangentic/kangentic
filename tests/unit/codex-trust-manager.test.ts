@@ -256,6 +256,8 @@ describe('sweepRemovedFolderTrust', () => {
     const userFolder = path.join(tmpHome, 'user-folder-gone');
     const deliberate = path.join(tmpHome, 'repo', '.kangentic', 'worktrees', 'untrusted');
     fs.mkdirSync(live, { recursive: true });
+    // A preview project's checkout stays; only its project folder went.
+    fs.mkdirSync(path.join(tmpHome, 'checkout'), { recursive: true });
     const table = (folder: string, level = 'trusted'): string[] => [`[projects.'${folder}']`, `trust_level = "${level}"`, ''];
     writeConfig(['model = "gpt-5.5"', '', ...table(gone), ...table(live), ...table(preview), ...table(userFolder), ...table(deliberate, 'untrusted')].join('\n'));
 
@@ -271,7 +273,27 @@ describe('sweepRemovedFolderTrust', () => {
     expect(readConfig()).toContain('model = "gpt-5.5"');
   });
 
-  it('keeps a table whose folder cannot be checked', async () => {
+  it('keeps the table of a gone worktree whose project folder is gone too, as an unmounted drive looks', async () => {
+    const worktree = path.join(tmpHome, 'unmounted-project', '.kangentic', 'worktrees', 'task-1');
+    writeConfig([`[projects.'${worktree}']`, 'trust_level = "trusted"', ''].join('\n'));
+    expect(await sweepRemovedFolderTrust()).toBe(0);
+    expect(trustOf(worktree)).toBe('trusted');
+  });
+
+  it('drops every gone worktree of one existing project, and counts each', async () => {
+    const projectFolder = path.join(tmpHome, 'repo');
+    const first = path.join(projectFolder, '.kangentic', 'worktrees', 'gone-1');
+    const second = path.join(projectFolder, '.kangentic', 'worktrees', 'gone-2');
+    fs.mkdirSync(projectFolder, { recursive: true });
+    const table = (folder: string): string[] => [`[projects.'${folder}']`, 'trust_level = "trusted"', ''];
+    writeConfig(['model = "gpt-5.5"', '', ...table(first), ...table(second)].join('\n'));
+    expect(await sweepRemovedFolderTrust()).toBe(2);
+    expect(trustOf(first)).toBeNull();
+    expect(trustOf(second)).toBeNull();
+    expect(readConfig()).toContain('model = "gpt-5.5"');
+  });
+
+  it('keeps a table whose folder the existence check reports present', async () => {
     const worktree = path.join(tmpHome, 'repo', '.kangentic', 'worktrees', 'unreadable');
     writeConfig([`[projects.'${worktree}']`, 'trust_level = "trusted"', ''].join('\n'));
     expect(await sweepRemovedFolderTrust(async () => true)).toBe(0);

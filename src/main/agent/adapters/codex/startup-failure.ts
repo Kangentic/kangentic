@@ -42,7 +42,8 @@ const PARSE_POSITION = /: (TOML parse error at line \d+, column \d+)/;
  * `codex resume` without an ID ...") is advice a narrow terminal wraps off.
  */
 const RESUME_MISS_LEAD = 'ERROR: No saved session found with ID ';
-const RESUME_MISS = /^ERROR: No saved session found with ID ([0-9a-fA-F-]{8,})\./;
+/** The lead with its id captured. The lead holds no regex metacharacter, so it is used as written. */
+const RESUME_MISS = new RegExp(`^${RESUME_MISS_LEAD}([0-9a-fA-F-]{8,})\\.`);
 
 /** See `AgentAdapter.namesMissingConversation`. A line that starts with the refusal, for this id. */
 export function codexNamesMissingConversation(finalOutput: string, agentSessionId: string): boolean {

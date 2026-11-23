@@ -38,6 +38,7 @@ const mockAdapters = new Map<string, {
   name?: string;
   supportsWslCli?: boolean;
   onWorktreeRemoved?: (path: string, place?: CliPlace | null) => Promise<void>;
+  sweepRemovedFolderTrust?: () => Promise<number>;
 }>();
 
 vi.mock('../../src/main/agent/agent-registry', () => ({
@@ -58,11 +59,41 @@ vi.mock('../../src/main/agent/shared/wsl-distro', async (importOriginal) => {
 });
 
 import path from 'node:path';
-import { notifyAdaptersWorktreeRemoved } from '../../src/main/ipc/helpers/task-cleanup';
+import { notifyAdaptersWorktreeRemoved, sweepAdaptersRemovedFolderTrust } from '../../src/main/ipc/helpers/task-cleanup';
 import type { CliPlace } from '../../src/main/agent/shared/cli-target';
 
 const WORKTREE_PATH = '/mock/project/.kangentic/worktrees/7';
 const realPlatform = process.platform;
+
+describe('sweepAdaptersRemovedFolderTrust', () => {
+  beforeEach(() => {
+    mockAdapters.clear();
+  });
+
+  it('skips an adapter with no sweep, survives one that throws, and sums the rest', async () => {
+    const throwingSweep = vi.fn(async (): Promise<number> => { throw new Error('config locked'); });
+    const countingSweep = vi.fn(async () => 2);
+    const laterSweep = vi.fn(async () => 3);
+    mockAdapters.set('claude', {});
+    mockAdapters.set('gemini', { sweepRemovedFolderTrust: throwingSweep });
+    mockAdapters.set('codex', { sweepRemovedFolderTrust: countingSweep });
+    mockAdapters.set('qwen', { sweepRemovedFolderTrust: laterSweep });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await expect(sweepAdaptersRemovedFolderTrust()).resolves.toBe(5);
+
+    expect(throwingSweep).toHaveBeenCalledTimes(1);
+    expect(countingSweep).toHaveBeenCalledTimes(1);
+    expect(laterSweep).toHaveBeenCalledTimes(1);
+    warnSpy.mockRestore();
+    logSpy.mockRestore();
+  });
+
+  it('answers 0 with no adapters registered', async () => {
+    await expect(sweepAdaptersRemovedFolderTrust()).resolves.toBe(0);
+  });
+});
 
 describe('notifyAdaptersWorktreeRemoved', () => {
   beforeEach(() => {

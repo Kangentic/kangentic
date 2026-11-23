@@ -450,7 +450,6 @@ describe('CodexHookTrustCheck', () => {
       expect(state).not.toBeNull();
       expect(state).not.toContain('subagent_start');
     });
-
   });
 
   describe('a read that failed to run', () => {
@@ -464,7 +463,7 @@ describe('CodexHookTrustCheck', () => {
      * moves. An attempt is the extended read, and the base read a failed one falls back to shares
      * its outcome, so `read` counts attempts (`attempts`), not calls.
      */
-    function checkWithClock(outcomes: Array<'fails' | 'confirms'>): { check: CodexHookTrustCheck; read: { mock: { calls: unknown[][] } } & ReturnType<typeof vi.fn>; advance: (milliseconds: number) => void } {
+    function checkWithClock(outcomes: Array<'fails' | 'confirms'>): { check: CodexHookTrustCheck; read: ReturnType<typeof vi.fn>; advance: (milliseconds: number) => void } {
       let clock = 1_000_000;
       let current: 'fails' | 'confirms' | undefined;
       const read = vi.fn((_codexPath: string, definitions: readonly CodexHookDefinition[]): Promise<CodexHookTrustEntry[] | null> => {
@@ -531,6 +530,181 @@ describe('CodexHookTrustCheck', () => {
       await check.settle(1000);
       expect(attempts(read)).toBe(1);
     });
+  });
+
+  describe('the extended set retried after its read failed to run', () => {
+    const RETRY_AFTER_MS = 5 * 60_000;
+    const isExtended = (definitions: readonly CodexHookDefinition[]): boolean => definitions.length === HOOK_EVENTS.length;
+
+    /** A Codex whose extended read follows `extendedOutcomes` in order; its base read always confirms. */
+    function checkWithExtendedOutcomes(extendedOutcomes: Array<'throws' | 'confirms' | 'null' | 'hangs'>) {
+      let clock = 1_000_000;
+      const releaseHeld: Array<() => void> = [];
+      const read = vi.fn((_codexPath: string, definitions: readonly CodexHookDefinition[]): Promise<CodexHookTrustEntry[] | null> => {
+        if (!isExtended(definitions)) return Promise.resolve(reportedEntries(BASE_HOOK_EVENTS));
+        const outcome = extendedOutcomes.shift();
+        if (outcome === 'confirms') return Promise.resolve(reportedEntries(HOOK_EVENTS));
+        if (outcome === 'null') return Promise.resolve(null);
+        if (outcome === 'hangs') {
+          return new Promise((resolve) => { releaseHeld.push(() => resolve(reportedEntries(HOOK_EVENTS))); });
+        }
+        return Promise.reject(new Error('timed out'));
+      });
+      const check = new CodexHookTrustCheck(read, () => 'stamp', () => clock);
+      return { check, read, releaseHeld, advance: (milliseconds: number) => { clock += milliseconds; } };
+    }
+
+    const extendedReads = (read: { mock: { calls: unknown[][] } }): number =>
+      read.mock.calls.filter((call) => isExtended(call[1] as readonly CodexHookDefinition[])).length;
+    const baseReads = (read: { mock: { calls: unknown[][] } }): number =>
+      read.mock.calls.filter((call) => !isExtended(call[1] as readonly CodexHookDefinition[])).length;
+
+    it('reads nothing before five minutes pass', async () => {
+      const { check, read, advance } = checkWithExtendedOutcomes(['throws', 'confirms']);
+      check.start('codex');
+      await check.settle(1000);
+      expect(check.hookSetFor('codex')).toBe('base');
+      advance(RETRY_AFTER_MS - 1);
+      check.start('codex');
+      expect(read).toHaveBeenCalledTimes(2);
+    });
+
+    it('reads only the extended set after five minutes, and switches to it once Codex confirms', async () => {
+      const { check, read, advance } = checkWithExtendedOutcomes(['throws', 'confirms']);
+      check.start('codex');
+      await check.settle(1000);
+      expect(check.stateOverrideFor('codex')).not.toContain('subagent_start');
+      advance(RETRY_AFTER_MS);
+      check.start('codex');
+      await expect.poll(() => check.hookSetFor('codex')).toBe('extended');
+      expect(check.stateOverrideFor('codex')).toContain('subagent_start');
+      expect(extendedReads(read)).toBe(2);
+      expect(baseReads(read)).toBe(1);
+    });
+
+    it('keeps the confirmed base override in place while the retry is in flight', async () => {
+      const { check, releaseHeld, advance } = checkWithExtendedOutcomes(['throws', 'hangs']);
+      check.start('codex');
+      await check.settle(1000);
+      const baseOverride = check.stateOverrideFor('codex');
+      expect(baseOverride).not.toBeNull();
+      advance(RETRY_AFTER_MS);
+      check.start('codex');
+      expect(check.hookSetFor('codex')).toBe('base');
+      expect(check.stateOverrideFor('codex')).toBe(baseOverride);
+      releaseHeld[0]();
+      await expect.poll(() => check.hookSetFor('codex')).toBe('extended');
+    });
+
+    it('keeps base and waits another five minutes when the retry throws', async () => {
+      const { check, read, advance } = checkWithExtendedOutcomes(['throws', 'throws', 'confirms']);
+      check.start('codex');
+      await check.settle(1000);
+      advance(RETRY_AFTER_MS);
+      check.start('codex');
+      await expect.poll(() => extendedReads(read)).toBe(2);
+      // Let the rejection land before the clock is read for the next wait.
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(check.hookSetFor('codex')).toBe('base');
+      expect(check.stateOverrideFor('codex')).not.toBeNull();
+
+      advance(RETRY_AFTER_MS - 1);
+      check.start('codex');
+      expect(extendedReads(read)).toBe(2);
+
+      advance(1);
+      check.start('codex');
+      await expect.poll(() => check.hookSetFor('codex')).toBe('extended');
+      expect(extendedReads(read)).toBe(3);
+    });
+
+    it('never retries an extended read Codex answered without', async () => {
+      const { check, read, advance } = checkWithExtendedOutcomes(['null', 'confirms']);
+      check.start('codex');
+      await check.settle(1000);
+      expect(check.hookSetFor('codex')).toBe('base');
+      advance(24 * 60 * 60_000);
+      check.start('codex');
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(extendedReads(read)).toBe(1);
+      expect(check.hookSetFor('codex')).toBe('base');
+    });
+  });
+
+  describe('a Codex on an SSH host', () => {
+    const place = { kind: 'ssh', hostId: 'host-1', home: '/home/dev', shellName: 'bash', localHome: '', roots: [] } as const;
+
+    function hostCheck(confirms: { extended: boolean; base: boolean }) {
+      const readOnHost = vi.fn(async (_place: unknown, definitions: readonly CodexHookDefinition[]): Promise<CodexHookTrustEntry[] | null> => {
+        const extended = definitions.length === HOOK_EVENTS.length;
+        if (extended ? confirms.extended : confirms.base) return reportedEntries(extended ? HOOK_EVENTS : BASE_HOOK_EVENTS);
+        return null;
+      });
+      const check = new CodexHookTrustCheck(vi.fn(), () => 'stamp', Date.now, readOnHost);
+      return { check, readOnHost };
+    }
+
+    it('runs the extended set when the host confirms it', async () => {
+      const { check } = hostCheck({ extended: true, base: true });
+      check.startOnHost(place, '0.171.0');
+      await check.settle(1000);
+      expect(check.hookSetForHost('host-1')).toBe('extended');
+      expect(check.stateOverrideForHost('host-1')).toContain('subagent_start');
+    });
+
+    it('falls back to the base set when the host answers without the extended one', async () => {
+      const { check, readOnHost } = hostCheck({ extended: false, base: true });
+      check.startOnHost(place, '0.163.0');
+      await check.settle(1000);
+      expect(readOnHost).toHaveBeenCalledTimes(2);
+      expect(check.hookSetForHost('host-1')).toBe('base');
+      expect(check.stateOverrideForHost('host-1')).not.toContain('subagent_start');
+    });
+
+    it('answers base for a host it never read', () => {
+      const { check } = hostCheck({ extended: true, base: true });
+      expect(check.hookSetForHost('unknown-host')).toBe('base');
+    });
+
+    it('hands the host reads the WSL runner definitions, for both sets', async () => {
+      const { check, readOnHost } = hostCheck({ extended: false, base: true });
+      check.startOnHost(place, '0.163.0');
+      await check.settle(1000);
+      const lengths = readOnHost.mock.calls.map((call) => call[1].length);
+      expect(lengths).toEqual([HOOK_EVENTS.length, BASE_HOOK_EVENTS.length]);
+      for (const call of readOnHost.mock.calls) {
+        expect(call[1].length).toBeGreaterThan(0);
+        for (const definition of call[1]) expect(definition.command.startsWith('sh .kangentic/')).toBe(true);
+      }
+    });
+  });
+
+  it('hands both the extended and the base read of a WSL Codex the WSL runner definitions', async () => {
+    const wslTarget = {
+      target: {
+        kind: 'wsl',
+        distro: 'Ubuntu',
+        linuxCliPath: '/usr/bin/codex',
+        facts: { distro: 'Ubuntu', homeLinux: '/home/dev', homeUnc: '//wsl.localhost/Ubuntu/home/dev', uncRoot: '//wsl.localhost/Ubuntu', interactivePath: '', env: {}, networkingMode: 'unknown' },
+      },
+      version: '0.163.0',
+    } as const;
+    const read = vi.fn(async (_codexPath: string, _definitions: readonly CodexHookDefinition[], _target: unknown): Promise<CodexHookTrustEntry[] | null> => null);
+    const check = new CodexHookTrustCheck(async (codexPath, definitions, target) => {
+      const extended = definitions.length === HOOK_EVENTS.length;
+      read(codexPath, definitions, target);
+      if (!extended) return reportedEntries(BASE_HOOK_EVENTS);
+      throw new Error('timed out');
+    }, () => 'stamp');
+    check.start('codex', wslTarget);
+    await check.settle(1000);
+    expect(read).toHaveBeenCalledTimes(2);
+    for (const call of read.mock.calls) {
+      expect(call[1].every((definition) => definition.command.startsWith('sh .kangentic/'))).toBe(true);
+      expect(call[2]).toBe(wslTarget.target);
+    }
+    expect(read.mock.calls[0][1]).toHaveLength(HOOK_EVENTS.length);
+    expect(read.mock.calls[1][1]).toHaveLength(BASE_HOOK_EVENTS.length);
   });
 
   it('stops waiting at the bound', async () => {

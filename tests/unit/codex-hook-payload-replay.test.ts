@@ -12,15 +12,15 @@
  * names (`.kangentic/codex-event-bridge.cjs`), so a command that named another
  * path would fail to run at all.
  *
- * PermissionRequest and PreCompact have no captured payload yet, so they are
- * not replayed here.
+ * PermissionRequest, PreCompact and SessionEnd have no captured payload yet, so
+ * they are not replayed here.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { codexHookDefinitions, CODEX_EVENT_BRIDGE_COPY_NAME, CODEX_WSL_HOOK_COPY_NAME } from '../../src/main/agent/adapters/codex/hook-manager';
+import { codexHookDefinitions, CODEX_EVENT_BRIDGE_COPY_NAME, CODEX_WSL_HOOK_COPY_NAME, type CodexHookRunner } from '../../src/main/agent/adapters/codex/hook-manager';
 import { copyWslHookScriptInto, prepareWslHookTransport } from '../../src/main/agent/shared/wsl-hook-transport';
 import { WslHookInbox } from '../../src/main/pty/readers/wsl-hook-inbox';
 import { toForwardSlash } from '../../src/shared/paths';
@@ -76,8 +76,8 @@ function presentString(value: string | undefined, description: string): string {
 }
 
 /** The hook Kangentic registers for a Codex hook event, found by the `hooks.<Event>=` name of its override. */
-function commandFor(hookEventName: string): string {
-  const definition = codexHookDefinitions().find((candidate) => /^hooks\.(\w+)=/.exec(candidate.override)?.[1] === hookEventName);
+function commandFor(hookEventName: string, runner: CodexHookRunner = 'node'): string {
+  const definition = codexHookDefinitions(runner).find((candidate) => /^hooks\.(\w+)=/.exec(candidate.override)?.[1] === hookEventName);
   if (!definition) throw new Error(`Kangentic registers no hook for ${hookEventName}`);
   return definition.command;
 }
@@ -199,9 +199,7 @@ describe('Codex hook payloads, through the WSL hook transport', () => {
     try {
       for (const file of files) {
         const { raw, payload } = readFixture(file);
-        const definition = codexHookDefinitions('wsl').find((candidate) => /^hooks\.(\w+)=/.exec(candidate.override)?.[1] === payload.hook_event_name);
-        if (!definition) throw new Error(`Kangentic registers no hook for ${payload.hook_event_name}`);
-        const result = spawnSync(posixShells[0], ['-c', definition.command], {
+        const result = spawnSync(posixShells[0], ['-c', commandFor(payload.hook_event_name, 'wsl')], {
           cwd: workspace,
           input: raw,
           env: { ...process.env, KANGENTIC_WSL_HOOK_DIR: posixShellPath(transportPaths.directory) },

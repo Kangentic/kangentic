@@ -114,9 +114,6 @@ import { createWindowNotifier, setSyncWriteFailureNotifier } from './config/writ
 import { sendToRenderer } from './ipc/send-to-renderer';
 import { setWorktreeRemovedListener, setWorktreeRemovingListener } from './git/worktree-manager';
 import { notifyAdaptersWorktreeRemoved, sweepAdaptersRemovedFolderTrust } from './ipc/helpers/task-cleanup';
-
-/** How long after startup the adapters' removed-folder sweep waits, so it never competes with a launch. */
-const ADAPTER_FOLDER_SWEEP_DELAY_MS = 60_000;
 import { writeClipboardImage } from './ipc/helpers/clipboard-image';
 import { restoreShellEnv } from './shell-env';
 import { isFirstPartyPermissionAllowed } from './permission-policy';
@@ -133,6 +130,9 @@ import {
 import { installEmbeddedBrowserSessionPolicy } from './browser/guest-session-policy';
 import { applyBrowserUserAgent } from './browser/browser-user-agent';
 import { armGuest, isUnderAgentControl, releaseAgentControl } from './browser/passkey-guard';
+
+/** How long after startup the adapters' removed-folder sweep waits, so it never competes with a launch. */
+const ADAPTER_FOLDER_SWEEP_DELAY_MS = 60_000;
 
 initStartupTimer(PROCESS_START);
 mark('process_start');

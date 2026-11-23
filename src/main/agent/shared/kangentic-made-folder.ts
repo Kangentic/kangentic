@@ -15,8 +15,21 @@ export function isKangenticMadeFolder(folderPath: string): boolean {
 }
 
 /**
- * Whether a folder exists. Only a clean "not found" counts as gone, so a drive
- * that is not mounted or a share that cannot be read keeps its entries.
+ * The project or checkout whose `.kangentic` folder holds a Kangentic-made
+ * folder, in the path's own separators, or null when `folderPath` is not one.
+ * A sweep drops a gone folder's entry only while its owner exists: Windows
+ * answers "not found" for a drive that is not mounted, so the folder alone
+ * cannot tell a removed worktree from an unplugged disk.
+ */
+export function kangenticMadeFolderOwner(folderPath: string): string | null {
+  const match = KANGENTIC_MADE_FOLDER.exec(folderPath.replace(/\\/g, '/'));
+  return match ? folderPath.slice(0, match.index) : null;
+}
+
+/**
+ * Whether a folder exists. Only a clean "not found" counts as gone, so a folder
+ * that cannot be read keeps its entries. A drive that is not mounted answers
+ * "not found" too, which `kangenticMadeFolderOwner` covers.
  */
 export async function folderExists(folderPath: string): Promise<boolean> {
   try {

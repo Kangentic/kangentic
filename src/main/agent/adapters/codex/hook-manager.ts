@@ -47,6 +47,9 @@ export type CodexHookRunner = 'node' | 'wsl';
  */
 export type CodexHookSet = 'extended' | 'base';
 
+/** One hook: its Codex event, its command, and its timeout when not the default. */
+type CodexHookCommand = readonly [event: string, command: string, timeoutSeconds?: number];
+
 function codexHookCommand(runner: CodexHookRunner, eventType: string, ...directives: string[]): string {
   const head = runner === 'wsl'
     ? ['sh', CODEX_WSL_HOOK_RELATIVE, 'event']
@@ -75,7 +78,8 @@ export const CODEX_QUESTION_TOOL = 'request_user_input';
  *
  * The end (extended set): SessionEnd fires as Codex exits (measured on 0.171.0
  * after a Ctrl+C on an empty composer, twice per exit), so a Command Terminal
- * whose Codex left ends at once rather than at the sweep's next look. Its
+ * whose Codex left ends within a few of the sweep's 2 s looks
+ * (`requestAgentAbsenceCheck`) rather than at its 60 s one. Its
  * timeout is 3 s, the most Codex allows it without a warning. PostCompact is not
  * wired: PreCompact already marks a compaction, and Kangentic has no event for
  * its end.
@@ -98,10 +102,10 @@ export const CODEX_QUESTION_TOOL = 'request_user_input';
  * tests/fixtures/codex-hooks/). The tool hooks of the spawn and of the parent's
  * `wait_agent` fire around them as for any tool.
  */
-function codexHookCommands(runner: CodexHookRunner, hookSet: CodexHookSet): ReadonlyArray<readonly [event: string, command: string, timeoutSeconds?: number]> {
+function codexHookCommands(runner: CodexHookRunner, hookSet: CodexHookSet): ReadonlyArray<CodexHookCommand> {
   const command = (eventType: string, ...directives: string[]): string => codexHookCommand(runner, eventType, ...directives);
   const sessionIdOnly = captureHookContextFields(['session_id']);
-  const extendedHooks: ReadonlyArray<readonly [event: string, command: string, timeoutSeconds?: number]> = hookSet === 'extended'
+  const extendedHooks: ReadonlyArray<CodexHookCommand> = hookSet === 'extended'
     ? [
       ['SubagentStart', command(EventType.SubagentStart, extractDetail(['agent_type']), extractSubagentId(['agent_id']))],
       ['SubagentStop', command(EventType.SubagentStop, extractDetail(['agent_type']), extractSubagentId(['agent_id']))],
@@ -143,6 +147,10 @@ export interface CodexHookDefinition {
  * comes from `KANGENTIC_EVENTS_PATH`, or the hook folder from
  * `KANGENTIC_WSL_HOOK_DIR`), which is what lets one trust check per Codex
  * binary cover every spawn.
+ *
+ * The default is the whole extended list. A session registers the set its
+ * trust read confirmed (`CodexCommandOptions.codexHookSet`), whose absence
+ * means base, since a hook registered without trust opens Codex's dialog.
  */
 export function codexHookDefinitions(runner: CodexHookRunner = 'node', hookSet: CodexHookSet = 'extended'): CodexHookDefinition[] {
   return codexHookCommands(runner, hookSet).map(([event, command, timeoutSeconds = CODEX_HOOK_TIMEOUT_SECONDS]) => ({

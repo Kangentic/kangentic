@@ -1196,6 +1196,41 @@ describe('Codex Adapter', () => {
       expect(withParent).toBe(parentId);
     });
 
+    // The two session_meta lines codex-cli 0.171.0 wrote for a parent and its
+    // spawn_agent child, with the cwd and times moved into this test's window.
+    it('captures the parent and never the child, from the real 0.171.0 session_meta lines', async () => {
+      const fixturePath = path.join(__dirname, '..', 'fixtures', 'codex-0.171.0-subagent-session-meta.jsonl');
+      const [parentLine, childLine] = fs.readFileSync(fixturePath, 'utf-8').split('\n').filter((line) => line.trim().length > 0);
+      const parent = JSON.parse(parentLine).payload as Record<string, unknown> & { id: string };
+      const child = JSON.parse(childLine).payload as Record<string, unknown> & { id: string };
+      const cwd = '/tmp/task-real-fixture';
+      const startedAt = new Date(Date.now() - 1000);
+      const iso = startedAt.toISOString();
+      writeRollout(child.id, cwd, startedAt, { ...child, id: child.id, cwd, timestamp: iso });
+      const childAlone = await CodexSessionHistoryParser.captureSessionIdFromFilesystem({
+        spawnedAt: new Date(Date.now() - 2000), cwd, maxAttempts: 1,
+      });
+      expect(childAlone).toBeNull();
+      writeRollout(parent.id, cwd, startedAt, { ...parent, id: parent.id, cwd, timestamp: iso });
+      const withParent = await CodexSessionHistoryParser.captureSessionIdFromFilesystem({
+        spawnedAt: new Date(Date.now() - 2000), cwd, maxAttempts: 1,
+      });
+      expect(withParent).toBe(parent.id);
+    });
+
+    // Either marker alone says "child": dropping half of the check would let
+    // a child whose other marker is absent become the session.
+    it.each([
+      ['only parent_thread_id', { parent_thread_id: 'dddd4444-dddd-dddd-dddd-dddddddddddd' }],
+      ['only source.subagent', { source: { subagent: { thread_spawn: { depth: 1 } } } }],
+    ])('never captures a rollout with %s', async (_description, marker) => {
+      writeRollout('eeee5555-eeee-eeee-eeee-eeeeeeeeeeee', '/tmp/task-marker', new Date(Date.now() - 1000), marker);
+      const result = await CodexSessionHistoryParser.captureSessionIdFromFilesystem({
+        spawnedAt: new Date(Date.now() - 2000), cwd: '/tmp/task-marker', maxAttempts: 1,
+      });
+      expect(result).toBeNull();
+    });
+
     it('disambiguates concurrent spawns by cwd (prevents task A from stealing task B\'s session)', async () => {
       // REGRESSION: two fresh rollout files in the same dir. Without
       // cwd matching, picking "newest by mtime" would cross-contaminate.
