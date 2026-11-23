@@ -213,7 +213,7 @@ function planDemoAssets(version: string, base: string): { scripts: string[]; fil
     const bytes = readFileSync(face.file);
     const fileName = hashedName(`fonts/${face.name}`, bytes);
     files.push({ fileName, source: bytes });
-    return { family: face.family, weight: face.weight, url: `${base}${fileName}`, unicodeRange: face.unicodeRange, awaited: face.awaited };
+    return { family: face.family, weight: face.weight, url: `${base}${fileName}`, unicodeRange: face.unicodeRange, awaited: face.awaited, metrics: face.metrics };
   });
   const demoFonts = { faces: fontFaces, stacks: DEMO_FONT_STACKS, terminalLineHeight: DEMO_TERMINAL_LINE_HEIGHT };
   console.log(`[demo] fonts emitted: ${fontFaces.length} faces, ${fontFaces.filter((face) => face.awaited).length} awaited before ready`);

@@ -26,10 +26,10 @@ export function shellDisplayName(shellPath: string | undefined | null, options: 
   // Extract basename and strip .exe
   const basename = shellPath.split(/[\\/]/).pop()?.replace(/\.exe$/i, '').toLowerCase() ?? '';
 
-  // navigator.platform is deprecated in browsers but reliable in Electron
-  // (always reflects the host OS, not spoofed by user-agent overrides). It
-  // describes this computer, so it says nothing about a shell on a remote host.
-  const isWindows = !options.onHost && navigator.platform.startsWith('Win');
+  // The bridge's platform is main's process.platform, this computer's OS. It says nothing about a
+  // shell on a remote host. In the web demo it is the sample install's (a Windows machine), where
+  // navigator.platform would name the visitor's OS and draw another label than the posters show.
+  const isWindows = !options.onHost && window.electronAPI.platform === 'win32';
 
   const nameMap: Record<string, string> = {
     pwsh: 'PowerShell 7',

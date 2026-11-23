@@ -15,7 +15,9 @@
       renders a bare heading and list, and rebuilding it would invalidate the recordings that
       edit or print that file (demo/README.md, Browser guest). Nothing here may fetch
       off-origin, follow the OS color scheme, or animate: the build fetches nothing off-origin,
-      the frame's theme is not the visitor's OS, and stills must be deterministic.
+      the frame's theme is not the visitor's OS, and stills must be deterministic. It draws in the
+      demo's own faces, which the shim registers in this document (demo/boot.js, dressGuestFonts),
+      never the visitor's system face, or the page wraps and measures differently on every OS.
     -->
     <style>
       :root {
@@ -40,7 +42,7 @@
       body {
         background: var(--page);
         color: var(--text);
-        font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        font-family: "Kangentic Demo Sans", "Kangentic Demo Symbols", sans-serif;
         font-size: 16px;
         line-height: 1.45;
       }

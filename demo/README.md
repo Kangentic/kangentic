@@ -1177,30 +1177,43 @@ is held to three things (`tests/captures/helpers/poster-gate.ts`):
   above it (1.33 px at 150 percent on `workflow-draft`), so only its size is. xterm paints a
   canvas, so no text node shows a terminal's layout.
 - **Pixels**, where a poster exists at that scale: nothing may differ beyond what pixelmatch reads
-  as antialiasing, up to a per-OS budget (`NON_ANTIALIASING_PIXEL_BUDGET`). Linux, where the
-  posters are shot, holds at none. The Windows and macOS budgets start at none too and are raised
-  only from a measured run, with the number beside the value.
+  as antialiasing (`PIXEL_COMPARISON`). On Linux, where the posters are shot, every pixel counts,
+  so this leg fails on a change in how text itself is drawn. On Windows and macOS every pixel
+  counts but the text's: each measured line box, each empty field's placeholder, each terminal,
+  each of Monaco's icon-font glyphs and the Browser pane's guest text are left out, 1 CSS px
+  around. Each OS rasterizes glyphs its own way, and no budget tells that from a real change. In
+  v0.62.0 every 2x frame differed on both, `welcome clay` by 7212 pixels on Windows and 4459 on
+  macOS with the same text in the same places, and leaving the text out took them to 0 and 2. The
+  layout above still holds that text on every OS. A differing pixel with no differing neighbour is
+  not counted on any OS: macOS shades about eight icon edges a frame one step apart from Linux. A
+  real change moves pixels together. Every budget is 0, and one is raised only from a measured
+  run, with the number beside the value.
 
 The frame keeps its own clock (`demo/boot.js`, the frame's clock): it opens at 2026-11-09 12:00
 UTC whenever a visitor opens the page, and dates, times and numbers format in UTC and en-US, so a
 time the poster shows is the time the live frame shows in any zone or locale. A text that still
 differs from its poster only in its digits is a counter that moved on between the shot and the
-measure: its line count and position are held, its width is not, and its scene's pixels are not
-compared.
+measure: its line count and position are held, its width is not, and its own pixels are left out
+of the comparison while the rest of the frame is compared. Which counters moved is read from a
+measure taken right after the shot, so a tick between ready and the shot cannot fail a case. Until
+v0.62.0 a moved counter skipped the whole frame's pixels, and a case that failed them passed on
+its retry when a clock ticked. The gate now runs with `--fail-on-flaky-tests`, so a case that
+passes only on its retry fails.
 
 `GATE_KNOWN_DIFFERENCES` names what differs from the poster for a reason the gate knows, and each
 run prints it:
 
-- The Knowledge Graph overview labels a different set of titles on each boot, and the per-project
-  maps settle their camera a little differently.
+- The Knowledge Graph's maps settle their camera a little differently on each boot, so the set of
+  conversation titles a map labels differs too. Their labels (the text under
+  `[knowledge-graph-canvas]`) and their pixels are not held; every other text on the page is.
 - A HELD terminal (the Changes scenes, `task-mcp`, `command-terminal-tiled`) takes another grid at
   another display scale: the Changes terminal is 130 columns at 100 percent and 118 at 200, since
   xterm conforms it to the largest type its pane takes at each display's own cell. Its terminals
   are held at the poster's scale only. Holding one grid instead left the pane an empty band at 125
   and 200 percent, the posters' own scale included, so the fill was kept.
-- `workflow-draft` and `settings-workflows` break one long text a word differently at 125 or 150
-  percent, where Chromium lays text out with fractional advances. Their text is held at whole
-  scales only.
+- `workflow-draft`, `settings-workflows` and the two redis scenes (`ssh-remote-project`,
+  `ssh-remote-host`) break one long text a word differently at 125 or 150 percent, where Chromium
+  lays text out with fractional advances. Their text is held at whole scales only.
 
 What the gate found is fixed at the cause. The Changes scenes reported ready before the diff had
 laid out: Monaco lands the diff and folds the unchanged regions a task later, which moved every
@@ -1229,6 +1242,28 @@ underline the agent wrote (the frames rebuilt with
 `node scripts/backfill-demo-timelines.mjs --force`). The looping hero's terminal is held to the
 still's grid and layout at ready, not its pixels: a shot right after ready races the spinner.
 
+The first release runs on Windows and macOS (v0.61.0 and v0.62.0) found five more, each a frame
+that showed a visitor something other than its poster:
+
+- The context bar named the shell from `navigator.platform`, the visitor's OS, so a Windows
+  visitor read "Git Bash" over a poster that said "bash". The sample install is a Windows machine,
+  and `shellDisplayName` now reads the bridge's platform, which the mock answers as `win32`.
+- Roboto's OS/2 win metrics are taller than its hhea metrics, and DirectWrite reads them where
+  FreeType and CoreText read hhea, so every line on Windows was 0.4 px taller at 14 px and a
+  table's rows sat up to 2.25 px low. Every face now carries the metrics Linux reads as FontFace
+  overrides (`metricOverrides` in `scripts/lib/demo-fonts.mjs`).
+- Inline code in a conversation asked for `ui-monospace, monospace` rather than `--font-mono`, so
+  each OS drew it in its own face and Windows wrapped it differently. It now uses the variable, and
+  `tests/unit/release-workflow-gates.test.ts` fails any renderer `font-family` that does not.
+- The Browser pane's guest page asked for `system-ui`. It now names the demo's sans face, which
+  `demo/boot.js` registers in its document (`dressGuestFonts`) before the shim reports it loaded.
+- `windows-tiled` and `ssh-remote-project` reported ready before a window's terminal had drawn, on
+  a slow macOS runner, since terminals are built one at a time. Their `ready` now waits for each
+  task window's terminal.
+
+Monaco reuses its absolutely placed line elements, so their DOM order changed from one boot to the
+next with the same lines on screen; the measure takes its lines top to bottom.
+
 `.github/workflows/demo-poster-gate.yml` runs it on Windows, macOS and Linux, two shards each.
 `release.yml`'s `poster-gate` job calls it after `demo-posters` has attached the zip, on the build
 and set that job uploads, so a mismatch turns the release run red without pulling an asset. Run
@@ -1237,9 +1272,10 @@ on Linux first, and its numbers are the ones a budget is raised from. A failing 
 frame, its diff and its layout. If a per-OS difference survives, kangentic.com #137 names the
 fallback: one hero poster per platform, picked at the edge by `Sec-CH-UA-Platform`.
 
-What it finds, run on Windows against a set shot there on 2026-11-13: all 413 cases pass, and
-every one of the 156 pixel comparisons is identical to its poster. The macOS and Linux legs, and
-the per-OS pixel budgets, wait on a dispatched run of `demo-poster-gate.yml`.
+A run on Windows against a set shot there (2026-11-13) passed all 413 cases with every pixel
+comparison identical, which says only that Windows reproduces itself. Against the Linux-shot
+release set (v0.62.0, run 45102383693) Windows failed 394 cases and macOS 116, for the causes
+above and the glyph rasterization the Windows and macOS comparison now leaves out.
 
 ### One viewport, one scale
 

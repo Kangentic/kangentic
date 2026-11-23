@@ -67,15 +67,16 @@
     // "document went away" answer the renderer's callers already read as null.
     var pendingCalls = new Set();
     var guestLoaded = false;
+    var loadCount = 0;
     function load(url) {
       currentUrl = url || '';
       guestLoaded = false;
+      loadCount += 1;
+      var thisLoad = loadCount;
       pendingCalls.forEach(function (settle) { settle(); });
       pendingCalls.clear();
       var guest = guestFor(currentUrl);
       frame.onload = function () {
-        // Set before dom-ready fires: its listeners call executeJavaScript at once.
-        guestLoaded = true;
         // Extensions inject into every frame, and the guest is a document of its own, so it gets
         // the same opt-outs and sweep as the app (demo/boot.js, Browser extensions). Each load is
         // a new document, which is why this runs here and not once.
@@ -83,10 +84,24 @@
         if (boot && typeof boot.shieldGuestDocument === 'function') {
           try { boot.shieldGuestDocument(frame.contentDocument); } catch (error) { console.error('[kangentic-demo] the guest page could not be shielded:', error); }
         }
-        fire(node, 'dom-ready');
-        fire(node, 'did-navigate');
-        fire(node, 'did-stop-loading');
+        // The page draws in the demo's own faces, so it is reported loaded only once they are in
+        // (demo/boot.js, dressGuestFonts). A face that fails still lets the page load, drawn in a
+        // fallback, with the failure on the console.
+        var fontsIn = boot && typeof boot.dressGuestFonts === 'function'
+          ? boot.dressGuestFonts(frame.contentDocument).then(null, function (error) { console.error('[kangentic-demo] the guest page\'s fonts did not load:', error); })
+          : Promise.resolve();
+        fontsIn.then(function () {
+          // A later load replaced this document while its faces loaded: that load reports itself.
+          if (thisLoad !== loadCount) return;
+          // Set before dom-ready fires: its listeners call executeJavaScript at once.
+          guestLoaded = true;
+          frame.setAttribute('data-demo-guest-loaded', '');
+          fire(node, 'dom-ready');
+          fire(node, 'did-navigate');
+          fire(node, 'did-stop-loading');
+        });
       };
+      frame.removeAttribute('data-demo-guest-loaded');
       frame.src = guest || 'about:blank';
     }
 

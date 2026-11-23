@@ -395,6 +395,20 @@ const MCP_SCENE_TERMINAL = {
  */
 const TILED_PAIR_RECT = { x: 0.03, y: 0.15, w: 0.94, h: 0.7 };
 
+/**
+ * Appended to `body` in a `ready`: the task window has opened its terminal. A window's title and a
+ * tile's splitter mount before its terminal is built (terminals are built one at a time, in
+ * terminal-init-queue.ts), and on a slow machine (v0.62.0's macOS poster gate) the frame reported
+ * ready with a window's terminal not yet there, so a host would have lifted its poster onto a
+ * window with no terminal in it. `.xterm-screen` is there under either renderer, WebGL or DOM. A
+ * window restored from a workspace is `board-window-<n>`, in the workspace's order; with no id,
+ * any one window. CSS cannot nest :has(), so a scene with two windows names both.
+ */
+function windowTerminalOpen(windowId?: string): string {
+  const frame = windowId ? `[data-testid="window-frame-${windowId}"]` : '[data-testid^="window-frame-"]';
+  return `:has(${frame} .xterm-screen)`;
+}
+
 /** The middleware and api-client windows tiled side by side, restored on cold boot. */
 function tiledPairWorkspace() {
   const halfWidth = TILED_PAIR_RECT.w / 2;
@@ -1693,7 +1707,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     description: 'The middleware and api-client task windows tiled side by side in the footprint a dock produces (TILED_PAIR_RECT). Both sessions carry a recording made at the tiled width (manifest geometry taskWindowTiled), so both terminals are at native type; the single recording would be held at two-thirds. The api-client session opens 25 s before its single recording ends (the board scene flips it), which is after its 112 s tiled run ended at a permission prompt, so the right window paints that run\'s last frame while the card reads working until the single recording ends.',
     alt: 'Two task windows tiled side by side over the board: Claude Code working on Extract auth middleware on the left, and on the right asking to run a PowerShell typecheck for Generate API client types, each with a context bar of model, context use, and cost.',
     config: { workspaceByProject: { [PROJECT_CONTOSO]: tiledPairWorkspace() } },
-    ready: '[data-testid^="tile-splitter-"]',
+    ready: `body${windowTerminalOpen('board-window-1')}${windowTerminalOpen('board-window-2')} [data-testid^="tile-splitter-"]`,
     motion: 'Both terminals replay their working sessions\' tiled recordings.',
   },
   // The Browser and Changes scenes below keep a narrow terminal on purpose. There the PANEL is the
@@ -1715,7 +1729,9 @@ export const SCENES: Record<string, SceneDefinition> = {
     // Finished, so the session rests on the frame its recorded Send starts from (demo-dataset.ts,
     // sendRests) and Send continues from what the visitor sees.
     sessions: { [SESSION_MIDDLEWARE]: { activity: 'idle' } },
-    ready: '[data-testid="browser-webview"] iframe',
+    // The guest page in, faces and all (demo/webview-shim.js), so a host never lifts its poster onto
+    // an empty pane.
+    ready: '[data-testid="browser-webview"] iframe[data-demo-guest-loaded]',
     // The note the matrix sent this session (the manifest's browserSends) typed into the pane's own
     // field and sent. The recording plays on: the payload pasted into the agent's terminal and
     // echoed whole, the screenshot read, and the agent at work. A few seconds in, the cut takes it
@@ -1738,7 +1754,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     config: { workspaceByProject: { [PROJECT_CONTOSO]: middlewareWindowWorkspace('maximized') } },
     tasks: MIDDLEWARE_BROWSER_OPEN_TASKS,
     seeds: { __mockBrowserAnnotationDrafts: { [TASK_MIDDLEWARE]: DEMO_BROWSER_ANNOTATION_DRAFT } },
-    ready: '[data-testid="annotation-row-3"]',
+    ready: 'body:has([data-testid="browser-webview"] iframe[data-demo-guest-loaded]) [data-testid="annotation-row-3"]',
     // Looking around the draft: two rows hovered (the page shows that annotation's badge alone),
     // the first made active, Draw switched on and off, and the third active again, as it opened. A
     // row's number focuses its note, so the last click is on the page, which leaves no field
@@ -1789,9 +1805,9 @@ export const SCENES: Record<string, SceneDefinition> = {
     alt: 'The board for redis, a project on a remote host: a server icon follows its name in the sidebar, a plan waits for approval in Planning, and a task window shows Claude Code running shell commands in the project\'s folder on the host.',
     rows: DEMO_REDIS_ROWS,
     config: { workspaceByProject: { [PROJECT_REDIS]: redisWindowWorkspace() } },
-    // The window's title, on a frame whose sidebar shows the host connected: a :has() rather than a
-    // list, since a selector list is either one.
-    ready: `body:has([data-testid="project-host-chip"][data-host-state="connected"]) [data-testid="task-title-text"]`,
+    // The window's title, on a frame whose sidebar shows the host connected and whose window has
+    // drawn its terminal: a :has() rather than a list, since a selector list is either one.
+    ready: `body:has([data-testid="project-host-chip"][data-host-state="connected"])${windowTerminalOpen()} [data-testid="task-title-text"]`,
     // The host's name and state in the chip's tip, then the plan waiting in Planning in its mark's.
     choreography: [
       { hover: '[data-testid="project-host-chip"]', ms: 1800 },
