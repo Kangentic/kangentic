@@ -72,6 +72,8 @@ export interface StderrSource {
 export class StderrTail implements StderrSource {
   private readonly decoder = new StringDecoder('utf8');
   private text = '';
+  /** Watchdog lines a trim or `clear` dropped, for `watchdogLinesSeen`. */
+  private watchdogLinesDropped = 0;
   /** True from `captureWorkerStderr` attaching a stream until that stream
    *  ends or closes. */
   private streamOpen = false;
@@ -139,17 +141,27 @@ export class StderrTail implements StderrSource {
     return watchdogLineCount(this.text);
   }
 
+  /** Every watchdog line this tail was ever given, the ones a trim or `clear`
+   *  dropped included. It never goes down, so a caller that counts before and
+   *  after a stall sees a new line even when a trim took an old one with it. */
+  watchdogLinesSeen(): number {
+    return this.watchdogLinesDropped + watchdogLineCount(this.text);
+  }
+
   /** The retained text, home directory redacted, trailing whitespace dropped. */
   snapshot(): string {
     return redactHomeDirectory(this.text, this.homeDirectory, this.caseInsensitiveHome).trimEnd();
   }
 
   clear(): void {
+    this.watchdogLinesDropped += watchdogLineCount(this.text);
     this.text = '';
   }
 
   private trimToBudget(): void {
     let bytes = Buffer.byteLength(this.text, 'utf8');
+    if (bytes <= this.maxBytes) return;
+    const watchdogLinesBefore = watchdogLineCount(this.text);
     while (bytes > this.maxBytes) {
       const newlineIndex = this.text.indexOf('\n');
       if (newlineIndex !== -1 && newlineIndex < this.text.length - 1) {
@@ -171,6 +183,7 @@ export class StderrTail implements StderrSource {
       this.text = encoded.subarray(start).toString('utf8');
       bytes = Buffer.byteLength(this.text, 'utf8');
     }
+    this.watchdogLinesDropped += watchdogLinesBefore - watchdogLineCount(this.text);
   }
 }
 
@@ -266,8 +279,9 @@ export const EVENT_LOOP_HELD_PHRASE = 'event loop held';
 
 /** How many watchdog lines a stderr tail holds. A caller that counts before and
  *  after a stall can tell a line the stall wrote from an older one still in the
- *  tail. A trim can drop an old line as a new one lands, which reads as none:
- *  the safe direction. */
+ *  tail. A trim can drop an old line as a new one lands, which reads as none.
+ *  That only costs a label (the heartbeat report's `heldStep`); a caller that
+ *  decides whether to report at all counts with `StderrTail.watchdogLinesSeen`. */
 export function watchdogLineCount(tail: string): number {
   let count = 0;
   let index = tail.indexOf(EVENT_LOOP_HELD_PHRASE);
