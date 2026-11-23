@@ -27,7 +27,10 @@
         8776,
         8886,
         8942,
-        9472
+        9472,
+        9492,
+        9600,
+        9608
       ]
     },
     {
@@ -80,7 +83,32 @@
       "file": "symbols-noto-sans-sc-89.woff2",
       "source": "@fontsource/noto-sans-sc@5.3.1 files/noto-sans-sc-89-400-normal.woff2",
       "codepoints": [
+        9474,
         9475
+      ]
+    },
+    {
+      "file": "symbols-noto-sans-symbols-2-braille.woff2",
+      "source": "@fontsource/noto-sans-symbols-2@5.3.0 files/noto-sans-symbols-2-braille-400-normal.woff2",
+      "codepoints": [
+        10240,
+        10246,
+        10251,
+        10255,
+        10264,
+        10267,
+        10268,
+        10270,
+        10272,
+        10275,
+        10276,
+        10278,
+        10279,
+        10288,
+        10291,
+        10292,
+        10296,
+        10297
       ]
     },
     {
@@ -147,6 +175,8 @@
   ],
   "gaps": [
     "U+2139",
-    "U+257F"
+    "U+257F",
+    "U+259C",
+    "U+259D"
   ]
 }

@@ -24,6 +24,7 @@ import {
   saveDiffScroll,
 } from '../../../../utils/diff-scroll-memory';
 import { copyDiffSelection } from '../../../../utils/diff-clipboard';
+import { monoFontFamily } from '../../../../utils/mono-font-family';
 import { registerDiffViewerSnapshotReader } from '../../../../monaco-error-funnel';
 import { readAttachedViewModel, type DisposableViewModel } from '../../../../monaco-diff-view-model';
 import { monacoThemeForTheme, selectDiffAlgorithmOptions } from './diff-render-options';
@@ -1638,6 +1639,8 @@ export function DiffViewer({
                 // Pin the enclosing scope's header line while scrolling a long
                 // hunk (VS Code's editor.stickyScroll).
                 stickyScroll: { enabled: true },
+                // The app's monospace stack, not Monaco's per-OS default.
+                fontFamily: monoFontFamily(),
                 fontSize: 12,
                 lineHeight: 18,
                 // Monaco's default context menu also surfaces "Command Palette",
