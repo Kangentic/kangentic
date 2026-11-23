@@ -6,7 +6,7 @@ import { ensureLocalGitExcludes } from '../../shared/git-exclude';
 import { cliPathForTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
 import { copyWslHookScriptInto, prepareWslHookTransport, wslReachesLoopback } from '../../shared/wsl-hook-transport';
 import { kangenticMcpServer, type KangenticMcpServer } from '../../shared/kangentic-mcp-server';
-import { buildHooks, buildCodexHookOverrides, CODEX_EVENT_BRIDGE_COPY_NAME, CODEX_WSL_HOOK_COPY_NAME } from './hook-manager';
+import { buildHooks, buildCodexHookOverrides, CODEX_EVENT_BRIDGE_COPY_NAME, CODEX_WSL_HOOK_COPY_NAME, type CodexHookSet } from './hook-manager';
 import { TASK_PROCESS_TAG_ENV, isValidTaskTagValue } from '../../../pty/process-tag/task-process-tag';
 import type { PermissionMode } from '../../../../shared/types';
 
@@ -44,6 +44,13 @@ export interface CodexCommandOptions {
    * runs without Kangentic's hooks, on the PTY tracker.
    */
   codexHookStateOverride?: string | null;
+  /**
+   * The hooks that override trusts (`CodexHookTrustCheck.hookSetFor`), which
+   * are the ones the session registers: a hook registered without its trust
+   * entry opens Codex's blocking "Hooks need review" dialog. Absent is the
+   * base set, which every confirmed override covers.
+   */
+  codexHookSet?: CodexHookSet;
   /**
    * A Codex installed in a WSL distro (`CommandOptions.cliTarget`): named by
    * the path the distro sees, its working directory too, and its hooks run the
@@ -324,7 +331,7 @@ function buildHookArgs(options: CodexCommandOptions): string[] {
     );
     return [];
   }
-  return [...buildCodexHookOverrides(inDistro ? 'wsl' : 'node'), stateOverride].flatMap((value) => ['-c', quoteArg(value, options.shell)]);
+  return [...buildCodexHookOverrides(inDistro ? 'wsl' : 'node', options.codexHookSet ?? 'base'), stateOverride].flatMap((value) => ['-c', quoteArg(value, options.shell)]);
 }
 
 export class CodexCommandBuilder {

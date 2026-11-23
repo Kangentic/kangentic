@@ -3,7 +3,7 @@
   "result": {
     "data": [
       {
-        "cwd": "C:\\Users\\dev\\AppData\\Local\\Temp\\kangentic-codex-hooks-HgTFhU\\folder",
+        "cwd": "C:\\Users\\dev\\AppData\\Local\\Temp\\kangentic-codex-hooks-I1ibNy\\folder",
         "hooks": [
           {
             "key": "C:\\<session-flags>\\config.toml:pre_tool_use:0:0",
@@ -126,6 +126,46 @@
             "trustStatus": "untrusted"
           },
           {
+            "key": "C:\\<session-flags>\\config.toml:subagent_start:0:0",
+            "eventName": "subagentStart",
+            "handlerType": "command",
+            "command": "node .kangentic/codex-event-bridge.cjs env:KANGENTIC_EVENTS_PATH subagent_start extractDetail:eyJmaWVsZHMiOlsiYWdlbnRfdHlwZSJdfQ== extractSubagentId:eyJmaWVsZHMiOlsiYWdlbnRfaWQiXX0=",
+            "async": false,
+            "matcher": null,
+            "timeoutSec": 10,
+            "statusMessage": null,
+            "additionalContextLimit": null,
+            "sourcePath": "C:\\<session-flags>\\config.toml",
+            "source": "sessionFlags",
+            "pluginId": null,
+            "environmentId": null,
+            "displayOrder": 6,
+            "enabled": true,
+            "isManaged": false,
+            "currentHash": "sha256:d7b278268b5b04db07faef4ade09c8567ac2e7154f32363d740fac97cea6f75f",
+            "trustStatus": "untrusted"
+          },
+          {
+            "key": "C:\\<session-flags>\\config.toml:subagent_stop:0:0",
+            "eventName": "subagentStop",
+            "handlerType": "command",
+            "command": "node .kangentic/codex-event-bridge.cjs env:KANGENTIC_EVENTS_PATH subagent_stop extractDetail:eyJmaWVsZHMiOlsiYWdlbnRfdHlwZSJdfQ== extractSubagentId:eyJmaWVsZHMiOlsiYWdlbnRfaWQiXX0=",
+            "async": false,
+            "matcher": null,
+            "timeoutSec": 10,
+            "statusMessage": null,
+            "additionalContextLimit": null,
+            "sourcePath": "C:\\<session-flags>\\config.toml",
+            "source": "sessionFlags",
+            "pluginId": null,
+            "environmentId": null,
+            "displayOrder": 7,
+            "enabled": true,
+            "isManaged": false,
+            "currentHash": "sha256:5140306f8433fd337c6f00967660ebbec18417376e7b988286ef1d8dd302b028",
+            "trustStatus": "untrusted"
+          },
+          {
             "key": "C:\\<session-flags>\\config.toml:stop:0:0",
             "eventName": "stop",
             "handlerType": "command",
@@ -139,7 +179,7 @@
             "source": "sessionFlags",
             "pluginId": null,
             "environmentId": null,
-            "displayOrder": 6,
+            "displayOrder": 8,
             "enabled": true,
             "isManaged": false,
             "currentHash": "sha256:e7b4a1e3637239c79c80f82358f3c79be22171341e735bb80d58e6b30c70c168",

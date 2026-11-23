@@ -113,7 +113,10 @@ import { ProjectRepository } from './db/repositories/project-repository';
 import { createWindowNotifier, setSyncWriteFailureNotifier } from './config/write-failure-notice';
 import { sendToRenderer } from './ipc/send-to-renderer';
 import { setWorktreeRemovedListener, setWorktreeRemovingListener } from './git/worktree-manager';
-import { notifyAdaptersWorktreeRemoved } from './ipc/helpers/task-cleanup';
+import { notifyAdaptersWorktreeRemoved, sweepAdaptersRemovedFolderTrust } from './ipc/helpers/task-cleanup';
+
+/** How long after startup the adapters' removed-folder sweep waits, so it never competes with a launch. */
+const ADAPTER_FOLDER_SWEEP_DELAY_MS = 60_000;
 import { writeClipboardImage } from './ipc/helpers/clipboard-image';
 import { restoreShellEnv } from './shell-env';
 import { isFirstPartyPermissionAllowed } from './permission-policy';
@@ -1882,6 +1885,9 @@ app.whenReady().then(async () => {
     worktreePath,
     (projectPath) => getOptionalIpcContext()?.configManager.getEffectiveConfig(projectPath).agent.cliPaths ?? null,
   ));
+  // Once a launch, after startup has settled: the entries left for folders that
+  // went while no removal listener ran (before it existed, a closed preview, a crash).
+  setTimeout(() => { void sweepAdaptersRemovedFolderTrust(); }, ADAPTER_FOLDER_SWEEP_DELAY_MS).unref?.();
 
   // Symmetric BEFORE hook: release every fs.watch handle we hold under a
   // worktree ahead of deleting it. On Windows a directory watch whose target is

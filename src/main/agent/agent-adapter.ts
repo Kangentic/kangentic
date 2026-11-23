@@ -1833,4 +1833,13 @@ export interface AgentAdapter {
    */
   onWorktreeRemoved?(worktreePath: string, place?: CliPlace | null): Promise<void>;
 
+  /**
+   * Drop what this adapter recorded on this machine for folders Kangentic made
+   * (task worktrees, dev preview projects) that are gone: the entries left from
+   * before `onWorktreeRemoved` existed, and from removals that ran while the app
+   * was not. Runs once, after startup. Never touches a folder Kangentic did not
+   * make, nor one it cannot prove is gone. Answers how many entries it dropped.
+   */
+  sweepRemovedFolderTrust?(): Promise<number>;
+
 }

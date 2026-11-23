@@ -437,6 +437,29 @@ export async function notifyAdaptersWorktreeRemoved(
 }
 
 /**
+ * Let every adapter drop what it recorded for folders Kangentic made that are
+ * gone (`sweepRemovedFolderTrust`): entries from before `onWorktreeRemoved`
+ * existed, and from removals that ran while the app was not. Generic over the
+ * registry, as `notifyAdaptersWorktreeRemoved` is. Answers the entries dropped.
+ */
+export async function sweepAdaptersRemovedFolderTrust(): Promise<number> {
+  let dropped = 0;
+  for (const adapterName of agentRegistry.list()) {
+    const adapter = agentRegistry.get(adapterName);
+    if (!adapter?.sweepRemovedFolderTrust) continue;
+    try {
+      const count = await adapter.sweepRemovedFolderTrust();
+      if (count > 0) console.log(`[WORKTREE] ${adapterName} dropped ${count} entries for removed folders`);
+      dropped += count;
+    } catch (error) {
+      // report-ok: a failed sweep leaves stale entries for the next launch's sweep; nothing depends on it.
+      console.warn(`[WORKTREE] ${adapterName} removed-folder sweep failed (non-fatal):`, error);
+    }
+  }
+  return dropped;
+}
+
+/**
  * Kill the PTY session and wipe session records for a task.
  * Preserves the worktree and branch so code is not lost.
  *

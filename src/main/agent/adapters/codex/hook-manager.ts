@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { EventType } from '../../../../shared/types';
 import { isKangenticHookCommand, safelyUpdateSettingsFile, EVENTS_PATH_FROM_ENVIRONMENT } from '../../shared/hook-utils';
-import { appendPermissionWaitForTool, captureHookContextFields, extractTool, extractToolId, extractDetail, setDetail, setWaitKind } from '../../shared/directive-builders';
+import { appendPermissionWaitForTool, captureHookContextFields, extractSubagentId, extractTool, extractToolId, extractDetail, setDetail, setWaitKind } from '../../shared/directive-builders';
 
 /**
  * The workspace copy of the event bridge Codex's hooks run, relative to the
@@ -32,6 +32,14 @@ const CODEX_HOOK_TOKEN = /^[A-Za-z0-9_./:+=-]+$/;
 
 /** Where the hooks run: Codex on this machine (the node bridge) or in a WSL distro (the transport script). */
 export type CodexHookRunner = 'node' | 'wsl';
+
+/**
+ * Which hooks a session registers. `extended` adds SubagentStart and
+ * SubagentStop, which codex-cli 0.171.0 lists and an older Codex may not; the
+ * trust read is all-or-nothing, so `hook-trust.ts` asks for `extended` first
+ * and falls back to `base` rather than leaving that Codex with no hooks.
+ */
+export type CodexHookSet = 'extended' | 'base';
 
 function codexHookCommand(runner: CodexHookRunner, eventType: string, ...directives: string[]): string {
   const head = runner === 'wsl'
@@ -71,10 +79,22 @@ export const CODEX_QUESTION_TOOL = 'request_user_input';
  * seen and no id (Sentry DESKTOP-36 on 0.171.0). UserPromptSubmit and Stop name
  * the session too, so each keeps its `session_id`, and nothing else: the
  * prompt's text stays out of the event.
+ *
+ * The subagents (extended set): a `spawn_agent` child fires SubagentStart and
+ * SubagentStop in its parent's hooks, each naming it by `agent_id` and its role
+ * by `agent_type`, the fields Claude's carry (measured on 0.171.0, fixtures in
+ * tests/fixtures/codex-hooks/). The tool hooks of the spawn and of the parent's
+ * `wait_agent` fire around them as for any tool.
  */
-function codexHookCommands(runner: CodexHookRunner): ReadonlyArray<readonly [event: string, command: string]> {
+function codexHookCommands(runner: CodexHookRunner, hookSet: CodexHookSet): ReadonlyArray<readonly [event: string, command: string]> {
   const command = (eventType: string, ...directives: string[]): string => codexHookCommand(runner, eventType, ...directives);
   const sessionIdOnly = captureHookContextFields(['session_id']);
+  const subagentHooks: ReadonlyArray<readonly [event: string, command: string]> = hookSet === 'extended'
+    ? [
+      ['SubagentStart', command(EventType.SubagentStart, extractDetail(['agent_type']), extractSubagentId(['agent_id']))],
+      ['SubagentStop', command(EventType.SubagentStop, extractDetail(['agent_type']), extractSubagentId(['agent_id']))],
+    ]
+    : [];
   return [
     ['SessionStart', command(EventType.SessionStart)],
     ['UserPromptSubmit', command(EventType.Prompt, sessionIdOnly)],
@@ -92,6 +112,7 @@ function codexHookCommands(runner: CodexHookRunner): ReadonlyArray<readonly [eve
       setWaitKind('approval'))],
     ['Stop', command(EventType.Idle, sessionIdOnly)],
     ['PreCompact', command(EventType.Compact)],
+    ...subagentHooks,
   ];
 }
 
@@ -110,8 +131,8 @@ export interface CodexHookDefinition {
  * `KANGENTIC_WSL_HOOK_DIR`), which is what lets one trust check per Codex
  * binary cover every spawn.
  */
-export function codexHookDefinitions(runner: CodexHookRunner = 'node'): CodexHookDefinition[] {
-  return codexHookCommands(runner).map(([event, command]) => ({
+export function codexHookDefinitions(runner: CodexHookRunner = 'node', hookSet: CodexHookSet = 'extended'): CodexHookDefinition[] {
+  return codexHookCommands(runner, hookSet).map(([event, command]) => ({
     command,
     timeoutSeconds: CODEX_HOOK_TIMEOUT_SECONDS,
     override: `hooks.${event}=[{hooks=[{type='command',command='${command}',timeout=${CODEX_HOOK_TIMEOUT_SECONDS}}]}]`,
@@ -119,8 +140,8 @@ export function codexHookDefinitions(runner: CodexHookRunner = 'node'): CodexHoo
 }
 
 /** The `-c` values that register Kangentic's hooks (`codexHookDefinitions`). */
-export function buildCodexHookOverrides(runner: CodexHookRunner = 'node'): string[] {
-  return codexHookDefinitions(runner).map((definition) => definition.override);
+export function buildCodexHookOverrides(runner: CodexHookRunner = 'node', hookSet: CodexHookSet = 'extended'): string[] {
+  return codexHookDefinitions(runner, hookSet).map((definition) => definition.override);
 }
 
 /** One hook's trust entry, as Codex's `hooks/list` reported it. */

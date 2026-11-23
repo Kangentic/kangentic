@@ -1,0 +1,11 @@
+{
+  "session_id": "01a20a02-54fe-77f1-b614-428c164189bf",
+  "turn_id": "01a20a02-6567-7a71-b3aa-61432582e15a",
+  "transcript_path": "C:\\Users\\dev\\.codex\\sessions\\2026\\11\\23\\rollout-2026-11-23T15-04-18-01a20a02-6552-7ec2-b380-6ea45a4b7ced.jsonl",
+  "cwd": "C:\\Users\\dev\\projects\\work",
+  "hook_event_name": "SubagentStart",
+  "model": "gpt-6-luna",
+  "permission_mode": "bypassPermissions",
+  "agent_id": "01a20a02-6552-7ec2-b380-6ea45a4b7ced",
+  "agent_type": "default"
+}

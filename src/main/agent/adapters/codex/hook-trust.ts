@@ -6,7 +6,7 @@ import { converseWithAppServer } from './app-server-rpc';
 import { cliPathForTarget, type CliTarget, type SshCliPlace } from '../../shared/cli-target';
 import { shimFamilyKey } from '../../shared/shim-family-key';
 import type { CliChildProcess } from '../../../utility-process/off-main-cli';
-import { codexHookDefinitions, codexHookStateOverride, type CodexHookDefinition, type CodexHookTrustEntry } from './hook-manager';
+import { codexHookDefinitions, codexHookStateOverride, type CodexHookDefinition, type CodexHookRunner, type CodexHookSet, type CodexHookTrustEntry } from './hook-manager';
 
 /**
  * Codex's hook trust, read from Codex itself (task #859).
@@ -293,6 +293,8 @@ interface TrustRead {
   pending: Promise<void>;
   /** Undefined while the read runs; null when Codex did not confirm the hooks. */
   stateOverride: string | null | undefined;
+  /** The hooks the state override trusts, which are the ones a session may register. */
+  hookSet: CodexHookSet;
   /** When the read failed to run (the read rejected); null for an answer or a read in flight. */
   failedAt: number | null;
 }
@@ -302,6 +304,34 @@ export interface CodexTrustReadTarget {
   target: CliTarget;
   /** The version detection read, which keys the read: the binary's file cannot be stat'ed through the share. */
   version: string;
+}
+
+/** Entries Codex confirmed, and which of Kangentic's hook sets they cover. */
+interface ConfirmedHooks {
+  entries: CodexHookTrustEntry[];
+  hookSet: CodexHookSet;
+}
+
+/**
+ * Read the extended hooks, and the base seven when Codex does not confirm the
+ * extended set whole. The trust read is all-or-nothing, and a Codex older than
+ * the subagent hooks would otherwise run with none (Sentry shows 0.163 to 0.171
+ * in use at once). A run of the extended read that failed outright is tried
+ * with the base set too, since an unknown event may stop the app-server rather
+ * than list a warning; only a base read that also fails is a failed read.
+ */
+async function readWithFallback(
+  read: (definitions: readonly CodexHookDefinition[]) => Promise<CodexHookTrustEntry[] | null>,
+  runner: CodexHookRunner,
+): Promise<ConfirmedHooks | null> {
+  try {
+    const extended = await read(codexHookDefinitions(runner, 'extended'));
+    if (extended) return { entries: extended, hookSet: 'extended' };
+  } catch {
+    // report-ok: the base read below answers; its own failure is the one that counts.
+  }
+  const base = await read(codexHookDefinitions(runner, 'base'));
+  return base ? { entries: base, hookSet: 'base' } : null;
 }
 
 /**
@@ -334,12 +364,13 @@ export class CodexHookTrustCheck {
   start(codexPath: string, wsl: CodexTrustReadTarget | null = null): void {
     const stamp = wsl ? `version:${wsl.version}` : this.stampOf(codexPath);
     if (!stamp) return;
+    const runner: CodexHookRunner = wsl ? 'wsl' : 'node';
     this.begin(
       shimFamilyKey(codexPath),
       codexPath,
       stamp,
       wsl !== null,
-      () => this.read(codexPath, codexHookDefinitions(wsl ? 'wsl' : 'node'), wsl?.target ?? null),
+      () => readWithFallback((definitions) => this.read(codexPath, definitions, wsl?.target ?? null), runner),
     );
   }
 
@@ -349,7 +380,7 @@ export class CodexHookTrustCheck {
    * transport script's, as in a distro. Nothing is read when the host has no Codex.
    */
   startOnHost(place: SshCliPlace, version: string): void {
-    this.begin(hostReadKey(place.hostId), HOST_CODEX_PROGRAM, `version:${version}`, true, () => this.readOnHost(place, codexHookDefinitions('wsl')));
+    this.begin(hostReadKey(place.hostId), HOST_CODEX_PROGRAM, `version:${version}`, true, () => readWithFallback((definitions) => this.readOnHost(place, definitions), 'wsl'));
   }
 
   /** The `hooks.state` override confirmed for the Codex on this host, or null when it is not. */
@@ -357,27 +388,42 @@ export class CodexHookTrustCheck {
     return this.reads.get(hostReadKey(hostId))?.stateOverride ?? null;
   }
 
+  /** The hook set the host's override trusts: what a session there registers beside it. */
+  hookSetForHost(hostId: string): CodexHookSet {
+    return this.reads.get(hostReadKey(hostId))?.hookSet ?? 'base';
+  }
+
+  /** The hook set `stateOverrideFor` trusts for this binary: what a session registers beside it. */
+  hookSetFor(codexPath: string): CodexHookSet {
+    return this.reads.get(shimFamilyKey(codexPath))?.hookSet ?? 'base';
+  }
+
   private begin(
     key: string,
     detectedPath: string,
     stamp: string,
     stampedByVersion: boolean,
-    run: () => Promise<CodexHookTrustEntry[] | null>,
+    run: () => Promise<ConfirmedHooks | null>,
   ): void {
     const existing = this.reads.get(key);
     if (existing && existing.detectedPath === detectedPath && existing.stamp === stamp && !this.failedLongAgo(existing)) return;
     const trustRead: TrustRead = {
-      detectedPath, stamp, stampedByVersion, pending: Promise.resolve(), stateOverride: undefined, failedAt: null,
+      detectedPath, stamp, stampedByVersion, pending: Promise.resolve(), stateOverride: undefined, hookSet: 'base', failedAt: null,
     };
     trustRead.pending = run()
-      .then((entries) => (entries ? codexHookStateOverride(entries) : null))
+      .then((confirmed) => {
+        if (!confirmed) return null;
+        trustRead.hookSet = confirmed.hookSet;
+        return codexHookStateOverride(confirmed.entries);
+      })
       .catch(() => {
         trustRead.failedAt = this.now();
         return null;
       })
       .then((stateOverride) => {
         trustRead.stateOverride = stateOverride;
-        console.log(`[codex] hook trust ${stateOverride ? 'read from Codex; sessions run with hooks' : 'not confirmed; sessions run without hooks'}`);
+        const outcome = stateOverride ? `read from Codex; sessions run with the ${trustRead.hookSet} hooks` : 'not confirmed; sessions run without hooks';
+        console.log(`[codex] hook trust ${outcome}`);
       });
     this.reads.set(key, trustRead);
   }

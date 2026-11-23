@@ -15,12 +15,16 @@
  * PermissionRequest and PreCompact have no captured payload yet, so they are
  * not replayed here.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { execFileSync } from 'node:child_process';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { codexHookDefinitions, CODEX_EVENT_BRIDGE_COPY_NAME } from '../../src/main/agent/adapters/codex/hook-manager';
+import { codexHookDefinitions, CODEX_EVENT_BRIDGE_COPY_NAME, CODEX_WSL_HOOK_COPY_NAME } from '../../src/main/agent/adapters/codex/hook-manager';
+import { copyWslHookScriptInto, prepareWslHookTransport } from '../../src/main/agent/shared/wsl-hook-transport';
+import { WslHookInbox } from '../../src/main/pty/readers/wsl-hook-inbox';
+import { toForwardSlash } from '../../src/shared/paths';
+import { gitBashPath, installedShOrPowerShellHosts } from './helpers/shell-argv-probe';
 
 const EVENT_BRIDGE_SOURCE = path.resolve(__dirname, '../../src/main/agent/event-bridge.js');
 const FIXTURES = path.resolve(__dirname, '../fixtures/codex-hooks');
@@ -28,6 +32,8 @@ const FIXTURES = path.resolve(__dirname, '../fixtures/codex-hooks');
 interface CodexHookPayload {
   hook_event_name: string;
   session_id?: string;
+  agent_id?: string;
+  agent_type?: string;
   tool_name?: string;
   tool_use_id?: string;
   tool_input?: { command?: string };
@@ -41,6 +47,7 @@ interface BridgedEvent {
   toolId?: string;
   detail?: string;
   hookContext?: string;
+  subagentId?: string;
 }
 
 let workspace: string;
@@ -129,6 +136,23 @@ describe('Codex hook payloads, replayed through the real event bridge', () => {
     expect(events[0].toolId).toBe(presentString(payload.tool_use_id, 'tool_use_id'));
   });
 
+  // Captured from codex-cli 0.171.0: a `spawn_agent` child's start and stop in its parent's hooks.
+  it('SubagentStart writes subagent_start with the child\'s id and its role as the detail', () => {
+    const { payload, events } = replay('codex-0.171.0-subagent-start.json');
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe('subagent_start');
+    expect(events[0].subagentId).toBe(presentString(payload.agent_id, 'agent_id'));
+    expect(events[0].detail).toBe(presentString(payload.agent_type, 'agent_type'));
+  });
+
+  it('SubagentStop writes subagent_stop for the same child', () => {
+    const { payload, events } = replay('codex-0.171.0-subagent-stop.json');
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe('subagent_stop');
+    expect(events[0].subagentId).toBe(presentString(payload.agent_id, 'agent_id'));
+    expect(events[0].detail).toBe(presentString(payload.agent_type, 'agent_type'));
+  });
+
   it('Stop writes a plain idle, with no permission detail, carrying only the session id', () => {
     const { payload, events } = replay('codex-0.154.0-stop.json');
     expect(events).toHaveLength(1);
@@ -137,4 +161,65 @@ describe('Codex hook payloads, replayed through the real event bridge', () => {
     expect(events[0]).not.toHaveProperty('detail');
     expect(JSON.parse(events[0].hookContext ?? '{}')).toEqual({ session_id: presentString(payload.session_id, 'session_id') });
   });
+});
+
+/** The POSIX shells installed here that run `-c <command>`: sh and bash, or Git Bash on Windows. */
+function posixShellPaths(): string[] {
+  const shellPaths: string[] = [];
+  for (const host of installedShOrPowerShellHosts()) {
+    if (host === 'sh' || host === 'bash') shellPaths.push(host);
+    if (host === 'git-bash') {
+      const gitBash = gitBashPath();
+      if (gitBash) shellPaths.push(gitBash);
+    }
+  }
+  return shellPaths;
+}
+
+const posixShells = posixShellPaths();
+
+/** A path as a POSIX shell here reads it: `/c/...` under Git Bash on Windows, unchanged elsewhere. */
+function posixShellPath(filePath: string): string {
+  if (process.platform !== 'win32') return filePath;
+  return toForwardSlash(filePath).replace(/^([A-Za-z]):/, (_match, drive: string) => `/${drive.toLowerCase()}`);
+}
+
+// A Codex in a WSL distro or on an SSH host runs its hooks through the transport
+// script, and the inbox here does the bridge's work on what it publishes. The
+// session id each later hook keeps has to survive that path too.
+describe('Codex hook payloads, through the WSL hook transport', () => {
+  it.skipIf(posixShells.length === 0)('UserPromptSubmit and Stop carry only the session id', async () => {
+    const sessionDirectory = path.join(workspace, 'session');
+    const transportPaths = prepareWslHookTransport(sessionDirectory);
+    copyWslHookScriptInto(workspace, CODEX_WSL_HOOK_COPY_NAME);
+    fs.writeFileSync(eventsPath, '');
+    const inbox = new WslHookInbox({ sessionDirectory, eventsOutputPath: eventsPath, onAppended: () => undefined });
+    inbox.start();
+    const files = ['codex-0.154.0-user-prompt-submit.json', 'codex-0.154.0-stop.json'];
+    try {
+      for (const file of files) {
+        const { raw, payload } = readFixture(file);
+        const definition = codexHookDefinitions('wsl').find((candidate) => /^hooks\.(\w+)=/.exec(candidate.override)?.[1] === payload.hook_event_name);
+        if (!definition) throw new Error(`Kangentic registers no hook for ${payload.hook_event_name}`);
+        const result = spawnSync(posixShells[0], ['-c', definition.command], {
+          cwd: workspace,
+          input: raw,
+          env: { ...process.env, KANGENTIC_WSL_HOOK_DIR: posixShellPath(transportPaths.directory) },
+          encoding: 'utf-8',
+          windowsHide: true,
+          timeout: 30_000,
+        });
+        expect(result.status, file).toBe(0);
+      }
+      await vi.waitFor(() => {
+        expect(fs.readFileSync(eventsPath, 'utf-8').split('\n').filter(Boolean)).toHaveLength(files.length);
+      }, { timeout: 10_000, interval: 50 });
+    } finally {
+      inbox.close();
+    }
+    const events = fs.readFileSync(eventsPath, 'utf-8').trim().split('\n').map((line) => JSON.parse(line) as BridgedEvent);
+    const sessionId = presentString(readFixture(files[0]).payload.session_id, 'session_id');
+    expect(events.map((event) => event.type)).toEqual(['prompt', 'idle']);
+    for (const event of events) expect(JSON.parse(event.hookContext ?? '{}')).toEqual({ session_id: sessionId });
+  }, 60_000);
 });

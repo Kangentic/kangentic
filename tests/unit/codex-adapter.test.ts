@@ -1133,7 +1133,7 @@ describe('Codex Adapter', () => {
     let sessionsHome: string;
     const originalCodexHome = process.env.CODEX_HOME;
 
-    function writeRollout(uuid: string, cwd: string, createdAt: Date = new Date()): string {
+    function writeRollout(uuid: string, cwd: string, createdAt: Date = new Date(), extraPayload: Record<string, unknown> = {}): string {
       const iso = createdAt.toISOString();
       const fileName = `rollout-${iso.replace(/[:.]/g, '-').replace('Z', '')}-${uuid}.jsonl`;
       const filepath = path.join(sessionsDir, fileName);
@@ -1142,7 +1142,7 @@ describe('Codex Adapter', () => {
         type: 'session_meta',
         // payload.timestamp is the authoritative session creation time
         // used by captureSessionIdFromFilesystem's precise filter.
-        payload: { id: uuid, cli_version: '0.118.0', cwd, timestamp: iso },
+        payload: { id: uuid, cli_version: '0.118.0', cwd, timestamp: iso, ...extraPayload },
       }) + '\n');
       createdFiles.push(filepath);
       return filepath;
@@ -1171,6 +1171,29 @@ describe('Codex Adapter', () => {
         maxAttempts: 2,
       });
       expect(result).toBe('aaaa1111-bbbb-cccc-dddd-eeeeeeeeeeee');
+    });
+
+    // A `spawn_agent` child writes a rollout of its own in the same folder and
+    // cwd, seconds after its parent (codex-cli 0.171.0: `source.subagent` and a
+    // `parent_thread_id` in its session_meta). Its id is not the session's: a
+    // resume of it would reopen the child. Here it sorts first in the folder.
+    it('never captures a subagent\'s rollout as the session', async () => {
+      const parentId = 'dddd4444-dddd-dddd-dddd-dddddddddddd';
+      const childId = '01a20a02-6552-7ec2-b380-6ea45a4b7ced';
+      const subagentMeta = {
+        parent_thread_id: parentId,
+        source: { subagent: { thread_spawn: { parent_thread_id: parentId, depth: 1, agent_path: '/root/reply_ok' } } },
+      };
+      writeRollout(childId, '/tmp/task-sub', new Date(Date.now() - 1000), subagentMeta);
+      const alone = await CodexSessionHistoryParser.captureSessionIdFromFilesystem({
+        spawnedAt: new Date(Date.now() - 2000), cwd: '/tmp/task-sub', maxAttempts: 1,
+      });
+      expect(alone).toBeNull();
+      writeRollout(parentId, '/tmp/task-sub');
+      const withParent = await CodexSessionHistoryParser.captureSessionIdFromFilesystem({
+        spawnedAt: new Date(Date.now() - 2000), cwd: '/tmp/task-sub', maxAttempts: 1,
+      });
+      expect(withParent).toBe(parentId);
     });
 
     it('disambiguates concurrent spawns by cwd (prevents task A from stealing task B\'s session)', async () => {

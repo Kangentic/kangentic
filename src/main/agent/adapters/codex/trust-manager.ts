@@ -2,12 +2,14 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { atomicWriteFileWithBackup } from '../../shared/relocation-utils';
 import { cliPathForTarget, type CliPlace } from '../../shared/cli-target';
+import { folderExists, isKangenticMadeFolder } from '../../shared/kangentic-made-folder';
 import {
   withCodexConfigLock,
   configTomlPath,
   readTrustLevel,
   parseHeaderLine,
   normalizeForCompare,
+  stripLongPathPrefix,
 } from './config-toml';
 
 /**
@@ -81,10 +83,43 @@ function projectRootForWorktree(resolvedPath: string): string | null {
  * directory as the distro saw it.
  */
 export async function removeWorktreeTrust(worktreePath: string, place: CliPlace | null = null): Promise<void> {
+  await removeTrustTable(worktreePath, place);
+}
+
+/** `removeWorktreeTrust`, answering whether a table was dropped. */
+function removeTrustTable(worktreePath: string, place: CliPlace | null): Promise<boolean> {
   return withCodexConfigLock(() => removeWorktreeTrustSync(worktreePath, place));
 }
 
-function removeWorktreeTrustSync(worktreePath: string, place: CliPlace | null): void {
+/**
+ * Drop the trust tables of every Kangentic-made folder that is gone
+ * (`isKangenticMadeFolder`): worktrees removed before `removeWorktreeTrust`
+ * existed or while the app was not running, and a dev preview's project roots,
+ * which no removal ever named. Each goes through `removeWorktreeTrust`, so only
+ * a sole `trust_level = "trusted"` table is dropped. Answers how many it dropped.
+ */
+export async function sweepRemovedFolderTrust(exists: (folderPath: string) => Promise<boolean> = folderExists): Promise<number> {
+  let content: string;
+  try {
+    content = await fs.promises.readFile(configTomlPath(null), 'utf-8');
+  } catch {
+    // report-ok: no config.toml, or one that cannot be read, holds nothing to sweep.
+    return 0;
+  }
+  const folders = new Set<string>();
+  for (const line of content.split('\n')) {
+    const header = parseHeaderLine(line);
+    if (header && isKangenticMadeFolder(header.innerPath)) folders.add(stripLongPathPrefix(header.innerPath));
+  }
+  let dropped = 0;
+  for (const folder of folders) {
+    if (await exists(folder)) continue;
+    if (await removeTrustTable(folder, null)) dropped += 1;
+  }
+  return dropped;
+}
+
+function removeWorktreeTrustSync(worktreePath: string, place: CliPlace | null): boolean {
   const tomlPath = configTomlPath(place);
   const windowsPath = path.resolve(worktreePath);
   const target = normalizeForCompare(place ? cliPathForTarget(windowsPath, place) : windowsPath, place?.kind === 'ssh');
@@ -93,7 +128,7 @@ function removeWorktreeTrustSync(worktreePath: string, place: CliPlace | null): 
   try {
     content = fs.readFileSync(tomlPath, 'utf-8');
   } catch {
-    return;
+    return false;
   }
 
   const lines = content.split('\n');
@@ -133,13 +168,14 @@ function removeWorktreeTrustSync(worktreePath: string, place: CliPlace | null): 
     index = cursor;
   }
 
-  if (!removed) return;
+  if (!removed) return false;
 
   // Full-file rewrite of a config the user owns, so it goes through the same
   // backup + temp-file + rename helper `project-relocation.ts` uses on this
   // exact file. A plain writeFileSync interrupted by a crash or a force-kill
   // would truncate every project's trust, not just the worktree being dropped.
   atomicWriteFileWithBackup(tomlPath, kept.join('\n'), { logTag: '[CODEX_TRUST]' });
+  return true;
 }
 
 function ensureWorktreeTrustSync(workingDirectory: string, place: CliPlace | null): void {
