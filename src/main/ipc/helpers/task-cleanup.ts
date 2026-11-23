@@ -4,7 +4,7 @@ import PQueue from 'p-queue';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { WorktreeManager, prepareWorktreeForRemoval, GitQueuePriority, type WorktreeRemovalCaller, type WorktreeRemovalOptions } from '../../git/worktree-manager';
-import type { LeftoverProcessEntry } from '../../pty/process-tag/tagged-reap';
+import { NOTHING_LEFT_RUNNING, reapVerdictOf, type ReapVerdict } from './reap-verdict';
 import { waitForWorktreeCreation } from '../../git/worktree-creation-registry';
 import { scheduleRemovedWorktreeDeletion } from '../../git/removed-worktrees';
 import { readWorktreeHead } from '../../git/worktree-head';
@@ -133,29 +133,6 @@ export async function reapTaskLeftovers(
   } finally {
     releaseReport();
   }
-}
-
-/** What a reap left running, for the worktree removal that follows it. */
-export interface ReapVerdict {
-  /** Tasks with a process still working inside their worktree after the reap. */
-  tasksLeftRunningInWorktree: ReadonlySet<string>;
-}
-
-/** A reap that named no task: none ran, it failed, or it left nothing in a worktree. */
-export const NOTHING_LEFT_RUNNING: ReapVerdict = { tasksLeftRunningInWorktree: new Set() };
-
-/**
- * The tasks a reap left a process working inside the worktree of. `kept` covers
- * a process kept on purpose (shared, outside, a visible app, tmux) and every
- * process when stopping is off; `failed` is one the reap could not stop. A
- * process left in the project folder outside the worktree holds no worktree.
- */
-export function reapVerdictOf(entries: ReadonlyArray<Pick<LeftoverProcessEntry, 'taskId' | 'outcome' | 'place'>>): ReapVerdict {
-  const tasksLeftRunningInWorktree = new Set<string>();
-  for (const entry of entries) {
-    if (entry.place === 'worktree' && entry.outcome !== 'stopped') tasksLeftRunningInWorktree.add(entry.taskId);
-  }
-  return tasksLeftRunningInWorktree.size === 0 ? NOTHING_LEFT_RUNNING : { tasksLeftRunningInWorktree };
 }
 
 /** How many of a task's newest session records are checked for a conversation in a background session. */

@@ -88,8 +88,9 @@ vi.mock('../../src/main/ipc/task-lifecycle-lock', () => ({
 
 import { retryFailedDoneCleanups } from '../../src/main/transition-engine/resource-cleanup';
 import { GitQueuePriority } from '../../src/main/git/worktree-manager';
+import { NOTHING_LEFT_RUNNING } from '../../src/main/ipc/helpers/reap-verdict';
 
-const FAST_OPTS = { timeoutMs: 3000, removalProfile: 'fast', caller: 'startup_retry' };
+const FAST_OPTS = { timeoutMs: 3000, removalProfile: 'fast', caller: 'startup_retry', reapLeftRunning: false };
 
 interface MockTask {
   id: string;
@@ -146,7 +147,7 @@ describe('retryFailedDoneCleanups', () => {
     });
     mockMoveWorktreeAside.mockResolvedValue(true);
 
-    const result = await retryFailedDoneCleanups(PROJECT_PATH, taskRepo as never, swimlaneRepo as never);
+    const result = await retryFailedDoneCleanups(PROJECT_PATH, taskRepo as never, swimlaneRepo as never, NOTHING_LEFT_RUNNING);
 
     expect(result).toBe(1);
     expect(mockMoveWorktreeAside).toHaveBeenCalledWith(worktreePath, { timeoutMs: 3000 });
@@ -164,7 +165,7 @@ describe('retryFailedDoneCleanups', () => {
     ]);
     const taskRepo = makeTaskRepo({});
 
-    const result = await retryFailedDoneCleanups(PROJECT_PATH, taskRepo as never, swimlaneRepo as never);
+    const result = await retryFailedDoneCleanups(PROJECT_PATH, taskRepo as never, swimlaneRepo as never, NOTHING_LEFT_RUNNING);
 
     expect(result).toBe(0);
     expect(mockRemoveWorktree).not.toHaveBeenCalled();
@@ -180,7 +181,7 @@ describe('retryFailedDoneCleanups', () => {
       ],
     });
 
-    const result = await retryFailedDoneCleanups(PROJECT_PATH, taskRepo as never, swimlaneRepo as never);
+    const result = await retryFailedDoneCleanups(PROJECT_PATH, taskRepo as never, swimlaneRepo as never, NOTHING_LEFT_RUNNING);
 
     expect(result).toBe(0);
     expect(mockRemoveWorktree).not.toHaveBeenCalled();
@@ -197,7 +198,7 @@ describe('retryFailedDoneCleanups', () => {
     });
     mockRemoveWorktree.mockResolvedValue(true);
 
-    const result = await retryFailedDoneCleanups(PROJECT_PATH, taskRepo as never, swimlaneRepo as never);
+    const result = await retryFailedDoneCleanups(PROJECT_PATH, taskRepo as never, swimlaneRepo as never, NOTHING_LEFT_RUNNING);
 
     expect(result).toBe(1);
     expect(mockRemoveWorktree).toHaveBeenCalledWith('/home/dev/my-project/.kangentic/worktrees/stuck-bbbb2222', FAST_OPTS);
@@ -214,7 +215,7 @@ describe('retryFailedDoneCleanups', () => {
       ],
     });
 
-    await retryFailedDoneCleanups(PROJECT_PATH, taskRepo as never, swimlaneRepo as never);
+    await retryFailedDoneCleanups(PROJECT_PATH, taskRepo as never, swimlaneRepo as never, NOTHING_LEFT_RUNNING);
 
     // The git lock is acquired at BACKGROUND priority so a user spawn jumps ahead.
     expect(mockWithLock).toHaveBeenCalledWith(
@@ -228,6 +229,27 @@ describe('retryFailedDoneCleanups', () => {
     );
   });
 
+  it('flags reapLeftRunning only for the task the startup sweep left a process in', async () => {
+    // Sentry DESKTOP-3P on 0.62.0: the startup retry reported an EBUSY the sweep had just
+    // left running, because it never got the sweep's verdict.
+    const swimlaneRepo = makeSwimlaneRepo([
+      { id: 'lane-done', role: 'done', name: 'Done' },
+    ]);
+    const heldPath = '/home/dev/my-project/.kangentic/worktrees/held-dddd4444';
+    const freePath = '/home/dev/my-project/.kangentic/worktrees/free-eeee5555';
+    const taskRepo = makeTaskRepo({
+      'lane-done': [
+        { id: 'dddd4444', title: 'Dev server kept', worktree_path: heldPath },
+        { id: 'eeee5555', title: 'Nothing kept', worktree_path: freePath },
+      ],
+    });
+
+    await retryFailedDoneCleanups(PROJECT_PATH, taskRepo as never, swimlaneRepo as never, { tasksLeftRunningInWorktree: new Set(['dddd4444']) });
+
+    expect(mockRemoveWorktree).toHaveBeenCalledWith(heldPath, { ...FAST_OPTS, reapLeftRunning: true });
+    expect(mockRemoveWorktree).toHaveBeenCalledWith(freePath, FAST_OPTS);
+  });
+
   it('leaves worktree_path set when the retry fails, so the next startup can try again', async () => {
     const swimlaneRepo = makeSwimlaneRepo([
       { id: 'lane-done', role: 'done', name: 'Done' },
@@ -239,7 +261,7 @@ describe('retryFailedDoneCleanups', () => {
     });
     mockRemoveWorktree.mockResolvedValue(false);
 
-    const result = await retryFailedDoneCleanups(PROJECT_PATH, taskRepo as never, swimlaneRepo as never);
+    const result = await retryFailedDoneCleanups(PROJECT_PATH, taskRepo as never, swimlaneRepo as never, NOTHING_LEFT_RUNNING);
 
     expect(result).toBe(0);
     expect(taskRepo.update).not.toHaveBeenCalled();
@@ -267,7 +289,7 @@ describe('retryFailedDoneCleanups', () => {
       worktree_path: null, // already cleared by the concurrent move
     }));
 
-    const result = await retryFailedDoneCleanups(PROJECT_PATH, taskRepo as never, swimlaneRepo as never);
+    const result = await retryFailedDoneCleanups(PROJECT_PATH, taskRepo as never, swimlaneRepo as never, NOTHING_LEFT_RUNNING);
 
     // The concurrent TASK_MOVE already handled this task - we must not remove
     // the worktree or write to the DB again.
@@ -296,7 +318,7 @@ describe('retryFailedDoneCleanups', () => {
     // only path that returns it.
     taskRepo.list.mockReturnValue([]);
 
-    const result = await retryFailedDoneCleanups(PROJECT_PATH, taskRepo as never, swimlaneRepo as never);
+    const result = await retryFailedDoneCleanups(PROJECT_PATH, taskRepo as never, swimlaneRepo as never, NOTHING_LEFT_RUNNING);
 
     expect(taskRepo.listAllInSwimlane).toHaveBeenCalledWith('lane-done');
     expect(taskRepo.list).not.toHaveBeenCalled();
@@ -318,7 +340,7 @@ describe('retryFailedDoneCleanups', () => {
     });
     mockRemoveWorktree.mockImplementation(async (path: string) => !path.includes('stuck'));
 
-    const result = await retryFailedDoneCleanups(PROJECT_PATH, taskRepo as never, swimlaneRepo as never);
+    const result = await retryFailedDoneCleanups(PROJECT_PATH, taskRepo as never, swimlaneRepo as never, NOTHING_LEFT_RUNNING);
 
     expect(result).toBe(2);
     expect(taskRepo.update).toHaveBeenCalledTimes(2);
@@ -368,7 +390,7 @@ describe('retryFailedDoneCleanups', () => {
 
     // The pass itself must resolve, never reject, no matter which task throws.
     await expect(
-      retryFailedDoneCleanups(PROJECT_PATH, taskRepo as never, swimlaneRepo as never),
+      retryFailedDoneCleanups(PROJECT_PATH, taskRepo as never, swimlaneRepo as never, NOTHING_LEFT_RUNNING),
     ).resolves.toBe(2);
 
     // Both tasks AFTER the thrower in iteration order were still cleaned.

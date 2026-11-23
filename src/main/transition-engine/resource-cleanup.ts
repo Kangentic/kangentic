@@ -17,6 +17,7 @@ import { isSpareWorktreeFolder } from '../git/spare-worktree';
 import { readLocalBranchSha } from '../git/worktree-head';
 import { holdsPRIdentity } from '../pr/pr-identity';
 import { withTaskLock } from '../ipc/task-lifecycle-lock';
+import { NOTHING_LEFT_RUNNING, reapVerdictOf, type ReapVerdict } from '../ipc/helpers/reap-verdict';
 import { workflowKeepsRuns, type AutomationRunRepository } from '../db/repositories/automation-run-repository';
 import { WorkflowRepository } from '../db/repositories/workflow-repository';
 import { getExistingProjectDb } from '../db/database';
@@ -109,10 +110,11 @@ export async function cleanupStaleResourcesAsync(
 ): Promise<void> {
   const { projectPath } = ownership;
   // First: a leftover process holding a worktree as its cwd is what makes the
-  // removals in the next two passes fail on Windows.
-  await sweepTerminalTaskLeftovers(projectPath, taskRepo, swimlaneRepo, sessionManager, leftovers);
+  // removals in the next two passes fail on Windows. What it left running in a
+  // worktree is what the Done retry below would fail on, and the user was told.
+  const leftRunning = await sweepTerminalTaskLeftovers(projectPath, taskRepo, swimlaneRepo, sessionManager, leftovers);
   await cleanBacklogTaskResources(projectPath, taskRepo, taskMoveRepo, swimlaneRepo, sessionRepo, sessionManager);
-  await retryFailedDoneCleanups(projectPath, taskRepo, swimlaneRepo);
+  await retryFailedDoneCleanups(projectPath, taskRepo, swimlaneRepo, leftRunning);
   // Worktrees a Done move set aside and a quit left undeleted, plus any the
   // retry above just moved. In the background: it waits while init scripts run.
   scheduleRemovedWorktreeDeletion(projectPath);
@@ -123,12 +125,15 @@ export async function cleanupStaleResourcesAsync(
 }
 
 /**
- * Projects whose terminal tasks were swept this app launch. The sweep runs from
- * `cleanupStaleResourcesAsync`, which also runs on every plain project switch,
- * and a scan reads every same-user process's environment: once per launch is
- * what the sweep is for.
+ * Projects whose terminal tasks were swept this app launch, with what each
+ * sweep left running. The sweep runs from `cleanupStaleResourcesAsync`, which
+ * also runs on every plain project switch, and a scan reads every same-user
+ * process's environment: once per launch is what the sweep is for. A later
+ * open gets the first sweep's verdict, so its Done retry counts the same held
+ * folder instead of reporting it. The entry is the sweep's promise, so an open
+ * that arrives while the first sweep still reaps waits for its verdict.
  */
-const sweptProjectPaths = new Set<string>();
+const sweptProjectVerdicts = new Map<string, Promise<ReapVerdict>>();
 
 /**
  * Kill anything still running for a task that already reached a terminal state
@@ -153,20 +158,46 @@ const sweptProjectPaths = new Set<string>();
  * drag of them for as long as the reap took, which a slow host and a wedged
  * `wsl.exe` can stretch to 35 s, plus up to 3 s for a PTY still parked on its
  * exit grace.
+ *
+ * Resolves with its verdict (`reapVerdictOf`): the tasks it left a process
+ * working inside the worktree of. The Done retry right after it passes that on
+ * as `reapLeftRunning`, as every terminal transition does (Sentry DESKTOP-3P).
+ * A sweep that did not scan (stopping off) or failed names no task: nothing is
+ * known, so a failed retry still reports.
  */
-export async function sweepTerminalTaskLeftovers(
+export function sweepTerminalTaskLeftovers(
   projectPath: string,
   taskRepo: TaskRepository,
   swimlaneRepo: SwimlaneRepository,
   sessionManager: Pick<SessionManager, 'reapTaskProcesses'>,
   leftovers: LeftoverSweepOptions,
-): Promise<void> {
-  if (sweptProjectPaths.has(projectPath)) return;
+): Promise<ReapVerdict> {
+  const sweptVerdict = sweptProjectVerdicts.get(projectPath);
+  if (sweptVerdict) return sweptVerdict;
   // With stopping off the sweep would kill nothing and report nothing (below),
   // so it skips the scan, which reads every same-user process's environment.
   // Not latched: a later open this launch sweeps if the user turns it on.
-  if (!leftovers.stoppingEnabled()) return;
-  sweptProjectPaths.add(projectPath);
+  if (!leftovers.stoppingEnabled()) return Promise.resolve(NOTHING_LEFT_RUNNING);
+  // The release runs in a `.then`, after the `set` below, so a sweep that
+  // throws before its first await cannot leave its failure latched.
+  const sweep = runTerminalTaskSweep(projectPath, taskRepo, swimlaneRepo, sessionManager, leftovers).then((verdict) => {
+    if (verdict) return verdict;
+    // Let a later open this launch try again.
+    sweptProjectVerdicts.delete(projectPath);
+    return NOTHING_LEFT_RUNNING;
+  });
+  sweptProjectVerdicts.set(projectPath, sweep);
+  return sweep;
+}
+
+/** The sweep itself. Resolves with its verdict, or null when it failed. */
+async function runTerminalTaskSweep(
+  projectPath: string,
+  taskRepo: TaskRepository,
+  swimlaneRepo: SwimlaneRepository,
+  sessionManager: Pick<SessionManager, 'reapTaskProcesses'>,
+  leftovers: LeftoverSweepOptions,
+): Promise<ReapVerdict | null> {
   try {
     const terminalTasks = new Map<string, { worktreePath: string | null; title: string }>();
     for (const task of taskRepo.listArchived()) terminalTasks.set(task.id, { worktreePath: task.worktree_path, title: task.title });
@@ -174,7 +205,7 @@ export async function sweepTerminalTaskLeftovers(
       if (lane.role !== 'todo') continue;
       for (const task of taskRepo.list(lane.id)) terminalTasks.set(task.id, { worktreePath: task.worktree_path, title: task.title });
     }
-    if (terminalTasks.size === 0) return;
+    if (terminalTasks.size === 0) return NOTHING_LEFT_RUNNING;
     // Only what this sweep did. A process it left running (a window, a tmux
     // server) was reported when its task ended and is still there at every
     // launch; naming it again would put the same toast up on every start.
@@ -191,10 +222,10 @@ export async function sweepTerminalTaskLeftovers(
       { stop: true, onLateEntries: reportActed, wslDistros: leftovers.wslDistrosOf?.([...terminalTasks.keys()]) ?? [] },
     );
     reportActed(entries);
+    return reapVerdictOf(entries);
   } catch (error) {
-    // Let a later open this launch try again.
-    sweptProjectPaths.delete(projectPath);
     console.warn('[TASK-REAP] Startup sweep failed (non-fatal):', error);
+    return null;
   }
 }
 
@@ -209,7 +240,7 @@ export interface LeftoverSweepOptions {
 
 /** Forget which projects were swept. Tests only. */
 export function _resetTerminalTaskSweepForTests(): void {
-  sweptProjectPaths.clear();
+  sweptProjectVerdicts.clear();
 }
 
 /**
@@ -483,11 +514,18 @@ async function cleanBacklogTaskResources(
  * Wraps each task's cleanup in `withTaskLock` so a concurrent TASK_MOVE on
  * the same task (user drags it out of Done right as we start retrying)
  * cannot race with the removal + DB clear.
+ *
+ * `leftRunning` is the startup sweep's verdict, required so `tsc` names every
+ * caller. A process the sweep left working in a task's worktree holds the
+ * folder on Windows and keeps holding it at every launch; the user was told
+ * when the task ended. So that removal's failure is counted and not reported,
+ * as at every terminal transition (Sentry DESKTOP-3P).
  */
 export async function retryFailedDoneCleanups(
   projectPath: string,
   taskRepo: TaskRepository,
   swimlaneRepo: SwimlaneRepository,
+  leftRunning: ReapVerdict,
 ): Promise<number> {
   const doneLane = swimlaneRepo.list().find((lane) => lane.role === 'done');
   if (!doneLane) return 0;
@@ -533,7 +571,12 @@ export async function retryFailedDoneCleanups(
           async () => {
             const movedAside = await worktreeManager.moveWorktreeAside(current.worktree_path!, { timeoutMs: 3000 });
             if (movedAside) return true;
-            return worktreeManager.removeWorktree(current.worktree_path!, { timeoutMs: 3000, removalProfile: 'fast', caller: 'startup_retry' });
+            return worktreeManager.removeWorktree(current.worktree_path!, {
+              timeoutMs: 3000,
+              removalProfile: 'fast',
+              caller: 'startup_retry',
+              reapLeftRunning: leftRunning.tasksLeftRunningInWorktree.has(task.id),
+            });
           },
           { priority: GitQueuePriority.BACKGROUND, label: `retry-remove-worktree:${task.id.slice(0, 8)}` },
         );

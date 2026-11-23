@@ -38,8 +38,11 @@ interface FakeStderrTail {
   text: string;
   /** What `whenDrained` hands back: null while nothing is still arriving. */
   drain: Promise<void> | null;
+  /** Watchdog lines a trim took out of `text`, so a test can stand for one. */
+  droppedWatchdogLines: number;
   snapshot(): string;
   watchdogLineCount(): number;
+  watchdogLinesSeen(): number;
   whenDrained(timeoutMs: number): Promise<void> | null;
 }
 
@@ -66,6 +69,7 @@ vi.mock('../../src/main/utility-process/stderr-tail', async (importOriginal) => 
     StderrTail: class implements FakeStderrTail {
       text = '';
       drain: Promise<void> | null = null;
+      droppedWatchdogLines = 0;
       constructor() {
         stderrTails.push(this);
       }
@@ -74,6 +78,9 @@ vi.mock('../../src/main/utility-process/stderr-tail', async (importOriginal) => 
       }
       watchdogLineCount(): number {
         return actual.watchdogLineCount(this.text);
+      }
+      watchdogLinesSeen(): number {
+        return this.droppedWatchdogLines + actual.watchdogLineCount(this.text);
       }
       whenDrained(): Promise<void> | null {
         return this.drain;
@@ -88,7 +95,8 @@ vi.mock('../../src/main/analytics/analytics', () => ({ trackEvent: vi.fn() }));
 vi.mock('../../src/main/analytics/error-reporting', () => ({ reportHandledError: vi.fn() }));
 vi.mock('../../src/main/diagnostics/event-loop-lag', () => ({ recordRelayedSyncSpan: vi.fn() }));
 
-import { UtilityPtyHostTransport, ptyHostEntryPath, ptyHostSpawnWorkerPath } from '../../src/main/pty/host/utility-pty-host-transport';
+import { WATCHDOG_CHECK_INTERVAL_MS, WATCHDOG_HELD_CHECKS } from '../../src/main/utility-process/event-loop-watchdog';
+import { HEARTBEAT_LATE_TIMER_MS, LATE_BEAT_SETTLE_MS, UtilityPtyHostTransport, ptyHostEntryPath, ptyHostSpawnWorkerPath } from '../../src/main/pty/host/utility-pty-host-transport';
 import { reportHandledError } from '../../src/main/analytics/error-reporting';
 import type { PtyHostTransport } from '../../src/main/pty/host/pty-host-client';
 import type { MessagePortMain } from 'electron';
@@ -426,6 +434,17 @@ describe('UtilityPtyHostTransport', () => {
       return { transport, child, pingId: lastRequestId(child) };
     }
 
+    /**
+     * Sleeps past the ping's send (fake t=5 s), then lets the 11 s threshold timer fire
+     * `lateMs` late. Date.now at the fire is start + 11 s + lateMs, so timerLateMs is lateMs.
+     * The ping's own 15 s timeout (fake t=20 s) has not fired yet when this returns.
+     */
+    async function thresholdTimerFiresLate(lateMs: number): Promise<void> {
+      await vi.advanceTimersByTimeAsync(5_000);
+      vi.setSystemTime(Date.now() + lateMs);
+      await vi.advanceTimersByTimeAsync(6_000);
+    }
+
     it('says how late a host that came back answered, with its stderr and the step that held it', async () => {
       const { transport, child, pingId } = await hostWithPingSent();
       // A spawn waiting behind the stall is named; the ping itself is not.
@@ -555,17 +574,6 @@ describe('UtilityPtyHostTransport', () => {
         expect(reports[0].contexts.pty_host).toMatchObject({ neverAnswered: true, timerLateMs: 0 });
       });
 
-      /**
-       * Sleeps past the ping's send (fake t=5 s), then lets the 11 s threshold timer fire
-       * `lateMs` late. Date.now at the fire is start + 11 s + lateMs, so timerLateMs is lateMs.
-       * The ping's own 15 s timeout (fake t=20 s) has not fired yet when this returns.
-       */
-      async function thresholdTimerFiresLate(lateMs: number): Promise<void> {
-        await vi.advanceTimersByTimeAsync(5_000);
-        vi.setSystemTime(Date.now() + lateMs);
-        await vi.advanceTimersByTimeAsync(6_000);
-      }
-
       it('reports and warns of nothing when a voided beat\'s ping is answered after the wake, and says it was not measured', async () => {
         // The ping's .then would otherwise report an "answered" stall for a beat that only slept.
         const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined);
@@ -606,11 +614,14 @@ describe('UtilityPtyHostTransport', () => {
       it('voids a beat whose threshold timer is late by more than 60 s and still reports one late by less', async () => {
         // HEARTBEAT_UNMEASURED_LATE_MS is 4 * the 15 s request timeout = 60 s. timerLateMs is
         // Date.now() - start - 11 s, so a clock jump of J ms during the beat makes it J ms late.
+        // Both beats carry a watchdog line, so the 61 s void stands on its own and is not the
+        // late-timer rule below (a late beat with no line is voided whatever its lateness).
         vi.spyOn(console, 'info').mockImplementation(() => undefined);
         const over = await hostWithPingSent();
         await thresholdTimerFiresLate(61_000);
+        watchdogWritesDuringStall();
         reply(over.child, over.pingId, null);
-        await vi.advanceTimersByTimeAsync(0);
+        await vi.advanceTimersByTimeAsync(LATE_BEAT_SETTLE_MS);
         expect(stallReports(), '61 s late is voided').toHaveLength(0);
         over.transport.shutdown();
 
@@ -618,13 +629,250 @@ describe('UtilityPtyHostTransport', () => {
         resetPtyHostReports();
         const under = await hostWithPingSent();
         await thresholdTimerFiresLate(59_000);
+        watchdogWritesDuringStall();
         reply(under.child, under.pingId, null);
-        await vi.advanceTimersByTimeAsync(0);
+        await vi.advanceTimersByTimeAsync(LATE_BEAT_SETTLE_MS);
 
         const reports = stallReports();
         expect(reports, '59 s late is still measured').toHaveLength(1);
         expect(reports[0].tags.outcome).toBe('answered');
         expect(reports[0].contexts.pty_host).toMatchObject({ timerLateMs: 59_000 });
+      });
+    });
+
+    // DESKTOP-43 on 0.62.0: the threshold timer fired 18.7 s late, under the 60 s void, and the
+    // host's watchdog (which prints at 5 s of a held loop) wrote nothing. Main's own loop was held,
+    // so its overdue timers ran before the host's answer was read. That beat measured main.
+    describe('a beat whose threshold timer fired late on main', () => {
+      const DESKTOP_43_LATE_MS = 18_658;
+
+      it('reports nothing when the host wrote no watchdog line during the beat', async () => {
+        const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+        await hostWithPingSent();
+        await thresholdTimerFiresLate(DESKTOP_43_LATE_MS);
+        // The ping's own 15 s timeout fires, then the settle passes.
+        await vi.advanceTimersByTimeAsync(4_000 + LATE_BEAT_SETTLE_MS);
+
+        expect(stallReports()).toHaveLength(0);
+        expect(infoSpy).toHaveBeenCalledWith(expect.stringMatching(/fired 19 s late with no hold in the host/));
+      });
+
+      it('reports a host the watchdog says was held too', async () => {
+        await hostWithPingSent();
+        await thresholdTimerFiresLate(DESKTOP_43_LATE_MS);
+        watchdogWritesDuringStall();
+        await vi.advanceTimersByTimeAsync(4_000 + LATE_BEAT_SETTLE_MS);
+
+        const reports = stallReports();
+        expect(reports).toHaveLength(1);
+        expect(reports[0].tags.outcome).toBe('no_answer');
+        expect(reports[0].contexts.pty_host).toMatchObject({ timerLateMs: DESKTOP_43_LATE_MS, heldStep: WATCHDOG_LINE });
+      });
+
+      it('reads a watchdog line that arrives after the overdue timers ran', async () => {
+        // Main resumes: its overdue threshold timer and the ping's timeout run before libuv reads
+        // the host's pending stderr. Deciding at the timeout would miss the line.
+        await hostWithPingSent();
+        await thresholdTimerFiresLate(DESKTOP_43_LATE_MS);
+        await vi.advanceTimersByTimeAsync(4_000);
+        expect(stallReports(), 'the decision waits for the settle').toHaveLength(0);
+        watchdogWritesDuringStall();
+        await vi.advanceTimersByTimeAsync(LATE_BEAT_SETTLE_MS);
+
+        const reports = stallReports();
+        expect(reports).toHaveLength(1);
+        expect(reports[0].contexts.pty_host).toMatchObject({ heldStep: WATCHDOG_LINE });
+      });
+
+      it('records nothing at quit for a late beat with no watchdog line', async () => {
+        const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'pty-host-late-at-quit-'));
+        try {
+          const stallAtQuitFilePath = path.join(directory, 'pty-host-stall-at-quit.json');
+          const { transport, child } = await hostWithPingSent(stallAtQuitFilePath);
+          await thresholdTimerFiresLate(DESKTOP_43_LATE_MS);
+
+          transport.shutdown();
+          child.emit('exit', 0);
+          await vi.advanceTimersByTimeAsync(LATE_BEAT_SETTLE_MS);
+
+          expect(fs.existsSync(stallAtQuitFilePath)).toBe(false);
+          expect(stallReports()).toHaveLength(0);
+        } finally {
+          fs.rmSync(directory, { recursive: true, force: true });
+        }
+      });
+
+      /** A host whose tail already holds a watchdog line when the beat is sent. */
+      async function hostWithOldWatchdogLine(): Promise<{ child: FakeChild }> {
+        const { transport } = makeTransport();
+        transport.start();
+        const child = latestChild();
+        stderrTails[stderrTails.length - 1].text = HOST_STDERR;
+        child.emit('message', { type: 'ready' });
+        await vi.advanceTimersByTimeAsync(5_000);
+        return { child };
+      }
+
+      it('parity: the late-timer threshold is the watchdog\'s own hold threshold, which main cannot import', () => {
+        expect(HEARTBEAT_LATE_TIMER_MS).toBe(WATCHDOG_CHECK_INTERVAL_MS * WATCHDOG_HELD_CHECKS);
+      });
+
+      describe('a host that exited', () => {
+        async function lateBeatWithHeldDrain(): Promise<{ dyingTail: FakeStderrTail; finishDrain: () => void }> {
+          const { child } = await hostWithPingSent();
+          await thresholdTimerFiresLate(DESKTOP_43_LATE_MS);
+          let finishDrain = (): void => undefined;
+          const dyingTail = stderrTails[stderrTails.length - 1];
+          dyingTail.drain = new Promise<void>((resolve) => {
+            finishDrain = resolve;
+          });
+          child.emit('exit', 1);
+          await vi.advanceTimersByTimeAsync(0);
+          return { dyingTail, finishDrain };
+        }
+
+        it('reports nothing, before or after the pipe drains, when the host wrote no watchdog line', async () => {
+          const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+          const { finishDrain } = await lateBeatWithHeldDrain();
+          await vi.advanceTimersByTimeAsync(LATE_BEAT_SETTLE_MS);
+          expect(stallReports(), 'waiting on the drain').toHaveLength(0);
+
+          finishDrain();
+          await vi.advanceTimersByTimeAsync(0);
+
+          expect(stallReports()).toHaveLength(0);
+          expect(infoSpy).toHaveBeenCalledWith(expect.stringMatching(/fired 19 s late with no hold in the host/));
+        });
+
+        it('waits for the drain, not the settle, and reports once a watchdog line landed during it', async () => {
+          const { dyingTail, finishDrain } = await lateBeatWithHeldDrain();
+          dyingTail.text = HOST_STDERR;
+          await vi.advanceTimersByTimeAsync(LATE_BEAT_SETTLE_MS);
+          expect(stallReports(), 'the settle alone does not decide it').toHaveLength(0);
+
+          finishDrain();
+          await vi.advanceTimersByTimeAsync(0);
+
+          const reports = stallReports();
+          expect(reports).toHaveLength(1);
+          expect(reports[0].tags.outcome).toBe('host_exited');
+          expect(reports[0].contexts.pty_host).toMatchObject({ heldStep: WATCHDOG_LINE });
+        });
+      });
+
+      describe('a quit during the settle', () => {
+        let directory: string;
+        let stallAtQuitFilePath: string;
+
+        beforeEach(() => {
+          directory = fs.mkdtempSync(path.join(os.tmpdir(), 'pty-host-settle-quit-'));
+          stallAtQuitFilePath = path.join(directory, 'pty-host-stall-at-quit.json');
+        });
+
+        afterEach(() => {
+          fs.rmSync(directory, { recursive: true, force: true });
+        });
+
+        it('records the stall with its own outcome for the next launch and sends nothing, when the host held', async () => {
+          const { transport } = await hostWithPingSent(stallAtQuitFilePath);
+          await thresholdTimerFiresLate(DESKTOP_43_LATE_MS);
+          watchdogWritesDuringStall();
+          // The ping's own timeout ends the beat, which then waits out its settle.
+          await vi.advanceTimersByTimeAsync(4_000);
+          expect(stallReports(), 'still settling').toHaveLength(0);
+
+          transport.shutdown();
+          await vi.advanceTimersByTimeAsync(LATE_BEAT_SETTLE_MS);
+
+          expect(stallReports()).toHaveLength(0);
+          expect(JSON.parse(fs.readFileSync(stallAtQuitFilePath, 'utf8'))).toMatchObject({ outcome: 'no_answer' });
+        });
+
+        it('records nothing when the host wrote no watchdog line', async () => {
+          vi.spyOn(console, 'info').mockImplementation(() => undefined);
+          const { transport } = await hostWithPingSent(stallAtQuitFilePath);
+          await thresholdTimerFiresLate(DESKTOP_43_LATE_MS);
+          await vi.advanceTimersByTimeAsync(4_000);
+
+          transport.shutdown();
+          await vi.advanceTimersByTimeAsync(LATE_BEAT_SETTLE_MS);
+
+          expect(stallReports()).toHaveLength(0);
+          expect(fs.existsSync(stallAtQuitFilePath)).toBe(false);
+        });
+      });
+
+      describe('a watchdog line from before the beat', () => {
+        it('does not count as a hold during it', async () => {
+          const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+          await hostWithOldWatchdogLine();
+          await thresholdTimerFiresLate(DESKTOP_43_LATE_MS);
+          await vi.advanceTimersByTimeAsync(4_000 + LATE_BEAT_SETTLE_MS);
+
+          expect(stallReports()).toHaveLength(0);
+          expect(infoSpy).toHaveBeenCalledWith(expect.stringMatching(/no hold in the host/));
+        });
+
+        it('still reports when a second line arrives during the beat', async () => {
+          await hostWithOldWatchdogLine();
+          await thresholdTimerFiresLate(DESKTOP_43_LATE_MS);
+          stderrTails[stderrTails.length - 1].text = `${HOST_STDERR}\n${WATCHDOG_LINE}`;
+          await vi.advanceTimersByTimeAsync(4_000 + LATE_BEAT_SETTLE_MS);
+
+          expect(stallReports()).toHaveLength(1);
+        });
+
+        it('still reports when the new line landed as a trim dropped the old one', async () => {
+          // The retained count stays 1, so only the never-decreasing count sees the new line.
+          await hostWithOldWatchdogLine();
+          await thresholdTimerFiresLate(DESKTOP_43_LATE_MS);
+          const tail = stderrTails[stderrTails.length - 1];
+          tail.text = WATCHDOG_LINE;
+          tail.droppedWatchdogLines = 1;
+          await vi.advanceTimersByTimeAsync(4_000 + LATE_BEAT_SETTLE_MS);
+
+          expect(stallReports()).toHaveLength(1);
+        });
+      });
+
+      describe('the late-timer boundary', () => {
+        it('still reports a beat late by exactly HEARTBEAT_LATE_TIMER_MS with no watchdog line', async () => {
+          await hostWithPingSent();
+          await thresholdTimerFiresLate(HEARTBEAT_LATE_TIMER_MS);
+          await vi.advanceTimersByTimeAsync(4_000 + LATE_BEAT_SETTLE_MS);
+
+          expect(stallReports()).toHaveLength(1);
+        });
+
+        it('voids a beat late by one ms more with no watchdog line', async () => {
+          vi.spyOn(console, 'info').mockImplementation(() => undefined);
+          await hostWithPingSent();
+          await thresholdTimerFiresLate(HEARTBEAT_LATE_TIMER_MS + 1);
+          await vi.advanceTimersByTimeAsync(4_000 + LATE_BEAT_SETTLE_MS);
+
+          expect(stallReports()).toHaveLength(0);
+        });
+      });
+
+      it('reports nothing for a late beat the host answered with no watchdog line, and says so', async () => {
+        const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+        const { child, pingId } = await hostWithPingSent();
+        await thresholdTimerFiresLate(8_000);
+        reply(child, pingId, null);
+        await vi.advanceTimersByTimeAsync(LATE_BEAT_SETTLE_MS);
+
+        expect(stallReports()).toHaveLength(0);
+        expect(infoSpy).toHaveBeenCalledWith(expect.stringMatching(/fired 8 s late with no hold in the host/));
+      });
+
+      it('still reports an on-time beat the host never answered, with no watchdog line', async () => {
+        await hostWithPingSent();
+        await vi.advanceTimersByTimeAsync(16_000);
+
+        const reports = stallReports();
+        expect(reports).toHaveLength(1);
+        expect(reports[0].tags.outcome).toBe('no_answer');
+        expect(reports[0].contexts.pty_host).toMatchObject({ timerLateMs: 0, heldStep: null });
       });
     });
 
