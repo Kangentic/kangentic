@@ -62,7 +62,7 @@ codex resume <sessionId> -C <cwd> --sandbox <level> --ask-for-approval <level> [
 
 `codex resume --help` lists `[PROMPT]`, "Optional user prompt to start the session", so a resume's message (a column's message, a plan continuation, held messages) rides it as the positional argument, as on a new session (`resumePromptDelivery: 'command-line'`). The builder used to drop it, and a column's message never reached a resumed Codex session. See [How the resume prompt arrives](../../architecture/sessions/resume.md#how-the-resume-prompt-arrives).
 
-The hook overrides appear only when Codex confirmed their trust for this binary (see [Hook Integration](#hook-integration)).
+The hook overrides appear only when Codex confirmed their trust for this binary (see [Hook Integration](#hook-integration)). A launch registers the set the trust read confirmed, passed as `codexHookSet` (from `hookSetFor`, or `hookSetForHost` over SSH): the base seven until Codex confirms the ten of the extended set, which adds SubagentStart, SubagentStop and SessionEnd. The command builder treats a missing value as the base set.
 
 `check_for_update_on_startup=false` keeps Codex's "Update available" prompt out of a Kangentic session. It is a modal at TUI startup whose first option is "Update now", so an `auto_command` typed into a session showing it, or any Enter meant for the agent, updates Codex and ends the session (a probe's Enter did exactly that, 0.154.0 to 0.163.0, in task #859). The key is Codex's own (`config_toml.rs`), it applies to that process only, and the user's own terminal still offers updates.
 
@@ -120,7 +120,7 @@ Codex runs under a shell that outlives it, so one that exits at launch is found 
 
 It does not name the home `config.toml` (Kangentic writes trust tables into it and passes `-c` overrides, so a refusal of those may be ours), a bare `Not logged in` (a working session prints it), or a `401` on a request (the first request after a fresh API key login answered one and the next worked). The fixtures are the PTY bytes of the first two runs.
 
-A session whose launch already reported a failure sends no missed-session-id report, however late the sweep ended its shell. For a shell the sweep retired, the agent's end is the shell's last output (`ManagedSession.lastOutputAt`), not the sweep's kill, which for a launch with no sign it ran comes at the 120 s start ceiling. See [Agent absence sweep](../../architecture/sessions/agent-absence-sweep.md).
+A session whose launch already reported a failure, and that never got an id, sends no missed-session-id report however late the sweep ended its shell, unless an id store holds a conversation. For a shell the sweep retired, the agent's end is the shell's last output (`ManagedSession.lastOutputAt`), not the sweep's kill, which for a launch with no sign it ran comes at the 120 s start ceiling. See [Agent absence sweep](../../architecture/sessions/agent-absence-sweep.md).
 
 ## Launch Options
 

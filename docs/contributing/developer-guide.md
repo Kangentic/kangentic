@@ -501,8 +501,8 @@ npx playwright test --project=electron
   `CLAUDE_CONFIG_DIR` and `KIMI_CODE_HOME` under its data dir (`codexHomeForDataDir`,
   `claudeHomeForDataDir`), and the mock CLIs write there. Before, a local run left a trust entry in
   the developer's real `~/.codex/config.toml` and `~/.claude.json` for every test folder, and
-  planted rollouts in their Codex history. A spec plants an agent's files through those helpers,
-  never `os.homedir()`. A spec that tests Claude accounts passes its own `CLAUDE_CONFIG_DIR`.
+  planted rollouts in their Codex history. A spec plants a Codex, Claude or Kimi file through those
+  helpers, never `os.homedir()`. A spec that tests Claude accounts passes its own `CLAUDE_CONFIG_DIR`.
   `command-terminal-restart.spec.ts` is the one spec on the developer's Claude home: on a fresh one,
   Claude's model-picker probe held its relaunch past the restore waits. Each run still adds one
   `.claude.json` entry for its project folder there.
