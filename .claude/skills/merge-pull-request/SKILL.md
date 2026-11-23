@@ -283,7 +283,7 @@ divergence loudly rather than letting it compound.
 
 1. Record where it stands, `git -C <projectRoot> rev-parse HEAD` (call it `<oldHead>`), then
    fast-forward it: `git -C <projectRoot> pull --ff-only`. If this succeeds, run
-   `git -C <projectRoot> diff --name-only <oldHead> HEAD -- src/main src/preload src/shared src/devtools packages/protocol/src scripts`
+   `git -C <projectRoot> diff --name-only <oldHead> HEAD -- src/main src/preload src/shared src/devtools packages/protocol/src scripts package-lock.json`
    and note what it listed, then go to Step 5. Never restart the app from this skill: a restart
    suspends every running agent, this one included.
 2. **If it fails, do NOT just log a soft warning - that is how divergence compounds.** A
@@ -320,11 +320,16 @@ Summarize:
   worktree branch (`<branch>`, a different name) realigned to the merged base. The move to Done
   later removes the worktree and keeps that branch.
 - Local `main` checkout status (fast-forwarded for HMR, or the divergence you surfaced).
-- Only when Step 4's diff listed files, one line. A file outside `scripts/`: main-process code
-  changed, which HMR cannot load; the dogfood window may offer a restart ("Main process changed"),
-  as it does whenever the built main, preload or worker bundle differs. `scripts/dev.js`, or a
-  `scripts/` module it `require`s: the dev server itself changed, which an in-app restart does not
-  reload, so `npm start` needs a stop and start. Any other `scripts/` file needs no line.
+- Only when Step 4's diff listed files, one line. A file outside `scripts/` other than
+  `package-lock.json`: main-process code changed, which HMR cannot load; the dogfood window may
+  offer a restart ("Main process changed"), as it does whenever the built main, preload or worker
+  bundle differs. `scripts/dev.js`, or a `scripts/` module it `require`s: the dev server itself
+  changed, which an in-app restart does not reload, so `npm start` needs a stop and start. Any other `scripts/` file needs no line.
+- Only when Step 4's diff listed `package-lock.json`, one line: the main checkout's `node_modules`
+  is behind the lockfile and needs `npm install` in `<projectRoot>`, which updates `node_modules`
+  in place where `npm ci` deletes it first, under every preview worktree linked to it. A running
+  `npm start` must stop first and start again after. Never run the install from this skill, for
+  the same reason it never restarts the app.
 - Only for a run outside the Merge column, a reminder to move the task to Done, which removes the
   local worktree. Step 0 noted the task's column. A column other than Merge, or no task at all, is
   outside it. In the Merge column, leave the reminder out: the line below moves the task.
