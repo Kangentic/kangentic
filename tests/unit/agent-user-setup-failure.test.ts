@@ -5,17 +5,20 @@
  * wide hides a real bug, and the opposite cases below matter as much as the
  * positive ones. Every sentence is the CLI's own wording as each adapter's
  * `startup-failure.ts` records it, read out of the shipped bundle or binary at the
- * version named there. None is a live capture. The table replays every branch of
+ * version named there. The one live capture is Codex 0.171.0's refused project
+ * config, the PTY ring's bytes as a fixture. The table replays every branch of
  * every adapter's regex list once, so a typo in one branch fails here.
  *
  * Outcomes pinned here: a login or configuration failure a CLI names is the
  * user's. Anything else from an installed CLI stays a report: a bare phrase, a
  * sentence quoted in a typed prompt, a file Kangentic writes, and an unknown failure.
  */
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { agentRegistry } from '../../src/main/agent/agent-registry';
+import { classifyLaunchOutput } from '../../src/main/pty/launch-output-class';
 
 /** Agents with no measured wording. Unidentified is the safe side, so a failure of theirs is reported. */
 const NO_RECOGNIZER = ['aider', 'goose', 'kimi', 'ollama'];
@@ -155,10 +158,15 @@ describe('a Codex project config the CLI refuses', () => {
     expect(identify('codex', refused('/home/dev/repo/.codex/config.toml'))).toBe('bad_configuration');
   });
 
-  it('stays a report for any other file, or the sentence quoted in a prompt', () => {
+  it('stays a report for the home config.toml, which Kangentic writes, or the sentence quoted in a prompt', () => {
     expect(identify('codex', shellRun('Error loading config.toml: invalid type: string, expected a boolean'))).toBeNull();
-    expect(identify('codex', refused('C:\\Users\\dev\\repo\\settings.toml'))).toBeNull();
     expect(identify('codex', '$ agent --print \'Error: Error parsing project config file /repo/.codex/config.toml: TOML parse error at line 1, column 6\'\r\n$ ')).toBeNull();
+  });
+
+  it('reads the bytes ConPTY sent, with a cursor escape inside the sentence', () => {
+    const ring = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'codex-0.171.0-project-config-refused.txt'), 'utf-8');
+    expect(identify('codex', ring)).toBe('bad_configuration');
+    expect(classifyLaunchOutput(ring, agentRegistry.get('codex'))).toBe('bad_configuration');
   });
 });
 

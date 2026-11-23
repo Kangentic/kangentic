@@ -1382,6 +1382,22 @@ describe('the session id capture reports', () => {
       expect(reportHandledError).not.toHaveBeenCalled();
     });
 
+    // Measured on Codex 0.171.0 (task #1182): a project config it refused ended it
+    // 6 s in under PowerShell, and the sweep retired the shell at its 120 s start
+    // ceiling, so the PTY's exit landed 116 s after the agent ran, past the
+    // minute above. Its launch report had already named the failure.
+    it('sends no capture report for a launch that already reported, however late the sweep ended it', async () => {
+      await settleAtCeiling({
+        agentCliVersion: '0.171.0 (Codex CLI)',
+        agentRanAt: STARTED_AT_MS + 6_000,
+        exitedAt: STARTED_AT_MS + 122_000,
+        intentionalExit: true,
+        overrideExitCode: 0,
+        launchFailureNoted: true,
+      });
+      expect(reportHandledError).not.toHaveBeenCalled();
+    });
+
     it('marks the session reported, so no later launch report for it goes', async () => {
       const diedAtStart = await settleAtCeiling();
       expect(diedAtStart.launchFailureNoted).toBe(true);

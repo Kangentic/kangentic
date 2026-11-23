@@ -503,6 +503,9 @@ npx playwright test --project=electron
   the developer's real `~/.codex/config.toml` and `~/.claude.json` for every test folder, and
   planted rollouts in their Codex history. A spec plants an agent's files through those helpers,
   never `os.homedir()`. A spec that tests Claude accounts passes its own `CLAUDE_CONFIG_DIR`.
+  `command-terminal-restart.spec.ts` is the one spec on the developer's Claude home: on a fresh one,
+  Claude's model-picker probe held its relaunch past the restore waits. Each run still adds one
+  `.claude.json` entry for its project folder there.
 - **Boot reuse (opt-in):** a spec that uses the canonical default config and never relaunches
   Electron can import `{ test, expect }` from `./shared-app` instead of `@playwright/test` to
   share one worker-scoped Electron boot. See the header of `tests/e2e/shared-app.ts` for the
