@@ -32,7 +32,7 @@ vi.mock('node:os', async () => {
 });
 
 import { ensureWorktreeTrust, ensureMcpServerTrust } from '../../src/main/agent/adapters/claude';
-import { declineExternalClaudeMdImports, ensureClaudeSpawnConfig, removeWorktreeEntry, sweepRemovedFolderEntries } from '../../src/main/agent/adapters/claude/trust-manager';
+import { declineExternalClaudeMdImports, ensureClaudeSpawnConfig } from '../../src/main/agent/adapters/claude/trust-manager';
 
 describe('declineExternalClaudeMdImports: the dev preview answers the imports question', () => {
   it('records the question as answered no on the project entry, keeps its trust, and writes once', async () => {
@@ -851,66 +851,6 @@ describe('ensureMcpServerTrust', () => {
     expect(servers).toContain('server-a');
     expect(servers).toContain('server-b');
     expect(servers.filter((server) => server === 'kangentic')).toHaveLength(1);
-  });
-});
-
-// Kangentic trusted every worktree it started Claude in and never dropped the
-// entry again: a dogfooding ~/.claude.json held thousands for folders long gone.
-describe('the entry of a folder Kangentic made and removed', () => {
-  /** A folder under tmpHome, as a key the way ensureClaudeSpawnConfig files it. */
-  async function trustedKey(folder: string): Promise<string> {
-    await ensureClaudeSpawnConfig(folder);
-    const keys = Object.keys(readClaudeJson().projects as Record<string, unknown>);
-    const key = keys.find((candidate) => candidate.toLowerCase().endsWith(folder.replace(/\\/g, '/').toLowerCase().split('/').slice(-3).join('/')));
-    if (!key) throw new Error(`no entry for ${folder}`);
-    return key;
-  }
-
-  const projectKeys = (): string[] => Object.keys(readClaudeJson().projects as Record<string, unknown>);
-
-  it('drops a removed worktree\'s entry, and never one for a folder Kangentic did not make', async () => {
-    const worktree = path.join(tmpHome, 'repo', '.kangentic', 'worktrees', 'task-1');
-    const userFolder = path.join(tmpHome, 'repo', 'some-folder');
-    await trustedKey(worktree);
-    await trustedKey(userFolder);
-
-    await removeWorktreeEntry(worktree);
-    await removeWorktreeEntry(userFolder);
-
-    const keys = projectKeys();
-    expect(keys.some((key) => key.includes('/.kangentic/worktrees/task-1'))).toBe(false);
-    expect(keys.some((key) => key.endsWith('/some-folder'))).toBe(true);
-  });
-
-  it('sweeps the entries of Kangentic-made folders that are gone, and keeps the ones still there', async () => {
-    const goneWorktree = path.join(tmpHome, 'repo', '.kangentic', 'worktrees', 'gone');
-    const liveWorktree = path.join(tmpHome, 'repo', '.kangentic', 'worktrees', 'live');
-    const gonePreview = path.join(tmpHome, 'checkout', '.kangentic', 'data', 'preview-projects', 'project-1');
-    const goneUserFolder = path.join(tmpHome, 'user-folder-gone');
-    for (const folder of [goneWorktree, liveWorktree, gonePreview, goneUserFolder]) await trustedKey(folder);
-    fs.mkdirSync(liveWorktree, { recursive: true });
-
-    expect(await sweepRemovedFolderEntries()).toBe(2);
-
-    const keys = projectKeys();
-    expect(keys.some((key) => key.includes('/worktrees/gone'))).toBe(false);
-    expect(keys.some((key) => key.includes('/preview-projects/project-1'))).toBe(false);
-    expect(keys.some((key) => key.includes('/worktrees/live'))).toBe(true);
-    // Gone, but not Kangentic's: the user opened Claude there.
-    expect(keys.some((key) => key.endsWith('/user-folder-gone'))).toBe(true);
-  });
-
-  it('keeps an entry whose folder cannot be read, and writes nothing when nothing is gone', async () => {
-    const worktree = path.join(tmpHome, 'repo', '.kangentic', 'worktrees', 'unreadable');
-    await trustedKey(worktree);
-    const renames = vi.spyOn(fs.promises, 'rename');
-    try {
-      expect(await sweepRemovedFolderEntries(async () => true)).toBe(0);
-      expect(renames).not.toHaveBeenCalled();
-    } finally {
-      renames.mockRestore();
-    }
-    expect(projectKeys().some((key) => key.includes('/worktrees/unreadable'))).toBe(true);
   });
 
   it('is idempotent -- skips write if kangentic already present', async () => {

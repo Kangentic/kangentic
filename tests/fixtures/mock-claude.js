@@ -249,13 +249,16 @@ if (process.env.MOCK_CLAUDE_ACCOUNT_PROBE === '1' && process.env.CLAUDE_CONFIG_D
 // `~/.claude/projects/<folder>/<id>.jsonl`, which the locator's scan finds, and
 // the `session_id` its status line would put in status.json. A resume keeps its
 // id. The folder is the spec's own, and it deletes it. The home folder itself
-// cannot be redirected: a fake HOME and USERPROFILE crash Chromium on Windows.
+// cannot be redirected (a fake HOME and USERPROFILE crash Chromium on Windows),
+// so Claude's own config dir is: the E2E launch sets CLAUDE_CONFIG_DIR to the
+// run's data dir, as the real CLI would read it.
 if (process.env.MOCK_CLAUDE_TRANSCRIPT_FOLDER && settingsPath && !args.includes('--print')) {
   const fs = require('node:fs');
   const os = require('node:os');
   const pathMod = require('node:path');
   const conversationId = sessionId || require('node:crypto').randomUUID();
-  const transcriptDirectory = pathMod.join(os.homedir(), '.claude', 'projects', process.env.MOCK_CLAUDE_TRANSCRIPT_FOLDER);
+  const claudeHome = process.env.CLAUDE_CONFIG_DIR || pathMod.join(os.homedir(), '.claude');
+  const transcriptDirectory = pathMod.join(claudeHome, 'projects', process.env.MOCK_CLAUDE_TRANSCRIPT_FOLDER);
   try {
     fs.mkdirSync(transcriptDirectory, { recursive: true });
     fs.appendFileSync(pathMod.join(transcriptDirectory, `${conversationId}.jsonl`), JSON.stringify({ type: 'system', sessionId: conversationId }) + '\n');

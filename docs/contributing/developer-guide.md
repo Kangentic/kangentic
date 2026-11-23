@@ -497,6 +497,12 @@ npx playwright test --project=electron
   `.github/workflows/ci.yml` and `playwright.config.ts`).
 - **What to test here:** PTY sessions, terminal rendering, session lifecycle, shell detection, config persistence
 - **Build required** before running
+- **Agent homes stay in the data dir:** `launchApp` gives every run its own `CODEX_HOME`,
+  `CLAUDE_CONFIG_DIR` and `KIMI_CODE_HOME` under its data dir (`codexHomeForDataDir`,
+  `claudeHomeForDataDir`), and the mock CLIs write there. Before, a local run left a trust entry in
+  the developer's real `~/.codex/config.toml` and `~/.claude.json` for every test folder, and
+  planted rollouts in their Codex history. A spec plants an agent's files through those helpers,
+  never `os.homedir()`. A spec that tests Claude accounts passes its own `CLAUDE_CONFIG_DIR`.
 - **Boot reuse (opt-in):** a spec that uses the canonical default config and never relaunches
   Electron can import `{ test, expect }` from `./shared-app` instead of `@playwright/test` to
   share one worker-scoped Electron boot. See the header of `tests/e2e/shared-app.ts` for the
