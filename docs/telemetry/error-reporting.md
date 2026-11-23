@@ -29,6 +29,8 @@ sources:
   - resource: build/verify-signed-team-id.js
   - resource: src/main/pty/agent-launch-report.ts
   - resource: src/main/pty/launch-output-class.ts
+  - resource: src/main/pty/abandoned-launches.ts
+  - resource: src/main/quit-cause.ts
   - resource: src/main/git/worktree-errors.ts
   - resource: src/main/git/git-command-error.ts
   - resource: src/main/retrieval/vec-load-cause.ts
@@ -868,7 +870,7 @@ in one Sentry org, one triage surface.
   | `shell_exit` | The shell exited on its own with no sign the agent ran | `AgentLaunchShellExitError` |
   | `never_started` | The sweep, or a timer where the sweep cannot judge, found no agent and no sign one ran | `AgentLaunchNeverStartedError` |
   | `agent_exited` | A CLI named its own startup failure (`describeStartupFailure`), or a never-captured session's agent ran, then ended on its own under a minute later with no prompt, no session store and no deliberate kill (cause `no_conversation`, sent from the `agent_session_id` report with its tags) | `AgentLaunchAgentExitedError` |
-  | `abandoned` | A person ended a launch that had shown nothing for 15 s | `AgentLaunchAbandonedError` |
+  | `abandoned` | A person, or a quit an update or the OS began, ended a launch that had shown nothing for 15 s | `AgentLaunchAbandonedError` |
   | `pty_port` | A renderer that stays open never got its terminal port | `PtyPortDeliveryError` |
 
   `reportHandledError` takes a fingerprint, and these reports pass `['agent-launch', stage, cause]`,
@@ -892,8 +894,14 @@ in one Sentry org, one triage surface.
   program this machine runs), `bad_cpu_type` (macOS refused the binary for its CPU type, zsh's
   `bad CPU type in executable:`), `killed` (the shell reported the command killed, such as bash's
   and dash's `Killed` or zsh's `killed`), `crashed` (a segmentation fault, bus error, abort or illegal instruction), `unknown_option`, `line_too_long`,
-  `conversation_missing`, `login_required`, `bad_configuration`, `other`, `not_read`, `unreadable`), and an ending adds `exit_code`, `exit_signal` and, for `abandoned`, `ended_by`
-  (`pause`, `kill`, `quit`) and `agent_process` (`present`, `absent`, `unknown`).
+  `conversation_missing`, `login_required`, `bad_configuration`, `other`, `not_read`, `unreadable`). Output
+  that is `other` adds `other_from`: `shell` when the last lines hold a PowerShell error record (a
+  line that starts with `CategoryInfo` or `FullyQualifiedErrorId`, so the shell refused the typed
+  line), and `unknown` otherwise. A shell refusing the line and an agent that started and left need
+  different fixes, and both read `other` (Sentry DESKTOP-2J). A class that names a cause has no
+  `other_from`. An ending adds `exit_code`, `exit_signal` and, for `abandoned`, `ended_by`
+  (`pause`, `kill`, `quit`) and `agent_process` (`present`, `absent`, `unknown`). An `abandoned`
+  report from a quit adds `quit_by` (below).
   `never_started` adds `judge` (`sweep`, `timer`). An `agent_exited` report with cause
   `no_conversation` is the exception to this list: it carries `stage`, `cause`, `platform`,
   `attempt`, `source` (`agent_launch`) and the `agent_session_id` report's tags, not these. A preflight report
@@ -1050,6 +1058,18 @@ in one Sentry org, one triage surface.
   launch a person quit on goes on disk, as `abandoned-launches.json` in the config directory, and
   the next launch reports it (`src/main/pty/abandoned-launches.ts`). A person who never opens the
   app again is not reported.
+
+  That report says what began the quit, as `quit_by`: `update` (the updater's install, which every
+  `quitAndInstall` call goes through), `os` (the Windows `session-end` route and the macOS and Linux
+  `powerMonitor` shutdown route in `src/main/index.ts`), or `user`. Each route notes it just before
+  its quit (`src/main/quit-cause.ts`, first note wins) and `syncShutdownCleanup` reads it into
+  `abandonedLaunchTags`. It is a fixed word, never read from text. The report stays: the launch
+  still showed nothing for a minute or more, which an update's installer does not explain. Sentry
+  DESKTOP-2N was a person installing an update, and only a timestamp match against DESKTOP-4V showed
+  that, because the report said `abandoned` and nothing else. `user` is also the answer for a quit
+  nobody noted: a POSIX signal cannot say whether a person or the OS sent it, and an app quitting
+  with a downloaded update installs on the way out (`autoInstallOnAppQuit`) without going through
+  the updater's install, so both read `user`.
 - **A ConPTY whose output never connected is its own issue.** Sentry groups a `pty_spawn` report
   by the error's type and the code line of each in-app frame, and ignores the message (DESKTOP-23's
   grouping info). So `recordSpawnFailure` (`src/main/pty/spawn/pty-spawn.ts`) reports that shape

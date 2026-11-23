@@ -514,6 +514,27 @@ describe('the before-quit drain is wired into src/main/index.ts', () => {
   });
 
   /**
+   * A launch an OS shutdown ends had shown nothing, and the next start reports
+   * it. It says so (`quit_by=os`) instead of reading as a person giving up
+   * (Sentry DESKTOP-2N was an update's quit, which only a timestamp match
+   * showed). The note comes before the flush, since the flush reads it.
+   */
+  it('notes an OS shutdown as the quit\'s cause before either route flushes', () => {
+    const windowsStart = INDEX_SOURCE.indexOf(".on('session-end'");
+    const windowsRegion = INDEX_SOURCE.slice(windowsStart, INDEX_SOURCE.indexOf('});', windowsStart));
+    const powerMonitorStart = INDEX_SOURCE.indexOf("powerMonitor.on('shutdown'");
+    const powerMonitorRegion = sliceBalancedBlock(INDEX_SOURCE, powerMonitorStart);
+
+    for (const [route, region] of [['Windows session-end', windowsRegion], ['powerMonitor shutdown', powerMonitorRegion]] as const) {
+      expect(region, `${route} must note the quit as the OS's`).toContain("noteQuitBy('os');");
+      expect(
+        region.indexOf("noteQuitBy('os');"),
+        `${route} must note the cause before performShutdown() reads it`,
+      ).toBeLessThan(region.indexOf('performShutdown('));
+    }
+  });
+
+  /**
    * What the handler does is tests/unit/signal-exit.test.ts; this pins that all
    * three signals reach it. Without a listener, SIGHUP (on Windows, the
    * console's CTRL_CLOSE_EVENT) ends the process with no exit recorded, so an

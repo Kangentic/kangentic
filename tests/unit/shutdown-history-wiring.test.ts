@@ -107,6 +107,7 @@ vi.mock('../../src/main/pty/abandoned-launches', () => ({
 // ---------------------------------------------------------------------------
 
 import { syncShutdownCleanup } from '../../src/main/shutdown';
+import { noteQuitBy, resetQuitBy } from '../../src/main/quit-cause';
 import { destroyAllLanes } from '../../src/main/browser/browser-lane-manager';
 import { spareWorktreePool } from '../../src/main/git/spare-worktree';
 import { closeAll } from '../../src/main/db/database';
@@ -187,6 +188,28 @@ describe('syncShutdownCleanup history wire-up', () => {
     );
     expect(mockRecordAbandonedLaunches.mock.invocationCallOrder[0])
       .toBeLessThan(manager.killAll.mock.invocationCallOrder[0]);
+  });
+
+  // Sentry DESKTOP-2N: an update's install ended a launch that had shown
+  // nothing, and the next start reported a person giving up.
+  it.each([
+    ['a quit nobody explained', null, 'user'],
+    ['an update\'s install', 'update', 'update'],
+    ['an OS shutdown', 'os', 'os'],
+  ] as const)('tells the launches it records what began the quit: %s', (_name, noted, expected) => {
+    resetQuitBy();
+    try {
+      if (noted) noteQuitBy(noted);
+      const dependencies = buildMockDependencies([]);
+      const manager = dependencies.getSessionManager();
+      dependencies.getSessionManager.mockReturnValue(manager);
+
+      syncShutdownCleanup(dependencies);
+
+      expect(manager.abandonedLaunchTags).toHaveBeenCalledWith(expect.any(Number), expected);
+    } finally {
+      resetQuitBy();
+    }
   });
 
   it('still kills every PTY when that write throws', () => {

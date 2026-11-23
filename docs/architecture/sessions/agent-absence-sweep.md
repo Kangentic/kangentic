@@ -461,8 +461,9 @@ end is `abandoned`, for an adapter that reports its start, past `LAUNCH_ABANDON_
 overlay's 15 s ceiling. A cold Claude reaches its alt screen in about 3 s, so a Stop sooner than
 that is a quick Stop and no failure. `ended_by` reads `pause` for a suspend (a Stop, a move to Done)
 and `kill` for a kill (a move to To Do, a delete), since neither call knows which gesture asked. A
-host loss, a hidden agent and a quit are left out here; a quit goes on disk
-([Error reporting](../../telemetry/error-reporting.md)).
+host loss, a hidden agent and a quit are left out here; a quit goes on disk with what began it
+(`quit_by`: an update's install, an OS shutdown, or the user,
+[Error reporting](../../telemetry/error-reporting.md)).
 
 **An abandoned report says whether an agent process was there.** Silence alone made the report: a
 resume can take far longer than 15 s to show anything (an install on 0.55.0 logged `agent_ran` 89 s

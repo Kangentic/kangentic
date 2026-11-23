@@ -210,6 +210,27 @@ export function lineTooLongSentence(rawScrollback: string): string | null {
   return finalLinesOf(rawScrollback).find((line) => LINE_TOO_LONG_SENTENCES.some((sentence) => sentence.test(line))) ?? null;
 }
 
+/** Who wrote the output a launch ended on when its class is `other`. */
+export type OtherFrom = 'shell' | 'unknown';
+
+/**
+ * The two field names a PowerShell error record prints on a line of its own,
+ * `+ CategoryInfo          : ObjectNotFound: ...` and `+ FullyQualifiedErrorId : ...`.
+ * Only the record's own framing counts, never the words an error holds: a
+ * line that merely names one of them in prose does not start with it.
+ */
+const POWERSHELL_ERROR_RECORD_FIELD = /^\+?\s*(?:CategoryInfo|FullyQualifiedErrorId)\s*:/;
+
+/**
+ * For output that matched no class (`other`): whether the shell refused the
+ * typed line, which a PowerShell error record shows, or nothing says. A shell
+ * refusing the line and the agent starting then exiting need different fixes
+ * (Sentry DESKTOP-2J could not tell them apart). Only the word leaves.
+ */
+export function otherFromOf(rawScrollback: string): OtherFrom {
+  return finalLinesOf(rawScrollback).some((line) => POWERSHELL_ERROR_RECORD_FIELD.test(line)) ? 'shell' : 'unknown';
+}
+
 /**
  * Classify the last output into a fixed value. Only the class leaves this
  * process. The adapter speaks first, since only it knows its own CLI's words.

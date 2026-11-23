@@ -14,6 +14,7 @@ import { isWorkflowAgentSession } from '../shared/session-owner';
 import { stopMetricsSnapshotTimer } from './ipc/handlers/metrics-snapshot-timer';
 import { stopAccounts } from './ipc/handlers/accounts';
 import { recordAbandonedLaunches } from './pty/abandoned-launches';
+import { quitByNoted } from './quit-cause';
 import { hostOfRecord } from './remote/record-host';
 import type { SessionManager } from './pty/session-manager';
 import type { PtyKillReport } from './pty/shutdown/session-shutdown';
@@ -160,10 +161,11 @@ export function syncShutdownCleanup(dependencies: ShutdownDependencies): PtyKill
     );
 
     // A launch a person is quitting on, while the rows still read running. Disk
-    // only: the next launch reports it (abandoned-launches.ts).
+    // only: the next launch reports it (abandoned-launches.ts). It says what
+    // began the quit, so an update's install is not read as a person giving up.
     runCleanupStep(
       'recordAbandonedLaunches',
-      () => recordAbandonedLaunches(dependencies.abandonedLaunchesFilePath, sessionManager.abandonedLaunchTags()),
+      () => recordAbandonedLaunches(dependencies.abandonedLaunchesFilePath, sessionManager.abandonedLaunchTags(Date.now(), quitByNoted())),
     );
 
     // Mark running DB records as 'suspended' so sessions can resume on next launch.

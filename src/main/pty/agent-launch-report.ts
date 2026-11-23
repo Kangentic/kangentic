@@ -43,7 +43,7 @@ import { cliIdentitySinceDetection, type CliIdentitySinceDetection } from '../ag
 import { cliVersionTag } from '../agent/shared/cli-version-tag';
 import { WorktreeSetupScriptError } from '../git/worktree-errors';
 import type { AgentProcessPresence } from './host/agent-process-presence';
-import { classifyLaunchOutput, type LaunchOutputClass } from './launch-output-class';
+import { classifyLaunchOutput, otherFromOf, type LaunchOutputClass } from './launch-output-class';
 import { AGENT_READY_CEILING_MS } from './lifecycle/agent-output-tracker';
 import { parseWslShellSpec } from './process-tag/task-process-tag';
 import { AgentBatchShimUnresolvedError, AgentCommandTooLongError, AgentStartRefusedError } from './spawn/agent-start-refused';
@@ -616,11 +616,11 @@ export function reportSessionLaunchFailure(failure: SessionLaunchFailure): void 
     });
     return outputClass;
   };
-  const sendOnceRead = (outputClass: LaunchOutputClass): LaunchOutputClass | Promise<LaunchOutputClass> => {
-    if (!agentProcess) return send(outputClass);
+  const sendOnceRead = (outputClass: LaunchOutputClass, readTags: LaunchTags = {}): LaunchOutputClass | Promise<LaunchOutputClass> => {
+    if (!agentProcess) return send(outputClass, readTags);
     return agentProcess.then(
-      (presence) => send(outputClass, { agent_process: presence }),
-      () => send(outputClass, { agent_process: 'unknown' }),
+      (presence) => send(outputClass, { ...readTags, agent_process: presence }),
+      () => send(outputClass, { ...readTags, agent_process: 'unknown' }),
     );
   };
   if (!readOutput) {
@@ -628,7 +628,12 @@ export function reportSessionLaunchFailure(failure: SessionLaunchFailure): void 
     return;
   }
   session.launchOutputRead = readOutput().then(
-    (rawScrollback) => sendOnceRead(classifySessionOutput(session, rawScrollback)),
+    (rawScrollback) => {
+      const outputClass = classifySessionOutput(session, rawScrollback);
+      // Output that named no cause says who wrote it, when it can: a shell's
+      // refusal of the typed line and an agent that ran and left read the same.
+      return sendOnceRead(outputClass, outputClass === 'other' ? { other_from: otherFromOf(rawScrollback) } : {});
+    },
     () => sendOnceRead('unreadable'),
   );
 }

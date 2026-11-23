@@ -8,6 +8,7 @@ import appleTeam from '../shared/apple-team-id.json';
 import type { LocalizedText } from '../shared/i18n/text';
 import { trackEvent, sanitizeErrorMessage } from './analytics/analytics';
 import { reportHandledError } from './analytics/error-reporting';
+import { noteQuitBy } from './quit-cause';
 import { errorCodeOf, errorNameOf, firstFrameOf, markReported } from './analytics/handled-report';
 import { translateText } from './i18n/main-i18n';
 import { normalizeReleaseNotes } from './updater-release-notes';
@@ -719,6 +720,18 @@ export async function downloadWithRetry(): Promise<void> {
 let updateDownloaded = false;
 
 /**
+ * Quit and run the downloaded update's installer. The one place the app asks
+ * for that, so the quit is noted as the update's before it starts: a launch it
+ * ends is reported as the install's, not as a person giving up (`quit_by`, Sentry
+ * DESKTOP-2N). A plain quit that installs on the way out
+ * (`autoInstallOnAppQuit`) does not come through here, and reads as the user's.
+ */
+function installAndQuit(): void {
+  noteQuitBy('update');
+  autoUpdater.quitAndInstall(true, true);
+}
+
+/**
  * For a restart the app asks for itself (changing Graphics acceleration).
  * With an update downloaded and `autoInstallOnAppQuit` on, a plain quit runs
  * the installer silently WITHOUT relaunching, and the installer closes the old
@@ -731,7 +744,7 @@ let updateDownloaded = false;
  */
 export function quitAndInstallIfUpdatePending(): boolean {
   if (!updateDownloaded || !autoUpdater.autoInstallOnAppQuit) return false;
-  autoUpdater.quitAndInstall(true, true);
+  installAndQuit();
   return true;
 }
 
@@ -830,7 +843,7 @@ export function initUpdater(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC.UPDATE_CHECK, () => checkWithRetry());
 
   ipcMain.handle(IPC.UPDATE_INSTALL, () => {
-    autoUpdater.quitAndInstall(true, true);
+    installAndQuit();
   });
 
   // When an update is available, start downloading immediately (with retry).
