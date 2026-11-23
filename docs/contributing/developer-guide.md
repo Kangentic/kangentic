@@ -362,7 +362,7 @@ docs figure carries, the maintainer description), the frame size (1600 by 1000),
 version, generated from the same registry the page boots, which is what kangentic.com reads at
 build time to embed a scene by name. `--base=<path>` on the CLI
 moves the base path; the GitHub Pages deploy (`.github/workflows/deploy-demo.yml`, called from
-the release graph after `publish-release`) builds with `--base=/kangentic/`. `demo/README.md`
+the release graph after `publish-release` and the poster shoot) builds with `--base=/kangentic/`. `demo/README.md`
 documents the URL contract, the scenes, the numbers, and the Electron-only surfaces that stay
 inert in a browser. A scene's scripted pointer is the dot kangentic.com's hero draws, read from
 `@kangentic/branding` (`assets/pointer/`) by `demo/pointer.ts`, and `demo/README.md` also documents
