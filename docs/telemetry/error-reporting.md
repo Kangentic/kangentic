@@ -31,6 +31,8 @@ sources:
   - resource: src/main/pty/launch-output-class.ts
   - resource: src/main/git/worktree-errors.ts
   - resource: src/main/git/git-command-error.ts
+  - resource: src/main/retrieval/vec-load-cause.ts
+  - resource: src/main/retrieval/worker/checkpoint-labels.ts
   - resource: src/main/accounts/account-report.ts
   - resource: src/main/agent/shared/cli-version-tag.ts
   - resource: src/main/utility-process/off-main-exec.ts
@@ -542,7 +544,22 @@ in one Sentry org, one triage surface.
   - `pty_host` also reports the first host crash of a run, fingerprinted
     `['utility-process-first-crash', service, cause]`, apart from the five-crash latch.
   - `retrieval`: the worker's reply carries the error's class and code, and a sqlite-vec load
-    failure and an embeddings init failure each report once.
+    failure and an embeddings init failure each report once. A sqlite-vec load failure
+    (`sqlite_vec_load`) also carries `load_cause`, the loader's reason as a fixed word (`not_found`,
+    `bad_image`, `blocked_by_policy`, `access_denied`, `entry_point` or `other`), and
+    `vec_file_exists` (`yes` or `no`). The worker reads both: the cause from SQLite's message
+    (`src/main/retrieval/vec-load-cause.ts`), which is the operating system's own words. Neither
+    the message nor the path leaves the worker, and main sends a cause outside the six words as
+    `other`. Sentry DESKTOP-4Q carried only `SqliteError`. The
+    message described the wrong file until the load dropped the extension's suffix
+    (`withoutLibrarySuffix`): SQLite retries a failed load with the suffix appended and keeps the
+    last error, so every failure read "module could not be found". On Windows, `not_found` with
+    `vec_file_exists: yes` usually means a DLL the extension links against is missing. The
+    fingerprint leaves the cause out, so the issue keeps grouping. Both are fixed words of the kind
+    Settings > Privacy already discloses ("a fixed failure code"), so that list did not change.
+    `vec_file_exists` says only whether Kangentic's own bundled extension file was at the path
+    Kangentic resolved for it. It describes the install, not anything the user made or opened, so
+    it is part of that failure code rather than a new data class.
   - `agent_session_id`: a session whose id no capture path found within the 30 s window
     (`SessionIdManager`), reported once its outcome is known, never at the window (Sentry
     DESKTOP-36 reported there and could not tell late from never). An id that arrives later sends
@@ -810,6 +827,13 @@ in one Sentry org, one triage surface.
   The stderr tail is one worker's text and cannot say which crash wrote it, so a
   crash with a watchdog line also carries it on its own `crashes` entry, read at report time:
   `request_timeout method=transcript.trailRead watchdog="[retrieval-worker] event loop held 5 s in transcript:parse-codex"`.
+  Sentry DESKTOP-4P's entries all read `in db:checkpoint`. The two checkpoint sites now have labels
+  of their own, `db:checkpoint-tick` (main's 5 s request) and `db:checkpoint-after-write` (the pacer
+  after the worker's commits). Both run on the worker's checkpoint thread and hold no loop. The
+  labels name the in-loop fallback when that thread cannot run. A request that times out while the
+  newest watchdog line, written since the worker's last message, names one of them is failed without
+  a kill or a counted crash, for up to a minute (`CHECKPOINT_HOLD_MAX_MS`), so it reaches no
+  latch report.
 - **Every failed launch that is reported has one report.** A user whose terminal never starts leaves, and most of
   these failures throw nothing, so `src/main/pty/agent-launch-report.ts` is the one way a launch
   failure reaches Sentry. Each report has a `stage`, and each stage its own error name:

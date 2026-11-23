@@ -113,6 +113,9 @@ asarUnpack:
   - ".vite/build/worktree-copy-worker.js"
   - ".vite/build/dictation-worker.js"
   - ".vite/build/retrieval-worker.js"
+  # The retrieval worker's checkpoint thread: a worker thread too, which loads
+  # better-sqlite3 from the unpacked tree beside it.
+  - ".vite/build/retrieval-checkpoint-thread.js"
   - ".vite/build/pty-host.js"
   # The pty host's spawn worker is a worker thread, whose file Node's own
   # loader reads, so it must be a real file on every platform.

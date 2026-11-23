@@ -177,7 +177,10 @@ function buildRetrievalLoadScript(unpackedRoot) {
     "if (!vecPackage) throw new Error('no sqlite-vec platform package in ' + modulesDir);",
     'const vecBinary = fs.readdirSync(path.join(modulesDir, vecPackage)).find((name) => /^vec0\\.(dll|so|dylib)$/.test(name));',
     "if (!vecBinary) throw new Error('no vec0 binary in ' + vecPackage);",
-    'db.loadExtension(path.join(modulesDir, vecPackage, vecBinary));',
+    // Loaded without its suffix, as `loadVecExtensionFrom` does, so the probe
+    // proves the form that ships: SQLite's retry appends the suffix (and on
+    // Windows LoadLibraryW appends `.dll` itself).
+    "db.loadExtension(path.join(modulesDir, vecPackage, vecBinary.replace(/\\.(dll|so|dylib)$/, '')));",
     "process.stdout.write('better-sqlite3 opened, sqlite-vec ' + db.prepare('SELECT vec_version() AS version').get().version + ' loaded\\n');",
     'db.close();',
   ].join('\n');
@@ -440,6 +443,75 @@ function verifySpawnWorkerLoads({ unpackedRoot, electronBinaryPath, spawn = exec
   log(`[afterPack] pty host spawn worker: ${String(stdout).trim()}`);
 }
 
+/**
+ * The script the checkpoint thread probe runs under the packaged Electron
+ * binary: it writes a WAL into a temp database with the unpacked better-sqlite3,
+ * starts the retrieval worker's checkpoint thread
+ * (`.vite/build/retrieval-checkpoint-thread.js`, a worker thread that loads
+ * better-sqlite3 itself) the way the worker does, asks it for one PASSIVE
+ * checkpoint, and closes the thread's connection. A thread that cannot load the
+ * addon would leave every checkpoint on the worker's request loop.
+ */
+function buildCheckpointThreadLoadScript(unpackedRoot) {
+  return [
+    "const path = require('path');",
+    "const fs = require('fs');",
+    "const os = require('os');",
+    "const { Worker } = require('worker_threads');",
+    `const root = fs.realpathSync(${JSON.stringify(unpackedRoot)});`,
+    "const Database = require(path.join(root, 'node_modules', 'better-sqlite3'));",
+    "const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-checkpoint-probe-'));",
+    "const dbPath = path.join(directory, 'probe.db');",
+    'const writer = new Database(dbPath);',
+    "writer.pragma('journal_mode = WAL');",
+    "writer.pragma('wal_autocheckpoint = 0');",
+    "writer.exec('CREATE TABLE probe (value TEXT)');",
+    "writer.prepare('INSERT INTO probe (value) VALUES (?)').run('checkpoint-thread-probe');",
+    "const finish = (code, text) => { try { writer.close(); fs.rmSync(directory, { recursive: true, force: true }); } catch { /* temp dir */ } (code === 0 ? process.stdout : process.stderr).write(text + '\\n'); process.exit(code); };",
+    "const worker = new Worker(path.join(root, '.vite', 'build', 'retrieval-checkpoint-thread.js'));",
+    "const timer = setTimeout(() => finish(1, 'the checkpoint thread started but never answered its checkpoint'), 20000);",
+    "worker.on('error', (error) => finish(1, 'the checkpoint thread failed: ' + (error && error.stack ? error.stack : String(error))));",
+    "worker.on('message', (message) => {",
+    "  if (!message || message.type !== 'result') return;",
+    '  if (message.id === 1) {',
+    "    if (!message.ok || !message.row || message.row.checkpointed < 1) { clearTimeout(timer); finish(1, 'the checkpoint thread copied nothing: ' + JSON.stringify(message)); return; }",
+    "    worker.postMessage({ type: 'close', id: 2, dbPath });",
+    '    return;',
+    '  }',
+    '  clearTimeout(timer);',
+    "  if (!message.ok) { finish(1, 'the checkpoint thread did not close its connection: ' + JSON.stringify(message)); return; }",
+    "  finish(0, 'the checkpoint thread loaded better-sqlite3 and checkpointed a WAL');",
+    '});',
+    "worker.postMessage({ type: 'checkpoint', id: 1, dbPath });",
+  ].join('\n');
+}
+
+/**
+ * Run the checkpoint thread probe with the packaged Electron binary as Node,
+ * before `flipFuses` turns `ELECTRON_RUN_AS_NODE` off. Throws with the child's
+ * stderr on failure; logs the verified branch on success.
+ */
+function verifyRetrievalCheckpointThreadLoads({ unpackedRoot, electronBinaryPath, spawn = execFileSync, log = console.log }) {
+  let stdout;
+  try {
+    stdout = spawn(electronBinaryPath, ['-e', buildCheckpointThreadLoadScript(unpackedRoot)], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 60_000,
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    });
+  } catch (error) {
+    const stderr = error && typeof error.stderr === 'string' ? error.stderr.trim() : '';
+    throw new Error(
+      `[afterPack] the retrieval worker's checkpoint thread cannot checkpoint from ${unpackedRoot} under ${electronBinaryPath}. ` +
+        'The packaged worker would run every WAL checkpoint on its request loop. ' +
+        'Check .vite/build/retrieval-checkpoint-thread.js and better-sqlite3 in `asarUnpack` in electron-builder.yml.\n' +
+        (stderr || String(error)),
+    );
+  }
+  log(`[afterPack] retrieval checkpoint thread: ${String(stdout).trim()}`);
+}
+
 module.exports = {
   EMBED_WORKER_EXTERNALS,
   EMBED_WORKER_PROBE_DEPENDENCIES,
@@ -453,6 +525,7 @@ module.exports = {
   buildRetrievalLoadScript,
   buildPtyHostLoadScript,
   buildSpawnWorkerLoadScript,
+  buildCheckpointThreadLoadScript,
   buildEmbedRuntimeLoadScript,
   foreignMsvcRuntimeModules,
   verifyUnpackedWorkerModules,
@@ -460,4 +533,5 @@ module.exports = {
   verifyRetrievalWorkerLoads,
   verifyPtyHostLoads,
   verifySpawnWorkerLoads,
+  verifyRetrievalCheckpointThreadLoads,
 };

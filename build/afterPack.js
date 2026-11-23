@@ -7,6 +7,7 @@ const {
   verifyRetrievalWorkerLoads,
   verifyPtyHostLoads,
   verifySpawnWorkerLoads,
+  verifyRetrievalCheckpointThreadLoads,
   DICTATION_WORKER_EXTERNALS,
   DICTATION_WORKER_PROBE_DEPENDENCIES,
   RETRIEVAL_WORKER_EXTERNALS,
@@ -309,6 +310,9 @@ module.exports = async function afterPack(context) {
     probeDependencies: RETRIEVAL_WORKER_PROBE_DEPENDENCIES,
   });
   verifyRetrievalWorkerLoads({ unpackedRoot, electronBinaryPath });
+  // The worker runs its WAL checkpoints on a worker thread that loads
+  // better-sqlite3 itself: start it the same way and checkpoint one WAL.
+  verifyRetrievalCheckpointThreadLoads({ unpackedRoot, electronBinaryPath });
 
   // The pty host runs every terminal from the unpacked tree: resolve node-pty
   // there, then spawn a real process with it under the packaged Electron

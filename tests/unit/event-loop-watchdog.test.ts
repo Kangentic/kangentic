@@ -353,16 +353,23 @@ describe('event-loop watchdog', () => {
     for (const moduleName of requires) expect(moduleName.startsWith('node:')).toBe(true);
   });
 
-  it('is one of the worker-thread users in src/main, all loading only node built-ins', () => {
+  it('is one of the known worker-thread users in src/main', () => {
     // The pty host's entry starts the spawn worker, which keeps process starts off
     // the thread that carries terminal I/O. Its graph is held to built-ins and pure
-    // modules by pty-host-boundary.test.ts.
+    // modules by pty-host-boundary.test.ts. The retrieval worker's checkpoint runner
+    // starts the checkpoint thread, which keeps WAL checkpoints off the worker's
+    // request loop (Sentry DESKTOP-4P). It is the one thread that loads a native
+    // module, better-sqlite3, held to that alone by
+    // retrieval-out-of-process-boundary.test.ts and proven under the packaged
+    // Electron by the afterPack probe.
     expect(
       sourceFilesContaining(/['"](node:)?worker_threads['"]/),
       'A new worker thread in src/main: see .claude/rules/retrieval-out-of-process.md and pty-host-out-of-process.md before adding one, and update this list if it is deliberate.',
     ).toEqual([
       'pty/host/pty-host-entry.ts',
       'pty/host/spawn-worker/spawn-worker-entry.ts',
+      'retrieval/worker/checkpoint-runner.ts',
+      'retrieval/worker/checkpoint-thread/checkpoint-thread-entry.ts',
       'utility-process/event-loop-watchdog.ts',
     ]);
   });

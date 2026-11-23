@@ -107,6 +107,38 @@ describe('retrieval out-of-process boundary', () => {
     expect(Object.keys(inputs).some((input) => input.replace(/\\/g, '/').endsWith('src/main/retrieval/retrieval-store.ts'))).toBe(true);
   }, 30_000);
 
+  // The checkpoint thread (Sentry DESKTOP-4P) is the one worker thread that loads a native
+  // module. Its graph stays to its own folder, node built-ins and better-sqlite3, so nothing
+  // else native or main-only rides into a thread, where no other module was proven to load.
+  it('builds the checkpoint thread as its own unpacked entry, loading only better-sqlite3 and built-ins', async () => {
+    const threadEntry = 'src/main/retrieval/worker/checkpoint-thread/checkpoint-thread-entry.ts';
+    const threadOutput = '.vite/build/retrieval-checkpoint-thread.js';
+    for (const scriptName of ['build.js', 'dev.js']) {
+      const source = fs.readFileSync(path.join(REPO_ROOT, 'scripts', scriptName), 'utf-8');
+      expect(source, `scripts/${scriptName} must build ${threadEntry} as its own entry`).toContain(threadEntry);
+      expect(source, `scripts/${scriptName} must output ${threadOutput}`).toContain(threadOutput);
+    }
+    // A worker thread's file is read by Node's own loader, never through the asar.
+    expect(fs.readFileSync(path.join(REPO_ROOT, 'electron-builder.yml'), 'utf-8')).toContain(`- "${threadOutput}"`);
+    // And main names it to the worker by the same file name.
+    expect(fs.readFileSync(path.join(REPO_ROOT, CLIENT_FILE), 'utf-8')).toContain(`'${path.basename(threadOutput)}'`);
+
+    const inputs = await bundleInputs(threadEntry, false);
+    const offenders: string[] = [];
+    for (const [input, info] of Object.entries(inputs)) {
+      const normalized = input.replace(/\\/g, '/');
+      if (!normalized.startsWith('src/main/retrieval/worker/checkpoint-thread/')) offenders.push(`${normalized} (outside the thread's folder)`);
+      for (const imported of info.imports) {
+        if (!imported.external) continue;
+        if (imported.path === 'better-sqlite3' || imported.path.startsWith('node:')) continue;
+        offenders.push(`${normalized} imports ${imported.path}`);
+      }
+    }
+    expect(offenders, `The checkpoint thread's graph reaches past better-sqlite3 and built-ins:\n${offenders.join('\n')}`).toEqual([]);
+    // Not vacuous: the thread does import better-sqlite3.
+    expect(Object.values(inputs).some((info) => info.imports.some((imported) => imported.path === 'better-sqlite3'))).toBe(true);
+  }, 30_000);
+
   it('keeps the index code out of the main bundle, dev seeders included', async () => {
     // A value import of any of these from main-resident code would put a
     // second copy on main: a map pass, a scan of every vector, an index write.

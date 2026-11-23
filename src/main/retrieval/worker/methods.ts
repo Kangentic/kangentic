@@ -42,6 +42,9 @@ import type { RetrievalEventName } from './protocol';
 import { createIndexStatusReader, type IndexAllParams, type IndexAllStatus } from './index-status';
 import { createGraphService } from '../graph/graph-service';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
+import { CHECKPOINT_TICK_LABEL } from './checkpoint-labels';
+import { passiveCheckpointInLoop } from './checkpoint-runner';
+import type { CheckpointRow } from './checkpoint-thread/protocol';
 import { awaitWriteTurn } from '../write-budget';
 import { prepareAnswer, type AnswerPrepareParams, type PreparedAnswer } from './answer-prepare';
 import { indexHandlers, type IndexMethods } from './index-methods';
@@ -108,8 +111,16 @@ export interface ProjectRef {
 /** What a handler may use besides its params. */
 export interface WorkerContext {
   getDb(projectId: string): Database.Database;
-  /** Close the worker's connection to a project's database, if open. */
-  closeDb(projectId: string): void;
+  /** Close the worker's connections to a project's database, if open. The
+   *  worker's resolves once its checkpoint thread has let go of the file too. */
+  closeDb(projectId: string): void | Promise<void>;
+  /**
+   * A PASSIVE checkpoint of a project's database off the worker's loop
+   * (`checkpoint-runner.ts`), running `inLoop` instead when the checkpoint
+   * thread cannot. A context without it (the tests') runs `inLoop` on the
+   * project's `getDb` connection. Throws for a project closed for deletion.
+   */
+  checkpointDb?(projectId: string, inLoop: () => CheckpointRow | null): Promise<CheckpointRow | null>;
   /** Why sqlite-vec last failed to load into a connection, or null. */
   vecLoadError(): string | null;
   /** Where sqlite-vec loads from, for a connection a dev seeder opens itself. */
@@ -380,8 +391,8 @@ export const retrievalHandlers: RetrievalHandlers = {
     if (!Object.hasOwn(reader, read)) throw new Error(`Unknown usage read: ${String(read)}`);
     return timeSyncWork(`usage:${read}`, () => (reader[read] as (...readArgs: unknown[]) => unknown)(...args));
   },
-  'project.close': ({ projectId }, context) => {
-    context.closeDb(projectId);
+  'project.close': async ({ projectId }, context) => {
+    await context.closeDb(projectId);
     indexStatus.forget(projectId);
     forgetConversationOwners(projectId);
     // Only a context that ever read a graph has one to forget; never create one here.
@@ -402,17 +413,18 @@ export const retrievalHandlers: RetrievalHandlers = {
   'graph.requestRegionNames': ({ projectId, urgent, summaryNamesOn }, context) => {
     graphFor(context, summaryNamesOn).requestRegionNames(projectId, urgent);
   },
-  'db.checkpoint': ({ projectIds }, context) => projectIds.map((projectId) => {
+  'db.checkpoint': ({ projectIds }, context) => Promise.all(projectIds.map(async (projectId) => {
+    // The same checkpoint on the worker's loop, for when the thread cannot run it.
+    const inLoop = (): CheckpointRow | null => passiveCheckpointInLoop(context.getDb(projectId), CHECKPOINT_TICK_LABEL);
     try {
-      const db = context.getDb(projectId);
-      const [row] = timeSyncWork('db:checkpoint', () => db.pragma('wal_checkpoint(PASSIVE)') as Array<{ busy: number; log: number; checkpointed: number }>);
+      const row = context.checkpointDb ? await context.checkpointDb(projectId, inLoop) : inLoop();
       const result = { projectId, walFrames: row?.log ?? 0, checkpointed: row?.checkpointed ?? 0, busy: (row?.busy ?? 0) !== 0 };
       if (__KANGENTIC_DEV__) logCheckpoint(result);
       return result;
-    } catch {
+    } catch { // report-ok: a database gone or closed for deletion is skipped; the next tick asks again.
       return null;
     }
-  }),
+  })),
   'status.indexAll': async (params, context) => {
     const status = await indexStatus.readAll((projectId) => context.getDb(projectId), params);
     // Read after the opens, since opening a database is what loads sqlite-vec.

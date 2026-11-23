@@ -18,7 +18,10 @@
  * - A call that times out kills the worker. A stuck worker may be holding the
  *   database's write lock, and main's own writes would otherwise wait on it
  *   until SQLite's busy timeout. The kill counts as a crash, so a worker that
- *   keeps sticking latches off rather than looping.
+ *   keeps sticking latches off rather than looping. The one exception is a
+ *   worker its watchdog says is held in a WAL checkpoint, which holds no write
+ *   lock: that call fails and the worker is left to finish, for up to
+ *   `CHECKPOINT_HOLD_MAX_MS` (`heldInCheckpoint`).
  * - Worker events (`graph-changed`, `graph-progress`) and, after a crash, a
  *   `respawned` event, so the retrieval service can replay what a new worker
  *   has not seen.
@@ -31,8 +34,10 @@ import { PATHS } from '../config/paths';
 import { recordRelayedSyncSpan } from '../diagnostics/event-loop-lag';
 import { unpacked } from '../utility-process/paths';
 import { UtilityRestartPolicy } from '../utility-process/restart-policy';
-import { StderrTail, UTILITY_PROCESS_STDIO, captureWorkerStderr } from '../utility-process/stderr-tail';
+import { StderrTail, UTILITY_PROCESS_STDIO, captureWorkerStderr, watchdogLine } from '../utility-process/stderr-tail';
 import { resolveVecLoadablePath } from './vec-extension';
+import { isVecLoadCause } from './vec-load-cause';
+import { isCheckpointHoldLine } from './worker/checkpoint-labels';
 import { sendHandledFailure } from '../analytics/handled-report';
 import type {
   FromWorkerMessage,
@@ -46,6 +51,8 @@ import type {
 import type { KnowledgeGraphBuildProgress } from '../../shared/types';
 
 const SERVICE_NAME = 'kangentic-retrieval';
+/** The worker's checkpoint thread, built beside the worker (`scripts/build.js`). */
+const CHECKPOINT_THREAD_BUNDLE = 'retrieval-checkpoint-thread.js';
 const MAX_CRASHES = 3;
 /** An interactive call's budget. The worker answers between the steps of its
  *  background jobs, and no step runs longer than a conversation KNN (under
@@ -58,6 +65,11 @@ const CLOSE_PROJECT_TIMEOUT_MS = 3_000;
  *  only after ready, so a worker stuck starting (a native module load that
  *  never returns) would otherwise hold every call with no end. */
 export const READY_TIMEOUT_MS = 30_000;
+/** How long a worker held in a WAL checkpoint is left running, counted from
+ *  the first call that hold failed, before it is killed anyway, so a dead disk
+ *  still ends. Time, not a count of calls: calls that were pending together
+ *  all time out within one budget. */
+export const CHECKPOINT_HOLD_MAX_MS = 60_000;
 
 /** The worker is not available: latched off after crashes, disposed, or it
  *  died or stuck mid-call. Callers answer with their degraded result. */
@@ -106,6 +118,11 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
   /** Children whose exit has landed, so a close never waits for one again. */
   private readonly exitedChildren = new WeakSet<UtilityProcess>();
   private readonly restartPolicy: UtilityRestartPolicy;
+  /** How many watchdog lines the worker's stderr held at its last message. A
+   *  held loop sends nothing, so a line past this count is the current hold. */
+  private watchdogLinesAtLastMessage = 0;
+  /** When the current checkpoint hold first failed a call without a kill, or null. */
+  private checkpointHoldSince: number | null = null;
 
   constructor(restartPolicy?: UtilityRestartPolicy) {
     super();
@@ -178,6 +195,8 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
     this.child = child;
     const stderrTail = new StderrTail();
     this.childStderr = stderrTail;
+    this.watchdogLinesAtLastMessage = 0;
+    this.checkpointHoldSince = null;
     captureWorkerStderr(child, stderrTail, !app.isPackaged);
     let markReady: () => void = () => undefined;
     let failReady: (error: Error) => void = () => undefined;
@@ -204,13 +223,21 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
       failReady(new RetrievalUnavailableError('The retrieval worker exited before it was ready'));
       this.onWorkerExit(child, code, stderrTail);
     });
-    const init: InitMessage = { type: 'init', projectsDir: PATHS.projectsDir, vecLoadablePath: vecLoadablePathOrNull() };
+    const init: InitMessage = {
+      type: 'init',
+      projectsDir: PATHS.projectsDir,
+      vecLoadablePath: vecLoadablePathOrNull(),
+      checkpointThreadPath: unpacked(path.join(__dirname, CHECKPOINT_THREAD_BUNDLE)),
+    };
     child.postMessage(init);
     return child;
   }
 
   private onWorkerMessage(child: UtilityProcess, message: unknown, markReady: () => void, replacesWorker: boolean): void {
     if (child !== this.child || typeof message !== 'object' || message === null) return;
+    // The loop ran: whatever hold the watchdog wrote about before this is over.
+    this.watchdogLinesAtLastMessage = this.childStderr?.watchdogLineCount() ?? 0;
+    this.checkpointHoldSince = null;
     const record = message as FromWorkerMessage;
     if (record.type === 'ready') {
       markReady();
@@ -249,6 +276,16 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
 
   private onTimeout(child: UtilityProcess, requestId: number, method: RetrievalMethod): void {
     if (!this.pending.has(requestId) || child !== this.child) return;
+    if (this.heldInCheckpoint()) {
+      // A PASSIVE checkpoint holds no write lock, and a held write lock is why a
+      // stuck worker is killed. A kill would also throw the copy away, so the
+      // next worker meets the same WAL and holds again (Sentry DESKTOP-4P: five
+      // latches in 80 minutes). Fail this call so its caller degrades, and let
+      // the checkpoint finish, up to the ceiling.
+      console.warn(`[retrieval] ${method} did not answer in time; the retrieval worker is checkpointing, left running`);
+      this.settle(requestId, new RetrievalUnavailableError('The retrieval worker is checkpointing'));
+      return;
+    }
     console.warn(`[retrieval] ${method} did not answer in time; restarting the retrieval worker`);
     // What else was waiting, read before `drop` settles it all. Background jobs
     // count too: one holding the worker between steps is what a timeout most
@@ -261,6 +298,24 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
     // it lands, may come after the next worker is already running.
     this.restartPolicy.recordCrash(null, this.childStderr ?? undefined, { cause: 'request_timeout', method, pendingMethods });
     this.drop(new RetrievalUnavailableError(`The retrieval worker did not answer ${method} in time`));
+  }
+
+  /**
+   * Whether the worker's loop is held in a WAL checkpoint right now, and has
+   * not been failing calls for longer than `CHECKPOINT_HOLD_MAX_MS`: the
+   * watchdog wrote a line since the worker's last message, and the newest line
+   * names a checkpoint label. Checkpoints normally run on the worker's
+   * checkpoint thread and hold no loop; this covers its in-loop fallback.
+   */
+  private heldInCheckpoint(): boolean {
+    const stderr = this.childStderr;
+    if (!stderr) return false;
+    if (stderr.watchdogLineCount() <= this.watchdogLinesAtLastMessage) return false;
+    const line = watchdogLine(stderr.snapshot());
+    if (line === null || !isCheckpointHoldLine(line)) return false;
+    const now = Date.now();
+    this.checkpointHoldSince ??= now;
+    return now - this.checkpointHoldSince < CHECKPOINT_HOLD_MAX_MS;
   }
 
   private onWorkerExit(child: UtilityProcess, exitCode: number, stderrTail: StderrTail): void {
@@ -369,7 +424,14 @@ function reportRetrievalWorkerFailure(message: Extract<FromWorkerMessage, { type
   const error = new Error(`The retrieval worker reported ${message.code}`) as NodeJS.ErrnoException;
   error.name = message.errorName ?? 'Error';
   if (message.errorCode) error.code = message.errorCode;
-  sendHandledFailure('retrieval_worker', error, { code: message.code }, {}, ['retrieval-worker', message.code, message.errorCode ?? message.errorName ?? 'none']);
+  // Fixed words only: the cause is an enum the worker read from the loader's
+  // message, and the message itself never crossed the process line. Both are
+  // checked here, since a type does not survive the wire.
+  const tags: Record<string, string> = { code: message.code };
+  if (message.loadCause !== undefined) tags.load_cause = isVecLoadCause(message.loadCause) ? message.loadCause : 'other';
+  if (typeof message.fileExists === 'boolean') tags.vec_file_exists = message.fileExists ? 'yes' : 'no';
+  // The fingerprint leaves the cause out, so DESKTOP-4Q keeps grouping its events.
+  sendHandledFailure('retrieval_worker', error, tags, {}, ['retrieval-worker', message.code, message.errorCode ?? message.errorName ?? 'none']);
 }
 
 /** A worker log line into main's log. An error also went to the worker's

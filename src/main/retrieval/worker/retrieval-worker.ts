@@ -13,13 +13,16 @@
  * `tests/unit/retrieval-out-of-process-boundary.test.ts`.
  */
 
+import fs from 'node:fs';
 import { format } from 'node:util';
 import type Database from 'better-sqlite3';
-import { closeProjectDb, configureProjectDbAccess, getProjectDb, setProjectDbInitializer, setWalAutoCheckpoint } from '../../db/database';
+import { closeProjectDb, configureProjectDbAccess, getProjectDb, projectDbPath, setProjectDbInitializer, setWalAutoCheckpoint } from '../../db/database';
 import { setAfterCommitHook } from '../../db/transaction';
 import { relaySlowSyncSpans, timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { loadVecExtensionFrom } from '../vec-support';
+import { vecLoadCause } from '../vec-load-cause';
 import { createCheckpointPacer } from './checkpoint-pacing';
+import { checkpointRunner } from './checkpoint-runner';
 import { startEventLoopWatchdog } from '../../utility-process/event-loop-watchdog';
 import { installWriteBudget } from '../write-budget';
 import { retrievalHandlers, type WorkerContext } from './methods';
@@ -76,6 +79,9 @@ function initialize(message: InitMessage): void {
   // for 16 rows after a terminal flood, which held up every request behind it
   // and read as a lock hold it was not.
   setWalAutoCheckpoint(0);
+  // Both kinds run on the checkpoint thread, so a long one never holds this
+  // loop (Sentry DESKTOP-4P); with no thread they run here, as before.
+  checkpointRunner.configure(message.checkpointThreadPath ?? null);
   setAfterCommitHook(createCheckpointPacer());
   installWriteBudget();
   vecLoadablePath = message.vecLoadablePath;
@@ -87,12 +93,21 @@ function initialize(message: InitMessage): void {
       vecLoadError = null;
     } catch (error) {
       // Keywords only for this connection.
-      vecLoadError = error instanceof Error ? error.message : String(error);
+      const loadMessage = error instanceof Error ? error.message : String(error);
+      vecLoadError = loadMessage;
       console.warn('[retrieval-worker] sqlite-vec unavailable, semantic search disabled:', error);
-      // Semantic search is off for this install from here, so main hears of it, once.
+      // Semantic search is off for this install from here, so main hears of it,
+      // once: the loader's reason as a fixed word and whether the file is there,
+      // never the message, which holds the install path (Sentry DESKTOP-4Q).
       if (!vecLoadFailureSent) {
         vecLoadFailureSent = true;
-        post({ type: 'handledError', code: 'sqlite_vec_load', ...errorShapeOf(error) });
+        post({
+          type: 'handledError',
+          code: 'sqlite_vec_load',
+          ...errorShapeOf(error),
+          loadCause: vecLoadCause(loadMessage),
+          fileExists: fs.existsSync(vecLoadablePath),
+        });
       }
     }
   });
@@ -111,14 +126,26 @@ function initialize(message: InitMessage): void {
  */
 const closedProjectIds = new Set<string>();
 
+function assertNotClosed(projectId: string): void {
+  if (closedProjectIds.has(projectId)) throw new Error(`Project ${projectId} was closed for deletion`);
+}
+
 const context: WorkerContext = {
   getDb: (projectId) => {
-    if (closedProjectIds.has(projectId)) throw new Error(`Project ${projectId} was closed for deletion`);
+    assertNotClosed(projectId);
     return getProjectDb(projectId);
   },
-  closeDb: (projectId) => {
+  closeDb: async (projectId) => {
     closedProjectIds.add(projectId);
     closeProjectDb(projectId);
+    // The thread's connection too, or Windows refuses the unlink that follows.
+    if (checkpointRunner.usesThread) await checkpointRunner.close(projectDbPath(projectId));
+  },
+  // No await before the runner's call: with no thread, `inLoop` runs inside the
+  // caller's `method:db.checkpoint` span, so a hold there is still named.
+  checkpointDb: async (projectId, inLoop) => {
+    assertNotClosed(projectId);
+    return checkpointRunner.checkpoint(() => projectDbPath(projectId), inLoop);
   },
   vecLoadError: () => vecLoadError,
   vecLoadablePath: () => vecLoadablePath,
