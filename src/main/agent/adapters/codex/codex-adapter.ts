@@ -416,8 +416,10 @@ export class CodexAdapter implements AgentAdapter {
    * printing `codex resume <id>` to reconnect. With a draft the first one only
    * clears the composer, and the second then exits it the same way. Nothing here
    * is Enter, so no state can take it as a submit or an approval. A busy turn and
-   * an open approval were not probed (each costs a paid turn); Ctrl+C interrupts
-   * or declines there. A console close is not graceful: Codex dies with
+   * an open approval were not probed (each costs a paid turn). Codex runs its
+   * turns in an app-server daemon, and as the TUI exits it prints "Disconnected
+   * from this task. Any running work continues.", so whether a busy turn outlives
+   * this exit is unmeasured. A console close is not graceful: Codex dies with
    * STATUS_CONTROL_C_EXIT and prints nothing, so `consoleCloseIsGraceful` stays off.
    *
    * The pause is 400 ms by measurement (Windows, this sequence whole): on an
