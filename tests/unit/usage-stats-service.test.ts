@@ -522,7 +522,7 @@ describe('usage-stats service: background calls', () => {
     const stats = await service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
 
     expect(stats.background?.totals).toMatchObject({ calls: 0, costUsd: null });
-    expect(stats.background?.byJob).toHaveLength(5);
+    expect(stats.background?.byJob).toHaveLength(6);
     expect(stats.background?.byDay).toEqual([]);
   });
 });

@@ -9,7 +9,7 @@
 import { test, expect, type Page, type Locator } from '@playwright/test';
 import { chromium, type Browser } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, gotoVite, VITE_URL } from './helpers';
+import { waitForViteReady, gotoVite, toastCountRightNow, VITE_URL } from './helpers';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const PROJECT_ID = 'proj-git';
@@ -236,7 +236,7 @@ test.describe('creating a pull request', () => {
     await hooks(page, { __mockGitActionResult: { outcome: 'done', pullRequest: { number: 12, url: 'https://github.com/example/repo/pull/12' } } });
     await page.getByTestId('git-create-pr-confirm').click();
     await expect(create).toBeHidden();
-    await expect(page.getByTestId('toast').filter({ hasText: 'Pull request created' })).toHaveCount(0);
+    expect(await toastCountRightNow(page, 'Pull request created')).toBe(0);
     await page.context().close();
   });
 
