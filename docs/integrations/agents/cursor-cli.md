@@ -65,10 +65,10 @@ mode", and skip-approvals already passes it to the session screen.
 agent --trust -p "prompt text" --output-format stream-json
 ```
 
-Selected when `nonInteractive` is set, and for every permission mode but `default`, `acceptEdits` and `plan`. That is `bypassPermissions`, the one such mode Cursor's list offers, and `dontAsk` and `auto`, which it does not. Cursor has no flag for either: its `approvalMode: auto-review` lives only in the global `cli-config.json` ([Configuration](https://cursor.com/docs/cli/reference/configuration)), which Kangentic does not rewrite. They stay on this path because the init event is the only documented place the model and session id arrive together. Has full write access. A directory Cursor has not seen prints "Workspace Trust Required" and exits. `--trust` skips that prompt. The NDJSON `init` event carries `session_id`, which `runtime.sessionId.fromOutput` captures for resume. A resume keeps `--trust` too. Every resume opens the session screen whatever its mode, because `buildCommand` returns before `-p` is added. A headless answer run that streams adds `--stream-partial-output`.
+Selected for a start that carries a prompt, when `nonInteractive` is set and for every permission mode but `default`, `acceptEdits` and `plan`. That is `bypassPermissions`, the one such mode Cursor's list offers, and `dontAsk` and `auto`, which it does not. Cursor has no flag for either: its `approvalMode: auto-review` lives only in the global `cli-config.json` ([Configuration](https://cursor.com/docs/cli/reference/configuration)), which Kangentic does not rewrite. They stay on this path because the init event is the only documented place the model and session id arrive together. Has full write access. A directory Cursor has not seen prints "Workspace Trust Required" and exits. `--trust` skips that prompt. The NDJSON `init` event carries `session_id`, which `runtime.sessionId.fromOutput` captures for resume. A resume keeps `--trust` too. Every resume opens the session screen whatever its mode, because `buildCommand` returns before `-p` is added. A headless answer run that streams adds `--stream-partial-output`.
 
 **A start with no prompt.** There is no turn to print, so it opens the session screen in every one of
-these modes:
+these modes, and with `nonInteractive` set:
 
 ```
 agent --trust --resume="<chat-id>"
@@ -95,8 +95,8 @@ It would also be dropped at the first resume, which passes none. So the screen a
 would write. Skip Approvals is the mode that does not ask. A message Kangentic types into this screen
 can wait at that question, as on a Non-Interactive resume.
 
-Known gap: an explicit `nonInteractive` start with no prompt still passes stream-json with no `-p`.
-Only a customized legacy Start agent row whose prompt comes out empty reaches it.
+Only a customized legacy Start agent row whose prompt comes out empty reaches a `nonInteractive` start
+with no prompt. It opens the screen its own mode opens.
 
 ### Resumed Session
 
@@ -268,8 +268,8 @@ missed `stop` leaves the card thinking until the stale-thinking reclaim.
   Command Terminal, or a workflow's agent) asks Cursor for one first: `createSessionId` runs
   `cursor-agent create-chat` in the working directory (measured: it prints the bare UUID and writes
   nothing under `~/.cursor`), and the start opens that chat with `--resume=<id>`. A start with no
-  prompt is one of these in every permission mode, `bypassPermissions`, `dontAsk` and `auto` included,
-  unless `nonInteractive` is set (Sentry DESKTOP-45). A print start (`-p` and `stream-json`) still
+  prompt is one of these in every permission mode, `bypassPermissions`, `dontAsk` and `auto` included
+  (Sentry DESKTOP-45). A print start (`-p` and `stream-json`) still
   takes the id from the init event and does not create a chat first.
   A print run can print nothing for about a minute before that event: observed once on
   2026.11.19 (Sentry DESKTOP-4W), not measured. Why is Cursor's own startup, which Kangentic cannot

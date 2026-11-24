@@ -125,7 +125,7 @@ no prompt in a fresh git repository on Windows (120 by 32 cells), watching for 1
 | Not declared | Codex, OpenCode, Copilot, Grok, Antigravity, Qwen | Each entered the alternate screen within 2.3 s and drew its boot screens inside it: Codex's sign-in, OpenCode's update offer, a selection menu over Copilot's input box, Grok's data-sharing opt-in, Antigravity's sign-in and folder trust. Qwen showed none in the run, but draws nothing before the alternate screen, so its recorded update and MCP approval screens are inside it too. Being in the alternate screen does not mean the input box is up |
 | Not declared yet | Goose | Opens `goose session` with no prompt; not installed where the others were measured |
 | Not declared | Aider | `--message` sends one message and exits; without it Aider is an interactive chat, a different run |
-| Not declared | Cursor | Only its `default`, `acceptEdits` and `plan` modes are interactive; every other mode is a `stream-json` print run, and a promptless interactive launch has not been measured |
+| Not declared | Cursor | With a prompt, only its `default`, `acceptEdits` and `plan` modes are interactive, and every other mode is a `stream-json` print run. With none, every mode opens its session screen, so the mode it runs in changes with the prompt. That promptless launch has not been measured |
 | Not declared | Ollama | A prompt is one turn that exits; without one `ollama run` opens a REPL |
 | Not declared | Oz (Warp) | `oz agent run` is a one-shot runner with no input box |
 

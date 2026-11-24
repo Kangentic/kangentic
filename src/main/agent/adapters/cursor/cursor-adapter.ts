@@ -40,7 +40,7 @@ import {
 import { cursorProjectMcpConfigProblem, removeCursorProjectMcpConfig, writeCursorProjectMcpConfig } from './project-mcp-config';
 import { cursorTranscriptFilePath, locateCursorTranscriptFile, resolveCursorTranscriptReadPath } from './session-paths';
 import { parseCursorTranscript, readCursorTranscriptPage } from './transcript-parser';
-import type { AgentAdapter, AgentInfo, DetectOptions, AnswerFromContextOptions, ParsedTranscript, SpawnCommandOptions, SettingsChangeSpec, SummarizeOptions, TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
+import type { AgentAdapter, AgentInfo, DetectOptions, AnswerFromContextOptions, FreshLaunch, ParsedTranscript, SpawnCommandOptions, SettingsChangeSpec, SummarizeOptions, TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
 import type {
   AgentCapabilities,
   AgentPermissionEntry,
@@ -152,9 +152,10 @@ function cursorCarriesPrompt(options: Pick<SpawnCommandOptions, 'prompt'>): opti
 
 /**
  * Whether a fresh start opens the session screen rather than one print turn.
- * Confirm-changes, skip-approvals and plan keep the screen. Any other mode
- * prints its prompt, and with no prompt there is nothing to print, so it opens
- * the screen too. An explicit non-interactive flag always prints.
+ * With no prompt there is nothing to print, so every mode opens the screen, an
+ * explicit non-interactive flag included. With a prompt, confirm-changes,
+ * skip-approvals and plan keep the screen unless that flag is set. Any other
+ * mode prints.
  *
  * The one answer for the command's shape, the id created before launch, the
  * hooks and their variable. The screen prints no conversation id, the print
@@ -163,8 +164,8 @@ function cursorCarriesPrompt(options: Pick<SpawnCommandOptions, 'prompt'>): opti
  * `-p`, no chat created and no hooks).
  */
 function cursorKeepsSessionScreen(start: CursorFreshStart): boolean {
-  if (start.nonInteractive) return false;
   if (!cursorCarriesPrompt(start)) return true;
+  if (start.nonInteractive) return false;
   return start.permissionMode === 'default' || start.permissionMode === 'acceptEdits' || start.permissionMode === 'plan';
 }
 
@@ -445,16 +446,17 @@ export class CursorAdapter implements AgentAdapter {
     // A mode Cursor's own list does not offer (dontAsk, auto) stays on the
     // print path, whose init event is the only documented place the model and
     // session id arrive together. With no prompt, "anything else" opens the
-    // session screen: stream-json "only works with --print" (CLI parameters),
+    // session screen. stream-json "only works with --print" (CLI parameters),
     // so it would print nothing. `agent about` seeds that screen's model.
     //
     // That screen gets --trust and no --force, as a Non-Interactive resume
     // does. Without --force a print turn rejects "anything that would need
     // approval" (https://cursor.com/docs/cli/headless), so --force would grant
-    // what the mode does not have, "exits with an error" where a team admin
-    // turned Run Everything off, and would be dropped at the first resume. So
-    // the screen asks, and Skip Approvals is the mode that does not.
-    // An explicit nonInteractive flag wins over every session screen.
+    // what the mode does not have. It "exits with an error" where a team admin
+    // turned Run Everything off, and the first resume would drop it. So the
+    // screen asks, and Skip Approvals is the mode that does not.
+    // An explicit nonInteractive flag wins over every session screen a prompt
+    // would open.
     const sessionUi = cursorKeepsSessionScreen(options);
     const confirmSession = sessionUi && options.permissionMode === 'default';
     const forceSession = sessionUi && options.permissionMode === 'acceptEdits';
@@ -537,8 +539,8 @@ export class CursorAdapter implements AgentAdapter {
    * session screen does not, so those starts create one first, and so does a
    * start with no prompt, which opens that screen in every mode.
    */
-  reportsLaunchSessionId(options: { permissionMode: PermissionMode; nonInteractive?: boolean; prompt: string | undefined }): boolean {
-    return !cursorKeepsSessionScreen(options);
+  reportsLaunchSessionId(launch: FreshLaunch): boolean {
+    return !cursorKeepsSessionScreen(launch);
   }
 
   /**

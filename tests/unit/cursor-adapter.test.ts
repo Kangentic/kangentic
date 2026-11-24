@@ -233,11 +233,11 @@ describe('CursorAdapter', () => {
         expect(adapter.buildEnv?.(options)).toBeNull();
       });
 
-      it('stays a print run when asked to run non-interactive, as before', () => {
-        const options = makeOptions({ permissionMode, nonInteractive: true, eventsOutputPath, shell: 'bash' });
-        expect(adapter.buildCommand(options)).toMatch(/ --trust --output-format stream-json$/);
-        expect(adapter.reportsLaunchSessionId({ permissionMode, nonInteractive: true, prompt: undefined })).toBe(true);
-        expect(adapter.buildEnv?.(options)).toBeNull();
+      it('opens the session screen even when asked to run non-interactive, since there is nothing to print', () => {
+        const options = makeOptions({ permissionMode, nonInteractive: true, sessionId: CHAT_ID, eventsOutputPath, shell: 'bash' });
+        expect(adapter.buildCommand(options)).toBe(`/usr/local/bin/agent --trust --resume=${quoteArg(CHAT_ID, 'bash')}`);
+        expect(adapter.reportsLaunchSessionId({ permissionMode, nonInteractive: true, prompt: undefined })).toBe(false);
+        expect(adapter.buildEnv?.(options)).toEqual({ KANGENTIC_EVENTS_PATH_INTERACTIVE: eventsOutputPath });
       });
     });
 
@@ -566,7 +566,7 @@ describe('CursorAdapter', () => {
 
     it.each<[string, Partial<SpawnCommandOptions>]>([
       ['a print run', { permissionMode: 'bypassPermissions', prompt: 'go' }],
-      ['a session screen asked to run non-interactive', { permissionMode: 'default', nonInteractive: true }],
+      ['a prompt asked to run non-interactive', { permissionMode: 'default', nonInteractive: true, prompt: 'go' }],
       ['a start with no events file', { eventsOutputPath: undefined }],
     ])('wires no hooks for %s', (_start, overrides) => {
       withFolder((folder) => {
