@@ -170,14 +170,14 @@ const accountsStoreInitializer: StateCreator<AccountsState> = (set, get) => {
   },
 
   switchTo: async (accountId) => {
-    // Answers once the agent's running sessions have moved; the list itself changes at once,
-    // through the `accounts:changed` push.
+    // Answers once each of the agent's running sessions was looked at once (idle ones moved, working
+    // ones wait for a safe point); the list itself changes at once, through the `accounts:changed` push.
     let result: AgentAccountSwitchResult;
     try {
       result = await window.electronAPI.accounts.switchTo(accountId);
     } catch (error) {
       console.warn('[accounts] Could not switch account:', error);
-      result = { ok: false, agent: null, accountName: null, moved: 0, failed: 0 };
+      result = { ok: false, agent: null, accountName: null, moved: 0, pending: 0, failed: 0 };
     }
     await get().loadAccounts();
     useToastStore.getState().addToast(describeAccountSwitchResult(result));

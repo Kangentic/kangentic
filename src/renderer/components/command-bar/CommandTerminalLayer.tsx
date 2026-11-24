@@ -158,6 +158,9 @@ export function useCloseCommandWindowOnRemoval(): void {
         .find((candidate) => candidate.sessionId === sessionId);
       if (!entry) return;
       useSessionStore.getState().clearTransientSessionById(sessionId);
+      // Main ends it only to start it again in its slot (a move to another account): the window
+      // stays, and adopts the slot's next terminal when it arrives (CommandTerminalWindow).
+      if (session?.commandTerminalRespawn) return;
       if (entry.projectId === (useProjectStore.getState().currentProject?.id ?? null)) {
         closeCommandTerminalWindowInSlot(entry.slot);
       }

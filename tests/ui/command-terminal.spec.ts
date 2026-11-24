@@ -215,11 +215,15 @@ async function launchSharedBrowser(preConfigScript: string): Promise<{
 async function launchWithState(
   preConfigScript: string,
   viewport: { width: number; height: number } = GRID_VIEWPORT,
+  useClock = false,
 ): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady();
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport });
   const page = await context.newPage();
+  // A test that moves page time (`page.clock.fastForward`) installs the clock before the page
+  // boots, so the app's own timers are the fake ones. Time still runs on its own.
+  if (useClock) await page.clock.install();
 
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.addInitScript(preConfigScript);
@@ -1478,6 +1482,91 @@ test.describe('Command Terminal', () => {
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
         expect(await commandWindowAnchors(page)).toEqual(['slot-2']);
         expect((await transientEntriesFor(page, MULTI_PROJECT_ID)).map((entry) => entry.slot)).toEqual(['slot-2']);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    // Task #1200: a terminal moved to another account is ended by main only to start again in its
+    // slot. The removal says so (`commandTerminalRespawn`), so its window stays and takes the slot's
+    // next terminal when it arrives.
+    test('a terminal main ends to start again in its slot keeps its window and adopts the next terminal', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        await expect.poll(async () => (await transientEntriesFor(page, MULTI_PROJECT_ID)).length).toBe(1);
+        const [moving] = await transientEntriesFor(page, MULTI_PROJECT_ID);
+
+        await page.evaluate(({ sessionId, projectId, slot }) => {
+          const mockWindow = window as unknown as { __mockFireRemoved: (id: string, session: unknown, projectId: string) => void };
+          mockWindow.__mockFireRemoved(sessionId, { id: sessionId, projectId, transient: true, commandTerminalSlot: slot, commandTerminalRespawn: true }, projectId);
+        }, { sessionId: moving.sessionId, projectId: MULTI_PROJECT_ID, slot: moving.slot });
+        await expect.poll(async () => (await transientEntriesFor(page, MULTI_PROJECT_ID)).length).toBe(0);
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1);
+
+        await fireTerminalLabel(page, { id: 'moved-terminal', projectId: MULTI_PROJECT_ID, slot: moving.slot, label: 'Moved terminal' });
+        await expect.poll(async () => (await transientEntriesFor(page, MULTI_PROJECT_ID)).map((entry) => entry.sessionId)).toEqual(['moved-terminal']);
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1);
+        expect(await commandWindowAnchors(page)).toEqual([moving.slot]);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    // The respawn's start can be refused, so no terminal ever comes back. The kept window then
+    // closes after RESPAWN_ADOPT_TIMEOUT_MS (60 s) as an end would, rather than outliving it.
+    test('a respawn whose next terminal never arrives closes its window after the adopt timeout', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig(), undefined, true);
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        await expect.poll(async () => (await transientEntriesFor(page, MULTI_PROJECT_ID)).length).toBe(1);
+        const [moving] = await transientEntriesFor(page, MULTI_PROJECT_ID);
+
+        await page.evaluate(({ sessionId, projectId, slot }) => {
+          const mockWindow = window as unknown as { __mockFireRemoved: (id: string, session: unknown, projectId: string) => void };
+          mockWindow.__mockFireRemoved(sessionId, { id: sessionId, projectId, transient: true, commandTerminalSlot: slot, commandTerminalRespawn: true }, projectId);
+        }, { sessionId: moving.sessionId, projectId: MULTI_PROJECT_ID, slot: moving.slot });
+        await expect.poll(async () => (await transientEntriesFor(page, MULTI_PROJECT_ID)).length).toBe(0);
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1);
+
+        // Just short of the timeout the window is still waiting.
+        await page.clock.fastForward(55_000);
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1);
+
+        await page.clock.fastForward(10_000);
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(0, { timeout: 5000 });
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a respawn whose next terminal arrives before the adopt timeout keeps its window and shows it', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig(), undefined, true);
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        await expect.poll(async () => (await transientEntriesFor(page, MULTI_PROJECT_ID)).length).toBe(1);
+        const [moving] = await transientEntriesFor(page, MULTI_PROJECT_ID);
+
+        await page.evaluate(({ sessionId, projectId, slot }) => {
+          const mockWindow = window as unknown as { __mockFireRemoved: (id: string, session: unknown, projectId: string) => void };
+          mockWindow.__mockFireRemoved(sessionId, { id: sessionId, projectId, transient: true, commandTerminalSlot: slot, commandTerminalRespawn: true }, projectId);
+        }, { sessionId: moving.sessionId, projectId: MULTI_PROJECT_ID, slot: moving.slot });
+        await expect.poll(async () => (await transientEntriesFor(page, MULTI_PROJECT_ID)).length).toBe(0);
+
+        await page.clock.fastForward(30_000);
+        await fireTerminalLabel(page, { id: 'moved-before-timeout', projectId: MULTI_PROJECT_ID, slot: moving.slot, label: 'Moved terminal' });
+        await expect.poll(async () => (await transientEntriesFor(page, MULTI_PROJECT_ID)).map((entry) => entry.sessionId)).toEqual(['moved-before-timeout']);
+
+        // Past the original deadline: the adopted terminal cancelled the timer.
+        await page.clock.fastForward(60_000);
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1);
+        expect(await commandWindowAnchors(page)).toEqual([moving.slot]);
       } finally {
         await browser.close();
       }

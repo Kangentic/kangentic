@@ -231,6 +231,237 @@ describe('startCommandTerminal: resuming an earlier conversation', () => {
     });
   });
 
+  // Task #1200: a running terminal moved to another account restarts in its own slot, on its own
+  // conversation, tag and grid, on the account named, and only once its old agent has exited.
+  describe('restartCommandTerminalOn', () => {
+    const resolveForSpawn = vi.fn(async (agent: string, accountId?: string | null) => ({ id: accountId ?? 'top', agent, kind: 'folder', env: {} }));
+    let exitAgent: () => void = () => undefined;
+
+    beforeEach(() => {
+      setAccountService({ resolveForSpawn } as unknown as AccountService);
+    });
+    afterEach(() => {
+      setAccountService(null);
+    });
+
+    function movingContext() {
+      const context = createContext({ 'conversation-a': { agent_name: 'claude', label: 'Fix the flaky drag test' } });
+      const running = {
+        id: 'old-session', taskId: 'terminal-tag', projectId: 'proj-1', transient: true, status: 'running',
+        commandTerminalSlot: 'slot-2', agentSessionId: 'conversation-a', hasUserInput: true,
+      };
+      const order: string[] = [];
+      const exited = new Promise<void>((resolve) => { exitAgent = resolve; });
+      Object.assign(context.sessionManager, {
+        getSession: vi.fn((id: string) => (id === running.id ? running : undefined)),
+        getSessionAgentName: vi.fn(() => 'claude'),
+        getLastDesktopDimensions: vi.fn(() => ({ cols: 132, rows: 40 })),
+        getDimensions: vi.fn(() => ({ cols: 80, rows: 24 })),
+        awaitExit: vi.fn(() => exited.then(() => { order.push('exited'); })),
+        endCommandTerminal: vi.fn(() => { order.push('ended'); return 'ended'; }),
+        spawn: vi.fn(async (input: { accountId: string | null }) => { order.push('spawned'); return { id: 'new-session', status: 'running', accountId: input.accountId }; }),
+      });
+      return { context, order, running };
+    }
+
+    it('ends the terminal as a respawn, waits for its agent, and resumes it in its slot on the account', async () => {
+      const { restartCommandTerminalOn } = await import('../../src/main/ipc/handlers/transient-sessions');
+      const { context, order } = movingContext();
+      const restarting = restartCommandTerminalOn(context as never, 'old-session', 'account-2', 'Continue.', () => true);
+      await vi.waitFor(() => expect(order).toEqual(['ended']));
+      exitAgent();
+      expect(await restarting).toBe('moved');
+
+      expect(order).toEqual(['ended', 'exited', 'spawned']);
+      expect(context.sessionManager.endCommandTerminal).toHaveBeenCalledWith('old-session', { respawn: true });
+      expect(context.commandTerminalHistory.claimResume).toHaveBeenCalledWith('proj-1', 'conversation-a');
+      expect(resolveForSpawn.mock.calls.at(-1)?.[1]).toBe('account-2');
+      const claude = adapters.get('claude')!;
+      expect(claude.buildCommand).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'conversation-a', resume: true, prompt: 'Continue.', taskId: 'terminal-tag' }));
+      expect(context.sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({
+        commandTerminalSlot: 'slot-2', cols: undefined, restoredGrid: { cols: 132, rows: 40 }, openingPrompt: 'command_line', startPath: 'resume',
+      }));
+    });
+
+    it('stops nothing when the terminal left its safe point', async () => {
+      const { restartCommandTerminalOn } = await import('../../src/main/ipc/handlers/transient-sessions');
+      const { context, order } = movingContext();
+      expect(await restartCommandTerminalOn(context as never, 'old-session', 'account-2', undefined, () => false)).toBe('deferred');
+      expect(order).toEqual([]);
+    });
+
+    it('waits on a terminal nobody has used yet: its history row goes with its end, so nothing would resume', async () => {
+      const { restartCommandTerminalOn } = await import('../../src/main/ipc/handlers/transient-sessions');
+      const { context, order, running } = movingContext();
+      running.hasUserInput = false;
+      expect(await restartCommandTerminalOn(context as never, 'old-session', 'account-2', undefined, () => true)).toBe('deferred');
+      expect(order).toEqual([]);
+    });
+
+    it('ends nothing when the conversation has no history row to resume', async () => {
+      const { restartCommandTerminalOn } = await import('../../src/main/ipc/handlers/transient-sessions');
+      const { context, order } = movingContext();
+      context.commandTerminalHistory.find.mockReturnValue(null);
+      expect(await restartCommandTerminalOn(context as never, 'old-session', 'account-2', undefined, () => true)).toBe('failed');
+      expect(order).toEqual([]);
+    });
+
+    it('holds the slot while the old agent exits, so another start cannot take it', async () => {
+      const { restartCommandTerminalOn, isCommandTerminalSlotStarting } = await import('../../src/main/ipc/handlers/transient-sessions');
+      const { context, order } = movingContext();
+      const restarting = restartCommandTerminalOn(context as never, 'old-session', 'account-2', undefined, () => true);
+      await vi.waitFor(() => expect(order).toEqual(['ended']));
+      expect(isCommandTerminalSlotStarting('proj-1', 'slot-2')).toBe(true);
+      exitAgent();
+      expect(await restarting).toBe('moved');
+      expect(isCommandTerminalSlotStarting('proj-1', 'slot-2')).toBe(false);
+    });
+
+    it('leaves a terminal whose agent cannot resume a conversation by id where it is', async () => {
+      const { restartCommandTerminalOn } = await import('../../src/main/ipc/handlers/transient-sessions');
+      const { context, order } = movingContext();
+      Object.assign(context.sessionManager, { getSessionAgentName: vi.fn(() => 'aider') });
+      expect(await restartCommandTerminalOn(context as never, 'old-session', 'account-2', undefined, () => true)).toBe('failed');
+      expect(order).toEqual([]);
+    });
+
+    // The gap between the end and the new start: the old agent is still exiting, the conversation
+    // and the slot are held by the move, and every way the move gives up hands both back.
+    describe('the gap after the end', () => {
+      /** A claim ledger like the real history's: a second claim of an open conversation is refused. */
+      function withClaimLedger(context: ReturnType<typeof movingContext>['context']): Set<string> {
+        const claimed = new Set<string>();
+        context.commandTerminalHistory.claimResume.mockImplementation((_projectId: string, agentSessionId: string) => {
+          if (claimed.has(agentSessionId)) return false;
+          claimed.add(agentSessionId);
+          return true;
+        });
+        context.commandTerminalHistory.settleResume.mockImplementation((_projectId: string, agentSessionId: string, sessionId: string | null) => {
+          // A start that landed hands the claim to its terminal; a give-up frees it.
+          if (sessionId === null) claimed.delete(agentSessionId);
+        });
+        return claimed;
+      }
+
+      it('claims the conversation in the same tick as the end, so an Earlier resume cannot take it while the old agent exits', async () => {
+        const { restartCommandTerminalOn } = await import('../../src/main/ipc/handlers/transient-sessions');
+        const { context, order } = movingContext();
+        withClaimLedger(context);
+        const restarting = restartCommandTerminalOn(context as never, 'old-session', 'account-2', undefined, () => true);
+        await vi.waitFor(() => expect(order).toEqual(['ended']));
+
+        // Still waiting on the old agent's exit: another caller's claim is refused.
+        expect(context.sessionManager.awaitExit).toHaveBeenCalledTimes(1);
+        expect(context.commandTerminalHistory.claimResume('proj-1', 'conversation-a')).toBe(false);
+
+        exitAgent();
+        expect(await restarting).toBe('moved');
+      });
+
+      it('fails and hands the conversation back when the slot cannot be held after the end', async () => {
+        const { restartCommandTerminalOn, isCommandTerminalSlotStarting } = await import('../../src/main/ipc/handlers/transient-sessions');
+        const { MAX_COMMAND_TERMINALS } = await import('../../src/shared/command-terminal-name');
+        const { context, order } = movingContext();
+        withClaimLedger(context);
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        // Other starts in flight hold every place, so the freed slot cannot be reserved again.
+        context.sessionManager.listSessions.mockReturnValue(
+          Array.from({ length: MAX_COMMAND_TERMINALS }, (_unused, index) => ({
+            id: `other-${index}`, projectId: 'proj-1', transient: true, status: 'running', commandTerminalSlot: `other-slot-${index}`,
+          })) as never,
+        );
+
+        expect(await restartCommandTerminalOn(context as never, 'old-session', 'account-2', undefined, () => true)).toBe('failed');
+
+        expect(order).toEqual(['ended']);
+        expect(context.sessionManager.spawn).not.toHaveBeenCalled();
+        expect(isCommandTerminalSlotStarting('proj-1', 'slot-2')).toBe(false);
+        expect(context.commandTerminalHistory.claimResume('proj-1', 'conversation-a')).toBe(true);
+        warn.mockRestore();
+      });
+
+      it.each([
+        ['the project is gone (unknown-project)', (context: ReturnType<typeof movingContext>['context']) => {
+          context.projectRepo.getById.mockReturnValue(null as never);
+        }],
+        ['the spawn throws', (context: ReturnType<typeof movingContext>['context']) => {
+          context.sessionManager.spawn.mockRejectedValue(new Error('spawn exploded'));
+        }],
+      ])('fails, frees the slot and hands the conversation back when the start throws after the end: %s', async (_name, breakStart) => {
+        const { restartCommandTerminalOn, isCommandTerminalSlotStarting } = await import('../../src/main/ipc/handlers/transient-sessions');
+        const { context, order } = movingContext();
+        withClaimLedger(context);
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        breakStart(context);
+        const restarting = restartCommandTerminalOn(context as never, 'old-session', 'account-2', undefined, () => true);
+        await vi.waitFor(() => expect(order).toEqual(['ended']));
+        exitAgent();
+
+        expect(await restarting).toBe('failed');
+
+        expect(isCommandTerminalSlotStarting('proj-1', 'slot-2')).toBe(false);
+        expect(context.commandTerminalHistory.claimResume('proj-1', 'conversation-a')).toBe(true);
+        warn.mockRestore();
+      });
+
+      it('fails when the terminal that started is on another account than the one asked for', async () => {
+        const { restartCommandTerminalOn } = await import('../../src/main/ipc/handlers/transient-sessions');
+        const { context, order } = movingContext();
+        // The account service answers with a different account than the one named.
+        resolveForSpawn.mockImplementationOnce(async (agent: string) => ({ id: 'account-other', agent, kind: 'folder', env: {} }));
+        const restarting = restartCommandTerminalOn(context as never, 'old-session', 'account-2', undefined, () => true);
+        await vi.waitFor(() => expect(order).toEqual(['ended']));
+        exitAgent();
+
+        expect(await restarting).toBe('failed');
+        expect(context.sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ accountId: 'account-other' }));
+      });
+
+      it('starts no terminal when a Stop reaches the move in the gap, and gives the slot and the conversation back', async () => {
+        const { restartCommandTerminalOn, stopCommandTerminalMove, isCommandTerminalSlotStarting } = await import('../../src/main/ipc/handlers/transient-sessions');
+        const { context, order } = movingContext();
+        withClaimLedger(context);
+        // No move holds an id nobody ended.
+        expect(stopCommandTerminalMove('old-session')).toBe(false);
+        const restarting = restartCommandTerminalOn(context as never, 'old-session', 'account-2', undefined, () => true);
+        await vi.waitFor(() => expect(order).toEqual(['ended']));
+        // The move registers its hold after it takes the slot, so wait for it.
+        await vi.waitFor(() => expect(stopCommandTerminalMove('old-session')).toBe(true));
+
+        exitAgent();
+        expect(await restarting).toBe('failed');
+
+        expect(context.sessionManager.spawn).not.toHaveBeenCalled();
+        expect(isCommandTerminalSlotStarting('proj-1', 'slot-2')).toBe(false);
+        expect(context.commandTerminalHistory.claimResume('proj-1', 'conversation-a')).toBe(true);
+        // The move is over, so the id is no longer held.
+        expect(stopCommandTerminalMove('old-session')).toBe(false);
+      });
+
+      it('stops the move when the kill-transient handler is asked to end the id the move already ended', async () => {
+        const { restartCommandTerminalOn, registerTransientSessionHandlers: registerHandlers, isCommandTerminalSlotStarting } = await import('../../src/main/ipc/handlers/transient-sessions');
+        const { context, order } = movingContext();
+        withClaimLedger(context);
+        // The move's own end finds the row; a Stop that follows finds none, as the real registry answers.
+        context.sessionManager.endCommandTerminal
+          .mockImplementationOnce(() => { order.push('ended'); return 'ended'; })
+          .mockImplementation(() => 'not-found');
+        registerHandlers(context as never);
+        const killHandler = capturedHandlers.get(IPC.SESSION_KILL_TRANSIENT)!;
+        const restarting = restartCommandTerminalOn(context as never, 'old-session', 'account-2', undefined, () => true);
+        await vi.waitFor(() => expect(order).toEqual(['ended']));
+
+        expect(() => killHandler(null, 'old-session')).not.toThrow();
+
+        exitAgent();
+        expect(await restarting).toBe('failed');
+        expect(context.sessionManager.spawn).not.toHaveBeenCalled();
+        expect(isCommandTerminalSlotStarting('proj-1', 'slot-2')).toBe(false);
+        expect(context.commandTerminalHistory.claimResume('proj-1', 'conversation-a')).toBe(true);
+      });
+    });
+  });
+
   it("resumes a row a user named as a user's name, so a suggestion never replaces it", async () => {
     const context = createContext({ 'conversation-a': { agent_name: 'claude', label: 'My rail fix', named_by_user: 1 } });
     await spawn(context, { projectId: 'proj-1', slot: 'slot-2', resumeAgentSessionId: 'conversation-a' });

@@ -283,9 +283,10 @@ export function windowElapsedPercentage(
 /**
  * One line of an account row's usage block in Settings > Accounts.
  * - `live`: a window the CLI reported and that has not reset.
- * - `not-started`: a window the agent always has that this account has not opened (Claude reports
- *   its 5h window only once the account has run in it). Drawn at 0% with no tick and no reset.
+ * - `not-started`: a declared window this account has but has not opened (Claude reports its 5h
+ *   window only once the account has run in it). Drawn at 0% with no tick and no reset.
  * - `unread`: no usage has been read for the account yet. Drawn empty, with no figures.
+ * A declared window the account does not have at all (`absentWindowIds`) draws no line.
  */
 export type AccountUsageLine =
   | { kind: 'live'; window: RateLimitWindow }
@@ -293,17 +294,20 @@ export type AccountUsageLine =
   | { kind: 'unread'; shape: AgentUsageWindowShape | null };
 
 /**
- * The lines an account row draws, so every row of an agent is one height: one per window the
- * agent declares (`usageWindows`, in its order), then any other window the CLI reported (a
- * per-model weekly window), shortest first. `liveWindows` must already be free of lapsed windows
- * (`liveRateLimitWindows`), so a window whose reset passed reads Not started again. With no
- * reading yet (`hasReading` false) each declared window is `unread`; an agent that declares none
- * gets one unnamed `unread` line, as the row drew before anything was read.
+ * The lines an account row draws: one per window the agent declares (`usageWindows`, in its
+ * order) that the account has, then any other window the CLI reported (a per-model weekly
+ * window), shortest first. A declared window the account's idle read named as one it does not
+ * have (`absentWindowIds`, a Claude plan with no 5h limit) draws no line unless a live report
+ * brings it back, so rows of one agent can differ in height. `liveWindows` must already be free of
+ * lapsed windows (`liveRateLimitWindows`), so a window whose reset passed reads Not started again.
+ * With no reading yet (`hasReading` false) each declared window is `unread`; an agent that declares
+ * none gets one unnamed `unread` line, as the row drew before anything was read.
  */
 export function accountUsageLines(
   usageWindows: readonly AgentUsageWindowShape[],
   liveWindows: RateLimitWindow[],
   hasReading: boolean,
+  absentWindowIds: readonly string[] = [],
 ): AccountUsageLine[] {
   if (!hasReading) {
     return usageWindows.length > 0
@@ -311,9 +315,10 @@ export function accountUsageLines(
       : [{ kind: 'unread', shape: null }];
   }
   const declaredIds = new Set(usageWindows.map((shape) => shape.id));
-  const lines: AccountUsageLine[] = usageWindows.map((shape): AccountUsageLine => {
+  const lines: AccountUsageLine[] = usageWindows.flatMap((shape): AccountUsageLine[] => {
     const reported = liveWindows.find((rateLimitWindow) => rateLimitWindow.id === shape.id);
-    return reported ? { kind: 'live', window: reported } : { kind: 'not-started', shape };
+    if (reported) return [{ kind: 'live', window: reported }];
+    return absentWindowIds.includes(shape.id) ? [] : [{ kind: 'not-started', shape }];
   });
   const extra = rateLimitWindowsShortestFirst(liveWindows.filter((rateLimitWindow) => !declaredIds.has(rateLimitWindow.id)));
   for (const rateLimitWindow of extra) lines.push({ kind: 'live', window: rateLimitWindow });

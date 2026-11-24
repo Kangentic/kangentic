@@ -1,6 +1,6 @@
 import { i18n } from '@lingui/core';
 import { msg, plural } from '@lingui/core/runtime-macro';
-import type { AgentAccountSwitched, AgentAccountSwitchResult, AgentAccountsAllFull } from '../../shared/agent-accounts';
+import type { AgentAccountSwitched, AgentAccountSwitchResult, AgentAccountsAllFull, AgentAccountsFollowing } from '../../shared/agent-accounts';
 import { agentDisplayName } from '../utils/agent-display-name';
 import { formatDuration } from '../utils/format-session';
 import { formatMonthDayTime } from './datetime';
@@ -33,17 +33,44 @@ export function describeAccountSwitchResult(result: AgentAccountSwitchResult): {
   if (failed > 0) {
     return {
       title: i18n._(msg`Couldn't move every session`),
-      message: i18n._(msg`${plural({ failed }, { one: '# running session stays on its account.', other: '# running sessions stay on their accounts.' })}`),
+      // Not "stays on its account": a Command Terminal or workflow agent whose start failed after
+      // its stop is ended or paused, with its conversation kept.
+      message: i18n._(msg`${plural({ failed }, { one: '# running session could not move.', other: '# running sessions could not move.' })}`),
       variant: 'error',
     };
   }
   const moved = result.moved;
+  // A session mid-tool, or with a draft, moves at its next safe point (task #1200).
+  const pending = result.pending ?? 0;
+  if (pending > 0) {
+    return {
+      title: i18n._(msg`Switched account`),
+      message: moved > 0
+        ? i18n._(msg`${plural({ moved }, { one: '# session moved', other: '# sessions moved' })} to ${{ accountName }}, ${{ pending }} more at the next pause.`)
+        : i18n._(msg`${plural({ pending }, { one: '# working session moves', other: '# working sessions move' })} to ${{ accountName }} at the next pause.`),
+      variant: 'success',
+    };
+  }
   return {
     title: i18n._(msg`Switched account`),
     message: moved > 0
       ? i18n._(msg`${plural({ moved }, { one: '# running session', other: '# running sessions' })} moved to ${{ accountName }}.`)
       : i18n._(msg`New ${{ agentName }} sessions start on ${{ accountName }}.`),
     variant: 'success',
+  };
+}
+
+/**
+ * The toast for Automatic order putting another account first (task #1200): the agent's running
+ * sessions follow it, each at its next safe point. Which account a session runs on is not on its
+ * card, so the move would otherwise go unseen. One per order change.
+ */
+export function describeAccountsFollowing(following: AgentAccountsFollowing): { title: string; message: string } {
+  const agentName = agentDisplayName(following.agent);
+  const accountName = following.accountName ?? agentName;
+  return {
+    title: i18n._(msg`Switching account`),
+    message: i18n._(msg`Running ${{ agentName }} sessions move to ${{ accountName }}.`),
   };
 }
 

@@ -13,7 +13,7 @@ import { PtyPortClient } from './pty-port-client';
 import { createLocalFontList } from './local-fonts';
 import type { ScrollbackInvokeResult } from '../shared/pty-port-protocol';
 import { installDevtoolsPreloadHooks } from '../devtools/preload/install-globals';
-import type { AgentAccountLoginEnded, AgentAccountSwitched, AgentAccountsAllFull } from '../shared/agent-accounts';
+import type { AgentAccountLoginEnded, AgentAccountSwitched, AgentAccountsAllFull, AgentAccountsFollowing } from '../shared/agent-accounts';
 import type { GuestBrowserShortcut } from '../shared/browser-pane-guest-shortcuts';
 
 // Decodes the standard base64 main writes with `Buffer.from(text, 'utf-8').toString('base64')`.
@@ -543,6 +543,11 @@ const api: ElectronAPI = {
       const handler = (_event: Electron.IpcRendererEvent, allFull: AgentAccountsAllFull) => callback(allFull);
       ipcRenderer.on(IPC.ACCOUNTS_ALL_FULL, handler);
       return () => ipcRenderer.removeListener(IPC.ACCOUNTS_ALL_FULL, handler);
+    },
+    onFollowing: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, following: AgentAccountsFollowing) => callback(following);
+      ipcRenderer.on(IPC.ACCOUNTS_FOLLOWING, handler);
+      return () => ipcRenderer.removeListener(IPC.ACCOUNTS_FOLLOWING, handler);
     },
   },
 

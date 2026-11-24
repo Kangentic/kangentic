@@ -20,6 +20,7 @@ interface AgentAccountRow {
   history_private: number;
   last_usage_json: string | null;
   last_usage_at: string | null;
+  absent_windows_json: string | null;
   created_at: string;
 }
 
@@ -49,6 +50,8 @@ function toAccount(row: AgentAccountRow): AgentAccount {
     historyPrivate: row.history_private === 1,
     lastUsage: parseJsonArray<RateLimitWindow>(row.last_usage_json),
     lastUsageAt: row.last_usage_at,
+    // Only window ids: a value that is not a string never reaches the renderer's id compare.
+    absentWindowIds: (parseJsonArray<unknown>(row.absent_windows_json) ?? []).filter((id): id is string => typeof id === 'string'),
     createdAt: row.created_at,
   };
 }
@@ -145,7 +148,7 @@ export class AgentAccountRepository {
 
   /** Forgets the row's usage: it was read for a login the row no longer names. */
   clearUsage(id: string): void {
-    this.database().prepare('UPDATE agent_accounts SET last_usage_json = NULL, last_usage_at = NULL WHERE id = ?').run(id);
+    this.database().prepare('UPDATE agent_accounts SET last_usage_json = NULL, last_usage_at = NULL, absent_windows_json = NULL WHERE id = ?').run(id);
   }
 
   updateStatus(id: string, status: AgentAccountStatus): void {
@@ -156,10 +159,20 @@ export class AgentAccountRepository {
     this.database().prepare('UPDATE agent_accounts SET history_private = ? WHERE id = ?').run(historyPrivate ? 1 : 0, id);
   }
 
-  updateUsage(id: string, windows: RateLimitWindow[]): void {
+  /**
+   * Stores the account's windows. `absentWindowIds`, given only by an idle read, replaces the
+   * windows the account does not have; left out (a live report), it keeps what is stored.
+   */
+  updateUsage(id: string, windows: RateLimitWindow[], absentWindowIds?: readonly string[]): void {
+    if (absentWindowIds === undefined) {
+      this.database()
+        .prepare('UPDATE agent_accounts SET last_usage_json = ?, last_usage_at = ? WHERE id = ?')
+        .run(JSON.stringify(windows), new Date().toISOString(), id);
+      return;
+    }
     this.database()
-      .prepare('UPDATE agent_accounts SET last_usage_json = ?, last_usage_at = ? WHERE id = ?')
-      .run(JSON.stringify(windows), new Date().toISOString(), id);
+      .prepare('UPDATE agent_accounts SET last_usage_json = ?, last_usage_at = ?, absent_windows_json = ? WHERE id = ?')
+      .run(JSON.stringify(windows), new Date().toISOString(), JSON.stringify([...absentWindowIds]), id);
   }
 
   /** Rewrites one agent's positions to the given id order (1-based). Ids not listed keep theirs after. */

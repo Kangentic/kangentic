@@ -126,6 +126,14 @@ export class AccountContinuation {
     });
   }
 
+  /**
+   * The continuation is deciding the session, or holds it waiting for an account to free: it owns
+   * where the session goes next, so a move to follow the order leaves it alone.
+   */
+  isHandling(sessionId: string): boolean {
+    return this.inFlight.has(sessionId) || this.waiting.has(sessionId);
+  }
+
   /** The session ended or was replaced: nothing waits on it any more. */
   forgetSession(sessionId: string): void {
     this.waiting.delete(sessionId);

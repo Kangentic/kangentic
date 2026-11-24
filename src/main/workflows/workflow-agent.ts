@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { resolveSpawnAccount } from '../accounts/account-service';
 import { buildSessionEnv } from '../accounts/account-env';
+import type { RestartOutcome } from '../accounts/account-session-move';
 import { v4 as uuidv4 } from 'uuid';
 import type { IpcContext } from '../ipc/ipc-context';
 import type { ActivityState, OpeningPromptDelivery, Project, Session, SessionIdCreationOutcome, Workflow, WorkflowAgentStatus, WorkflowAgentSummary } from '../../shared/types';
@@ -233,6 +234,50 @@ function syncWorkflowAgentAccess(context: IpcContext, homeProjectId: string, wor
   if (isActive(context.sessionManager.getActivityCache()[session.id])) return 'next-turn';
   setImmediate(() => void restartWithAccess(context, workflowId));
   return 'now';
+}
+
+/**
+ * Restart a workflow's running agent in place on `accountId`, resuming its
+ * conversation (task #1200): the account order moved, or Switch to named the
+ * account. `message` is what a session caught mid-turn is told, so it picks up
+ * the turn; an idle one resumes with none. `stillSafe` is asked again just
+ * before the stop, so a turn that started since is not cut. A read-access
+ * restart still owed is folded in: the start reads the grant from the workflow
+ * row, so the agent restarts once. A Pause the user pressed stands. An agent
+ * whose conversation id is not recorded yet waits (`deferred`).
+ */
+export async function restartWorkflowAgentOn(
+  context: IpcContext,
+  workflowId: string,
+  accountId: string,
+  message: string | undefined,
+  stillSafe: () => boolean,
+): Promise<RestartOutcome> {
+  const session = findWorkflowAgentSession(context, workflowId);
+  if (!session || session.status !== 'running' || userPaused.has(workflowId)) return 'failed';
+  // A restart resumes the conversation by its recorded id. With none recorded yet it would begin a
+  // new conversation and drop the one running, so the move waits, as a read-access grant does.
+  if (!recordedConversationId(session.projectId, workflowId)) return 'deferred';
+  if (!stillSafe()) return 'deferred';
+  const owedAccess = pendingAccess.get(workflowId);
+  pendingAccess.delete(workflowId);
+  captureSpend(context, session);
+  await context.sessionManager.suspend(session.id);
+  if (userPaused.has(workflowId)) return 'failed';
+  const restarted = await startOnce(
+    context,
+    session.projectId,
+    workflowId,
+    lastGrid.get(workflowId) ?? {},
+    message ?? owedAccess?.message,
+    accountId,
+  );
+  if (restarted.unavailable || restarted.setupNeeded) {
+    const reason = restarted.unavailable ?? 'the Workflow agent setting is not complete';
+    console.warn(`[WORKFLOW-AGENT] Stopped to move to another account, but could not start again: ${reason}`);
+    return 'failed';
+  }
+  return restarted.session?.accountId === accountId ? 'moved' : 'failed';
 }
 
 /**
@@ -547,10 +592,11 @@ function startOnce(
   workflowId: string,
   grid: WorkflowAgentGrid,
   continuation?: string,
+  accountId?: string,
 ): Promise<WorkflowAgentStatus> {
   const pending = opening.get(workflowId);
   if (pending) return pending;
-  const started = startWorkflowAgent(context, homeProjectId, workflowId, grid, continuation)
+  const started = startWorkflowAgent(context, homeProjectId, workflowId, grid, continuation, accountId)
     .catch((error: unknown) => {
       // A refusal comes back as a status, so what lands here is a real failure.
       reportPreflightFailure({ cause: 'workflow_agent', error, startPath: 'workflow' });
@@ -576,8 +622,9 @@ function startWorkflowAgent(
   workflowId: string,
   grid: WorkflowAgentGrid,
   continuation?: string,
+  accountId?: string,
 ): Promise<WorkflowAgentStatus> {
-  return withHostFilePull((hostFilePull) => startWorkflowAgentWithPull(hostFilePull, context, homeProjectId, workflowId, grid, continuation));
+  return withHostFilePull((hostFilePull) => startWorkflowAgentWithPull(hostFilePull, context, homeProjectId, workflowId, grid, continuation, accountId));
 }
 
 async function startWorkflowAgentWithPull(
@@ -587,6 +634,7 @@ async function startWorkflowAgentWithPull(
   workflowId: string,
   grid: WorkflowAgentGrid,
   continuation?: string,
+  accountId?: string,
 ): Promise<WorkflowAgentStatus> {
   // The home is the id a pane or a resume named, which can outlive its project.
   const homeDb = getExistingProjectDb(homeProjectId);
@@ -739,9 +787,10 @@ async function startWorkflowAgentWithPull(
     cliTarget,
     // The agent's top account with room, like any session (task #1057). A resume
     // hands its conversation over, so its plan file reaches the account it lands on.
+    // A restart that moves the agent to another account names that account (task #1200).
     account: cliTarget ? null : await resolveSpawnAccount(
       adapter.name,
-      undefined,
+      accountId,
       undefined,
       resume && agentSessionId ? { agentSessionId, cwd: projectRoot } : undefined,
     ),
@@ -779,12 +828,13 @@ async function startWorkflowAgentWithPull(
       releaseCommandHold(adapter, projectRoot, sessionId);
       return unavailable('This workflow no longer exists.');
     }
-    // The restart for read access is the one start Kangentic makes on its own. A
-    // Pause pressed while it found the CLI reached an agent that already read
-    // suspended, so it stopped nothing, and it stands: the agent stays suspended,
-    // and its next start reads the grant from the workflow row.
-    const restartForAccess = continuation !== undefined;
-    if (restartForAccess && userPaused.has(workflowId)) {
+    // The restarts for read access and for a move to another account are the
+    // starts Kangentic makes on its own. A Pause pressed while one found the CLI
+    // reached an agent that already read suspended, so it stopped nothing, and it
+    // stands: the agent stays suspended, and its next start reads the grant and
+    // the account order afresh.
+    const restartByKangentic = continuation !== undefined || accountId !== undefined;
+    if (restartByKangentic && userPaused.has(workflowId)) {
       hostFilePull.sync?.abandon();
       releaseCommandHold(adapter, projectRoot, sessionId);
       return sessionStatus(findWorkflowAgentSession(context, workflowId));

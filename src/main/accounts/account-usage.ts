@@ -60,6 +60,13 @@ export interface AccountUsageRefresherOptions {
    * is already open never brings the pass forward. Absent: the pass runs at the delay.
    */
   startupGate?: () => Promise<void>;
+  /**
+   * Called after each account's usage read settles, read or failed, and after each pass, the
+   * reset timer's included. Automatic order can change on any of them, the clock alone included
+   * (a longest window that reset sorts its account last), so running sessions are re-placed here
+   * (`AutomaticOrderFollower`). Never per `accounts:changed` push.
+   */
+  onReadSettled?: () => void;
 }
 
 /** Which accounts a pass reads, and whose sign-in it reads first. */
@@ -201,6 +208,7 @@ export class AccountUsageRefresher {
     }).finally(() => {
       // A read queued behind this one while it ran holds the entry now; leave that one.
       if (this.pendingReads.get(accountId) === read) this.pendingReads.delete(accountId);
+      this.announceReadSettled();
     });
     this.pendingReads.set(accountId, read);
     this.queue = read;
@@ -230,6 +238,18 @@ export class AccountUsageRefresher {
     }
     await this.queue;
     this.armResetTimer();
+    this.announceReadSettled();
+  }
+
+  /** `onReadSettled`, which must never throw into the read queue. */
+  private announceReadSettled(): void {
+    if (this.disposed) return;
+    try {
+      this.options.onReadSettled?.();
+    } catch (error) {
+      console.warn('[ACCOUNTS] Could not re-place running sessions after a usage read:', error instanceof Error ? error.name : 'unknown');
+      this.options.failureReporter?.report(error, { tags: { stage: 'follow_order' } });
+    }
   }
 
   /**

@@ -29,6 +29,15 @@ const THREE_ACCOUNTS = [{
   ],
 }];
 
+/** The three accounts and a fourth whose plan has no 5h limit: its cached usage holds `five_hour: null` (task #1200). */
+const WITH_NO_FIVE_HOUR = [{
+  ...THREE_ACCOUNTS[0],
+  accounts: [
+    ...THREE_ACCOUNTS[0].accounts,
+    { id: 'account-4', email: 'four@example.com', plan: 'Max', lastUsage: [sevenDay(20, 5 * DAY)], absentWindowIds: ['five-hour'] },
+  ],
+}];
+
 async function openAccounts(page: Page): Promise<void> {
   await createProject(page, `settings-accounts-${Date.now()}`);
   await page.locator('[data-testid="settings-button"]').click();
@@ -51,7 +60,7 @@ async function accountCalls(page: Page, name: string): Promise<MockCall[]> {
 test.describe('Settings > Accounts', () => {
   // One boot on the three-account seed for three reads that change nothing.
   test('three accounts: the first with room is Active, a full one is skipped, a signed-out one says so', async () => {
-    const { browser, page } = await launchPage({ beforeLoad: seedAccounts(THREE_ACCOUNTS) });
+    const { browser, page } = await launchPage({ beforeLoad: seedAccounts(WITH_NO_FIVE_HOUR) });
     try {
       await openAccounts(page);
       await test.step('three accounts: the first with room is Active, a full one is skipped, a signed-out one says so', async () => {
@@ -73,6 +82,12 @@ test.describe('Settings > Accounts', () => {
         await expect(signedOut).toContainText('Not signed in');
         await expect(signedOut.getByTestId('account-usage-line')).toHaveCount(0);
         await expect(signedOut.getByTestId('account-switch-to')).toHaveCount(0);
+      });
+
+      await test.step('an account whose plan has no 5h window draws only its weekly line', async () => {
+        const noFiveHour = page.getByTestId('account-row-account-4');
+        await expect(noFiveHour.getByTestId('account-usage-line')).toHaveCount(1);
+        await expect(noFiveHour.getByTestId('account-usage-not-started')).toHaveCount(0);
       });
 
       await test.step('the agent own login has no Remove', async () => {
@@ -191,7 +206,7 @@ test.describe('Settings > Accounts', () => {
       await outcome(page, 2, 1);
       await page.getByTestId('account-row-account-1').getByTestId('account-switch-to').click();
       const failed = page.getByTestId('toast').filter({ hasText: "Couldn't move every session" });
-      await expect(failed.getByTestId('toast-body')).toHaveText('1 running session stays on its account.');
+      await expect(failed.getByTestId('toast-body')).toHaveText('1 running session could not move.');
     } finally {
       await browser.close();
     }

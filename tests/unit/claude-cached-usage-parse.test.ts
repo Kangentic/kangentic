@@ -60,11 +60,20 @@ describe('readClaudeCachedUsage', () => {
     expect(readClaudeCachedUsage(state, fetchedAtMs + TEN_MINUTES_MS + 1)).toEqual({ empty: 'cache-stale', cacheAge: 'under_1h' });
   });
 
-  it('skips a null window, as a plan with no 5h window has', () => {
+  it('skips a null window and names it absent, as a plan with no 5h window has', () => {
     const state = loadState();
     state.cachedUsageUtilization.utilization.five_hour = null;
-    const windows = windowsOf(state, state.cachedUsageUtilization.fetchedAtMs);
-    expect(windows?.map((window) => window.id)).toEqual(['seven-day']);
+    const reading = readClaudeCachedUsage(state, state.cachedUsageUtilization.fetchedAtMs);
+    expect('windows' in reading && reading.windows.map((window) => window.id)).toEqual(['seven-day']);
+    expect('windows' in reading && reading.absentWindowIds).toEqual(['five-hour']);
+  });
+
+  it('names nothing absent for a window the cache leaves out, which says nothing about the plan', () => {
+    const state = loadState();
+    delete state.cachedUsageUtilization.utilization.five_hour;
+    const reading = readClaudeCachedUsage(state, state.cachedUsageUtilization.fetchedAtMs);
+    expect('windows' in reading && reading.windows.map((window) => window.id)).toEqual(['seven-day']);
+    expect('windows' in reading && reading.absentWindowIds).toEqual([]);
   });
 
   it('clamps utilization to 0..100', () => {

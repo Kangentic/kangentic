@@ -33,6 +33,7 @@ import {
   type AgentAccountsAllFull,
   type AgentAccountsCard,
   type AgentAccountsConfig,
+  type AgentAccountsFollowing,
 } from './agent-accounts';
 import { COMMAND_RAIL_DEFAULT_WIDTH_PX, type CommandTerminalRailState } from './command-terminal-rail';
 
@@ -1778,6 +1779,11 @@ export interface Session {
   /** The user renamed this Command Terminal (or cleared its name), so the namer
    *  never names it: a manual name always wins over the auto-derived one. */
   commandTerminalNamedByUser?: boolean;
+  /** This Command Terminal is ending only to start again in its own slot, on
+   *  its conversation (a move to another account, task #1200). Set on the
+   *  removal's snapshot: the window stays and pairs with the slot's next
+   *  terminal, and what its agent left running is not reaped. */
+  commandTerminalRespawn?: boolean;
   /**
    * Someone typed, pasted or sent something into this session's terminal
    * (`writeCarriesUserContent`, src/shared/terminal-input-content.ts), or it
@@ -10055,8 +10061,9 @@ export interface ElectronAPI {
     /** A drag: the agent's list takes this order and the run order becomes Manual. */
     reorder: (agent: string, orderedIds: string[]) => Promise<void>;
     /**
-     * Moves the account to #1, the run order becomes Manual, and the agent's running task sessions
-     * on other accounts restart in place on it.
+     * Moves the account to #1, the run order becomes Manual, and the agent's running sessions on
+     * other accounts (task sessions, Command Terminals, workflow agents) restart in place on it,
+     * each at its next safe point.
      */
     switchTo: (accountId: string) => Promise<AgentAccountSwitchResult>;
     /** Reads every account's usage now (the tab opened). Resolves once the reads are done. */
@@ -10067,6 +10074,8 @@ export interface ElectronAPI {
     onSwitched: (callback: (switched: AgentAccountSwitched) => void) => () => void;
     /** Every account of an agent is at its limit; a session waits for the first reset. */
     onAllFull: (callback: (allFull: AgentAccountsAllFull) => void) => () => void;
+    /** Automatic order put another account first, and the agent's running sessions move to it. */
+    onFollowing: (callback: (following: AgentAccountsFollowing) => void) => () => void;
   };
 
   // Keybindings

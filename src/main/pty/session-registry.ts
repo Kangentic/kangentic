@@ -105,6 +105,8 @@ export interface ManagedSession {
   commandTerminalLabel?: string | null;
   /** The user renamed or cleared this terminal's name, so the namer stands down. */
   commandTerminalNamedByUser?: boolean;
+  /** This terminal is ending to start again in its slot (`Session.commandTerminalRespawn`). */
+  commandTerminalRespawn?: boolean;
   /** Why this row's start never reached an agent (`Session.startBlockedReason`). */
   startBlockedReason?: StartBlockedReason | null;
   /** Who paused this row (`Session.suspendedBy`). Set by `suspend()` and a placeholder. */
@@ -454,6 +456,7 @@ export function toSession(session: ManagedSession): Session {
     commandTerminalBranch: session.commandTerminalBranch ?? null,
     commandTerminalLabel: session.commandTerminalLabel ?? null,
     commandTerminalNamedByUser: session.commandTerminalNamedByUser || undefined,
+    commandTerminalRespawn: session.commandTerminalRespawn || undefined,
     hasUserInput: session.hasUserInput || undefined,
     startBlockedReason: session.startBlockedReason ?? undefined,
     suspendedBy: session.suspendedBy ?? undefined,

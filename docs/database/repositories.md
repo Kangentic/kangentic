@@ -390,9 +390,9 @@ does not fail soft: a failed read or write throws to its caller, the account ser
 | `insert(input)` | Add an account at the bottom of its agent's list, `status` `ok` unless given, and return it |
 | `updateIdentity(id, identity)` | Write the `email`, `org_id`, `plan` and `status` the CLI reported |
 | `setFolderPath(id, folderPath)` | Point a folder account at another folder, one that now holds its login |
-| `clearUsage(id)` | Clear `last_usage_json` and `last_usage_at`, read for a login the row no longer names |
+| `clearUsage(id)` | Clear `last_usage_json`, `last_usage_at` and `absent_windows_json`, read for a login the row no longer names |
 | `updateStatus(id, status)` | Write `status` alone |
 | `setHistoryPrivate(id, historyPrivate)` | Record whether the account keeps its own prompt history |
-| `updateUsage(id, windows)` | Write the account's last usage windows (`last_usage_json`) and stamp `last_usage_at` |
+| `updateUsage(id, windows, absentWindowIds?)` | Write the account's last usage windows (`last_usage_json`) and stamp `last_usage_at`. `absentWindowIds`, from an idle read or a live report that brings a window back, replaces `absent_windows_json`; left out, the column keeps its value |
 | `reorder(agent, orderedIds)` | Rewrite one agent's positions to the given order, 1-based, in one transaction. Ids not listed keep their order after the listed ones |
 | `delete(id)` | Delete the row and close the gap in its agent's positions. The account's folder and login stay on disk |

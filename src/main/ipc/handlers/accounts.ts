@@ -12,17 +12,25 @@ import {
   type AgentAccountSwitchResult,
   type AgentAccountsAllFull,
   type AgentAccountsCard,
+  type AgentAccountsFollowing,
 } from '../../../shared/agent-accounts';
-import { EventType, type SessionEvent, type SessionUsage } from '../../../shared/types';
-import { AccountContinuation } from '../../accounts/account-continuation';
+import { EventType, type Session, type SessionEvent, type SessionUsage } from '../../../shared/types';
+import { isCommandTerminalSession, isWorkflowAgentSession } from '../../../shared/session-owner';
+import { AccountContinuation, CONTINUE_PROMPT } from '../../accounts/account-continuation';
+import { requiresUserInteraction } from '../../../shared/activity-state';
 import { carryRecapAcross, forgetRecapSession, pauseRecapTurnWait } from '../../automations/turn-end/recap-turns';
 import { AccountLoginRunner } from '../../accounts/account-login';
 import { AccountLoginWatch } from '../../accounts/account-login-watch';
 import { createTaskAccountSwitcher, setTaskAccountSwitcher, type TaskAccountSwitcherHandle } from '../../accounts/account-task-switch';
-import { moveRunningSessions } from '../../accounts/account-session-move';
+import { SessionAccountMover, type RunningSession, type SafePoint } from '../../accounts/account-session-move';
+import { AutomaticOrderFollower } from '../../accounts/account-order-follow';
+import { sessionsCanMove } from '../../accounts/account-support';
 import { AccountService, setAccountService } from '../../accounts/account-service';
 import { AccountUsageRefresher } from '../../accounts/account-usage';
 import { multiAccountAgents } from '../../accounts/account-order';
+import { retrievalClient } from '../../retrieval/retrieval-client';
+import { restartWorkflowAgentOn } from '../../workflows/workflow-agent';
+import { restartCommandTerminalOn } from './transient-sessions';
 import { setAccountsConfigListener } from '../../accounts/accounts-config-changed';
 import { agentRegistry } from '../../agent/agent-registry';
 import { resolveCliTarget } from '../../agent/shared/cli-target';
@@ -42,6 +50,7 @@ let loginRunner: AccountLoginRunner | null = null;
 let loginWatch: AccountLoginWatch | null = null;
 let syncLoginWatch: (() => void) | null = null;
 let taskSwitcher: TaskAccountSwitcherHandle | null = null;
+let sessionMover: SessionAccountMover | null = null;
 
 /** Synchronous: clears the usage timers and ends any sign-in still open (app quit). */
 export function stopAccounts(): void {
@@ -49,14 +58,19 @@ export function stopAccounts(): void {
   loginRunner?.dispose();
   loginWatch?.dispose();
   taskSwitcher?.dispose();
+  sessionMover?.dispose();
   setTaskAccountSwitcher(null);
   usageRefresher = null;
   loginRunner = null;
   loginWatch = null;
   syncLoginWatch = null;
   taskSwitcher = null;
+  sessionMover = null;
   setAccountsConfigListener(null);
 }
+
+/** How long a safe-point check waits for the retrieval worker to read the transcript. */
+const TOOL_RESULTS_READ_TIMEOUT_MS = 5_000;
 
 /** How long after an account move a failed turn still counts as the move's. */
 const TURN_AFTER_MOVE_WINDOW_MS = 10 * 60 * 1000;
@@ -101,6 +115,8 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
   const resolveCliVersion = async (agent: string): Promise<string | null> => (await detectCli(agent))?.version || null;
   // Assigned below, once the service it reads exists. A change before then has nothing waiting.
   let continuation: AccountContinuation | null = null;
+  // Assigned below too: running sessions follow Automatic order's top account (task #1200).
+  let follower: AutomaticOrderFollower | null = null;
   const notifyChanged = (): void => {
     sendToRenderer(context.mainWindow, IPC.ACCOUNTS_CHANGED);
     // An account added, removed or moved to another folder changes which login files are watched.
@@ -146,8 +162,12 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
     const account = repository.getById(accountId);
     return account ? account.folderPath : undefined;
   });
-  // A saved Order mode changes the order main lists: the tab lists again once the write landed.
-  setAccountsConfigListener(notifyChanged);
+  // A saved Order mode changes the order main lists: the tab lists again once the write landed,
+  // and a switch back to Automatic re-places running sessions.
+  setAccountsConfigListener(() => {
+    notifyChanged();
+    follower?.evaluate();
+  });
 
   // Each account keeps its latest windows, so its usage shows with no session running on it.
   context.sessionManager.on('usage', (_sessionId: string, usage: SessionUsage) => {
@@ -165,6 +185,9 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
     onStartup: () => syncLoginWatch?.(),
     // The pass runs a CLI per account, so it waits for the launch to settle.
     startupGate: whenBootSettled,
+    // Each read, and each pass (the one just after a window resets included), can change which
+    // account Automatic puts first; never each `accounts:changed` push.
+    onReadSettled: () => follower?.evaluate(),
   });
   refresher.start();
   usageRefresher = refresher;
@@ -217,7 +240,14 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
     session: { sessionId: string; taskId: string; projectId: string },
     accountId: string,
     prompt: string | undefined,
-  ): Promise<boolean> => withTaskLock(session.taskId, async () => {
+  ): Promise<boolean> => withTaskLock(session.taskId, () => restartTaskInLock(session, accountId, prompt));
+
+  /** `restartTaskOn`'s body, for a caller that already holds the task's lock. */
+  const restartTaskInLock = async (
+    session: { sessionId: string; taskId: string; projectId: string },
+    accountId: string,
+    prompt: string | undefined,
+  ): Promise<boolean> => {
     // Decided before the lock: a move or a restart may have replaced the session since.
     const task = getProjectRepos(context, session.projectId).tasks.getById(session.taskId);
     const projectPath = context.projectRepo.getById(session.projectId)?.path;
@@ -257,7 +287,7 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
       return false;
     }
     return true;
-  });
+  };
 
   // `kangentic_switch_account` (task #1113): a task's agent moves its own session to another
   // listed account, so it never needs a `/login`. The call answers first; the restart waits for
@@ -268,11 +298,7 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
       return live ? { id: live.id, projectId: live.projectId, accountId: live.accountId ?? null } : null;
     },
     agentOf: (sessionId) => context.sessionManager.getSessionAgentName(sessionId),
-    sessionsCanMove: (agent) => {
-      const support = agentRegistry.get(agent)?.accounts;
-      if (!support) return null;
-      return !(support.kind === 'folder' && support.conversationsStayOnAccount);
-    },
+    sessionsCanMove: (agent) => sessionsCanMove(agentRegistry.get(agent)?.accounts),
     ordered: (agent) => service.ordered(agent),
     onTurnEnded: (listener) => {
       const onTurnEnded = (payload: { sessionId: string }): void => listener(payload.sessionId);
@@ -305,12 +331,8 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
         return null;
       }
     },
-    canContinue: (agent) => {
-      const support = agentRegistry.get(agent)?.accounts;
-      if (!support) return false;
-      // A conversation that can only be resumed on its own account is never moved to another.
-      return !(support.kind === 'folder' && support.conversationsStayOnAccount);
-    },
+    // A conversation that can only be resumed on its own account is never moved to another.
+    canContinue: (agent) => sessionsCanMove(agentRegistry.get(agent)?.accounts) === true,
     isUsageLimitFailure: (agent, detail) => agentRegistry.get(agent)?.accounts?.isUsageLimitFailure?.(detail) ?? false,
     ordered: (agent) => service.ordered(agent),
     readUsageNow: (accountId) => refresher.refreshAccount(accountId, true),
@@ -375,6 +397,159 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
     activeContinuation.forgetSession(sessionId);
     // Read while the row is still in the registry: the session ended on this home.
     checkHome(context.sessionManager.getSessionHomeAccountId(sessionId));
+  });
+
+  // Running sessions follow the account order (task #1200): Automatic's new top account, or the
+  // account Switch to named. Each session moves at its first safe point, never mid-tool.
+  const sessionManager = context.sessionManager;
+  /** Each session's last tool call that ended, while nothing of its own has started since. */
+  const lastToolEnd = new Map<string, string>();
+  /**
+   * The last tool call whose results the transcript was read to hold, per session. Written results
+   * stay written, so a second look at the same call needs no second read.
+   */
+  const resultsWrittenFor = new Map<string, string>();
+  /**
+   * What the cheap checks say, before any transcript read: `idle` (the turn is over), `mid-turn`
+   * (working, and maybe between two tools), or null (not now). `safePoint` turns `mid-turn` into
+   * `between-tools` only once the transcript holds the last call's results.
+   */
+  type QuickSafePoint = 'idle' | 'mid-turn' | null;
+  /**
+   * The checks that need no transcript read: no tool in flight and no prompt or question open, no
+   * background shell or subagent alive (each dies with the restart; a service the agent marked is
+   * not one), and nothing typed into its input box.
+   */
+  const quickSafePoint = (sessionId: string): QuickSafePoint => {
+    if (sessionManager.automatedKeysBlocker(sessionId) !== null) return null;
+    const openWork = sessionManager.getOpenWork(sessionId);
+    if (openWork.backgroundShells.length > 0 || openWork.backgroundSubagents.length > 0) return null;
+    // The ledger lists a background subagent only once its parent's turn ended; the engine counts it from its start.
+    if ((sessionManager.getActivityStatsSnapshot(sessionId)?.subagentDepth ?? 0) > 0) return null;
+    if ((sessionManager.getPendingDraft(sessionId) ?? '').trim() !== '') return null;
+    // A permission prompt is refused above, so a session needing the user here is one whose turn is over.
+    return requiresUserInteraction(sessionManager.getActivityCache()[sessionId]) ? 'idle' : 'mid-turn';
+  };
+  /** Whether the session still stands where it was found: the same kind of point, and between two tools, the same last call. */
+  const stillAt = (sessionId: string, point: Exclude<SafePoint, null>, toolUseId: string | undefined): boolean => {
+    const quick = quickSafePoint(sessionId);
+    if (point === 'idle') return quick === 'idle';
+    return quick === 'mid-turn' && toolUseId !== undefined && lastToolEnd.get(sessionId) === toolUseId;
+  };
+  const isMainAgentEvent = (event: SessionEvent): boolean => !event.subagentId;
+  /**
+   * Mid-turn, a session is safe only once its transcript holds every result of the message whose
+   * call just ended: Claude writes a result 130 ms to 2.4 s after the call's PostToolUse (measured
+   * for task #1200). An agent that cannot say moves at its turn end.
+   */
+  const safePoint = async (sessionId: string): Promise<SafePoint> => {
+    const quick = quickSafePoint(sessionId);
+    if (quick !== 'mid-turn') return quick;
+    const toolUseId = lastToolEnd.get(sessionId);
+    if (toolUseId !== undefined && resultsWrittenFor.get(sessionId) === toolUseId) return 'between-tools';
+    const session = sessionManager.getSession(sessionId);
+    const agentName = sessionManager.getSessionAgentName(sessionId);
+    if (!toolUseId || !session || !agentName || !agentRegistry.get(agentName)?.transcriptToolResultsWritten) return null;
+    let written: boolean | null;
+    try {
+      written = await retrievalClient.call('transcript.toolResultsWritten', {
+        agentName,
+        transcriptPath: null,
+        agentSessionId: session.agentSessionId ?? null,
+        cwd: session.cwd,
+        cliTarget: sessionManager.getSessionCliTarget(sessionId) ?? null,
+        toolUseId,
+      }, { timeoutMs: TOOL_RESULTS_READ_TIMEOUT_MS });
+    } catch {
+      // report-ok: an unread transcript is no safe point; the next tool end or the turn end asks again.
+      return null;
+    }
+    if (written !== true || !stillAt(sessionId, 'between-tools', toolUseId)) return null;
+    resultsWrittenFor.set(sessionId, toolUseId);
+    return 'between-tools';
+  };
+  const runningSessionOf = (session: Session): RunningSession | null => {
+    const agent = sessionManager.getSessionAgentName(session.id);
+    if (!agent || session.status !== 'running') return null;
+    const kind = isCommandTerminalSession(session) ? 'command-terminal' : isWorkflowAgentSession(session) ? 'workflow' : 'task';
+    return {
+      sessionId: session.id,
+      kind,
+      projectId: session.projectId,
+      ownerId: session.workflowId ?? session.taskId,
+      agent,
+      accountId: session.accountId ?? null,
+    };
+  };
+  const mover = new SessionAccountMover({
+    listRunning: (agent) => sessionManager.listSessions()
+      .flatMap((session) => runningSessionOf(session) ?? [])
+      .filter((running) => running.agent === agent),
+    findRunning: (sessionId) => {
+      const session = sessionManager.getSession(sessionId);
+      return session ? runningSessionOf(session) : null;
+    },
+    accountsOf: (agent) => repository.listForAgent(agent),
+    isHandledElsewhere: (sessionId) => activeContinuation.isHandling(sessionId),
+    safePoint,
+    hasDraft: async (sessionId) => ((await sessionManager.readPendingDraft(sessionId)) ?? '').trim() !== '',
+    restartOn: async (running, accountId, point) => {
+      // A session cut between two tools is told to continue; one whose turn was over hears nothing.
+      const prompt = point === 'between-tools' ? CONTINUE_PROMPT : undefined;
+      // Asked again just before the stop, under any lock.
+      const toolUseId = lastToolEnd.get(running.sessionId);
+      const stillSafe = (): boolean => stillAt(running.sessionId, point, toolUseId);
+      if (running.kind === 'command-terminal') return restartCommandTerminalOn(context, running.sessionId, accountId, prompt, stillSafe);
+      if (running.kind === 'workflow') return restartWorkflowAgentOn(context, running.ownerId, accountId, prompt, stillSafe);
+      return withTaskLock(running.ownerId, async () => {
+        if (!stillSafe()) return 'deferred';
+        const moved = await restartTaskInLock({ sessionId: running.sessionId, taskId: running.ownerId, projectId: running.projectId }, accountId, prompt);
+        return moved ? 'moved' : 'failed';
+      });
+    },
+    reportFailure: (error) => { accountsReporter.report(error, { tags: { stage: 'session_move' } }); },
+  });
+  sessionMover = mover;
+  sessionManager.on('event', (sessionId: string, event: SessionEvent) => {
+    if (isMainAgentEvent(event)) {
+      if (event.type === EventType.ToolEnd && event.toolId) {
+        lastToolEnd.set(sessionId, event.toolId);
+        mover.noteToolEnded(sessionId);
+      } else if (event.type === EventType.ToolEnd) {
+        // A call that ended with no id cannot be checked in the transcript: wait for the turn end.
+        lastToolEnd.delete(sessionId);
+      } else if (event.type === EventType.ToolStart || event.type === EventType.Prompt || event.type === EventType.Idle) {
+        lastToolEnd.delete(sessionId);
+        mover.dropRechecks(sessionId);
+      }
+    }
+    // Off the event's stack: the engine and the open-work ledger take this event in after it.
+    if (mover.isPending(sessionId)) setImmediate(() => mover.check(sessionId));
+  });
+  sessionManager.on('activity', (sessionId: string) => {
+    if (mover.isPending(sessionId)) setImmediate(() => mover.check(sessionId));
+  });
+  sessionManager.on('turn-ended', (payload: { sessionId: string }) => {
+    if (mover.isPending(payload.sessionId)) setImmediate(() => mover.check(payload.sessionId));
+  });
+  sessionManager.on('session-removed', (sessionId: string) => {
+    mover.forget(sessionId);
+    lastToolEnd.delete(sessionId);
+    resultsWrittenFor.delete(sessionId);
+  });
+  follower = new AutomaticOrderFollower({
+    readConfig,
+    agents: () => [...multiAccountAgents(repository.list())],
+    followsOrderMode: (agent) => service.followsOrderMode(agent),
+    sessionsCanMove: (agent) => sessionsCanMove(agentRegistry.get(agent)?.accounts) === true,
+    ordered: (agent) => service.ordered(agent),
+    request: (agent, accountId) => mover.request(agent, accountId, 'follow'),
+    cancelFollowing: (agent) => mover.cancelFollowing(agent),
+    notifyFollowing: (agent, account) => {
+      const following: AgentAccountsFollowing = { agent, accountName: accountDisplayName(account) };
+      sendToRenderer(context.mainWindow, IPC.ACCOUNTS_FOLLOWING, following);
+    },
+    reportFailure: (error) => { accountsReporter.report(error, { tags: { stage: 'follow_order' } }); },
   });
 
   const runner = new AccountLoginRunner({
@@ -459,37 +634,23 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
     if (typeof agent !== 'string' || !Array.isArray(orderedIds)) return;
     service.reorder(agent, orderedIds.filter((id): id is string => typeof id === 'string'));
   });
-  // Switch to is a deliberate switch: the account goes to #1 and the agent's running task sessions
-  // move to it now. A switch that left them where they were would only matter at a limit, and the
-  // automatic switch already covers that. A drag only reorders, for new sessions.
+  // Switch to is a deliberate switch: the account goes to #1 and the agent's running sessions (task
+  // sessions, Command Terminals and workflow agents) move to it, each at its first safe point, the
+  // same way an Automatic reorder moves them (task #1200). A drag only reorders, for new sessions.
   ipcMain.handle(IPC.ACCOUNTS_SWITCH_TO, async (_event, accountId: unknown): Promise<AgentAccountSwitchResult> => {
     if (typeof accountId !== 'string' || !service.switchTo(accountId)) {
-      return { ok: false, agent: null, accountName: null, moved: 0, failed: 0 };
+      return { ok: false, agent: null, accountName: null, moved: 0, pending: 0, failed: 0 };
     }
     const switchedAccount = repository.getById(accountId);
     const agent = switchedAccount?.agent;
-    let outcome = { moved: 0, failed: 0 };
-    const agentSupport = agent ? agentRegistry.get(agent)?.accounts : undefined;
+    let outcome = { moved: 0, pending: 0, failed: 0 };
     // An agent whose conversations stay on their account keeps its running sessions where they are.
-    if (agent && !(agentSupport?.kind === 'folder' && agentSupport.conversationsStayOnAccount)) {
-      // Each running session restarts in place, one at a time, and the board shows each as it
-      // goes. The list has already changed (the service pushed it); the answer waits for the
-      // sessions, so the renderer can say how the switch ended.
-      const activity = context.sessionManager.getActivityCache();
-      outcome = await moveRunningSessions({
-        listRunning: (ofAgent) => context.sessionManager.listSessions()
-          .filter((session) => !session.transient && session.status === 'running'
-            && context.sessionManager.getSessionAgentName(session.id) === ofAgent)
-          .map((session) => ({
-            sessionId: session.id,
-            taskId: session.taskId,
-            projectId: session.projectId,
-            accountId: session.accountId ?? null,
-            // Anything but a settled idle is work the restart cuts.
-            working: activity[session.id] !== undefined && activity[session.id] !== 'idle',
-          })),
-        restartOn: restartTaskOn,
-      }, agent, accountId);
+    if (agent && sessionsCanMove(agentRegistry.get(agent)?.accounts) === true) {
+      // Idle sessions restart in place now, one at a time, and the board shows each as it goes.
+      // A working one waits for its next safe point. The list has already changed (the service
+      // pushed it); the answer waits for each session's first look, so the renderer can say how
+      // the switch went.
+      outcome = await mover.request(agent, accountId);
     }
     return {
       ok: true,

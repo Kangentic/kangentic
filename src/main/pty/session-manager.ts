@@ -4033,12 +4033,17 @@ export class SessionManager extends EventEmitter {
    * `immediate` skips the exit-sequence grace for a caller that knows the agent
    * is already gone (the sweep), where the sequence would only reach a shell.
    */
-  endCommandTerminal(sessionId: string, options?: { immediate?: boolean }): 'ended' | 'not-found' | 'not-command-terminal' {
+  endCommandTerminal(sessionId: string, options?: { immediate?: boolean; respawn?: boolean }): 'ended' | 'not-found' | 'not-command-terminal' {
     const session = this.registry.get(sessionId);
     if (!session) return 'not-found';
     // A workflow's own agent is transient too, but no Command Terminal: it is
     // ended through its workflow (`endWorkflowAgent`), never by a terminal Stop.
     if (!isCommandTerminalSession(session)) return 'not-command-terminal';
+    // Main starts it again in its slot (a move to another account): the
+    // removal's snapshot says so, for the window and the leftover reaper.
+    // Written on every end, so a mark a throwing kill left behind never
+    // reaches a later, final end.
+    session.commandTerminalRespawn = options?.respawn === true;
     const sessionDirectory = commandTerminalSessionDirectory(session);
     this.kill(sessionId, options);
     const sessionExited = this.awaitExit(sessionId);

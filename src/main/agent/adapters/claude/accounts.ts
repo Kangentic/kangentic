@@ -10,6 +10,7 @@ import {
   type DeriveContext,
   type EmptyUsageReadReason,
   type FolderAccountSupport,
+  type IdleUsageReading,
   type SharedEntry,
   type UsageCacheAge,
 } from '../../../accounts/account-support';
@@ -409,7 +410,7 @@ export function readClaudeCachedUsage(
   state: unknown,
   nowMs: number,
   maxAgeMs: number = IDLE_USAGE_MAX_AGE_MS,
-): { windows: RateLimitWindow[] } | { empty: EmptyUsageReadReason; cacheAge?: UsageCacheAge } {
+): IdleUsageReading | { empty: EmptyUsageReadReason; cacheAge?: UsageCacheAge } {
   if (!isPlainRecord(state)) return { empty: 'state-not-record' };
   const cache = state.cachedUsageUtilization;
   if (!isPlainRecord(cache) || typeof cache.fetchedAtMs !== 'number') return { empty: 'no-cache' };
@@ -425,8 +426,14 @@ export function readClaudeCachedUsage(
   }
   const spent = spentWindowKeys(utilization);
   const windows: RateLimitWindow[] = [];
+  // A window the cache names as null is one the account does not have. A missing key says nothing.
+  const absentWindowIds: string[] = [];
   for (const { key, ...windowShape } of RATE_LIMIT_WINDOWS) {
     const windowRaw = utilization[key];
+    if (windowRaw === null) {
+      absentWindowIds.push(windowShape.id);
+      continue;
+    }
     if (!isPlainRecord(windowRaw) || typeof windowRaw.utilization !== 'number' || !Number.isFinite(windowRaw.utilization)) continue;
     const resetsAtMs = typeof windowRaw.resets_at === 'string' ? Date.parse(windowRaw.resets_at) : Number.NaN;
     windows.push({
@@ -435,7 +442,7 @@ export function readClaudeCachedUsage(
       resetsAt: Number.isFinite(resetsAtMs) ? Math.floor(resetsAtMs / 1000) : 0,
     });
   }
-  return windows.length > 0 ? { windows } : { empty: 'no-windows' };
+  return windows.length > 0 ? { windows, absentWindowIds } : { empty: 'no-windows' };
 }
 
 /**
@@ -450,7 +457,7 @@ export function readClaudeCachedUsage(
  * measured on 2.1.319 only: a CLI too old to know it fails every run, which is why a failed run
  * carries its exit kind and the service reports one that repeats.
  */
-async function readClaudeIdleUsage(cliPath: string, home: string | null): Promise<RateLimitWindow[]> {
+async function readClaudeIdleUsage(cliPath: string, home: string | null): Promise<IdleUsageReading> {
   try {
     await runClaudeCli(cliPath, ['-p', '/usage', '--no-session-persistence', '--safe-mode'], 30_000, homeEnv(home));
   } catch (error) {
@@ -470,7 +477,7 @@ async function readClaudeIdleUsage(cliPath: string, home: string | null): Promis
   }
   const reading = readClaudeCachedUsage(state, Date.now());
   if ('empty' in reading) throw new EmptyUsageReadError(reading.empty, { cacheAge: reading.cacheAge });
-  return reading.windows;
+  return reading;
 }
 
 /**
@@ -536,8 +543,9 @@ export const CLAUDE_ACCOUNT_SUPPORT: FolderAccountSupport = {
   carryConversation: carryClaudePlanFiles,
   identify: identifyClaudeAccount,
   readIdleUsage: readClaudeIdleUsage,
-  // The 5h and 7d windows every Claude subscription has. The 5h one is reported only once an
-  // account has run in it, so the Accounts rows draw it as Not started until then.
+  // The 5h and 7d windows a Claude subscription can have. A plan may have no 5h window at all,
+  // which its cached usage says with `five_hour: null` (`absentWindowIds`); a 5h window it has is
+  // reported only once the account has run in it, and reads Not started until then.
   usageWindows: RATE_LIMIT_WINDOWS.map(({ id, label, iconKind, windowDurationSeconds }) => ({ id, label, iconKind, windowDurationSeconds })),
   // Claude's StopFailure hook names a usage limit `rate_limit`, the same word it uses for a
   // momentary 429 it retries by itself. The account layer tells the two apart by reading the

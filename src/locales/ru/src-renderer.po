@@ -230,7 +230,7 @@ msgid "{count, plural, one {Unknown variable: {variableNames}. It will be sent a
 msgstr "{count, plural, one {Неизвестная переменная: {variableNames}. Она будет отправлена как есть.} few {Неизвестные переменные: {variableNames}. Они будут отправлены как есть.} many {Неизвестные переменные: {variableNames}. Они будут отправлены как есть.} other {Неизвестные переменные: {variableNames}. Они будут отправлены как есть.}}"
 
 #: src/renderer/lib/account-toasts.ts
-msgid "{failed, plural, one {# running session stays on its account.} other {# running sessions stay on their accounts.}}"
+msgid "{failed, plural, one {# running session could not move.} other {# running sessions could not move.}}"
 msgstr ""
 
 #: src/renderer/lib/leftover-processes.ts
@@ -287,10 +287,18 @@ msgstr "{minutes} мин {seconds} с"
 msgid "{moved, plural, one {# running session} other {# running sessions}} moved to {accountName}."
 msgstr ""
 
+#: src/renderer/lib/account-toasts.ts
+msgid "{moved, plural, one {# session moved} other {# sessions moved}} to {accountName}, {pending} more at the next pause."
+msgstr ""
+
 #: src/renderer/components/MarkdownRenderer.tsx
 #, fuzzy
 msgid "{path} has no changes in this view"
 msgstr "В этом представлении нет изменений в {path}"
+
+#: src/renderer/lib/account-toasts.ts
+msgid "{pending, plural, one {# working session moves} other {# working sessions move}} to {accountName} at the next pause."
+msgstr ""
 
 #: src/renderer/lib/leftover-processes.ts
 #, fuzzy
@@ -1577,6 +1585,10 @@ msgstr "Запустить снова"
 msgid "running"
 msgstr "выполняется"
 
+#: src/renderer/lib/account-toasts.ts
+msgid "Running {agentName} sessions move to {accountName}."
+msgstr ""
+
 #: src/renderer/App.tsx
 #, fuzzy
 msgid "Running agents are resuming."
@@ -1703,6 +1715,10 @@ msgstr "Ошибка скрипта остановки"
 
 #: src/renderer/lib/account-toasts.ts
 msgid "Switched account"
+msgstr ""
+
+#: src/renderer/lib/account-toasts.ts
+msgid "Switching account"
 msgstr ""
 
 #: src/renderer/stores/board-store/task-completion-slice.ts

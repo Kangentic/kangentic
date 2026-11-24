@@ -196,8 +196,8 @@ msgid "{count, plural, one {Unknown variable: {variableNames}. It will be sent a
 msgstr "{count, plural, other {未知的變數：{variableNames}。將依原樣傳送。}}"
 
 #: src/renderer/lib/account-toasts.ts
-msgid "{failed, plural, one {# running session stays on its account.} other {# running sessions stay on their accounts.}}"
-msgstr "{failed, plural, other {# 個執行中的工作階段仍留在原帳戶。}}"
+msgid "{failed, plural, one {# running session could not move.} other {# running sessions could not move.}}"
+msgstr ""
 
 #: src/renderer/lib/leftover-processes.ts
 msgid "{failedCount, plural, one {Couldn't stop # process from \"{taskTitle}\", and {keptCount, plural, one {# more is still running.} other {# more are still running.}}} other {Couldn't stop # processes from \"{taskTitle}\", and {keptCount, plural, one {# more is still running.} other {# more are still running.}}}}"
@@ -243,9 +243,17 @@ msgstr "{minutes} 分 {seconds} 秒"
 msgid "{moved, plural, one {# running session} other {# running sessions}} moved to {accountName}."
 msgstr "{moved, plural, other {# 個執行中的工作階段}}已移至 {accountName}。"
 
+#: src/renderer/lib/account-toasts.ts
+msgid "{moved, plural, one {# session moved} other {# sessions moved}} to {accountName}, {pending} more at the next pause."
+msgstr ""
+
 #: src/renderer/components/MarkdownRenderer.tsx
 msgid "{path} has no changes in this view"
 msgstr "{path} 在此檢視中沒有變更"
+
+#: src/renderer/lib/account-toasts.ts
+msgid "{pending, plural, one {# working session moves} other {# working sessions move}} to {accountName} at the next pause."
+msgstr ""
 
 #: src/renderer/lib/leftover-processes.ts
 msgid "{processCount, plural, one {\"{taskTitle}\" left # process running.} other {\"{taskTitle}\" left # processes running.}}"
@@ -1308,6 +1316,10 @@ msgstr "再次執行"
 msgid "running"
 msgstr "執行中"
 
+#: src/renderer/lib/account-toasts.ts
+msgid "Running {agentName} sessions move to {accountName}."
+msgstr ""
+
 #: src/renderer/App.tsx
 msgid "Running agents are resuming."
 msgstr "執行中的代理正在恢復。"
@@ -1414,6 +1426,10 @@ msgstr "停止指令碼失敗"
 #: src/renderer/lib/account-toasts.ts
 msgid "Switched account"
 msgstr "已切換帳戶"
+
+#: src/renderer/lib/account-toasts.ts
+msgid "Switching account"
+msgstr ""
 
 #: src/renderer/stores/board-store/task-completion-slice.ts
 msgid "Task completed"

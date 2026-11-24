@@ -176,4 +176,10 @@ export function runGlobalMigrations(db: Database.Database): void {
   if (!accountColumns.some((column) => column.name === 'org_id')) {
     db.exec('ALTER TABLE agent_accounts ADD COLUMN org_id TEXT DEFAULT NULL');
   }
+
+  // Migration: the declared usage windows an account does not have at all (a Claude plan with no
+  // 5h limit), as a JSON array of window ids. Written only by an idle usage read; null until one.
+  if (!accountColumns.some((column) => column.name === 'absent_windows_json')) {
+    db.exec('ALTER TABLE agent_accounts ADD COLUMN absent_windows_json TEXT DEFAULT NULL');
+  }
 }
