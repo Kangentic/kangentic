@@ -994,7 +994,7 @@ export const DEMO_DICTATION_INFO = buildDictationInfo(
 );
 /**
  * What `tasks.listPrChecks` answers for the sample install's PRs whose rows read `failing`:
- * the Changes panel's Pull request section and the Changes button's count read it. Task #7's
+ * the Changes panel's Pull request section and the Changes button's badge read it. Task #7's
  * integration tests broke one CI job, and coverage dropped under the patch target. Job ids
  * are in the shape a real Actions run carries, so the GitHub connector's log path would take
  * them.

@@ -236,7 +236,7 @@ test.describe('Close browser', () => {
     await toggle.click();
     await sharedPage.locator('[data-testid="task-detail-browser-held"]').waitFor({ state: 'attached', timeout: 5000 });
     await expect(toggle).toHaveAccessibleDescription(/^Show browser.*Page kept$/);
-    // The running dot stays while the guest is kept behind the toggle; no
+    // The running badge stays while the guest is kept behind the toggle; no
     // agent is driving it in this fixture.
     const dot = sharedPage.locator('[data-testid="browser-toggle-alive"]');
     await expect(dot).toHaveCount(1);
@@ -281,7 +281,7 @@ test.describe('Close browser', () => {
     expect((await callsOfType(sharedPage, 'user-close', MOCK_WEB_CONTENTS_ID)).length).toBe(0);
   });
 
-  test('the card carries a solid green globe; only the always-rendered pill needs a running dot', async () => {
+  test('the card carries a solid green globe; only the always-rendered pill needs a running badge', async () => {
     await openRegisteredPane(sharedPage);
     // The card's globe renders ONLY while a guest is running, so its presence
     // is the signal and it needs no dot (a smudge at 12px). The pill is always

@@ -387,7 +387,7 @@ function DisplayIdBadge({ task, view, hidden }: { task: Task; view: TaskCardView
  *     every title's start. Placement is also what makes green safe here - green
  *     next to the ring's green lost its identity, but past the title and the
  *     ticket number it reads as its own thing.
- *   - NO running dot, unlike the pill: the pill is persistent chrome (always
+ *   - NO running badge, unlike the pill: the pill is persistent chrome (always
  *     rendered, so it needs a marker to say whether a guest is behind it), while
  *     this globe renders ONLY while a guest is running - its presence IS the
  *     signal, and at 12px the dot was a smudge on the glyph rather than a second

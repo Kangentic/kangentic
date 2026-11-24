@@ -1885,7 +1885,7 @@ export function runProjectMigrations(db: Database.Database): void {
 
   // Migration: one row per headless agent call Kangentic makes on the user's
   // behalf (a Condition check, a workflow step check, a task summary batch, a
-  // task title, a Command Terminal name) with what the CLI reported it cost.
+  // task title, a Command Terminal name, a git draft) with what the CLI reported it cost.
   // Its own table rather than usage_history, whose every aggregate reads as
   // session usage. No foreign key to tasks: spend outlives a deleted task, as
   // usage_history's does. Token and cost columns are NULL, never 0, for an
