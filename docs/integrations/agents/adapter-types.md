@@ -105,7 +105,7 @@ Three command builders read what discovery learned: Cursor turns a stored model 
 
 `src/main/agent/agent-adapter.ts`
 
-Fourteen recently-added optional fields drive per-spawn overrides. Adapters consume them in `buildCommand` to emit the appropriate CLI flag (or branch) when the value is present:
+These optional `CommandOptions` fields drive per-spawn overrides. Adapters consume them in `buildCommand` to emit the appropriate CLI flag (or branch) when the value is present:
 
 | Field | Type | Purpose |
 |-------|------|---------|

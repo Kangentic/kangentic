@@ -305,7 +305,7 @@ It writes `Kangentic (dev).lnk` to the checkout root. Double-click it there to s
 3. esbuild bundles main + preload + the six utility-process workers (embed, line-count, worktree-copy, dictation, retrieval, pty-host), minified.
    A build that uploads fails on any bundle whose sourcemap did not reach the upload
    (`scripts/sentry-upload-gate.js`, see [Error reporting](../telemetry/error-reporting.md#sourcemaps-and-debug-files)), in step 2 as well as here.
-4. Copies bridge scripts (`status-bridge.js`, `event-bridge.js`, `plan-approval-bridge.js`, `background-shell-hint-bridge.js`, `browser-policy-bridge.js`) to `.vite/build/`
+4. Copies the bridge scripts that `EXTERNAL_SCRIPTS` (`scripts/copy-external-scripts.js`) lists to `.vite/build/`: `status-bridge.js`, `event-bridge.js`, `plan-approval-bridge.js`, `background-shell-hint-bridge.js`, `browser-policy-bridge.js`
 5. Uploads node-pty's shipped Windows PDBs to Sentry as debug files (`uploadNativeDebugFiles`):
    Windows leg only, gated on a `KANGENTIC_SENTRY_TOKEN` / `SENTRY_AUTH_TOKEN` upload token and on
    the build being authorized to upload (CI, or a local `KANGENTIC_SENTRY_UPLOAD=1`). A missing
