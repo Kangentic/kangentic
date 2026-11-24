@@ -80,7 +80,7 @@ import { registerUsageStatsHandlers } from './handlers/usage-stats';
 import { registerPopOutHandlers } from './handlers/pop-out';
 import { registerMonitorHandlers } from './handlers/monitor';
 import { registerMcpServerHandlers } from './handlers/mcp-server';
-import { registerTaskDetailOwnershipHandlers } from './handlers/task-detail-ownership';
+import { detailOwnerRegistry, registerTaskDetailOwnershipHandlers } from './handlers/task-detail-ownership';
 import { retrievalService } from '../retrieval/retrieval-service';
 import { MobileBridgeService } from '../mobile-bridge/mobile-bridge-service';
 import { BoardEventBus } from '../mobile-bridge/board-event-bus';
@@ -540,6 +540,8 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   registerMonitorHandlers(context);
   registerMcpServerHandlers(context);
   registerTaskDetailOwnershipHandlers();
+  // A task with a window open anywhere is never paused for being idle.
+  sessionManager.setTaskWindowLookup((projectId, taskId) => detailOwnerRegistry.ownerOf(projectId, taskId) !== null);
   registerPopOutHandlers(context);
 
   // Start the central embedding engine's background drain loop at boot, not

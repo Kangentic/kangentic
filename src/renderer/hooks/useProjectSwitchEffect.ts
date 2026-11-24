@@ -33,7 +33,7 @@ import {
   snapshotProject,
   getProjectSnapshot,
 } from '../stores/project-cache';
-import { restoreWorkspaceForProject } from '../window-manager/persistence/restore-workspace';
+import { restoreWorkspaceForProject, resumeRestoredTasks } from '../window-manager/persistence/restore-workspace';
 import { reopenCommandTerminalPanelAfterRestart } from '../components/command-bar/reopen-panel';
 import { captureRetainedTasks, pruneRetainedTasks, planWindowRetention } from '../window-manager/bridge/retained-task-snapshots';
 import { useWindowStore } from '../window-manager/store/window-store';
@@ -297,6 +297,7 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
         // so this resolves synchronously; a cheap setState lets the restored
         // windows appear with the board (no flash) without blocking the swap.
         restoreWorkspaceForProject(currentProject.id);
+        if (previousProjectId) resumeRestoredTasks(currentProject.id);
 
         // The destination's windows are now in the window store, so the live
         // `dialogSessionIds` (reconciled next frame by useWindowSessionClaims) takes over the
@@ -420,6 +421,8 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
               // board, and every warm switch back would paint that.
               markProjectSeen(currentProject.id);
               restoreWorkspaceForProject(currentProject.id);
+              // A switch, never the launch restore: a restart lifts no pause.
+              if (previousProjectId) resumeRestoredTasks(currentProject.id);
               void reopenCommandTerminalPanelAfterRestart(currentProject.id);
               // Restore for this project is complete (its detail windows, if any, are now in the
               // window store). Disarm the pending collapse signal; the live `dialogSessionIds`

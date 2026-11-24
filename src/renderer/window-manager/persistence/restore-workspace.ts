@@ -22,6 +22,7 @@
 import { useConfigStore } from '../../stores/config-store';
 import { useBoardStore } from '../../stores/board-store';
 import { useSessionStore } from '../../stores/session-store';
+import { isWindowDormant } from '../store/types';
 import { useWindowStore } from '../store/window-store';
 
 // hmr-safe: holds only the one-shot listener a cycle keypress registers while it
@@ -47,6 +48,24 @@ function notifyWorkspaceRestored(projectId: string): void {
 export function restoreWorkspaceForProject(projectId: string): void {
   restoreWorkspace(projectId);
   notifyWorkspaceRestored(projectId);
+}
+
+/**
+ * Ask main to resume the tasks whose windows a project switch just brought back.
+ * A backgrounded project's windows do not count as open, so the idle timeout can
+ * pause their agents, and switching back is the user opening them again. Main
+ * decides which resume, as it does for any open. The caller skips this at launch:
+ * a restart lifts no pause.
+ */
+export function resumeRestoredTasks(projectId: string): void {
+  // A switch to a project with no saved layout leaves the outgoing project's
+  // windows in the store for a moment, so the board says whose a window is.
+  const boardTaskIds = new Set(useBoardStore.getState().tasks.map((task) => task.id));
+  for (const managedWindow of Object.values(useWindowStore.getState().windows)) {
+    if (managedWindow.kind !== 'task-detail' || isWindowDormant(managedWindow)) continue;
+    if (!boardTaskIds.has(managedWindow.anchor)) continue;
+    useSessionStore.getState().resumeOnOpen(managedWindow.anchor, projectId);
+  }
 }
 
 function restoreWorkspace(projectId: string): void {

@@ -259,6 +259,8 @@ function createMockContext() {
       getPendingDraft: vi.fn((_sessionId?: string) => null as string | null),
       // Read by the same re-check: a background job still open holds it off.
       getOpenWork: vi.fn((_sessionId?: string) => ({ backgroundShells: [] as Array<{ id: string }>, toolCalls: [] })),
+      // Read by the same re-check: a task the user has open is never paused.
+      isTaskOpen: vi.fn((_sessionId?: string) => false),
       getActivityCacheForProject: vi.fn(() => ({})),
       getUsageCache: vi.fn(() => ({})),
       getUsageCacheForProject: vi.fn(() => ({})),
@@ -1317,6 +1319,41 @@ describe('idle-timeout listener - DB side-effect when projectId is present', () 
     expect(context.sessionManager.suspend).not.toHaveBeenCalled();
 
     context.sessionManager.getOpenWork.mockReturnValue({ backgroundShells: [], toolCalls: [] });
+    fireIdleTimeout();
+    await drainUntil(() => context.sessionManager.suspend.mock.calls.length > 0);
+    expect(vi.mocked(markRecordSuspended)).toHaveBeenCalledWith(expect.anything(), 'record-idle', 'auto');
+  });
+
+  // The sweep reports no open task. This one was opened after the report, while
+  // the pause waited behind another operation on the task.
+  it('does not pause a task the user opened while the pause waited on the task lock, and pauses it once closed', async () => {
+    let releaseLock: () => void = () => {};
+    let lockHeld = false;
+    const lockHolder = withTaskLock('task-idle', () => new Promise<void>((resolve) => {
+      lockHeld = true;
+      releaseLock = resolve;
+    }));
+    try {
+      await drainUntil(() => lockHeld);
+      fireIdleTimeout();
+      context.sessionManager.isTaskOpen.mockReturnValue(true);
+    } finally {
+      releaseLock();
+    }
+    await lockHolder;
+    await drainUntil(() => context.sessionManager.isTaskOpen.mock.calls.length > 0);
+    // Intentional fixed wait - we cannot poll for non-occurrence.
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+    expect(context.sessionManager.isTaskOpen).toHaveBeenCalledWith('sess-idle');
+    expect(vi.mocked(markRecordSuspended)).not.toHaveBeenCalled();
+    expect(context.sessionManager.suspend).not.toHaveBeenCalled();
+    expect(context.terminalSubmitScheduler.cancel).not.toHaveBeenCalled();
+    expect(context.mainWindow.webContents.send).not.toHaveBeenCalledWith(
+      IPC.SESSION_IDLE_TIMEOUT, expect.anything(), expect.anything(), expect.anything(), expect.anything(),
+    );
+
+    context.sessionManager.isTaskOpen.mockReturnValue(false);
     fireIdleTimeout();
     await drainUntil(() => context.sessionManager.suspend.mock.calls.length > 0);
     expect(vi.mocked(markRecordSuspended)).toHaveBeenCalledWith(expect.anything(), 'record-idle', 'auto');

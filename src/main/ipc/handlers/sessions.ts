@@ -757,13 +757,15 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
       projectId,
       suspendedBy: 'auto',
       // The agent may have started working, or been moved or resumed onto a
-      // new session, while this waited for the task lock. Text the user is
-      // typing into its prompt also holds the pause off: the next sweep tries
+      // new session, while this waited for the task lock, or the user may have
+      // opened the task, which is never paused while it is open. Text the user
+      // is typing into its prompt also holds the pause off: the next sweep tries
       // again once the prompt is empty. So does a background job still open. A
       // shell the watcher cannot confirm alive is reclaimed at the five-minute
       // cap, so a long build can read idle while it runs, and a pause ends it.
       // A service the agent marked never opens here, so it does not hold this.
       stillEligible: (liveSession) => liveSession.id === sessionId
+        && !context.sessionManager.isTaskOpen(sessionId)
         && requiresUserInteraction(context.sessionManager.getActivityCache()[sessionId])
         && (context.sessionManager.getPendingDraft(sessionId) ?? '').trim() === ''
         && context.sessionManager.getOpenWork(sessionId).backgroundShells.length === 0

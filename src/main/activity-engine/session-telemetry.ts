@@ -35,6 +35,9 @@ const MAX_EVENTS_PER_SESSION = 500;
  */
 const PERMISSION_REJECTION_POLL_MS = 2_000;
 
+/** How often the idle sweep looks for sessions to time out. */
+const IDLE_SWEEP_MS = 60_000;
+
 /**
  * When a background session's SessionStart is checked for a move
  * (`confirmBackgroundMove`): at once, then four more times over 30 s. On a live
@@ -156,6 +159,14 @@ interface SessionTelemetryCallbacks {
    * conversation with it. Optional: a missing answer means the sweep applies.
    */
   isIdleTimeoutExempt?(sessionId: string): boolean;
+  /**
+   * The session's task is open in front of the user, in a task window or on a
+   * paired phone. The idle sweep never times one out, and its idle time starts
+   * over when the task closes. Its own question, not a branch of
+   * `isIdleTimeoutExempt`, because the sweep has to remember when it last saw
+   * the task open. Optional: a missing answer means it is not open.
+   */
+  isTaskOpen?(sessionId: string): boolean;
   /**
    * Nothing can reach the engine for this session right now, so its silence proves nothing: it runs
    * on an SSH host and the link is down (#913). The stale-thinking watchdog waits instead of forcing
@@ -335,6 +346,12 @@ export class SessionTelemetry {
   private readonly earlierToolCallCounts = new Map<string, number>();
   private _idleTimeoutMinutes = 0;
   private idleTimeoutInterval: ReturnType<typeof setInterval> | null = null;
+  /**
+   * When the idle sweep last saw each idle session's task open. Kept apart from
+   * the engine's `idleTimestamp`, which other readers take as when the agent
+   * went idle.
+   */
+  private readonly lastSeenOpenAt = new Map<string, number>();
   /**
    * Sessions currently `permissionPending`, tracked via the engine's own
    * `onActivityChange` transitions (task #640). Drives the lazy start/stop of
@@ -615,7 +632,7 @@ export class SessionTelemetry {
       this.idleTimeoutInterval = null;
     }
     if (minutes > 0) {
-      this.idleTimeoutInterval = setInterval(() => this.checkIdleTimeouts(), 60_000);
+      this.idleTimeoutInterval = setInterval(() => this.checkIdleTimeouts(), IDLE_SWEEP_MS);
       this.idleTimeoutInterval.unref();
     }
   }
@@ -646,8 +663,21 @@ export class SessionTelemetry {
       // Skipped before either callback: an idle-timeout report alone would
       // reach the renderer and mark the session suspended.
       if (this.callbacks.isIdleTimeoutExempt?.(sessionId)) return;
-      const idleStart = state.idleTimestamp;
-      if (idleStart && (now - idleStart) > timeoutMs) {
+      // A task the user has open is never timed out. The stamp is a sweep's
+      // sample rather than a close event, so a window and a phone work the same
+      // way, and a reload or a handover between windows opens no gap.
+      if (this.callbacks.isTaskOpen?.(sessionId)) {
+        this.lastSeenOpenAt.set(sessionId, now);
+        return;
+      }
+      if (!state.idleTimestamp) return;
+      // It may have closed any time before the sweep after the one that last saw
+      // it open, so its wait counts from that sweep: never an early pause.
+      const seenOpenAt = this.lastSeenOpenAt.get(sessionId);
+      const idleStart = seenOpenAt === undefined
+        ? state.idleTimestamp
+        : Math.max(state.idleTimestamp, seenOpenAt + IDLE_SWEEP_MS);
+      if ((now - idleStart) > timeoutMs) {
         this.callbacks.requestSuspend(sessionId);
         this.callbacks.onIdleTimeout(sessionId);
       }
@@ -1133,6 +1163,7 @@ export class SessionTelemetry {
    */
   clearSessionTracking(sessionId: string): void {
     this.activityEngine.deleteSession(sessionId);
+    this.lastSeenOpenAt.delete(sessionId);
     this.openWork.forget(sessionId);
     this.ptyTracker.clearSession(sessionId);
     // A suspend ends the agent's process; a resume reports its mode afresh.
@@ -1152,6 +1183,7 @@ export class SessionTelemetry {
     this.usage.removeSession(sessionId);
     this.earlierToolCallCounts.delete(sessionId);
     this.activityEngine.deleteSession(sessionId);
+    this.lastSeenOpenAt.delete(sessionId);
     this.openWork.forget(sessionId);
     this.ptyTracker.clearSession(sessionId);
     this.eventCache.delete(sessionId);

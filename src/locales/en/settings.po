@@ -1999,8 +1999,8 @@ msgid "Path to the private key"
 msgstr "Path to the private key"
 
 #: src/renderer/components/settings/settings-registry.ts
-msgid "Pause an agent waiting on you this long until you open or move its task."
-msgstr "Pause an agent waiting on you this long until you open or move its task."
+msgid "Pause an agent waiting on you this long, unless its task is open."
+msgstr "Pause an agent waiting on you this long, unless its task is open."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx

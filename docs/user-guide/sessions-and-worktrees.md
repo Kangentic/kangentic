@@ -87,6 +87,13 @@ the agent started is still open. It never pauses a Command Terminal: a pause wou
 and its conversation with it. It also leaves alone an agent that cannot resume, such as Warp or
 Ollama, for the same reason.
 
+It never pauses an agent whose task is open, however long it waits on you. A task is open while its
+window is, on the board or in the Agent Monitor, or while a paired phone has its screen open. The
+minutes start over when you close it. A task shown only in the bottom panel is not open. Neither is
+a window in a project you switched away from: its agent can pause, and it resumes when you switch
+back. A window you leave open overnight keeps its agent running, and a project's Stop script does
+not run for it.
+
 The agent stays paused until you come back to it, and a restart does not bring it back. Open the
 task and it resumes at once, from its card, a toast, search, or anywhere else that opens it. The
 conversation picks up where it stopped, and opening sends the agent nothing, so it costs no tokens.
@@ -106,8 +113,8 @@ A paused task keeps its Resume button, and opening it does not resume it, in the
   turn, so it waits for your click.
 - Its conversation cannot be resumed as it stands, so a resume would start a new one.
 
-A window that was already open when the pause landed keeps its Resume button too. Click the button,
-or click the task's card.
+A window that a restart restored keeps its Resume button too. Click the button, or click the task's
+card.
 
 A message held for the task, such as what a Stop script stopped, reaches the agent after your next
 turn ends. A task in a running workflow also rejoins that workflow when it resumes, so the workflow

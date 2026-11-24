@@ -57,7 +57,8 @@ contract was kept in sync across three files by prose comments alone.
   direct engine calls; they are not first-spawn entry points.
 - **Opening a task resumes it only with `plainResume`.** `resumeTaskOnOpen`
   (`handlers/session-resume-on-open.ts`) lifts an idle pause when a person opens the task, on the
-  desktop or on a paired phone (`start-session` with `trigger: 'open'`, through `openTaskSession`
+  desktop (a switch back to a project opens the windows left open there, `resumeRestoredTasks`) or
+  on a paired phone (`start-session` with `trigger: 'open'`, through `openTaskSession`
   in `handlers/session-start.ts`), and must send the agent nothing: it claims no held messages,
   and `resumeOnly` makes the engine decline a start that would go fresh. A start that needs a
   message keeps its Resume button. A phone's open never reaches the Start or Resume path.

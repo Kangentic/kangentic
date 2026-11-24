@@ -140,6 +140,7 @@ describe('idle pause', () => {
         getActivityCache: vi.fn(() => ({ 'sess-idle': 'idle' })),
         getPendingDraft: vi.fn(() => null),
         getOpenWork: vi.fn(() => ({ backgroundShells: [], toolCalls: [] })),
+        isTaskOpen: vi.fn(() => false),
         on: vi.fn((event: string, handler: (...handlerArguments: unknown[]) => unknown) => {
           capturedSessionEventHandlers.set(event, handler);
         }),

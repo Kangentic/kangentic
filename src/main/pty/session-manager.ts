@@ -391,6 +391,8 @@ export interface SessionTerminalDimensions {
  * all: the park exists so a phone does not mirror whatever strip the last
  * desktop surface left behind, so a desktop nobody paired (no probe) or a
  * session no phone is streaming must never pay its SIGWINCH + repaint.
+ * `hasStreamSubscriber` also answers the idle sweep (`isTaskOpen`): only a
+ * phone's open task screen asks for terminal bytes.
  */
 export interface MobileTerminalProbe {
   isSizeHeld(sessionId: string): boolean;
@@ -616,6 +618,8 @@ export class SessionManager extends EventEmitter {
   private transcriptSinkFor: ((projectId: string) => TranscriptSink | null) | null = null;
   /** Whether a session's plan approval decision approves its next plan (`setPlanApprovalLookup`). */
   private planApprovalLookup: ((sessionId: string) => boolean) | null = null;
+  /** Whether a task has a window open in any renderer (`setTaskWindowLookup`). */
+  private taskWindowLookup: ((projectId: string, taskId: string) => boolean) | null = null;
   /**
    * Sessions currently visible in the renderer (terminal panel + command bar overlay).
    * Only these sessions' PTY data is emitted via IPC - background sessions
@@ -1119,6 +1123,7 @@ export class SessionManager extends EventEmitter {
         return session !== undefined
           && (isCommandTerminalSession(session) || session.idlePauseLosesConversation === true);
       },
+      isTaskOpen: (sessionId) => this.isTaskOpen(sessionId),
       // Silence from a session on a host whose link is down is not a stuck agent (#913): no hook and no
       // output can arrive, and its agent goes on running there.
       isActivityHeld: (sessionId) => {
@@ -2202,6 +2207,29 @@ export class SessionManager extends EventEmitter {
    */
   setPlanApprovalLookup(lookup: (sessionId: string) => boolean): void {
     this.planApprovalLookup = lookup;
+  }
+
+  /**
+   * Tell the idle sweep which tasks have a window open: main's record of every
+   * task-detail window, in any renderer. Injected because that record lives in
+   * the IPC layer. Unset, no window is open.
+   */
+  setTaskWindowLookup(lookup: (projectId: string, taskId: string) => boolean): void {
+    this.taskWindowLookup = lookup;
+  }
+
+  /**
+   * The session's task is open in front of the user: a task window in any
+   * renderer, or its screen on a paired phone. Its agent is never paused for
+   * being idle. Asked by the idle sweep and again, under the task lock, by the
+   * pause it starts. The bottom panel does not count: it picks a tab by itself.
+   */
+  isTaskOpen(sessionId: string): boolean {
+    const session = this.registry.get(sessionId);
+    // A Command Terminal and a workflow's own agent have no task.
+    if (!session || session.transient) return false;
+    if (this.taskWindowLookup?.(session.projectId, session.taskId)) return true;
+    return this.mobileTerminalProbe?.hasStreamSubscriber(sessionId) === true;
   }
 
   dispose(): void {

@@ -2087,8 +2087,8 @@ msgid "Path to the private key"
 msgstr "私密金鑰路徑"
 
 #: src/renderer/components/settings/settings-registry.ts
-msgid "Pause an agent waiting on you this long until you open or move its task."
-msgstr "代理等你時，過這麼久才暫停，直到你開啟或移動該任務。"
+msgid "Pause an agent waiting on you this long, unless its task is open."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx

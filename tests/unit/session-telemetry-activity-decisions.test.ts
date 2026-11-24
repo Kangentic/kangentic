@@ -9,7 +9,8 @@
  *    >1s means the agent silently resumed, so force thinking.
  *  - checkIdleTimeouts(): the per-minute sweep that auto-suspends a session
  *    idle past the configured timeout, and skips one exempt from it (a
- *    Command Terminal).
+ *    Command Terminal) and one whose task is open, whose wait starts over when
+ *    the task closes.
  *  - handlePtyIdle(), reached through the PTY tracker: silence while a
  *    background shell is tracked ends the turn but keeps the shell (task #859).
  *  - ingestEvents({ suppressesPtyTracker }): whether a turn-initiating event
@@ -38,6 +39,7 @@ function makeTelemetry(
   engineOverrides: Partial<NonNullable<SessionTelemetryOptions['activityEngineOptions']>> = {},
   idleTimeoutExempt: Set<string> = new Set(),
   onAgentSessionId?: (sessionId: string, agentSessionId: string) => void,
+  openTasks: Set<string> = new Set(),
 ): SessionTelemetry {
   const staleThinkingTimeoutMs = engineOverrides.staleThinkingTimeoutMs ?? 600_000;
   const options: SessionTelemetryOptions = {
@@ -74,6 +76,7 @@ function makeTelemetry(
       },
       isSessionRunning: (sessionId) => !notRunning.has(sessionId),
       isIdleTimeoutExempt: (sessionId) => idleTimeoutExempt.has(sessionId),
+      isTaskOpen: (sessionId) => openTasks.has(sessionId),
       ...(onAgentSessionId ? { onAgentSessionId } : {}),
     },
     options,
@@ -100,6 +103,7 @@ describe('SessionTelemetry activity decisions', () => {
   let log: DecisionLog;
   let notRunning: Set<string>;
   let idleTimeoutExempt: Set<string>;
+  let openTasks: Set<string>;
   let telemetry: SessionTelemetry;
 
   beforeEach(() => {
@@ -107,7 +111,8 @@ describe('SessionTelemetry activity decisions', () => {
     log = { activityChanges: [], events: [], suspends: [], idleTimeouts: [] };
     notRunning = new Set();
     idleTimeoutExempt = new Set();
-    telemetry = makeTelemetry(log, notRunning, {}, idleTimeoutExempt);
+    openTasks = new Set();
+    telemetry = makeTelemetry(log, notRunning, {}, idleTimeoutExempt, undefined, openTasks);
   });
 
   afterEach(() => {
@@ -761,6 +766,79 @@ describe('SessionTelemetry activity decisions', () => {
       expect(log.idleTimeouts).not.toContain('terminal');
       expect(log.suspends).toContain('task');
       expect(log.idleTimeouts).toContain('task');
+    });
+
+    it('never times out a session whose task is open, while one idle beside it still times out', () => {
+      openTasks.add('open');
+      telemetry.initSession('open');
+      telemetry.initSession('closed');
+      telemetry.setIdleTimeout(30);
+      vi.advanceTimersByTime(12 * 60 * 60_000);
+      expect(log.suspends).not.toContain('open');
+      expect(log.idleTimeouts).not.toContain('open');
+      expect(log.suspends).toContain('closed');
+      expect(log.idleTimeouts).toContain('closed');
+    });
+
+    // Counted from when the agent went idle, a task open for two hours would be
+    // paused within a minute of its window closing. The three closes land right
+    // after a sweep, between two, and right before one.
+    it.each([1, 30_000, 59_999])('a task that closes %d ms after a sweep waits the whole timeout from its close', (closesAfterSweepMs) => {
+      openTasks.add('s1');
+      telemetry.initSession('s1');
+      telemetry.setIdleTimeout(30);
+      vi.advanceTimersByTime(2 * 60 * 60_000 + closesAfterSweepMs);
+      openTasks.delete('s1');
+      // A real interval runs a little late, so thirty sweeps are more than thirty
+      // minutes. Fake timers never drift, so the clock is nudged instead.
+      vi.setSystemTime(Date.now() + 5);
+
+      vi.advanceTimersByTime(30 * 60_000);
+      expect(log.idleTimeouts).toEqual([]);
+
+      // And is paused after it, within the sweep's own granularity.
+      vi.advanceTimersByTime(3 * 60_000);
+      expect(log.idleTimeouts).toContain('s1');
+    });
+
+    // The last sample of an open task is stale once the agent works for a while
+    // after the window closed. The new idle then starts later than that sample,
+    // and the wait counts from it. Red-green: replace the Math.max in
+    // checkIdleTimeouts with `seenOpenAt + IDLE_SWEEP_MS` and the 29-minute
+    // assertion fails, since the stale sample makes the fresh idle look an hour old.
+    it('counts the wait from a newer idle, not from the stale sample of the task being open', () => {
+      openTasks.add('s1');
+      telemetry.initSession('s1');
+      telemetry.setIdleTimeout(30);
+      vi.advanceTimersByTime(2 * 60 * 60_000); // open and idle: a sweep stamps it open
+      openTasks.delete('s1');
+
+      // Works for an hour after the close. A sweep passes over a thinking session
+      // and the stamp stays where the last open sweep left it.
+      for (let minute = 0; minute < 60; minute++) {
+        telemetry.ingestEvents('s1', [{ ts: Date.now(), type: EventType.Prompt }]);
+        vi.advanceTimersByTime(60_000);
+      }
+      expect(telemetry.getActivityCache()['s1']).toBe('thinking');
+      telemetry.ingestEvents('s1', [{ ts: Date.now(), type: EventType.Idle }]);
+      expect(telemetry.getActivityCache()['s1']).toBe('idle');
+      expect(log.idleTimeouts).toEqual([]);
+
+      vi.advanceTimersByTime(29 * 60_000);
+      expect(log.idleTimeouts).toEqual([]);
+
+      vi.advanceTimersByTime(3 * 60_000);
+      expect(log.idleTimeouts).toContain('s1');
+    });
+
+    it('leaves when the agent went idle as it is, so the card still shows its real wait', () => {
+      telemetry.initSession('s1');
+      const since = telemetry.getActivityReasonsCache()['s1'];
+      openTasks.add('s1');
+      telemetry.setIdleTimeout(1);
+      vi.advanceTimersByTime(10 * 60_000);
+      expect(log.activityChanges.filter((change) => change.sessionId === 's1').length).toBeLessThanOrEqual(1);
+      expect(telemetry.getActivityReasonsCache()['s1']).toEqual(since);
     });
 
     it('setIdleTimeout(0) cancels the sweep so an enrolled idle session is never suspended', () => {
