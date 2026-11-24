@@ -209,6 +209,7 @@ describe('spawnOffMain with a pty host registered', () => {
       windowsHide: false,
       outlivesApp: true,
       stdinFile: '/mock/input.bin',
+      userCommand: true,
     });
 
     expect(received[0].options).toEqual({
@@ -220,6 +221,7 @@ describe('spawnOffMain with a pty host registered', () => {
       windowsHide: false,
       outlivesApp: true,
       stdinFile: '/mock/input.bin',
+      userCommand: true,
     });
   });
 

@@ -707,6 +707,8 @@ export function registerSystemHandlers(context: IpcContext): void {
       stdio: 'ignore',
       windowsHide: false,
       outlivesApp: true,
+      // The user's own command: started whatever it names, as it always was.
+      userCommand: true,
     });
     // The pid is known once the start is acknowledged. A command that could
     // not be started answers with no pid, as it always did, and says why here.

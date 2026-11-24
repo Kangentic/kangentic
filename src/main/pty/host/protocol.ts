@@ -169,6 +169,15 @@ export interface PtyHostCliSpawnParams {
    * to send as `cliWrite` text, which has no backpressure.
    */
   stdinFile?: string;
+  /**
+   * The command is a user's own: a project's script, a run-script automation,
+   * a shortcut command. The host's refusal to start this app's own executable
+   * does not apply to it. That refusal guards runs Kangentic builds, and it
+   * compares a bare first word by name, which in a dev build is `electron`.
+   * Main ran a user's command unchecked while it started them, and refusing
+   * one is never Kangentic's to do.
+   */
+  userCommand?: boolean;
   /** Dev builds: the main-side code that asked for the run, for the spawn
    *  span's label (`spawn-caller.ts`). */
   caller?: string;

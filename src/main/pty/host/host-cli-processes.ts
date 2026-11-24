@@ -56,7 +56,11 @@ export class HostCliProcesses {
     // spawnCli builds it), and its arguments can carry a user's text naming
     // this app. Only the executable that would run is compared.
     const executable = params.shell ? leadingExecutable(params.command) : params.command;
-    const ownBinary = launchesOwnBinary({ kind: 'execFile', file: executable, args: [], options: {} }, this.ownExecutable ?? ownExecutables());
+    // The refusal guards runs Kangentic builds. A user's own command is never
+    // refused (`PtyHostCliSpawnParams.userCommand`): a script whose first word
+    // is `electron` names this app in a dev build, and main always ran it.
+    const ownBinary = params.userCommand !== true
+      && launchesOwnBinary({ kind: 'execFile', file: executable, args: [], options: {} }, this.ownExecutable ?? ownExecutables());
     if (ownBinary) {
       this.failToStart(processId, new Error('The pty host does not launch its own executable'));
       return;

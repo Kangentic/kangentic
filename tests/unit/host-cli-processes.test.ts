@@ -254,6 +254,37 @@ describe('host CLI runs', () => {
     expect(events.map((event) => event.type)).toEqual(['cliError', 'cliClose']);
   });
 
+  // A project's script, a run-script automation and a shortcut command are the
+  // user's own text. Main started them unchecked, and the refusal compares a
+  // bare first word by name, which in a dev build is `electron`: a script that
+  // starts `electron .` was refused once these moved here.
+  it('starts a user\'s own command that names this app\'s executable, as a program and as a shell command line', async () => {
+    const { processes, events, closed } = runner(process.execPath);
+    processes.start({ ...nodeRun(40, 'process.stdout.write("ran as a program")'), userCommand: true });
+    processes.start({
+      ...nodeRun(41, ''),
+      command: `"${process.execPath}" -e "process.stdout.write('ran through the shell')"`,
+      args: [],
+      shell: true,
+      userCommand: true,
+    });
+    await Promise.all([closed(40), closed(41)]);
+
+    expect(events.some((event) => event.type === 'cliError')).toBe(false);
+    const output = (processId: number): string => events
+      .filter((event): event is Extract<PtyHostEvent, { type: 'cliData' }> => event.type === 'cliData' && event.processId === processId)
+      .map((event) => Buffer.from(event.data).toString('utf-8'))
+      .join('');
+    expect(output(40)).toBe('ran as a program');
+    expect(output(41)).toBe('ran through the shell');
+  }, 20_000);
+
+  it('still refuses the same command when it is not marked as the user\'s', () => {
+    const { processes, events } = runner(process.execPath);
+    processes.start({ ...nodeRun(42, 'process.exit(0)'), userCommand: false });
+    expect(events.map((event) => event.type)).toEqual(['cliError', 'cliClose']);
+  });
+
   it('reads the executable a shell command line starts', () => {
     expect(leadingExecutable('"C:\\npm\\agent.cmd" -p "Kangentic.exe"')).toBe('C:\\npm\\agent.cmd');
     expect(leadingExecutable('  "/usr/local/bin/agent" --flag')).toBe('/usr/local/bin/agent');

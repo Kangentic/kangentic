@@ -284,7 +284,9 @@ export function spawnWithAbort(
       env,
       // Windows has no process groups; there `taskkill /T` walks the tree.
       detached: killsTree && process.platform !== 'win32',
-      ...(killsTree ? { outlivesApp: true } : {}),
+      // A script is the user's own command: started whatever it names, as it
+      // was here, where the host would refuse one that names this app.
+      ...(killsTree ? { outlivesApp: true, userCommand: true } : {}),
     });
     if (hostedChild) {
       controller.signal.addEventListener('abort', () => {
