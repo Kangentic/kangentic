@@ -37,6 +37,16 @@ interface CliRun {
   stopRequested: boolean;
 }
 
+/**
+ * Whether the host's shutdown waits for a run. One that outlives the app is not
+ * waited for, unless main asked for it to stop: a host that exits first takes
+ * the `taskkill` it started down with it, and the tree an aborted script left
+ * would go on running.
+ */
+export function shutdownWaitsForRun(run: { outlivesApp: boolean; stopRequested: boolean }): boolean {
+  return !run.outlivesApp || run.stopRequested;
+}
+
 export class HostCliProcesses {
   private readonly runs = new Map<number, CliRun>();
 
@@ -148,13 +158,11 @@ export class HostCliProcesses {
   }
 
   /** Runs whose process started and has not exited yet, which a shutdown
-   *  waits for. One that outlives the app is not waited for, unless main asked
-   *  for it to stop: a host that exits first takes the `taskkill` it started
-   *  down with it, and the tree an aborted script left would go on running. */
+   *  waits for (`shutdownWaitsForRun`). */
   get liveCount(): number {
     let count = 0;
     for (const run of this.runs.values()) {
-      if ((!run.outlivesApp || run.stopRequested) && run.child.pid !== undefined && !childHasExited(run.child)) count += 1;
+      if (shutdownWaitsForRun(run) && run.child.pid !== undefined && !childHasExited(run.child)) count += 1;
     }
     return count;
   }

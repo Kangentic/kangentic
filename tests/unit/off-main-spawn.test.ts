@@ -18,6 +18,19 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setOffMainCliSpawner, type CliChildProcess, type CliStopMode, type OffMainCliOptions } from '../../src/main/utility-process/off-main-cli';
 import { spawnOffMain, type OffMainChild } from '../../src/main/utility-process/off-main-spawn';
 
+// Spies that call through, so every test here keeps the real stop behavior and
+// one test can read which stop function a mode reached.
+const { stopChildTreeSpy, killChildTreeNowSpy } = vi.hoisted(() => ({
+  stopChildTreeSpy: vi.fn(),
+  killChildTreeNowSpy: vi.fn(),
+}));
+vi.mock('../../src/main/shared/child-tree-stop', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../src/main/shared/child-tree-stop')>();
+  stopChildTreeSpy.mockImplementation(original.stopChildTree);
+  killChildTreeNowSpy.mockImplementation(original.killChildTreeNow);
+  return { ...original, stopChildTree: stopChildTreeSpy, killChildTreeNow: killChildTreeNowSpy };
+});
+
 const PIPE_KEY = 'CHROME_CRASHPAD_PIPE_NAME';
 
 afterEach(() => {
@@ -133,6 +146,24 @@ describe('spawnOffMain with no pty host registered', () => {
 
     // Killed, not a clean exit: a signal on POSIX, a non-zero code on Windows.
     expect(run.child.signalCode !== null || run.child.exitCode !== 0).toBe(true);
+  }, 20_000);
+
+  it.each<[CliStopMode | undefined, number, number]>([
+    [undefined, 1, 0],
+    ['treeNow', 0, 1],
+    ['process', 0, 0],
+  ])('reaches the stop function its mode names (mode %s: tree stops %i, immediate tree kills %i)', async (mode, treeStops, immediateKills) => {
+    const run = nodeChild('setInterval(() => process.stdout.write("."), 50);', { detached: process.platform !== 'win32' });
+    await new Promise<void>((resolve) => run.child.stdout.once('data', () => resolve()));
+    stopChildTreeSpy.mockClear();
+    killChildTreeNowSpy.mockClear();
+
+    run.stop(mode);
+    await new Promise<void>((resolve) => run.child.on('close', () => resolve()));
+
+    // 'process' ends the one process and starts no tree stop, so no taskkill on Windows.
+    expect(stopChildTreeSpy).toHaveBeenCalledTimes(treeStops);
+    expect(killChildTreeNowSpy).toHaveBeenCalledTimes(immediateKills);
   }, 20_000);
 
   it('never hands the child Crashpad\'s pipe name, from the caller\'s env or from main\'s own', async () => {

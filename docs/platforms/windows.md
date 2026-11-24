@@ -43,8 +43,9 @@ What still inherits it, by decision:
 
 - The utility processes Kangentic forks. They need it to report their own crashes.
 - One fixed system tool main spawns directly, which starts nothing: the `taskkill` in `src/main/shared/child-tree-stop.ts`, for a run whose host died, a no-host fallback child, and every CLI run at quit. The pty host's own launches (taskkill, its process listing) inherit the host's env too.
-- Nothing of git. `git cat-file` (`git-object-reader.ts`) and the `ls-files` in the workspace file index (`project-entry-search.ts`) used to be started by main with its whole environment. They start through `spawnOffMain` now, which strips the pipe name like every other route. Every git call passes the rest of main's environment on, so a `GIT_DIR`, `GIT_CONFIG_GLOBAL` or `GIT_CONFIG_PARAMETERS` inherited from whatever launched Kangentic reaches it, as it always reached the lifecycle's git. That includes `GIT_CEILING_DIRECTORIES`, which a dev preview sets so git in a preview project cannot find the worktree above it.
 - `shell.openPath`, `openExternal` and `showItemInFolder`, `app.relaunch`, and the updater. Electron gives them no env option. `openPath` can open a file in an Electron app that is its default, so this is the one real gap, and its only fix is the global delete ruled out above.
+
+No git call inherits it. `git cat-file` (`git-object-reader.ts`) and the `ls-files` in the workspace file index (`project-entry-search.ts`) used to be started by main with its whole environment. They start through `spawnOffMain` now, which strips the pipe name like every other route. Every git call passes the rest of main's environment on, so a `GIT_DIR`, `GIT_CONFIG_GLOBAL` or `GIT_CONFIG_PARAMETERS` inherited from whatever launched Kangentic reaches it, as it always reached the lifecycle's git. That includes `GIT_CEILING_DIRECTORIES`, which a dev preview sets so git in a preview project cannot find the worktree above it.
 
 What still leaks shows up as the Sentry warning "Foreign process crash reached Kangentic's crash database", split by its `module` tag and release (see [Error reporting](../telemetry/error-reporting.md)).
 

@@ -79,10 +79,10 @@ every start on it.
 - **Measure:** a dev build times every start (`src/devtools/main/spawn-tracer.ts`).
   `kangentic_devtools_event_loop_lag` lists main's own under labels that start `spawn:`, and the
   host's under `pty-host:spawn-worker:` (only those of 16 ms or more). After a boot and a Settings
-  open, main's own `syncWorkByLabel` holds no label that starts `spawn:`. Measured in a `/preview`
-  on 2026-11-24 across two boots, the font list, the Changes and Graph reads, the file search, an
-  image preview, `ssh -V`, a Post-Worktree Script, a run-script row, a shortcut command and a Stop
-  script before a task's reap (`...runStopScript<...stopBeforeReap` on the spawn worker).
+  open, main's own `syncWorkByLabel` holds no label that starts `spawn:`. That was measured in a
+  `/preview` on 2026-11-24 across two boots, the font list, the Changes and Graph reads, the file
+  search, an image preview, `ssh -V`, a Post-Worktree Script, a run-script row, a shortcut command
+  and a Stop script before a task's reap (`...runStopScript<...stopBeforeReap` on the spawn worker).
 - **Rigs (by hand, Docker):** `node scripts/ssh-setup-rig.mjs --work <dir>` runs the Add host steps
   through `runProgram` against a real `sshd` (15 of 15 on 2026-11-24), and
   `node scripts/ssh-link-rig.mjs --work <dir>` installs the helper through `createSshRunner` with

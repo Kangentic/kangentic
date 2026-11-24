@@ -24,8 +24,9 @@
 
 import { recordRelayedSyncSpan } from '../../diagnostics/event-loop-lag';
 import { killChildTreeByPid } from '../../shared/child-tree-stop';
+import { shutdownWaitsForRun } from './host-cli-processes';
 import { LocalSpawnService, type HostSpawnService, type ProcessTableProbe, type SpawnServiceHooks } from './host-spawn-service';
-import type { CliStopMode, HostExecRequest, HostExecResult, PtyHostCliSpawnParams } from './protocol';
+import { cliStopMessage, type CliStopMode, type HostExecRequest, type HostExecResult, type PtyHostCliSpawnParams } from './protocol';
 import { HostHandledErrors } from './host-handled-error';
 import type { FromSpawnWorkerMessage, SpawnWorkerData, ToSpawnWorkerMessage } from './spawn-worker/protocol';
 import type { ProcessInfo } from '../../activity-engine/background-shell/process-tree';
@@ -173,13 +174,11 @@ export class WorkerSpawnService implements HostSpawnService {
   }
 
   /** Every run posted and not yet exited, pid known or not: the worker may
-   *  already have started it, and the host's shutdown must wait for it. A run
-   *  that outlives the app is not waited for, unless main asked for it to stop:
-   *  a host that exits first takes the `taskkill` it started down with it, and
-   *  the tree an aborted script left would go on running. */
+   *  already have started it, and the host's shutdown must wait for it, but
+   *  for a run it never waits for (`shutdownWaitsForRun`). */
   get liveCliCount(): number {
     let count = this.fallback?.liveCliCount ?? 0;
-    for (const run of this.runs.values()) if (!run.exited && (!run.outlivesApp || run.stopRequested)) count += 1;
+    for (const run of this.runs.values()) if (!run.exited && shutdownWaitsForRun(run)) count += 1;
     return count;
   }
 
@@ -344,7 +343,7 @@ export class WorkerSpawnService implements HostSpawnService {
   private sendStop(worker: SpawnWorkerHandle, processId: number, run: WorkerRun, mode: CliStopMode): void {
     // `process` starts no taskkill, so there is nothing for a pin to cover.
     if (mode !== 'process') this.pinBeforeStop(run);
-    this.send(worker, mode === 'tree' ? { type: 'cliStop', processId } : { type: 'cliStop', processId, mode });
+    this.send(worker, cliStopMessage(processId, mode));
   }
 
   private failPendingRequests(message: string): void {

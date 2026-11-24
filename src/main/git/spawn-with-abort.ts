@@ -3,7 +3,7 @@ import { StringDecoder } from 'node:string_decoder';
 import { resolveShellLaunch } from '../pty/spawn/shell-launch';
 import { withoutCrashpadPipeName } from '../shared/child-env';
 import { childHasExited, killChildTreeByPid, killChildTreeNow } from '../shared/child-tree-stop';
-import { spawnOffMainCli, type CliChildProcess } from '../utility-process/off-main-cli';
+import { spawnOffMainCli, stopHostedCli, type CliChildProcess } from '../utility-process/off-main-cli';
 
 /**
  * Per-stream cap on captured stdout/stderr. A verbose child (e.g. an
@@ -265,12 +265,17 @@ export function spawnWithAbort(
       treeExitWait = setTimeout(() => settleReject(abortedError()), TREE_EXIT_WAIT_MS);
       treeExitWait.unref?.();
     };
+    // Once an abort has killed the tree, whatever ends the wait (the close, or
+    // a host lost under it) settles the call as aborted. False when no abort
+    // killed it, and the caller then reports the event as its own.
+    const settledAsKilledTree = (): boolean => {
+      if (!treeKilled) return false;
+      clearTimeout(treeExitWait);
+      settleReject(abortedError());
+      return true;
+    };
     const onCloseAfterKill = (code: number | null, signalName: NodeJS.Signals | null): void => {
-      if (treeKilled) {
-        clearTimeout(treeExitWait);
-        settleReject(abortedError());
-        return;
-      }
+      if (settledAsKilledTree()) return;
       onClose(code, signalName);
     };
 
@@ -296,14 +301,12 @@ export function spawnWithAbort(
           // The stop is sent whether or not the start has been acknowledged:
           // the host holds it until the run has a pid.
           awaitKilledTree();
-          if (hostedChild.stopTree) hostedChild.stopTree('treeNow');
-          else hostedChild.kill();
+          stopHostedCli(hostedChild, 'treeNow');
           return;
         }
         // The host's stop ends git's tree with no exit signal to report on
         // Windows, so the abort settles here at once, with a local abort's wording.
-        if (hostedChild.stopTree) hostedChild.stopTree();
-        else hostedChild.kill();
+        stopHostedCli(hostedChild);
         settleReject(abortedError());
       }, { once: true });
       hostedChild.stdout.on('data', onStdout);
@@ -315,11 +318,7 @@ export function spawnWithAbort(
         // left running, it would be in the worktree when the creation is tried
         // again. A start that failed has no pid, and nothing to end.
         if (killsTree && hostedChild.pid !== undefined && !childHasExited(hostedChild)) killChildTreeByPid(hostedChild.pid);
-        if (treeKilled) {
-          clearTimeout(treeExitWait);
-          settleReject(abortedError());
-          return;
-        }
+        if (settledAsKilledTree()) return;
         onError(error);
       });
       hostedChild.on('close', onCloseAfterKill);

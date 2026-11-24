@@ -99,3 +99,13 @@ export function spawnOffMainCli(command: string, args: string[], options: OffMai
   const caller = __KANGENTIC_DEV__ ? describeSpawnCaller() : undefined;
   return spawner(command, args, { ...options, env: withoutCrashpadPipeName(options.env), ...(caller ? { caller } : {}) });
 }
+
+/**
+ * Stop a run `spawnOffMainCli` returned, where it runs (`CliStopMode`, the
+ * tree with the grace when no mode is given). A handle with no `stopTree` is
+ * killed instead.
+ */
+export function stopHostedCli(child: CliChildProcess, mode?: CliStopMode): void {
+  if (child.stopTree) child.stopTree(mode);
+  else child.kill();
+}
