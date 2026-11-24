@@ -328,7 +328,7 @@ export function AccountsTab({ globalConfig }: { globalConfig: AppConfig }) {
           placeholder
           searchIds={['accounts.list']}
           testId="settings-card-accounts-skeleton"
-          headerAction={<span className={ADD_ACCOUNT_SKELETON_CLASS} aria-hidden="true" />}
+          headerAction={<span className={ADD_ACCOUNT_SKELETON_CLASS} aria-hidden="true" data-testid="accounts-add-skeleton" />}
         >
           <AccountRowSkeleton />
         </SettingsCard>

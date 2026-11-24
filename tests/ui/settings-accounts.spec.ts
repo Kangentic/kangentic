@@ -131,14 +131,20 @@ test.describe('Settings > Accounts', () => {
       await page.getByTestId('settings-tab-list').getByRole('button', { name: 'Accounts', exact: true }).click();
 
       let skeletonRowHeight = 0;
+      let skeletonAddBox = { height: 0 };
       await test.step('nothing saved and the check running: the skeleton card, and no empty state', async () => {
         const skeleton = page.getByTestId('settings-card-accounts-skeleton');
         await expect(skeleton).toBeVisible();
         await expect(skeleton).toHaveAttribute('aria-busy', 'true');
         await expect(page.getByTestId('settings-card-accounts-empty')).toHaveCount(0);
         await expect(page.getByTestId('settings-card-accounts-claude')).toHaveCount(0);
+        // The title is drawn as a bar, yet the card keeps its name for a screen reader.
+        await expect(skeleton.getByRole('heading', { name: 'Accounts' })).toHaveCount(1);
         skeletonRowHeight = (await page.getByTestId('account-row-skeleton').boundingBox())?.height ?? 0;
         expect(skeletonRowHeight).toBeGreaterThan(0);
+        const addBox = await page.getByTestId('accounts-add-skeleton').boundingBox();
+        skeletonAddBox = { height: addBox?.height ?? 0 };
+        expect(skeletonAddBox.height).toBeGreaterThan(0);
       });
 
       await test.step('the check lands: the real cards replace it, a two-line row as tall as the skeleton row', async () => {
@@ -150,6 +156,10 @@ test.describe('Settings > Accounts', () => {
         await expect(realRow.getByTestId('account-usage-line')).toHaveCount(2);
         const realRowHeight = (await realRow.boundingBox())?.height ?? 0;
         expect(Math.abs(realRowHeight - skeletonRowHeight)).toBeLessThanOrEqual(1);
+        // The empty Add account box is the real button's height, so the header does not shift. Its
+        // width is the English label's, which depends on the OS font, so only the height is pinned.
+        const realAddBox = await page.getByTestId('accounts-add-claude').boundingBox();
+        expect(Math.abs((realAddBox?.height ?? 0) - skeletonAddBox.height)).toBeLessThanOrEqual(1);
       });
 
       await test.step('while the tab reads usage, a spinner rides the usage agent card only', async () => {
@@ -167,9 +177,19 @@ test.describe('Settings > Accounts', () => {
         await page.getByTestId('accounts-add-claude').click();
         await expect(page.getByTestId('account-login-dialog')).toBeVisible();
         await expect(page.getByTestId('account-login-terminal-starting')).toBeVisible();
+        // offsetHeight is layout height, which the dialog's entrance scale transform does not move.
+        const layoutHeight = (testId: string) => page.getByTestId(testId).evaluate((element) => (element as HTMLElement).offsetHeight);
+        const startingDialogHeight = await layoutHeight('account-login-dialog');
+        const startingBoxHeight = await layoutHeight('account-login-terminal-starting');
+        expect(startingDialogHeight).toBeGreaterThan(0);
         await page.evaluate(() => (window as unknown as { __mockReleaseAccountLoginStart: () => void }).__mockReleaseAccountLoginStart());
         await expect(page.getByTestId('account-login-terminal')).toBeVisible();
         await expect(page.getByTestId('account-login-terminal-starting')).toHaveCount(0);
+        // The empty box is the terminal's own size, so the window does not grow when the sign-in starts.
+        const startedDialogHeight = await layoutHeight('account-login-dialog');
+        const startedBoxHeight = await layoutHeight('account-login-terminal');
+        expect(Math.abs(startedBoxHeight - startingBoxHeight)).toBeLessThanOrEqual(1);
+        expect(Math.abs(startedDialogHeight - startingDialogHeight)).toBeLessThanOrEqual(1);
       });
     } finally {
       await browser.close();
