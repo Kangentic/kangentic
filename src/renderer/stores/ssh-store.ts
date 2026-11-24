@@ -32,7 +32,8 @@ interface SshStore {
   client: SshClientStatus | null;
 
   loadHosts: () => Promise<void>;
-  loadClient: () => Promise<void>;
+  /** Read the `ssh` program's status. Main answers from its first check unless `refresh` asks it to look again. */
+  loadClient: (options?: { refresh?: boolean }) => Promise<void>;
   probeHostKey: (destination: string) => Promise<SshHostKeyProbe>;
   /** The named hosts in this computer's SSH config, for the address field's suggestions. */
   listConfigHosts: () => Promise<SshConfigHost[]>;
@@ -89,9 +90,9 @@ const createSshStore = () => create<SshStore>((set, get) => ({
     }
   },
 
-  loadClient: async () => {
+  loadClient: async (options) => {
     try {
-      set({ client: await window.electronAPI.ssh.detectClient() });
+      set({ client: await window.electronAPI.ssh.detectClient(options) });
     } catch (error) {
       set({ client: { found: false, version: null, error: describeIpcError(error) } });
     }

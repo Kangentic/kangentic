@@ -15,7 +15,7 @@ front rather than reaching for ad-hoc fixes later.
 | Pattern | When to reach for it | How to apply | Example sites |
 |---|---|---|---|
 | **A. Preserve** | Module-scope state (timers, AbortControllers, caches, counters, scroll positions) that must survive a reload | `let x = import.meta.hot?.data?.x ?? <default>;` plus `import.meta.hot?.dispose((d) => { d.x = x; })` | `task-slice.ts` (`moveGenerations`), `session-store.ts` (`syncController`, transient sessions), `useTerminal.ts` (`savedScrollPositions`), `toast-store.ts`, `hmr-generation.ts`, `auto-name-scheduler.ts` |
-| **B. Re-sync** | Zustand stores whose truth lives in the main process (IPC-backed) | Add a `load*` / `sync*` call to the `vite:afterUpdate` handler in `App.tsx` | `loadBoard()`, `loadBacklog()`, `loadConfig()`, `loadProjects()`, `syncSessions()` |
+| **B. Re-sync** | Zustand stores whose truth lives in the main process (IPC-backed) | Add a `load*` / `sync*` call inside the `hmrResyncScheduler.schedule` callback of the `vite:afterUpdate` handler in `App.tsx` | `loadBoard()`, `loadBacklog()`, `loadConfig()`, `loadProjects()`, `syncSessions()` |
 | **C. Re-key remount** | Stateful third-party React subtrees whose subscriptions go stale across Fast Refresh (every `<DndContext>`) | `const hmrGeneration = useHmrGeneration();` then `<DndContext key={hmrGeneration}>` | All 5 `<DndContext>` sites: `KanbanBoard`, `BacklogView`, `PrioritiesPopover`, `ProjectSidebar`, `ShortcutsTab` |
 | **D. Cleanup** | Imperative DOM or global state no React component owns | Add the clear to the top of the `vite:afterUpdate` handler | `.drop-highlight` class removal and `clearDropGapDom()` (the cross-column drop gap) in `App.tsx` |
 | **E. Pin instance** | A Zustand store whose only runtime export is the non-component hook, so the module is not a Fast Refresh boundary and a re-eval can hand a SECOND store to part of the tree | `const preserved = import.meta.hot?.data?.x; if (preserved) refreshPinnedStore(preserved, xInitializer); export const useX = preserved ?? create<T>(xInitializer);` plus `import.meta.hot.data.x = useX; import.meta.hot.accept(() => import.meta.hot.invalidate())` | `board-store.ts`, `backlog-store.ts`, `announcements-store.ts`, and the rest of `PATTERN_E_STORES` in `tests/unit/hmr-resync.test.ts` (the authoritative list) |
@@ -23,7 +23,8 @@ front rather than reaching for ad-hoc fixes later.
 **Decision tree:**
 
 1. New IPC-backed Zustand store, or a new `load*` / `sync*` method on an existing one? Pattern
-   B: add a call in `App.tsx`'s `vite:afterUpdate` handler.
+   B: add a call in `App.tsx`'s `vite:afterUpdate` handler, inside the
+   `hmrResyncScheduler.schedule` callback (see "The re-sync runs once per burst" below).
 2. Is that store's only runtime export the non-component hook (`export const useXStore =
    create(...)`, no component exports)? Then the module is not a Fast Refresh boundary, so a
    re-eval (a slice edit, or an edit to a store it imports) can construct a second instance while
@@ -101,12 +102,29 @@ workaround (surface the gap and extend this catalog deliberately); do not gate P
 `process.env.NODE_ENV` (`import.meta.hot` is `undefined` in production builds, so the guards
 already collapse to no-ops).
 
+**The re-sync runs once per burst of updates, and the rest of the handler runs on each one.** A
+fast-forward of the main checkout sends hundreds of updates in a few seconds. With a re-sync on
+each, the dogfood app made 8,935 IPC calls in 12.7 s, main stalled for up to 2.8 s, and `ssh -V`
+started on main's thread 45 times in 10 s. `utils/hmr-resync-scheduler.ts` holds the re-sync until
+500 ms after the last update finishes with no other started: `vite:afterUpdate` arms the timer,
+and `vite:beforeUpdate` holds a pending ask while the next update applies. The hold is
+load-bearing. Vite's client applies updates one at a time, with the next starting as the last one
+ends (no idle gap passed 50 ms), and a single update took up to 1.4 s to apply, so the timer alone
+ran the re-sync twice per burst. A held ask runs 10 s after the last update started when none
+finishes, because Vite fires no `vite:afterUpdate` for an update whose accept callback throws.
+Measured in `/preview` on a replay of a 57-file change: 108 re-syncs and about 4,100 IPC calls per
+burst before, 1 and 38 after. The Pattern C bump and the Pattern D cleanups stay per update, in
+their order, because each undoes what that one update left behind. A pop-out window's listeners
+(`pop-out/usePopOutBootstrap.ts`) coalesce the same way on a scheduler of their own.
+
 **A Vite custom-event listener (`import.meta.hot.on`) is registered at module scope, never in a
 React effect.** Each evaluation of a module gets a new hot context, and Vite's client drops every
 listener the old context registered. An effect with `[]` deps registered `kangentic:main-stale`
 once, the first store edit that re-ran its module removed it, and the dev restart notice never
 showed (measured in `/preview`). `utils/dev-restart.ts` registers at module scope, so each
-evaluation registers its own, and gates on state in `sharedModuleState`.
+evaluation registers its own, and gates on state in `sharedModuleState`. A pop-out's re-sync
+listeners (`pop-out/usePopOutBootstrap.ts`) do the same: the mounted root hands them its re-sync
+through `sharedModuleState`, and a main window, which mounts no root, hands them nothing.
 
 **`import.meta.hot.dispose` runs only for the module that accepts the update.** A module Vite
 re-evaluates on the way to an importer's Fast Refresh boundary gets no dispose call, so a cleanup
@@ -152,10 +170,36 @@ comment-only edit still refreshes in place. Replay a commit's edit with
 `node scripts/hmr-guest-probe.mjs --file <hook> --edit-from <commit>~1`, and add
 `--no-hook-signatures` to see it land without the plugin.
 
+**An edit to the renderer entry, or to a plain module the entry imports, reloads the page.**
+`src/renderer/index.tsx` has no importer and accepts nothing, so Vite answers an edit to it with
+`page reload src/renderer/index.tsx`, and every live Browser pane guest goes with the page. A
+module the entry imports that is neither a Fast Refresh boundary nor self-accepting has the same
+fate, because its update reaches the entry with nothing in between to take it. `lib/ipc-error.ts`
+reloaded the page on every edit while the entry imported `rejectionMessage` from it (both
+measured with the probe). That function now lives in the leaf `src/shared/reported-failure-marker.ts`,
+which the entry imports, and `ipc-error.ts` re-exports it. In a burst the reload comes last, since
+Vite's client applies its messages one at a time and the reload waits behind every update queued
+ahead of it. The number of re-syncs has no part in it. Keep the entry's own imports few, and
+import a small leaf module there before a widely edited one.
+
+**A class component's module is the same hazard one level down.** Fast Refresh remounts a class
+whenever its module is re-evaluated, and the whole-window `ErrorBoundary` is a class that wraps
+everything: a comment-only edit to `ErrorBoundary.tsx` destroys the guest, and so does an edit to
+any plain module it imports. It imported `lib/ipc-error.ts` until the same change; the restart
+failure line is now `RootRestartFailure`, a function component in its own module. Keep a class
+boundary's imports to leaves and function-component modules.
+
+**Still open.** An edit to `lib/ipc-error.ts` no longer reloads the page or re-evaluates a class
+boundary, yet the board's window layer still remounts (the probe reports `window-overlay` removed
+from `#window-layer-root`). It re-evaluates 131 modules in one batch, and 23 of the modules that
+import it keep the guest when edited alone, so the cause is in how that batch refreshes the layer
+and is not yet found. `--list-updates` on the probe prints the batch.
+
 ## Enforcement (self-maintaining)
 
 - **Test:** `tests/unit/hmr-resync.test.ts` enforces four things: every IPC-backed store's
-  `load*` / `sync*` is called in `App.tsx`'s `vite:afterUpdate` (B); every module-scope mutable
+  `load*` / `sync*` is called in `App.tsx`'s `vite:afterUpdate`, and none sits above the
+  `hmrResyncScheduler.schedule` call, where it would run on every update (B); every module-scope mutable
   declaration under the watched dirs has `import.meta.hot.dispose(` or a `// hmr-safe:` opt-out
   (A); every `<DndContext>` has `key={hmrGeneration}` (C); and each instance-pinned store
   (the test's `PATTERN_E_STORES` array - extend it whenever a store adopts the pin) reads and
@@ -164,6 +208,14 @@ comment-only edit still refreshes in place. Replay a commit's edit with
   `refreshes` must call `refreshPinnedStore` with its preserved binding and may have no
   module-scope `let` in its file or its slice folder; one that does not refresh carries its
   reason. Runs in CI via `npm run test:unit`.
+- **Test (entry and class boundary imports):** the same file lists what `src/renderer/index.tsx`
+  and `components/ErrorBoundary.tsx` may import and fails on an import outside the list, so a
+  widely edited module cannot join either without a decision. It reads their own imports only; a
+  module reached through one of them is measured with the probe.
+- **Test (re-sync scheduler):** `tests/unit/hmr-resync-scheduler.test.ts` drives the scheduler on
+  fake timers: a burst runs once, an update that takes longer to apply than the quiet period does
+  not run it early, a held ask runs at the ceiling, and a run that throws leaves it usable. Runs in
+  CI via `npm run test:unit`.
 - **Test (refresh):** `tests/unit/hmr-store-pin.test.ts` refreshes a real store with a new
   initializer and asserts the new and changed actions arrive, an unchanged one keeps its
   identity, a new key takes its initial value, and live data is untouched. Runs in CI via
@@ -239,9 +291,12 @@ against the UI-tier mock, registers a guest, hides it (the held state), makes a 
 to a target file, and reports whether the page reloaded, whether the guest's `webContentsId`
 survived, whether the pane REMOUNTED (a new element, which a DOM-presence check cannot see), and
 Vite's own reload reason. It exits non-zero when the guest dies. `--file <path>` targets a
-different module, which is how a remount is bisected to the module that causes it. For the
-refresh, `--edit-with <file>` writes an edited copy over the target (a throwaway action added to
-a slice) and `--expect-store-key session.<action>` fails unless the live store has it afterwards.
+different module, which is how a remount is bisected to the module that causes it. Each removed
+node is named with the element it left (`window-overlay from #window-layer-root`). That tells a
+window-layer remount from a pane's own. `--list-updates` prints every module the edit
+re-evaluated. For the refresh, `--edit-with <file>` writes an edited copy over the target (a
+throwaway action added to a slice) and `--expect-store-key session.<action>` fails unless the
+live store has it afterwards.
 
 Two traps it exists to avoid. Vite's reload reason prints only to the DEV SERVER terminal, so a
 `/preview` session cannot show it; the probe captures it with a `customLogger`. And

@@ -79,7 +79,9 @@ export function registerSshHostHandlers(context: IpcContext): SshHostAdmin | nul
   // The project handlers prepare a remote project through it.
   context.remoteHosting.admin = admin;
 
-  ipcMain.handle(IPC.SSH_DETECT_CLIENT, (): Promise<SshClientStatus> => admin.detectClient());
+  ipcMain.handle(IPC.SSH_DETECT_CLIENT, (_event, options?: { refresh?: boolean }): Promise<SshClientStatus> => (
+    admin.detectClient({ refresh: options?.refresh === true })
+  ));
   ipcMain.handle(IPC.SSH_LIST_HOSTS, (): SshHostStatus[] => admin.listHosts());
   ipcMain.handle(IPC.SSH_PROBE_HOST_KEY, (_event, destination: string): Promise<SshHostKeyProbe> => admin.probeHostKey(destination));
   ipcMain.handle(IPC.SSH_LIST_CONFIG_HOSTS, (): Promise<SshConfigHost[]> => admin.listConfigHosts());

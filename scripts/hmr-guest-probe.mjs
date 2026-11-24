@@ -56,6 +56,7 @@
  *     --edit-with <edited copy> --expect-store-key session.hmrProbeAction
  *   node scripts/hmr-guest-probe.mjs --show      (leave the pane visible instead of held)
  *   node scripts/hmr-guest-probe.mjs --keep-edit (skip the file restore, for bisecting)
+ *   node scripts/hmr-guest-probe.mjs --list-updates (print every module the edit re-evaluated)
  *   node scripts/hmr-guest-probe.mjs --no-hook-signatures (drop scripts/vite-refresh-hook-signatures.mjs,
  *     which the renderer dev configs register, to see an edit as it lands without it)
  *
@@ -96,6 +97,7 @@ const editFromRef = argValue('--edit-from', null);
 const hookSignatures = !args.includes('--no-hook-signatures');
 const editWithPath = argValue('--edit-with', null);
 const expectStoreKey = argValue('--expect-store-key', null);
+const listUpdates = args.includes('--list-updates');
 
 // A ref git would read as an option, or the next flag taken as the ref
 // (`--edit-from --keep-edit`), fails here, before the target is touched.
@@ -373,11 +375,21 @@ async function main() {
           if (!node.matches?.('[data-testid="browser-webview"]')
             && !node.querySelector?.('[data-testid="browser-webview"]')) continue;
           const state = stores.session.getState();
+          // Which level of the tree went: the removed node's own test id (or its
+          // first classes), and the nearest test id above the place it left. A
+          // window frame, the whole shell and the pane's own slot are three
+          // different causes, and the tag alone cannot tell them apart.
+          const describe = (element) => element.getAttribute('data-testid')
+            ?? (element.id ? `#${element.id}` : `.${String(element.className).split(/\s+/).slice(0, 2).join('.')}`);
+          const parent = record.target instanceof HTMLElement ? record.target : null;
+          const namedAncestor = parent?.closest('[data-testid], [id]') ?? null;
           window.__paneWatch.push({
             open: [...state.browserOpenTasks],
             held: [...state.browserHeldTasks],
             guests: [...state.browserGuestTasks.keys()],
             removedTag: node.tagName,
+            removed: describe(node),
+            from: namedAncestor ? describe(namedAncestor) : '(no named ancestor)',
           });
         }
       }
@@ -449,9 +461,17 @@ async function main() {
   const watch = await page.evaluate(() => window.__paneWatch ?? []);
   console.log(`guest node removals   : ${watch.length}`);
   for (const record of watch) {
-    console.log(`   removed <${record.removedTag}> with open=[${record.open}] held=[${record.held}] guests=[${record.guests}]`);
+    console.log(`   removed <${record.removedTag}> ${record.removed} from ${record.from} with open=[${record.open}] held=[${record.held}] guests=[${record.guests}]`);
   }
   console.log(`modules hot updated   : ${hotUpdates}`);
+  if (listUpdates) {
+    // Every module the edit re-evaluated, once each. A class component's module in
+    // this list remounts that class and everything under it.
+    const updatedPaths = [...new Set(clientConsole
+      .filter((line) => line.includes('hot updated'))
+      .map((line) => line.replace(/^.*hot updated:\s*/, '').trim()))].sort();
+    for (const updatedPath of updatedPaths) console.log(`   updated ${updatedPath}`);
+  }
   if (expectedKeyType !== null) {
     console.log(`store key ${expectStoreKey} : ${expectedKeyType === 'function' ? 'callable' : `NOT callable (${expectedKeyType})`}`);
   }

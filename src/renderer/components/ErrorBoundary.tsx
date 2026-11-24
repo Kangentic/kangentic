@@ -3,7 +3,12 @@ import { Power, RefreshCw, RotateCcw } from 'lucide-react';
 import { Trans } from '@lingui/react/macro';
 import type { BoundaryReportTags } from '../error-reporting';
 import { syncFocusedTerminals } from '../utils/focused-terminals';
-import { describeIpcError, asSentence } from '../lib/ipc-error';
+// This module's imports are kept few on purpose, and tests/unit/hmr-resync.test.ts
+// lists them. The boundary is a class, and Fast Refresh remounts a class whenever
+// its module is re-evaluated, so an edit to any plain module imported here
+// remounts the whole window. Text that needs `lib/ipc-error.ts` is drawn by a
+// function component in a module of its own.
+import { RootRestartFailure } from './RootRestartFailure';
 
 interface Props {
   children: React.ReactNode;
@@ -12,8 +17,8 @@ interface Props {
 interface State {
   hasError: boolean;
   error: Error | null;
-  /** Why Restart did not go through, shown under the buttons. */
-  restartError: string | null;
+  /** What a failed Restart rejected with, shown under the buttons. Null when none has failed. */
+  restartFailure: { error: unknown } | null;
 }
 
 /**
@@ -40,11 +45,11 @@ function canRestartApp(): boolean {
 export class ErrorBoundary extends React.Component<Props, State> {
   constructor(props: Props) {
     super(props);
-    this.state = { hasError: false, error: null, restartError: null };
+    this.state = { hasError: false, error: null, restartFailure: null };
   }
 
   static getDerivedStateFromError(error: Error): Partial<State> {
-    return { hasError: true, error, restartError: null };
+    return { hasError: true, error, restartFailure: null };
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo): void {
@@ -76,17 +81,17 @@ export class ErrorBoundary extends React.Component<Props, State> {
   }
 
   handleRetry = () => {
-    this.setState({ hasError: false, error: null, restartError: null });
+    this.setState({ hasError: false, error: null, restartFailure: null });
   };
 
   /** Restart Kangentic. The tree is already gone, so there is nothing to confirm
    *  against; agents suspend and resume as on any restart. */
   handleRestart = async () => {
-    this.setState({ restartError: null });
+    this.setState({ restartFailure: null });
     try {
       await window.electronAPI.app.restart();
     } catch (error) {
-      this.setState({ restartError: asSentence(describeIpcError(error)) });
+      this.setState({ restartFailure: { error } });
     }
   };
 
@@ -136,10 +141,8 @@ export class ErrorBoundary extends React.Component<Props, State> {
               </button>
             )}
           </div>
-          {this.state.restartError !== null && (
-            <p className="text-sm text-fg-muted max-w-md text-center" data-testid="root-error-restart-failure">
-              {this.state.restartError}
-            </p>
+          {this.state.restartFailure !== null && (
+            <RootRestartFailure error={this.state.restartFailure.error} />
           )}
         </div>
       );

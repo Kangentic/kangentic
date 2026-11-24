@@ -47,14 +47,9 @@ function messageWithoutChannel(error: unknown): string | null {
   return withoutReportedFailureMarker(error.message.replace(REMOTE_METHOD_PREFIX, ''));
 }
 
-/**
- * A caught error's own text, exactly as it arrived but without main's reported
- * marker, or `String(error)` for a non-Error. For a site that shows or matches the
- * raw text of a rejected call rather than `describeIpcError`'s cleaned reason.
- */
-export function rejectionMessage(error: unknown): string {
-  return error instanceof Error ? withoutReportedFailureMarker(error.message) : String(error);
-}
+// A caught error's own text without main's reported marker. Defined in the shared
+// leaf so the renderer entry can import it without importing this module.
+export { rejectionMessage } from '../../shared/reported-failure-marker';
 
 /**
  * True when main reported this rejected call's failure to Sentry in this run: its

@@ -457,7 +457,9 @@ src/renderer/stores/
 scripts/
   hmr-guest-probe.mjs                       measures whether an edit destroys a live pane guest:
                                             reload? same webContentsId? pane remounted? plus Vite's
-                                            own reload reason. Exits non-zero when the guest dies
+                                            own reload reason. Exits non-zero when the guest dies.
+                                            Names each removed node with the element it left, and
+                                            --list-updates prints every module the edit re-evaluated
 
 src/renderer/utils/
   agent-input-focus-guard.ts                restores the user's focus after a drive; routes an

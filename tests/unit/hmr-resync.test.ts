@@ -25,6 +25,45 @@ const EXCLUDED_METHODS = new Set([
   'loadShortcuts',     // called internally by loadBoard
 ]);
 
+/**
+ * Holds one source file to a list of the relative modules it may import. Fails
+ * on an import the list does not name, and on a listed module the file no
+ * longer imports, so the list cannot drift from the file either way.
+ */
+function expectOnlyListedImports(check: {
+  /** The file whose own imports are read, relative to the repository root. */
+  file: string;
+  /** The allowlist's name in the test, for the failure messages. */
+  listName: string;
+  /** Each relative module the file may import, with what it is. */
+  allowlist: Record<string, string>;
+  /** An import the file is known to have, so the scan cannot pass on nothing. */
+  knownImport: string;
+  /** What an unlisted import costs in dev, and what to do about it. */
+  unlistedHelp: string;
+}): void {
+  const source = fs.readFileSync(path.resolve(__dirname, '../..', check.file), 'utf-8');
+  const relativeImports = [...source.matchAll(/^import\s+(?:[^'"]*?\s+from\s+)?['"](\.{1,2}\/[^'"]+)['"]/gm)]
+    .map((match) => match[1]);
+  // The scan must be reading real imports, or the two checks below pass on nothing.
+  expect(relativeImports).toContain(check.knownImport);
+
+  const unlisted = relativeImports.filter((specifier) => !(specifier in check.allowlist));
+  expect(
+    unlisted,
+    `${check.file} imports a module this test does not list.\n` +
+    `${check.unlistedHelp}\n` +
+    unlisted.map((specifier) => `  - ${specifier}`).join('\n'),
+  ).toHaveLength(0);
+
+  const stale = Object.keys(check.allowlist).filter((specifier) => !relativeImports.includes(specifier));
+  expect(
+    stale,
+    `${check.listName} lists modules ${check.file} no longer imports:\n` +
+    stale.map((specifier) => `  - ${specifier}`).join('\n'),
+  ).toHaveLength(0);
+}
+
 describe('HMR store re-sync', () => {
   it('App.tsx HMR handler calls load/sync for every IPC-backed store', () => {
     const appSource = fs.readFileSync(APP_TSX, 'utf-8');
@@ -54,6 +93,16 @@ describe('HMR store re-sync', () => {
     }
     const missingMethods: string[] = [];
 
+    // The re-sync runs once per burst of updates, inside the scheduler's callback
+    // (src/renderer/utils/hmr-resync-scheduler.ts). A call written above the
+    // callback runs on EVERY update instead: a fast-forward of the main checkout
+    // sends hundreds, which was 8,935 IPC calls in 12.7 s.
+    const scheduleCall = 'hmrResyncScheduler.schedule(';
+    const scheduleIndex = hmrBlock.indexOf(scheduleCall);
+    expect(scheduleIndex, `Could not find ${scheduleCall} in the vite:afterUpdate handler`).toBeGreaterThanOrEqual(0);
+    const perUpdateBlock = hmrBlock.slice(0, scheduleIndex);
+    const perUpdateMethods: string[] = [];
+
     for (const storeSourcePath of storeSourcePaths) {
       const storeSource = fs.readFileSync(storeSourcePath, 'utf-8');
       // Match method definitions like "loadBoard: async () =>" or "syncSessions: async () =>"
@@ -62,9 +111,12 @@ describe('HMR store re-sync', () => {
       while ((match = methodRegex.exec(storeSource)) !== null) {
         const methodName = match[1];
         if (EXCLUDED_METHODS.has(methodName)) continue;
+        const relativePath = path.relative(STORES_DIR, storeSourcePath).replace(/\\/g, '/');
         if (!hmrBlock.includes(`.${methodName}(`)) {
-          const relativePath = path.relative(STORES_DIR, storeSourcePath).replace(/\\/g, '/');
           missingMethods.push(`${relativePath} -> ${methodName}()`);
+        }
+        if (perUpdateBlock.includes(`.${methodName}(`)) {
+          perUpdateMethods.push(`${relativePath} -> ${methodName}()`);
         }
       }
     }
@@ -72,9 +124,96 @@ describe('HMR store re-sync', () => {
     expect(
       missingMethods,
       `IPC-backed store methods missing from HMR handler in App.tsx.\n` +
-      `Add these calls to the vite:afterUpdate block, or add to EXCLUDED_METHODS with a comment:\n` +
+      `Add these calls inside the ${scheduleCall}...) callback of the vite:afterUpdate block,\n` +
+      `or add to EXCLUDED_METHODS with a comment:\n` +
       missingMethods.map((m) => `  - ${m}`).join('\n'),
     ).toHaveLength(0);
+
+    expect(
+      perUpdateMethods,
+      `Store re-sync calls written above ${scheduleCall}...) in App.tsx run on every Vite update.\n` +
+      `Move them inside the callback, so a burst of updates re-syncs once:\n` +
+      perUpdateMethods.map((m) => `  - ${m}`).join('\n'),
+    ).toHaveLength(0);
+  });
+
+  // The hold is load-bearing: Vite applies updates one at a time and a single update
+  // took up to 1.4 s, so without a vite:beforeUpdate listener holding the pending ask,
+  // the 500 ms quiet timer fires mid-burst and the app re-syncs twice per burst
+  // (.claude/rules/hmr-patterns.md). The listener only runs under a Vite dev server, so
+  // this reads App.tsx's text, as the test above does. Red-green: delete the listener or
+  // its holdWhileUpdating() call and this fails.
+  it('App.tsx holds a pending re-sync from a vite:beforeUpdate listener on the shared scheduler', () => {
+    const appSource = fs.readFileSync(APP_TSX, 'utf-8');
+
+    const beforeUpdateMatch = appSource.match(/import\.meta\.hot\.on\('vite:beforeUpdate',\s*\(\)\s*=>\s*\{([\s\S]*?)\}\);/);
+    expect(beforeUpdateMatch, 'Could not find a vite:beforeUpdate listener in App.tsx').toBeTruthy();
+    expect(beforeUpdateMatch![1]).toContain('hmrResyncScheduler.holdWhileUpdating()');
+
+    // The hold and the re-sync must reach the same scheduler, the imported singleton.
+    expect(appSource).toMatch(/import\s*\{[^}]*\bhmrResyncScheduler\b[^}]*\}\s*from\s*'\.\/utils\/hmr-resync-scheduler'/);
+    expect(appSource).toContain('hmrResyncScheduler.schedule(');
+  });
+
+  // The renderer entry has no importer and accepts nothing, so Vite answers an
+  // edit to it, or to a plain module it imports, with a full page reload. That
+  // destroys every live Browser pane guest and every import.meta.hot.data pin.
+  // On 2026-11-23 the entry gained an import of lib/ipc-error.ts, a module some
+  // fifty files import and that is edited every few weeks, and from then on each
+  // of its edits reloaded the dogfood app (measured with
+  // scripts/hmr-guest-probe.mjs). So a new entry import is a decision, listed here
+  // with what it is. Prefer a small leaf over a module that is edited often.
+  //
+  // This reads the entry's own imports only. A module reached through one of them
+  // reloads the page too when nothing between accepts it; that part is measured
+  // with the probe, not scanned.
+  it('the renderer entry imports only the modules listed for it', () => {
+    const ENTRY_IMPORTS: Record<string, string> = {
+      './App': 'the app root, a component module and so a Fast Refresh boundary',
+      './i18n': 'activates the session language before the first render',
+      '../shared/i18n/locales': 'the source locale constant',
+      './components/ErrorBoundary': 'the root boundary, a component module',
+      './pop-out/read-descriptor': 'tells a pop-out window from the main one',
+      './pop-out/PopOutSurfaceRoot': 'the pop-out root, a component module',
+      './error-reporting': 'installs the error handlers before anything renders',
+      '../shared/reported-failure-marker': 'a small leaf with rejectionMessage; lib/ipc-error.ts re-exports it and must not be imported here',
+      './index.css': 'the stylesheet, which Vite hot-swaps on its own',
+    };
+    expectOnlyListedImports({
+      file: 'src/renderer/index.tsx',
+      listName: 'ENTRY_IMPORTS',
+      allowlist: ENTRY_IMPORTS,
+      knownImport: './App',
+      unlistedHelp:
+        `An edit to a plain module the entry imports reloads the whole dev app. Import a small leaf\n` +
+        `instead, or add the module to ENTRY_IMPORTS with what it is:`,
+    });
+  });
+
+  // The whole-window boundary is a class, and Fast Refresh remounts a class
+  // whenever its module is re-evaluated. It wraps the whole window, so that
+  // remount takes every task window and every Browser pane guest with it: a
+  // comment-only edit to ErrorBoundary.tsx destroys the guest (measured with
+  // scripts/hmr-guest-probe.mjs --file src/renderer/components/ErrorBoundary.tsx).
+  // An edit to a plain module it imports re-evaluates it the same way, so its
+  // imports are listed here too. It imported lib/ipc-error.ts until 2026-11-23;
+  // the text that needs that module is now drawn by RootRestartFailure, a function
+  // component whose own module takes the update.
+  it('the whole-window boundary imports only the modules listed for it', () => {
+    const BOUNDARY_IMPORTS: Record<string, string> = {
+      '../error-reporting': 'a type only, erased at build',
+      '../utils/focused-terminals': 'releases the window\'s terminal focus when the boundary catches',
+      './RootRestartFailure': 'a function component, so its module accepts its own updates',
+    };
+    expectOnlyListedImports({
+      file: 'src/renderer/components/ErrorBoundary.tsx',
+      listName: 'BOUNDARY_IMPORTS',
+      allowlist: BOUNDARY_IMPORTS,
+      knownImport: './RootRestartFailure',
+      unlistedHelp:
+        `An edit to a plain module the class boundary imports remounts the whole window in dev.\n` +
+        `Draw what needs it from a function component in its own module, or list it in BOUNDARY_IMPORTS:`,
+    });
   });
 
   // Catch new top-level mutable module state under stores/ and utils/ that

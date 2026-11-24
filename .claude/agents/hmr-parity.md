@@ -45,7 +45,7 @@ You enforce the catalog documented in `.claude/rules/hmr-patterns.md`. Internali
 | Pattern | Purpose | Canonical implementation |
 |---|---|---|
 | **A. Preserve** | Module-scope state survives module reload | `let x = import.meta.hot?.data?.x ?? <default>` plus `import.meta.hot?.dispose((d) => { d.x = x })` |
-| **B. Re-sync** | IPC-backed Zustand stores re-fetch from main process truth | `load*()` / `sync*()` call in `App.tsx` `vite:afterUpdate` handler |
+| **B. Re-sync** | IPC-backed Zustand stores re-fetch from main process truth | `load*()` / `sync*()` call inside the `hmrResyncScheduler.schedule` callback of `App.tsx`'s `vite:afterUpdate` handler, which runs once per burst of updates |
 | **C. Re-key remount** | Stateful third-party React subtrees remount cleanly | `const hmrGeneration = useHmrGeneration(); <Foo key={hmrGeneration} ...>` |
 | **D. Cleanup** | Imperative DOM/global state no React owns is cleared | Clear at top of `vite:afterUpdate` handler |
 
@@ -67,7 +67,7 @@ The unit test at `tests/unit/hmr-resync.test.ts` mechanically enforces parts of 
 | New IPC subscription (`window.electronAPI.<thing>.on*`) | Lifecycle-managed inside `useEffect` with cleanup | If at module scope, must be preserved/cleared on HMR; lifecycle-managed in a hook is the preferred shape |
 | New imperative DOM mutation (`classList.add`, `setAttribute`, registering a global handler) | **D** | A matching clear is in the `vite:afterUpdate` handler if React won't tear it down on unmount |
 | New Zustand store with transient client-only UI state (open/closed flags, selection sets) | Either **A** (preserve) or accept reset | If reset is the intended behaviour, declare it explicitly with a comment so future contributors don't add ad-hoc preservation |
-| New code path in `vite:afterUpdate` handler | **B** or **D** | Make sure the order is: bump HMR generation → cleanup imperative state → re-sync stores. Reordering can mask bugs |
+| New code path in `vite:afterUpdate` handler | **B** or **D** | Make sure the order is: bump HMR generation → cleanup imperative state → re-sync stores. Reordering can mask bugs. The bump and the cleanups run on every update; a re-sync call goes inside the `hmrResyncScheduler.schedule` callback, never above it |
 
 ### Anti-patterns to flag
 
