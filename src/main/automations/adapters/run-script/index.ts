@@ -177,6 +177,8 @@ function runToCompletion(options: {
       detached: process.platform !== 'win32',
       // A quit leaves a running script alone, as it did while main started it.
       outlivesApp: true,
+      // The user's own script, in the user's own shell: never refused.
+      userCommand: true,
     });
     const child = run.child;
 

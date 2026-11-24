@@ -32,6 +32,11 @@ every start on it.
   the caller's: `stop('treeNow')` for a script that timed out or was superseded, `stop('process')`
   for a program that starts nothing. A caller that reports a run as failed when the host is lost
   under it ends what the run left by pid (`killChildTreeByPid`), and a shortcut command never does.
+- **A move never makes a user's own command fail to start.** The host refuses to start this app's
+  own executable, and it compares a bare first word by name, which in a dev build is `electron`.
+  A project's script, a run-script automation and a shortcut command pass `userCommand`, which
+  lifts that refusal: main ran them unchecked, and a script that starts `electron .` is the
+  user's to run. Never pass it for a command Kangentic builds.
 - **Bytes do not cross to the host.** The channel carries text and has no backpressure, so input
   of any size is a file the child reads for itself (`stdinFile`), as the SSH helper upload is.
 - **Prefer no process at all.** The font list reads Chromium's own
@@ -67,7 +72,8 @@ every start on it.
   hand back the same child, report a failed start as `error` then `close`, and stop the same way.
   `host-cli-processes.test.ts`, `pty-host-spawn-worker.test.ts` and `remote-cli-process.test.ts`
   pin `outlivesApp` (not stopped and not waited for at shutdown, waited for once a stop was asked),
-  the stop modes, the ignored stdio and the file as stdin. Each moved caller pins its own options:
+  the stop modes, the ignored stdio, the file as stdin and `userCommand` (with the refusal as its
+  control), the last three through the real spawn worker too. Each moved caller pins its own options:
   `spawn-with-abort-off-main.test.ts`, `run-script-adapter-tree-kill.test.ts`,
   `shell-exec-handler.test.ts`, `remote-ssh-run.test.ts` and `ssh-setup.test.ts`.
 - **Measure:** a dev build times every start (`src/devtools/main/spawn-tracer.ts`).

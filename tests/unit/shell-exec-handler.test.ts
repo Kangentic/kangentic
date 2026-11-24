@@ -292,6 +292,8 @@ describe('SHELL_EXEC IPC handler', () => {
       expect(starts[0].options.stdio).toBe('ignore');
       expect(starts[0].options.windowsHide).toBe(false);
       expect(starts[0].options.outlivesApp).toBe(true);
+      // The user's own command: the host starts it whatever its first word names.
+      expect(starts[0].options.userCommand).toBe(true);
       expect(spawnMock).not.toHaveBeenCalled();
       // Never stopped, whatever happens next.
       expect(starts[0].child.stops).toEqual([]);

@@ -254,6 +254,7 @@ describe('run_script with a pty host registered', () => {
     expect(options.stdio).toBe('ignore');
     expect(options.detached).toBe(detached);
     expect(options.outlivesApp).toBe(true);
+    expect(options.userCommand).toBe(true);
     // The template variables travel as environment variables.
     expect(options.env.KANGENTIC_TO_COLUMN).toBe('Executing');
     expect(mockSpawn).not.toHaveBeenCalled();

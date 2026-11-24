@@ -168,7 +168,9 @@ at the Windows timer floor.
   shortcut command, the one-shot `ssh` of the SSH tab and the helper install, the image preview's
   `git cat-file` and the file search's git. A run asks for what it needs in its `cliSpawn`: no
   pipes (`stdio: 'ignore'`), a shown window, a file as its stdin (`stdinFile`, since the channel
-  carries text only), and `outlivesApp`. A run that outlives the app is neither stopped nor waited
+  carries text only), `outlivesApp`, and `userCommand`, which lifts the own-executable refusal
+  above for a command the user wrote (a script that starts `electron .` was refused in a dev
+  build, where the app's own name is `electron`). A run that outlives the app is neither stopped nor waited
   for at the host's shutdown and is not ended by pid when the host or its spawn worker is lost,
   because main never stopped these at a quit while it started them. Once main asks for such a run
   to stop, the shutdown waits for it like any other: a host that exits first takes its own

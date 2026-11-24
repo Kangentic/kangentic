@@ -42,6 +42,10 @@ export interface OffMainSpawnOptions {
   outlivesApp?: boolean;
   /** A file opened as the run's stdin in place of a pipe, for input of any size. */
   stdinFile?: string;
+  /** The command is a user's own (a project's script, a shortcut command). The
+   *  host then starts it whatever it names, this app's own executable included,
+   *  as main did while it started these itself. */
+  userCommand?: boolean;
 }
 
 export interface OffMainChild {
@@ -190,6 +194,7 @@ export function spawnOffMain(command: string, args: readonly string[], options: 
     ...(options.windowsHide !== undefined ? { windowsHide: options.windowsHide } : {}),
     ...(options.outlivesApp !== undefined ? { outlivesApp: options.outlivesApp } : {}),
     ...(options.stdinFile !== undefined ? { stdinFile: options.stdinFile } : {}),
+    ...(options.userCommand !== undefined ? { userCommand: options.userCommand } : {}),
   });
   if (!hosted) return spawnHere(command, args, options, env);
   return {

@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChildProcess, exec, type spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -946,4 +947,75 @@ describe('the real spawn worker, through the host core', () => {
       (service as WorkerSpawnService | null)?.dispose();
     }
   }, 30_000);
+
+  // What the runs main moved here ask for, carried through the real worker
+  // thread: the SSH helper upload's file as stdin, a script's ignored output,
+  // and a user's own command that names this app. The child is this runner's
+  // own Node, which is the worker's own executable, so the control below is
+  // the refusal every other run still gets.
+  it('gives a run a file as its stdin, no pipes, and a user\'s own command that names this app', async () => {
+    const events: PtyHostEvent[] = [];
+    let service: WorkerSpawnService | null = null;
+    const core = new PtyHostCore({
+      emit: (event) => events.push(event),
+      resolveAgent: () => undefined,
+      transcriptSinkFor: () => null,
+      coalesceMs: 0,
+      createSpawnService: (hooks) => {
+        service = new WorkerSpawnService({
+          ...hooks,
+          createWorker: (data: SpawnWorkerData) => new Worker(workerPath, { workerData: data }),
+        });
+        return service;
+      },
+    });
+    const inputDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-spawn-worker-stdin-'));
+    const closed = (processId: number): Promise<void> => vi.waitFor(
+      () => expect(events.some((event) => event.type === 'cliClose' && event.processId === processId)).toBe(true),
+      { timeout: 15_000 },
+    );
+    const outputOf = (processId: number): string => events
+      .filter((event): event is Extract<PtyHostEvent, { type: 'cliData' }> => event.type === 'cliData' && event.processId === processId)
+      .map((event) => Buffer.from(event.data).toString('utf8'))
+      .join('');
+    const run = { cwd: REPO_ROOT, shell: false, env: { ...process.env } as Record<string, string>, detached: false };
+    try {
+      // The control: this app's own executable, asked for as any other run, is refused.
+      core.handleCommand({ type: 'cliSpawn', params: { ...run, processId: 21, command: process.execPath, args: ['-e', '0'] } });
+      await closed(21);
+      const refusal = events.find((event): event is Extract<PtyHostEvent, { type: 'cliError' }> => event.type === 'cliError' && event.processId === 21);
+      expect(refusal?.error.message).toBe('The pty host does not launch its own executable');
+
+      // Every byte value, past any pipe's buffer: text decoding would change these.
+      const bytes = Buffer.alloc(1_500_000, Buffer.from(Array.from({ length: 256 }, (_, value) => value)));
+      const inputFile = path.join(inputDirectory, 'asset.bin');
+      fs.writeFileSync(inputFile, bytes);
+      const hashStdin = [
+        'const hash = require("node:crypto").createHash("sha256");',
+        'let total = 0;',
+        'process.stdin.on("data", (chunk) => { hash.update(chunk); total += chunk.length; });',
+        'process.stdin.on("end", () => process.stdout.write(total + " " + hash.digest("hex")));',
+      ].join(' ');
+      core.handleCommand({
+        type: 'cliSpawn',
+        params: { ...run, processId: 22, command: process.execPath, args: ['-e', hashStdin], stdinFile: inputFile, userCommand: true },
+      });
+      await closed(22);
+      expect(events.some((event) => event.type === 'cliError' && event.processId === 22)).toBe(false);
+      expect(outputOf(22)).toBe(`${bytes.length} ${createHash('sha256').update(bytes).digest('hex')}`);
+
+      // More output than a pipe holds, to nowhere: with a pipe nobody reads this run would never end.
+      core.handleCommand({
+        type: 'cliSpawn',
+        params: { ...run, processId: 23, command: process.execPath, args: ['-e', 'process.stdout.write("x".repeat(400000)); process.exitCode = 4;'], stdio: 'ignore', userCommand: true },
+      });
+      await closed(23);
+      expect(events.find((event) => event.type === 'cliExit' && event.processId === 23)).toMatchObject({ code: 4 });
+      expect(outputOf(23)).toBe('');
+      expect(core.liveChildCount).toBe(0);
+    } finally {
+      (service as WorkerSpawnService | null)?.dispose();
+      fs.rmSync(inputDirectory, { recursive: true, force: true });
+    }
+  }, 60_000);
 });

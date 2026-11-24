@@ -72,6 +72,9 @@ export interface OffMainCliOptions {
   outlivesApp?: boolean;
   /** A file opened as the run's stdin in place of a pipe. */
   stdinFile?: string;
+  /** The command is a user's own (a script, a shortcut command), which the
+   *  host never refuses to start (`PtyHostCliSpawnParams.userCommand`). */
+  userCommand?: boolean;
   /** Dev builds: who asked for the run, set by `spawnOffMainCli` for the
    *  host's spawn span (`spawn-caller.ts`). */
   caller?: string;

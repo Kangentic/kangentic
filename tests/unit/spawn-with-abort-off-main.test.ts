@@ -136,6 +136,9 @@ describe('spawnWithAbort with a pty host registered', () => {
     expect(call.command).toBe('git');
     expect(call.args).toEqual(['fetch', '--no-auto-gc', 'origin', 'main']);
     expect(call.options).toMatchObject({ cwd: '/mock/repo', shell: false, detached: false });
+    // Git is a run Kangentic builds: stopped at a quit, and never exempt from the host's own-executable refusal.
+    expect(call.options.outlivesApp).toBeUndefined();
+    expect(call.options.userCommand).toBeUndefined();
     // Omitted env inherits main's current environment, as a local spawn does.
     expect(call.options.env.KANGENTIC_GIT_HOST_PROBE).toBe('inherited');
     expect(hostRun.stdin.ended).toBe(true);
@@ -237,6 +240,8 @@ describe('a script (a shell command) with a pty host registered', () => {
     // Its own process group where there is one, so a stop reaches what it started.
     expect(call.options.detached).toBe(process.platform !== 'win32');
     expect(call.options.outlivesApp).toBe(true);
+    // The user's own command: the host starts it whatever its first word names.
+    expect(call.options.userCommand).toBe(true);
     expect(call.options.env).toEqual({ KANGENTIC_SCRIPT: 'yes' });
     expect(hostRun.stdin.ended).toBe(true);
     expect(spawnMock).not.toHaveBeenCalled();
