@@ -88,6 +88,7 @@ vi.mock('../../src/main/pty/session-manager', () => {
       remoteHostRequest = vi.fn();
       // registerAllIpc wires where a resumed session's earlier runs come from.
       setEarlierRunsSource = vi.fn();
+      setTaskWindowLookup = vi.fn();
       // The pty-host-lost listener files each lost session under its project.
       getSessionProjectId = vi.fn((_sessionId: string): string | undefined => undefined);
       // A Command Terminal the host took down is captured from its removal, which
@@ -1024,7 +1025,33 @@ describe('registerAllIpc idempotency', () => {
     // Red-green: delete the `setOnConfigApplied(...)` line, the
     // `isSessionInOwnCall` option or the `stopBackgroundSession` property in
     // register-all.ts and the matching test fails; point any of them at a stub
-    // and the behavior assertion fails.
+    // and the behavior assertion fails. For `setTaskWindowLookup`, delete the
+    // call, or drop its `!== null`, and the window lookup test goes red.
+
+    it('hands the session manager a lookup that is true only while a window holds the task open', async () => {
+      // The idle sweep never pauses a task whose window is open, and it asks
+      // through this lookup. Dropping the call, or the `!== null`, leaves every
+      // other suite green while open windows stop holding the pause off.
+      const { registerAllIpc, getSessionManager } = await import('../../src/main/ipc/register-all');
+      // Same module registry as register-all's import, so the same registry instance.
+      const { detailOwnerRegistry } = await import('../../src/main/ipc/handlers/task-detail-ownership');
+      registerAllIpc(makeMockWindow(1));
+
+      const registrations = vi.mocked(getSessionManager().setTaskWindowLookup).mock.calls;
+      expect(registrations).toHaveLength(1);
+      const hasOpenWindow = registrations[0][0];
+      const projectId = 'project-window-lookup';
+      const taskId = 'task-window-lookup';
+      expect(hasOpenWindow(projectId, taskId)).toBe(false);
+
+      detailOwnerRegistry.syncOwned(1, 'board', [{ projectId, taskId }]);
+      expect(hasOpenWindow(projectId, taskId)).toBe(true);
+      expect(hasOpenWindow('another-project', taskId)).toBe(false);
+      expect(hasOpenWindow(projectId, 'another-task')).toBe(false);
+
+      detailOwnerRegistry.releaseAllFor(1);
+      expect(hasOpenWindow(projectId, taskId)).toBe(false);
+    }, 30000);
 
     it('drains the agent queue when a board config is applied', async () => {
       // A teammate raising a column's agent limit in kangentic.json ends no
