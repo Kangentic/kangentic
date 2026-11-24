@@ -146,7 +146,7 @@ async function startBridge(_desktop: Desktop, script: string, line: string): Pro
   const direct = createSshRunner({ sshPath: options.sshPath, args: options.sshArgs });
   callCounter += 1;
   const base = `${HOST_HOME}/bridge-${callCounter}`;
-  await direct(posixShellCommand(`cat > "${base}.in"`), { stdin: Buffer.from(`${line}\n`) });
+  await direct(posixShellCommand(`cat > "${base}.in"`), { stdin: `${line}\n` });
   await direct(posixShellCommand(`(KANGENTIC_MCP_TOKEN=rig-token sh "${script}" mcp http://127.0.0.1:1/mcp/rig < "${base}.in" > "${base}.out" 2>&1 &); exit 0`));
   return {
     output: async () => (await direct(posixShellCommand(`cat "${base}.out" 2>/dev/null; true`))).stdout,

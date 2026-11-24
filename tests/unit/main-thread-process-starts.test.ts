@@ -108,14 +108,6 @@ const CLASSIFIED_STARTS: Record<string, ClassifiedStart> = {
     bindings: ['spawn'],
     reason: 'SHELL_EXEC: a shortcut command the user clicks, detached and never stopped',
   },
-  'src/main/remote/link/ssh-run.ts': {
-    bindings: ['spawn'],
-    reason: 'one ssh command on a host: the helper install and the Add host probes',
-  },
-  'src/main/remote/ssh-setup.ts': {
-    bindings: ['execFile'],
-    reason: 'ssh, ssh-keygen and icacls for SSH host setup, and ssh -V for the SSH tab',
-  },
 };
 
 /**

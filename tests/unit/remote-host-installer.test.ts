@@ -4,7 +4,6 @@
  * is the rig's (scripts/ssh-link-rig.mjs).
  */
 import { describe, expect, it, vi } from 'vitest';
-import { Readable } from 'node:stream';
 import { HostInstallError, installHost, type HostAsset } from '../../src/main/remote/link/host-installer';
 import type { SshRunResult, SshRunOptions } from '../../src/main/remote/link/ssh-run';
 
@@ -30,13 +29,16 @@ function fakeHost(options: FakeHostOptions = {}) {
   return { runner, calls };
 }
 
-const stream = (): Readable => Readable.from([Buffer.from('asset bytes')]);
+/** The files a host was sent, in order: each upload names the file `ssh` reads as its stdin. */
+const sentFiles = (calls: Array<{ options?: SshRunOptions }>): string[] => calls.flatMap((call) => {
+  const stdin = call.options?.stdin;
+  return typeof stdin === 'object' ? [stdin.filePath] : [];
+});
 
 describe('installing the helper', () => {
-  it('probes, sends the asset on stdin, and says how to start the relay', async () => {
+  it('probes, sends the asset file as stdin, and says how to start the relay', async () => {
     const host = fakeHost();
-    const assetStream = stream();
-    const installed = await installHost(host.runner, ASSET, () => assetStream);
+    const installed = await installHost(host.runner, ASSET);
 
     expect(installed).toEqual({
       directory: '/home/dev/.kangentic/host/0.52.0',
@@ -45,7 +47,10 @@ describe('installing the helper', () => {
     });
     expect(host.calls).toHaveLength(3);
     const upload = host.calls[2];
-    expect(upload.options?.stdin).toBe(assetStream);
+    // The file itself, never its bytes: ssh reads it, so the archive does not pass through this process.
+    expect(upload.options?.stdin).toEqual({ filePath: ASSET.filePath });
+    // The probes send nothing.
+    expect(sentFiles(host.calls)).toEqual([ASSET.filePath]);
     expect(upload.command).toContain(`expected="${SHA}"`);
     expect(upload.command).toContain('version="0.52.0"');
   });
@@ -54,7 +59,7 @@ describe('installing the helper', () => {
     // sshd hands the command to the login shell, and fish, nushell and csh read sh syntax their own
     // way. Inside single quotes with no quote, backslash or newline, each of them passes it to sh as is.
     const host = fakeHost();
-    const installed = await installHost(host.runner, ASSET, stream);
+    const installed = await installHost(host.runner, ASSET);
     const commands = [...host.calls.map((call) => call.command), installed.relayCommand];
     for (const command of commands) {
       expect(command.startsWith("sh -c '")).toBe(true);
@@ -65,7 +70,7 @@ describe('installing the helper', () => {
 
   it('removes the upload and the half-unpacked folder when a step fails', async () => {
     const host = fakeHost();
-    await installHost(host.runner, ASSET, stream);
+    await installHost(host.runner, ASSET);
     const script = host.calls[2].command;
     expect(script).toContain('trap cleanup EXIT');
     expect(script.indexOf('trap cleanup EXIT')).toBeLessThan(script.indexOf('cat > "$upload"'));
@@ -74,7 +79,7 @@ describe('installing the helper', () => {
 
   it('checks the checksum before it unpacks, and renames only a verified, complete version into place', async () => {
     const host = fakeHost();
-    await installHost(host.runner, ASSET, stream);
+    await installHost(host.runner, ASSET);
     const script = host.calls[2].command;
     const order = ['cat > "$upload"', 'sha256sum', 'checksum mismatch', 'tar -xzf', 'chmod 755', 'test -x', '.complete', 'mv "$base/$version.partial" "$base/$version"'];
     const positions = order.map((fragment) => script.indexOf(fragment));
@@ -84,19 +89,20 @@ describe('installing the helper', () => {
 
   it('does not send the asset again when that version is already complete with the same checksum', async () => {
     const host = fakeHost({ present: ok(`${SHA}\n`) });
-    const installed = await installHost(host.runner, ASSET, () => { throw new Error('the asset must not be opened'); });
+    const installed = await installHost(host.runner, ASSET);
     expect(installed.installed).toBe(false);
     expect(host.calls).toHaveLength(2);
+    expect(sentFiles(host.calls)).toEqual([]);
   });
 
   it('sends it again when the version on the host has a different checksum', async () => {
     const host = fakeHost({ present: ok(`${'b'.repeat(64)}\n`) });
-    expect((await installHost(host.runner, ASSET, stream)).installed).toBe(true);
+    expect((await installHost(host.runner, ASSET)).installed).toBe(true);
   });
 
   it('names a home directory that holds a quote through $HOME, never its text', async () => {
     const host = fakeHost({ probe: ok("Linux\nx86_64\n/home/o'brien\nglibc 2.39\n"), present: ok(`${SHA}\n`) });
-    const installed = await installHost(host.runner, ASSET, stream);
+    const installed = await installHost(host.runner, ASSET);
     expect(installed.directory).toBe("/home/o'brien/.kangentic/host/0.52.0");
     expect(installed.relayCommand).toContain('"$HOME/.kangentic/host/0.52.0/node/bin/node"');
     expect(installed.relayCommand).not.toContain('brien');
@@ -106,7 +112,7 @@ describe('installing the helper', () => {
 describe('refusing a host', () => {
   async function refusal(options: FakeHostOptions, asset: HostAsset | readonly HostAsset[] = ASSET): Promise<HostInstallError> {
     try {
-      await installHost(fakeHost(options).runner, asset, stream);
+      await installHost(fakeHost(options).runner, asset);
     } catch (error) {
       expect(error).toBeInstanceOf(HostInstallError);
       return error as HostInstallError;
@@ -130,7 +136,7 @@ describe('refusing a host', () => {
 
   it('accepts arm64 when the build carries it', async () => {
     const host = fakeHost({ probe: ok('Linux\naarch64\n/home/dev\nglibc 2.39\n') });
-    expect((await installHost(host.runner, { ...ASSET, arch: 'arm64' }, stream)).installed).toBe(true);
+    expect((await installHost(host.runner, { ...ASSET, arch: 'arm64' })).installed).toBe(true);
   });
 
   describe('a build that carries one asset per CPU', () => {
@@ -138,13 +144,13 @@ describe('refusing a host', () => {
     const BOTH: HostAsset[] = [ASSET, { ...ASSET, arch: 'arm64', sha256: ARM_SHA, filePath: '/mock/kangentic-host-0.52.0-linux-arm64.tar.gz' }];
 
     it('sends the one that matches the host, whichever order they are listed in', async () => {
-      const opened: string[] = [];
       const arm = fakeHost({ probe: ok('Linux\naarch64\n/home/dev\nglibc 2.39\n') });
-      await installHost(arm.runner, BOTH, (filePath) => { opened.push(filePath); return stream(); });
+      await installHost(arm.runner, BOTH);
       const intel = fakeHost();
-      await installHost(intel.runner, [...BOTH].reverse(), (filePath) => { opened.push(filePath); return stream(); });
+      await installHost(intel.runner, [...BOTH].reverse());
 
-      expect(opened).toEqual(['/mock/kangentic-host-0.52.0-linux-arm64.tar.gz', '/mock/kangentic-host-0.52.0-linux-x64.tar.gz']);
+      expect(sentFiles(arm.calls)).toEqual(['/mock/kangentic-host-0.52.0-linux-arm64.tar.gz']);
+      expect(sentFiles(intel.calls)).toEqual(['/mock/kangentic-host-0.52.0-linux-x64.tar.gz']);
       expect(arm.calls[2].command).toContain(`expected="${ARM_SHA}"`);
       expect(intel.calls[2].command).toContain(`expected="${SHA}"`);
     });
@@ -160,13 +166,13 @@ describe('refusing a host', () => {
       const prepared: string[] = [];
       const assets: HostAsset[] = BOTH.map((asset) => ({ ...asset, prepare: async () => { prepared.push(asset.arch); } }));
 
-      await installHost(fakeHost({ probe: ok('Linux\naarch64\n/home/dev\nglibc 2.39\n') }).runner, assets, stream);
+      await installHost(fakeHost({ probe: ok('Linux\naarch64\n/home/dev\nglibc 2.39\n') }).runner, assets);
       expect(prepared).toEqual(['arm64']);
 
       // The host already has this version: nothing is fetched or sent.
       prepared.length = 0;
       const alreadyThere = fakeHost({ present: ok(`${ARM_SHA}\n`), probe: ok('Linux\naarch64\n/home/dev\nglibc 2.39\n') });
-      await installHost(alreadyThere.runner, assets, stream);
+      await installHost(alreadyThere.runner, assets);
       expect(prepared).toEqual([]);
     });
 
@@ -174,14 +180,14 @@ describe('refusing a host', () => {
       const host = fakeHost();
       const assets: HostAsset[] = [{ ...ASSET, prepare: async () => { throw new Error('Could not download the host program: example.test answered 404.'); } }];
 
-      await expect(installHost(host.runner, assets, stream)).rejects.toThrow('example.test answered 404');
+      await expect(installHost(host.runner, assets)).rejects.toThrow('example.test answered 404');
 
       expect(host.calls.some((call) => call.command.includes('cat > "$upload"'))).toBe(false);
     });
 
     it('refuses a bad checksum on any entry before it runs anything on the host', async () => {
       const host = fakeHost();
-      await expect(installHost(host.runner, [ASSET, { ...ASSET, arch: 'arm64', sha256: 'not-a-checksum' }], stream)).rejects.toThrow('checksum');
+      await expect(installHost(host.runner, [ASSET, { ...ASSET, arch: 'arm64', sha256: 'not-a-checksum' }])).rejects.toThrow('checksum');
       expect(host.runner).not.toHaveBeenCalled();
     });
   });
@@ -193,7 +199,7 @@ describe('refusing a host', () => {
     const old = await refusal({ probe: ok('Linux\nx86_64\n/home/dev\nglibc 2.17\n') });
     expect(old.message).toContain('glibc 2.17');
     const host = fakeHost({ probe: ok('Linux\nx86_64\n/home/dev\nglibc 2.28\n') });
-    expect((await installHost(host.runner, ASSET, stream)).installed).toBe(true);
+    expect((await installHost(host.runner, ASSET)).installed).toBe(true);
   });
 
   it('shows ssh\'s own words when the probe cannot run', async () => {
@@ -215,8 +221,8 @@ describe('refusing a host', () => {
 
   it('refuses a version or checksum that could carry shell syntax, before running anything', async () => {
     const host = fakeHost();
-    await expect(installHost(host.runner, { ...ASSET, version: "1.0'; rm -rf ~; '" }, stream)).rejects.toBeInstanceOf(HostInstallError);
-    await expect(installHost(host.runner, { ...ASSET, sha256: 'not a checksum' }, stream)).rejects.toBeInstanceOf(HostInstallError);
+    await expect(installHost(host.runner, { ...ASSET, version: "1.0'; rm -rf ~; '" })).rejects.toBeInstanceOf(HostInstallError);
+    await expect(installHost(host.runner, { ...ASSET, sha256: 'not a checksum' })).rejects.toBeInstanceOf(HostInstallError);
     expect(host.runner).not.toHaveBeenCalled();
   });
 });

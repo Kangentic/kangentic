@@ -166,7 +166,7 @@ async function main(): Promise<void> {
   const installStarted = Date.now();
   const first = await installHost(run, options.asset);
   const installMs = Date.now() - installStarted;
-  const second = await installHost(run, options.asset, () => { throw new Error('the second install must not open the asset'); });
+  const second = await installHost(run, options.asset);
   if (!first.installed || second.installed) throw new Error(`install was not idempotent: first ${first.installed}, second ${second.installed}`);
   remoteCommand = first.relayCommand;
   process.stderr.write(`[install] ${first.directory} in ${installMs} ms, second call sent nothing\n`);

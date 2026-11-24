@@ -2,15 +2,17 @@
  * One command on a host over `ssh`, with its output collected and optional bytes on its stdin
  * (#913). It is what the installer and the add-host probes run through: a one-shot, as opposed to
  * `ssh-connection.ts`'s long-lived stream. The same rules hold: the child is never detached, is
- * killed by pid with its tree, and ssh's own stderr is the error, unaltered.
+ * stopped with its tree, and ssh's own stderr is the error, unaltered.
+ *
+ * `ssh` starts in the pty host (`spawnOffMain`), never on main's thread, where a start holds the
+ * window on Windows. So its input is text, or a file `ssh` reads for itself: bytes do not cross
+ * from main to the host, which carries strings and has no backpressure.
  *
  * Imports nothing of electron.
  */
 
-import { spawn } from 'node:child_process';
-import type { Readable } from 'node:stream';
 import { childProcessEnv } from '../../shared/child-env';
-import { killChildTreeNow } from '../../shared/child-tree-stop';
+import { spawnOffMain } from '../../utility-process/off-main-spawn';
 
 export interface SshRunResult {
   /** The exit status, or null when `ssh` was ended by a signal or by the timeout. */
@@ -20,8 +22,11 @@ export interface SshRunResult {
 }
 
 export interface SshRunOptions {
-  /** Bytes for the command's stdin, or a stream of them. Closed when sent. */
-  stdin?: Buffer | Readable;
+  /**
+   * The command's stdin, closed when sent: text, or a file opened as `ssh`'s own stdin, for bytes
+   * and for input of any size. A file that cannot be opened rejects the run before `ssh` starts.
+   */
+  stdin?: string | { filePath: string };
   timeoutMs?: number;
 }
 
@@ -32,8 +37,6 @@ export interface SshRunnerConfig {
   /** Everything before the remote command: options, then the destination. */
   args: string[];
   env?: NodeJS.ProcessEnv;
-  /** A test swaps the spawner. */
-  spawnProcess?: typeof spawn;
 }
 
 const DEFAULT_TIMEOUT_MS = 60_000;
@@ -51,44 +54,40 @@ export function posixShellCommand(script: string): string {
 }
 
 export function createSshRunner(config: SshRunnerConfig): SshRunner {
-  const spawnProcess = config.spawnProcess ?? spawn;
   return (remoteCommand, options = {}) => new Promise<SshRunResult>((resolve, reject) => {
-    const child = spawnProcess(config.sshPath, [...config.args, remoteCommand], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      windowsHide: true,
+    const input = options.stdin;
+    const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const run = spawnOffMain(config.sshPath, [...config.args, remoteCommand], {
+      cwd: process.cwd(),
       env: childProcessEnv(config.env),
+      ...(typeof input === 'object' ? { stdinFile: input.filePath } : {}),
     });
-    let stdout = '';
-    let stderr = '';
+    const child = run.child;
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
     let timedOut = false;
-    child.stdout?.setEncoding('utf8');
-    child.stderr?.setEncoding('utf8');
-    child.stdout?.on('data', (text: string) => { stdout += text; });
-    child.stderr?.on('data', (text: string) => { stderr += text; });
+    child.stdout.on('data', (chunk: Buffer) => { stdoutChunks.push(chunk); });
+    child.stderr.on('data', (chunk: Buffer) => { stderrChunks.push(chunk); });
     // A command that exits before reading its input shows as an error here and as its exit status below.
-    child.stdin?.on('error', () => {});
+    child.stdin.on('error', () => {});
     const timer = setTimeout(() => {
       timedOut = true;
-      killChildTreeNow(child, { leadsGroup: false });
-    }, options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-    child.on('error', (error) => {
+      run.stop('treeNow');
+    }, timeoutMs);
+    // `ssh` could not be started, or its stdin file could not be opened. `close` follows and settles nothing more.
+    child.on('error', (error: Error) => {
       clearTimeout(timer);
       reject(error);
     });
-    child.on('close', (code) => {
+    child.on('close', (code: number | null) => {
       clearTimeout(timer);
-      resolve({ code: timedOut ? null : code, stdout, stderr: timedOut ? `${stderr}\nssh did not finish within ${Math.round((options.timeoutMs ?? DEFAULT_TIMEOUT_MS) / 1000)} s` : stderr });
+      // Decoded whole, so a character split across two chunks is never broken.
+      const stdout = Buffer.concat(stdoutChunks).toString('utf8');
+      const stderr = Buffer.concat(stderrChunks).toString('utf8');
+      resolve({ code: timedOut ? null : code, stdout, stderr: timedOut ? `${stderr}\nssh did not finish within ${Math.round(timeoutMs / 1000)} s` : stderr });
     });
-    const input = options.stdin;
-    if (input === undefined) child.stdin?.end();
-    else if (Buffer.isBuffer(input)) child.stdin?.end(input);
-    else {
-      // A stream with no listener throws its error out of the pty host, and a pipe leaves ssh waiting for input.
-      input.once('error', (error) => {
-        killChildTreeNow(child, { leadsGroup: false });
-        reject(error);
-      });
-      input.pipe(child.stdin as NodeJS.WritableStream);
-    }
+    // With a file as its stdin there is no pipe to close: `ssh` reads the file to its end.
+    if (typeof input === 'string') child.stdin.end(input);
+    else if (input === undefined) child.stdin.end();
   });
 }

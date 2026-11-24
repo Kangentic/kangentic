@@ -12,6 +12,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { EventEmitter } from 'node:events';
+import { setOffMainCliSpawner, type CliChildProcess, type OffMainCliOptions } from '../../src/main/utility-process/off-main-cli';
 import {
   askpassProgram,
   checkKeyFile,
@@ -592,6 +594,79 @@ describe('running a program for ssh', () => {
     const result = await runProgram(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { timeout: 500 });
 
     expect(result.code).toBeNull();
+  });
+
+  it('resolves with a failing exit status and both outputs, since ssh\'s refusal is an answer', async () => {
+    const result = await runProgram(process.execPath, ['-e', "process.stdout.write('partial'); process.stderr.write('Permission denied (publickey).'); process.exitCode = 255;"], { timeout: 15_000 });
+
+    expect(result).toEqual({ code: 255, stdout: 'partial', stderr: 'Permission denied (publickey).' });
+  });
+
+  it('rejects when the program cannot be started, which is how a missing ssh reads as not installed', async () => {
+    await expect(runProgram(path.join(scratch, 'no-such-ssh'), ['-V'], { timeout: 15_000 })).rejects.toThrow(/ENOENT/);
+  });
+
+  it('gives the program the environment it was handed, which is the only place a password travels', async () => {
+    const result = await runProgram(
+      process.execPath,
+      ['-e', 'process.stdout.write(String(process.env.KANGENTIC_SSH_PASSWORD))'],
+      { env: { ...process.env, KANGENTIC_SSH_PASSWORD: 'p@ss w0rd; $(id)' }, timeout: 15_000 },
+    );
+
+    expect(result.stdout).toBe('p@ss w0rd; $(id)');
+  });
+
+  it('stops a program that prints past the cap, and reports no exit code', async () => {
+    // Five mebibytes and then a wait: without the stop this would run to its 20 s limit.
+    const started = Date.now();
+    const result = await runProgram(
+      process.execPath,
+      ['-e', "process.stdout.write('x'.repeat(5 * 1024 * 1024)); setTimeout(() => {}, 60000);"],
+      { timeout: 20_000 },
+    );
+
+    expect(result.code).toBeNull();
+    expect(result.stdout.length).toBeLessThanOrEqual(4 * 1024 * 1024);
+    expect(Date.now() - started).toBeLessThan(15_000);
+  }, 30_000);
+
+  describe('with a pty host registered', () => {
+    afterEach(() => {
+      setOffMainCliSpawner(null);
+    });
+
+    it('starts the program there and stops its whole tree at once on the time limit', async () => {
+      const stops: unknown[] = [];
+      const received: Array<{ command: string; args: string[]; options: OffMainCliOptions }> = [];
+      let stdinEnded = 0;
+      const hosted: CliChildProcess = Object.assign(new EventEmitter(), {
+        pid: undefined,
+        exitCode: null,
+        signalCode: null,
+        stdout: Object.assign(new EventEmitter(), { resume: () => undefined }),
+        stderr: Object.assign(new EventEmitter(), { resume: () => undefined }),
+        stdin: Object.assign(new EventEmitter(), { write: () => true, end: () => { stdinEnded += 1; } }),
+        kill: () => true,
+        stopTree: (mode?: unknown) => { stops.push(mode); },
+      });
+      setOffMainCliSpawner((command, args, options) => {
+        received.push({ command, args, options });
+        return hosted;
+      });
+
+      const pending = runProgram('/usr/bin/ssh', ['-V'], { env: { KANGENTIC_RUN: 'yes' }, timeout: 50 });
+      await expect.poll(() => stops).toEqual(['treeNow']);
+      hosted.stderr.emit('data', Buffer.from('OpenSSH_9.5p1\n'));
+      hosted.emit('close', 1, null);
+
+      expect(await pending).toEqual({ code: null, stdout: '', stderr: 'OpenSSH_9.5p1\n' });
+      expect(received).toHaveLength(1);
+      expect(received[0].command).toBe('/usr/bin/ssh');
+      expect(received[0].args).toEqual(['-V']);
+      expect(received[0].options.env).toEqual({ KANGENTIC_RUN: 'yes' });
+      expect(received[0].options.detached).toBe(false);
+      expect(stdinEnded).toBe(1);
+    });
   });
 });
 
