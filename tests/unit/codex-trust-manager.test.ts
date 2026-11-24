@@ -293,6 +293,28 @@ describe('sweepRemovedFolderTrust', () => {
     expect(readConfig()).toContain('model = "gpt-5.5"');
   });
 
+  // The sweep looks outside the lock and writes inside it. A spawn that recreates and trusts the
+  // worktree in between takes the same lock, so the locked re-check keeps its table.
+  it('keeps the table of a worktree recreated between the first look and the locked write', async () => {
+    const projectFolder = path.join(tmpHome, 'repo');
+    const worktree = path.join(projectFolder, '.kangentic', 'worktrees', 'recreated');
+    fs.mkdirSync(projectFolder, { recursive: true });
+    writeConfig([`[projects.'${worktree}']`, 'trust_level = "trusted"', ''].join('\n'));
+    const lookups = new Map<string, number>();
+    const exists = async (folderPath: string): Promise<boolean> => {
+      if (!folderPath.replace(/\\/g, '/').includes('/.kangentic/worktrees/')) return fs.existsSync(folderPath);
+      const lookup = (lookups.get(folderPath) ?? 0) + 1;
+      lookups.set(folderPath, lookup);
+      // Absent the first time (gone), present from then on (recreated before the locked write).
+      return lookup > 1;
+    };
+
+    expect(await sweepRemovedFolderTrust(exists)).toBe(0);
+
+    expect([...lookups.values()]).toEqual([2]);
+    expect(trustOf(worktree)).toBe('trusted');
+  });
+
   it('keeps a table whose folder the existence check reports present', async () => {
     const worktree = path.join(tmpHome, 'repo', '.kangentic', 'worktrees', 'unreadable');
     writeConfig([`[projects.'${worktree}']`, 'trust_level = "trusted"', ''].join('\n'));

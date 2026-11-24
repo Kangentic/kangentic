@@ -393,7 +393,7 @@ export const UNREPORTED_CATCH_SITES: Readonly<Record<string, number>> = {
   'src/main/ipc/helpers/project-setup.ts': 2,
   'src/main/ipc/helpers/resume-miss.ts': 1,
   'src/main/ipc/helpers/spare-worktrees.ts': 3,
-  'src/main/ipc/helpers/task-cleanup.ts': 13,
+  'src/main/ipc/helpers/task-cleanup.ts': 12,
   'src/main/ipc/helpers/task-delete.ts': 1,
   'src/main/ipc/helpers/task-git.ts': 11,
   'src/main/ipc/helpers/task-profile.ts': 1,

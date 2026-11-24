@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { atomicWriteFileWithBackup } from '../../shared/relocation-utils';
 import { cliPathForTarget, type CliPlace } from '../../shared/cli-target';
-import { folderExists, isKangenticMadeFolder, kangenticMadeFolderOwner } from '../../shared/kangentic-made-folder';
+import { folderExists, goneKangenticMadeFolders, isKangenticMadeFolder, stillGone } from '../../shared/kangentic-made-folder';
 import {
   withCodexConfigLock,
   configTomlPath,
@@ -90,9 +90,9 @@ export async function removeWorktreeTrust(worktreePath: string, place: CliPlace 
  * Drop the trust tables of every Kangentic-made folder that is gone
  * (`isKangenticMadeFolder`): worktrees removed before `removeWorktreeTrust`
  * existed or while the app was not running, and a dev preview's project roots,
- * which no removal ever named. A folder whose owner is gone too
- * (`kangenticMadeFolderOwner`) keeps its table, since that is also what a drive
- * that is not mounted looks like. The tables go in one rewrite, under the rules
+ * which no removal ever named. A folder whose owner is gone too keeps its
+ * table, since that is also what a drive that is not mounted looks like
+ * (`goneKangenticMadeFolders`). The tables go in one rewrite, under the rules
  * `removeWorktreeTrust` follows, so only a sole `trust_level = "trusted"` table
  * is dropped. Answers how many it dropped.
  */
@@ -109,17 +109,11 @@ export async function sweepRemovedFolderTrust(exists: (folderPath: string) => Pr
     const header = parseHeaderLine(line);
     if (header && isKangenticMadeFolder(header.innerPath)) folders.add(stripLongPathPrefix(header.innerPath));
   }
-  const ownerPresent = new Map<string, boolean>();
-  const goneFolders: string[] = [];
-  for (const folder of folders) {
-    if (await exists(folder)) continue;
-    const owner = kangenticMadeFolderOwner(folder);
-    if (owner === null) continue;
-    if (!ownerPresent.has(owner)) ownerPresent.set(owner, await exists(owner));
-    if (ownerPresent.get(owner)) goneFolders.push(folder);
-  }
+  const goneFolders = await goneKangenticMadeFolders(folders, exists);
   if (goneFolders.length === 0) return 0;
-  return withCodexConfigLock(() => removeTrustTablesSync(goneFolders, null));
+  // Checked once more under the lock a spawn's trust write takes, so a worktree
+  // recreated at a gone folder's path meanwhile keeps its table (`stillGone`).
+  return withCodexConfigLock(async () => removeTrustTablesSync(await stillGone(goneFolders, exists), null));
 }
 
 /** Drop the trust table of each folder, in one rewrite. Answers how many tables it dropped. */

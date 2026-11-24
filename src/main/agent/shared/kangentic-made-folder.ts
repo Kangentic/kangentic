@@ -40,3 +40,40 @@ export async function folderExists(folderPath: string): Promise<boolean> {
     return (error as NodeJS.ErrnoException).code !== 'ENOENT';
   }
 }
+
+/**
+ * The Kangentic-made folders among `folders` that are gone while their owner
+ * (`kangenticMadeFolderOwner`) exists. A folder whose owner is gone too is left
+ * out, since that is also what a drive that is not mounted looks like. One
+ * folder at a time, with each owner checked once: an adapter's sweep runs this
+ * over thousands of entries, and it is not in a hurry.
+ */
+export async function goneKangenticMadeFolders(
+  folders: Iterable<string>,
+  exists: (folderPath: string) => Promise<boolean> = folderExists,
+): Promise<string[]> {
+  const ownerPresent = new Map<string, boolean>();
+  const gone: string[] = [];
+  for (const folder of folders) {
+    if (await exists(folder)) continue;
+    const owner = kangenticMadeFolderOwner(folder);
+    if (owner === null) continue;
+    if (!ownerPresent.has(owner)) ownerPresent.set(owner, await exists(owner));
+    if (ownerPresent.get(owner)) gone.push(folder);
+  }
+  return gone;
+}
+
+/**
+ * The folders of `gone` still gone. A sweep asks this under its file's lock,
+ * just before it writes: a worktree recreated at a gone folder's path after the
+ * first look is trusted again by its spawn, which takes the same lock, so this
+ * sees the folder and the sweep keeps the entry the spawn needs.
+ */
+export async function stillGone(
+  gone: readonly string[],
+  exists: (folderPath: string) => Promise<boolean> = folderExists,
+): Promise<string[]> {
+  const present = await Promise.all(gone.map((folder) => exists(folder)));
+  return gone.filter((_folder, index) => !present[index]);
+}

@@ -115,8 +115,8 @@ describe('notifyAdaptersWorktreeRemoved', () => {
   });
 
   it('skips adapters that do not implement onWorktreeRemoved', async () => {
-    // Claude has no onWorktreeRemoved (no per-directory global state to drop).
-    mockAdapters.set('claude', {});
+    // An adapter with no hook, as Cursor and Aider have none.
+    mockAdapters.set('cursor', {});
     const codexRemoved = vi.fn(async () => {});
     mockAdapters.set('codex', { onWorktreeRemoved: codexRemoved });
 
