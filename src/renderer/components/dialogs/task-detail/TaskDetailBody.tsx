@@ -341,6 +341,7 @@ export function TaskDetailBody({
           task={task}
           popOutParams={projectId ? { taskId: task.id, projectId } : undefined}
           filePopOutParams={projectId ? { taskId: task.id, projectId } : undefined}
+          showing={!dormant}
         />
       </Suspense>
     </PanelErrorBoundary>

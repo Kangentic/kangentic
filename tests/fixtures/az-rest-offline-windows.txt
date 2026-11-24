@@ -1,0 +1,22 @@
+ERROR: The command failed with an unexpected error. Here is the traceback:
+ERROR: HTTPSConnectionPool(host='azure.invalid', port=443): Max retries exceeded with url: /org/_apis/git/repositories/repo/pullrequests (Caused by NameResolutionError("HTTPSConnection(host='azure.invalid', port=443): Failed to resolve 'azure.invalid' ([Errno 11001] getaddrinfo failed)"))
+Traceback (most recent call last):
+  File "D:\a\_work\1\s\build_scripts\windows\artifacts\cli\Lib\site-packages\urllib3/connection.py", line 204, in _new_conn
+  File "D:\a\_work\1\s\build_scripts\windows\artifacts\cli\Lib\site-packages\urllib3/util/connection.py", line 60, in create_connection
+  File "socket.py", line 977, in getaddrinfo
+socket.gaierror: [Errno 11001] getaddrinfo failed
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "D:\a\_work\1\s\build_scripts\windows\artifacts\cli\Lib\site-packages\requests/adapters.py", line 667, in send
+  File "D:\a\_work\1\s\build_scripts\windows\artifacts\cli\Lib\site-packages\urllib3/util/retry.py", line 535, in increment
+urllib3.exceptions.MaxRetryError: HTTPSConnectionPool(host='azure.invalid', port=443): Max retries exceeded with url: /org/_apis/git/repositories/repo/pullrequests (Caused by NameResolutionError("HTTPSConnection(host='azure.invalid', port=443): Failed to resolve 'azure.invalid' ([Errno 11001] getaddrinfo failed)"))
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "D:\a\_work\1\s\build_scripts\windows\artifacts\cli\Lib\site-packages\azure/cli/core/util.py", line 1088, in send_raw_request
+  File "D:\a\_work\1\s\build_scripts\windows\artifacts\cli\Lib\site-packages\requests/adapters.py", line 700, in send
+requests.exceptions.ConnectionError: HTTPSConnectionPool(host='azure.invalid', port=443): Max retries exceeded with url: /org/_apis/git/repositories/repo/pullrequests (Caused by NameResolutionError("HTTPSConnection(host='azure.invalid', port=443): Failed to resolve 'azure.invalid' ([Errno 11001] getaddrinfo failed)"))
+To check existing issues, please visit: https://github.com/Azure/azure-cli/issues
