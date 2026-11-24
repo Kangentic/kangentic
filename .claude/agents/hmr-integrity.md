@@ -43,7 +43,9 @@ You validate that all IPC-backed Zustand stores are properly registered in the `
 2. **Read `src/renderer/App.tsx`** and find the `vite:afterUpdate` handler block. Extract all store method calls within it.
 
 3. **Cross-reference:**
-   - Every store `load*`/`sync*` method should be called in `vite:afterUpdate`
+   - Every store `load*`/`sync*` method should be called in `vite:afterUpdate`, inside the
+     `hmrResyncScheduler.schedule(() => { ... })` callback. That callback runs once per burst of
+     updates; a call written above it runs on every update, and a merge sends hundreds
    - Push event re-subscriptions should be handled (unsubscribe old, subscribe new)
    - Project-switch handlers should not duplicate HMR re-sync logic
 

@@ -56,6 +56,9 @@ async function resetMock() {
     delete mockWindow.__mockFileGate;
     delete mockWindow.__mockSshChangedKeyError;
     delete mockWindow.__mockSshTrustError;
+    delete mockWindow.__mockSshClient;
+    // The mock keeps detectClient()'s answer the way main does, so one test's answer would reach the next.
+    (mockWindow.__mockSshForgetClient as () => void)();
   });
 }
 
@@ -74,6 +77,20 @@ test('shows an empty list and the ssh client it found', async () => {
   await expect(page.locator('[data-testid="ssh-add-host"]')).toBeVisible();
   await expect(page.locator('[data-testid="ssh-client-status-label"]')).toHaveText('ssh found');
   await expect(page.locator('[data-testid="ssh-client-status-text"]')).toContainText('OpenSSH');
+});
+
+test('asks for the ssh client again when the tab opens, past the answer main has kept', async () => {
+  // Main keeps its first check for every other caller, and the mock keeps one the same way. So an
+  // ssh program that went missing (or was installed) since then shows only if the tab asks again.
+  await page.evaluate(async () => {
+    await window.electronAPI.ssh.detectClient();
+    (window as unknown as Record<string, unknown>).__mockSshClient = { found: false, version: null, error: 'spawn ssh ENOENT' };
+  });
+
+  await openSshTab();
+
+  await expect(page.locator('[data-testid="ssh-client-status-label"]')).toHaveText('ssh not found');
+  await expect(page.locator('[data-testid="ssh-client-status-text"]')).toContainText('spawn ssh ENOENT');
 });
 
 test('says the list could not be read, and not that there are no hosts, when listing fails', async () => {

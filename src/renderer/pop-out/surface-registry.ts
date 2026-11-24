@@ -23,7 +23,9 @@ export interface SurfaceDescriptor<K extends PopOutKind = PopOutKind> {
    *  (idempotent loads, signal-scoped subscription teardown). */
   bootstrap: (params: PopOutParamsByKind[K], context: SurfaceBootstrapContext) => void;
   /** Re-sync just this surface's store(s) on this window's OWN vite:afterUpdate
-   *  (Pattern B, scoped to this window since App.tsx's handler never runs here). */
+   *  (Pattern B, scoped to this window). App.tsx's module-scope handler runs in a
+   *  pop-out too, since the entry imports App whether or not it mounts it, and
+   *  re-fetches the main window's stores; this covers what the surface owns. */
   hmrResync: () => void;
   /** The in-app surface this pop-out is mutually exclusive with, or null for an
    *  ADDITIVE surface with no exclusive in-app counterpart (a 'changes-file'

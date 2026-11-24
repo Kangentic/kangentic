@@ -314,7 +314,9 @@ export function SshTab() {
   useEffect(() => {
     // Neither load rejects: a failure is store state shown below.
     void loadHosts();
-    void loadClient();
+    // Main caches the check, so the tab asks it to look again: a client installed
+    // since the last check shows as soon as the tab opens.
+    void loadClient({ refresh: true });
   }, [loadHosts, loadClient]);
 
   // The names in the user's SSH config, for the address fields. Only a convenience: a config that cannot be read is no suggestions.

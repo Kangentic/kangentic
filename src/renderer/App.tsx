@@ -45,6 +45,7 @@ import { notificationConfigNow, playEventSound } from './utils/event-sound-playe
 import { COMMAND_TERMINAL_NOTIFICATION_TASK_ID } from '../shared/notification-constants';
 import { PTY_HOST_LOST_EXIT_CODE, PTY_HOST_LOST_NOTICE_WINDOW_MS } from '../shared/pty-host';
 import { bumpHmrGeneration } from './utils/hmr-generation';
+import { hmrResyncScheduler } from './utils/hmr-resync-scheduler';
 import { clearSnapPreviewDom } from './window-manager';
 import { clearDropGapDom } from './utils/board-drop-preview';
 import { setRebindCaptureActive } from './utils/rebind-state';
@@ -1502,13 +1503,28 @@ export function App() {
 // instance with main-process truth rather than restoring it from scratch. Keep
 // the calls either way; the unit test below enforces them.
 //
-// IMPORTANT: If you add a new IPC-backed store, add its load/sync call here.
-// The unit test "hmr-resync.test.ts" will fail if you forget.
+// IMPORTANT: If you add a new IPC-backed store, add its load/sync call inside the
+// `hmrResyncScheduler.schedule` callback below. The unit test "hmr-resync.test.ts"
+// will fail if you forget, or if you put the call above the callback.
+//
+// The handler does two things at two paces. The Pattern C bump and the Pattern D
+// cleanups run on EVERY update, because each one undoes something that update
+// left behind. The Pattern B re-sync runs ONCE per burst, the quiet period after
+// the last update finishes with no other started (utils/hmr-resync-scheduler.ts):
+// a fast-forward of the main checkout sends hundreds of updates, and a re-sync
+// on each was 8,935 IPC calls in 12.7 s.
 //
 // Order matters: projects first (restores currentProject), then config/board
 // (which depend on having a current project), then sessions last.
 // @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
 if (import.meta.hot) {
+  // An update is starting: a re-sync an earlier update asked for waits for this
+  // one to finish, however long it takes to apply. Vite's client applies updates
+  // one at a time, so within a burst the next has always started by now.
+  // @ts-expect-error Vite HMR API not typed under commonjs module resolution
+  import.meta.hot.on('vite:beforeUpdate', () => {
+    hmrResyncScheduler.holdWhileUpdating();
+  });
   // @ts-expect-error Vite HMR API not typed under commonjs module resolution
   import.meta.hot.on('vite:afterUpdate', () => {
     // Force every <DndContext> to remount with a fresh dnd-kit manager.
@@ -1520,9 +1536,11 @@ if (import.meta.hot) {
     bumpHmrGeneration();
 
     // Discard any buffered session pushes and clear the drag gate. The resync
-    // below re-fetches authoritative state from the main process, so buffered
-    // renderer-side pushes are stale; an HMR also tears down the DndContext
-    // without firing dragEnd, so the gate must be force-cleared here.
+    // scheduled below re-fetches authoritative state from the main process, so
+    // buffered renderer-side pushes are stale; an HMR also tears down the
+    // DndContext without firing dragEnd, so the gate must be force-cleared here.
+    // What is discarded here stays missing until that resync runs, after the
+    // burst's quiet period.
     resetCoalescerForHmr();
 
     // Cancel stale drop highlights (HMR unmounts DndContext without firing dragEnd)
@@ -1548,83 +1566,90 @@ if (import.meta.hot) {
     // on remount if it still is.
     setRebindCaptureActive(false);
 
-    // Snapshot active tab before sync - syncSessions may transiently clear
-    // activeSessionId if the sessions array is briefly empty during re-fetch.
-    const previousActiveSessionId = useSessionStore.getState().activeSessionId;
+    // Pattern B, once per burst. Everything above ran for this update; the
+    // re-sync waits until no update has started for the quiet period, and a
+    // later update replaces this ask.
+    hmrResyncScheduler.schedule(() => {
+      // Snapshot active tab before sync - syncSessions may transiently clear
+      // activeSessionId if the sessions array is briefly empty during re-fetch.
+      // Taken here, when the re-sync runs, since only that sync can clear it.
+      const previousActiveSessionId = useSessionStore.getState().activeSessionId;
 
-    useProjectStore.getState().loadProjects();
-    useProjectStore.getState().loadGroups();
-    useProjectStore.getState().loadCurrent();
-    useConfigStore.getState().loadConfig();
-    useConfigStore.getState().loadAgentList();
-    useConfigStore.getState().detectGit();
-    // The version never changes in a session, but the store holding it can be new: an
-    // update that finds no pinned instance builds one with no version, and the status
-    // bar drops its version pill.
-    useConfigStore.getState().loadAppVersion();
-    useBoardStore.getState().loadBoard();
-    useBoardStore.getState().loadBoardProfiles();
-    useBoardStore.getState().loadAutomations();
-    useBacklogStore.getState().loadBacklog();
-    useWorkflowStore.getState().loadWorkflows();
-    useWorkflowStore.getState().loadSupersessions();
-    useWorkflowStore.getState().loadDetail();
-    useWorkflowStore.getState().loadHomeSummaries(Object.keys(useWorkflowStore.getState().homeSummaries));
-    useMobileStore.getState().loadStatus();
-    useMobileStore.getState().loadDevices();
-    useSshStore.getState().loadHosts();
-    useSshStore.getState().loadClient();
-    // Usage dashboard Pattern B: refetch the composite payload from
-    // main-process truth (no-ops while the dashboard is closed).
-    useUsageDashboardStore.getState().loadDashboardStats();
-    // Agent monitor Pattern B: refetch the cross-project snapshot from
-    // main-process truth (no-ops while the monitor is closed).
-    if (useMonitorStore.getState().monitorOpen) {
-      void useMonitorStore.getState().loadSnapshot();
-    }
-    // Knowledge Graph Pattern B: re-read the cached projection + coverage from
-    // main-process truth (no-ops while the surface is closed).
-    // The Projects list and every project in a scope are main-process truth too.
-    // Marked as pushes: a save is a refresh, not the reader acting, so it never
-    // starts a rebuild of a stale map on its own. A window following the main
-    // one re-reads with null, as its own pushes do, so it keeps following.
-    if (useKnowledgeGraphStore.getState().graphOpen) {
-      const knowledgeGraph = useKnowledgeGraphStore.getState();
-      const asRefresh = { fromPush: true };
-      void knowledgeGraph.loadSnapshot(knowledgeGraph.followsCurrentProject ? null : knowledgeGraph.projectId, asRefresh);
-      void knowledgeGraph.loadProjects();
-      // The open project's island comes from loadSnapshot above.
-      for (const scopedProjectId of knowledgeGraph.scopeProjectIds ?? []) {
-        if (scopedProjectId !== knowledgeGraph.projectId) void knowledgeGraph.loadScopeSnapshot(scopedProjectId, asRefresh);
+      useProjectStore.getState().loadProjects();
+      useProjectStore.getState().loadGroups();
+      useProjectStore.getState().loadCurrent();
+      useConfigStore.getState().loadConfig();
+      useConfigStore.getState().loadAgentList();
+      useConfigStore.getState().detectGit();
+      // The version never changes in a session, but the store holding it can be new: an
+      // update that finds no pinned instance builds one with no version, and the status
+      // bar drops its version pill.
+      useConfigStore.getState().loadAppVersion();
+      useBoardStore.getState().loadBoard();
+      useBoardStore.getState().loadBoardProfiles();
+      useBoardStore.getState().loadAutomations();
+      useBacklogStore.getState().loadBacklog();
+      useWorkflowStore.getState().loadWorkflows();
+      useWorkflowStore.getState().loadSupersessions();
+      useWorkflowStore.getState().loadDetail();
+      useWorkflowStore.getState().loadHomeSummaries(Object.keys(useWorkflowStore.getState().homeSummaries));
+      useMobileStore.getState().loadStatus();
+      useMobileStore.getState().loadDevices();
+      useSshStore.getState().loadHosts();
+      // Answered from main's cache: only the SSH tab asks the ssh program again.
+      useSshStore.getState().loadClient();
+      // Usage dashboard Pattern B: refetch the composite payload from
+      // main-process truth (no-ops while the dashboard is closed).
+      useUsageDashboardStore.getState().loadDashboardStats();
+      // Agent monitor Pattern B: refetch the cross-project snapshot from
+      // main-process truth (no-ops while the monitor is closed).
+      if (useMonitorStore.getState().monitorOpen) {
+        void useMonitorStore.getState().loadSnapshot();
       }
-    }
-    // Pop-out windows Pattern B: re-hydrate which surfaces are currently detached.
-    usePopOutStore.getState().loadOpen();
-    // Offscreen browser surfaces Pattern B: main is the only authority, and a
-    // surface can sit unchanged across the whole session, so the push alone
-    // would leave the card globe dark after a Fast Refresh.
-    void useSessionStore.getState().loadBrowserOffscreenTasks();
-    // Announcements Pattern B: re-pull the active list and the archive from
-    // main-process truth. loadActive also re-runs the open-dialog
-    // reconciliation, which a history-opened dialog is exempt from.
-    void useAnnouncementsStore.getState().loadActive();
-    void useAnnouncementsStore.getState().loadHistory();
-    // Accounts Pattern B: re-pull the cards from main-process truth.
-    void useAccountsStore.getState().loadAccounts();
-    void useSessionStore.getState().syncQueueSnapshot();
-    useSessionStore.getState().syncSessions().then((applied) => {
-      if (!applied) return;
-
-      // Restore active tab if sync cleared it but the session still exists
-      if (previousActiveSessionId && !useSessionStore.getState().activeSessionId) {
-        const sessionStillExists = useSessionStore.getState().sessions.some(
-          (session) => session.id === previousActiveSessionId,
-        );
-        if (sessionStillExists) {
-          useSessionStore.getState().setActiveSession(previousActiveSessionId);
+      // Knowledge Graph Pattern B: re-read the cached projection + coverage from
+      // main-process truth (no-ops while the surface is closed).
+      // The Projects list and every project in a scope are main-process truth too.
+      // Marked as pushes: a save is a refresh, not the reader acting, so it never
+      // starts a rebuild of a stale map on its own. A window following the main
+      // one re-reads with null, as its own pushes do, so it keeps following.
+      if (useKnowledgeGraphStore.getState().graphOpen) {
+        const knowledgeGraph = useKnowledgeGraphStore.getState();
+        const asRefresh = { fromPush: true };
+        void knowledgeGraph.loadSnapshot(knowledgeGraph.followsCurrentProject ? null : knowledgeGraph.projectId, asRefresh);
+        void knowledgeGraph.loadProjects();
+        // The open project's island comes from loadSnapshot above.
+        for (const scopedProjectId of knowledgeGraph.scopeProjectIds ?? []) {
+          if (scopedProjectId !== knowledgeGraph.projectId) void knowledgeGraph.loadScopeSnapshot(scopedProjectId, asRefresh);
         }
       }
+      // Pop-out windows Pattern B: re-hydrate which surfaces are currently detached.
+      usePopOutStore.getState().loadOpen();
+      // Offscreen browser surfaces Pattern B: main is the only authority, and a
+      // surface can sit unchanged across the whole session, so the push alone
+      // would leave the card globe dark after a Fast Refresh.
+      void useSessionStore.getState().loadBrowserOffscreenTasks();
+      // Announcements Pattern B: re-pull the active list and the archive from
+      // main-process truth. loadActive also re-runs the open-dialog
+      // reconciliation, which a history-opened dialog is exempt from.
+      void useAnnouncementsStore.getState().loadActive();
+      void useAnnouncementsStore.getState().loadHistory();
+      // Accounts Pattern B: re-pull the cards from main-process truth.
+      void useAccountsStore.getState().loadAccounts();
+      void useSessionStore.getState().syncQueueSnapshot();
+      useSessionStore.getState().syncSessions().then((applied) => {
+        if (!applied) return;
 
+        // Restore active tab if sync cleared it but the session still exists
+        if (previousActiveSessionId && !useSessionStore.getState().activeSessionId) {
+          const sessionStillExists = useSessionStore.getState().sessions.some(
+            (session) => session.id === previousActiveSessionId,
+          );
+          if (sessionStillExists) {
+            useSessionStore.getState().setActiveSession(previousActiveSessionId);
+          }
+        }
+
+      });
     });
   });
 }

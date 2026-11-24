@@ -394,6 +394,74 @@ describe('adding a host', () => {
   });
 });
 
+describe('finding the ssh client', () => {
+  /** Count the `ssh -V` runs, and let a test choose what the next one prints or make it fail to start. */
+  function versionRuns(rig: Rig): { count: number; version: string; missing: boolean } {
+    const runs = { count: 0, version: 'OpenSSH_9.5p1', missing: false };
+    rig.setup.run = (async (file: string, args: string[]) => {
+      if (!args.includes('-V')) return rig.run(file, args);
+      runs.count += 1;
+      if (runs.missing) throw new Error('spawn ssh ENOENT');
+      // `ssh -V` prints to stderr.
+      return { code: 0, stdout: '', stderr: `${runs.version}\n` };
+    }) as RunProgram;
+    return runs;
+  }
+
+  it('runs ssh once and answers every later ask from that check', async () => {
+    const rig = makeRig();
+    const runs = versionRuns(rig);
+
+    const first = await rig.admin.detectClient();
+    runs.version = 'OpenSSH_10.0p2';
+    const second = await rig.admin.detectClient();
+
+    expect(first).toEqual({ found: true, version: 'OpenSSH_9.5p1', error: null });
+    expect(second).toEqual(first);
+    expect(runs.count).toBe(1);
+  });
+
+  it('shares one run between asks that arrive together', async () => {
+    const rig = makeRig();
+    const runs = versionRuns(rig);
+
+    const answers = await Promise.all([rig.admin.detectClient(), rig.admin.detectClient(), rig.admin.detectClient()]);
+
+    expect(answers.map((answer) => answer.version)).toEqual(['OpenSSH_9.5p1', 'OpenSSH_9.5p1', 'OpenSSH_9.5p1']);
+    expect(runs.count).toBe(1);
+  });
+
+  it('keeps a not-found answer too, until a refresh runs ssh again and that answer replaces it', async () => {
+    const rig = makeRig();
+    const runs = versionRuns(rig);
+    runs.missing = true;
+
+    expect(await rig.admin.detectClient()).toEqual({ found: false, version: null, error: 'spawn ssh ENOENT' });
+
+    // ssh is installed while the app runs. Only the settings tab's refresh looks again.
+    runs.missing = false;
+    expect((await rig.admin.detectClient()).found).toBe(false);
+    expect(runs.count).toBe(1);
+
+    expect(await rig.admin.detectClient({ refresh: true })).toEqual({ found: true, version: 'OpenSSH_9.5p1', error: null });
+    expect((await rig.admin.detectClient()).found).toBe(true);
+    expect(runs.count).toBe(2);
+  });
+
+  it('joins a check that is still running when asked to refresh, and runs ssh again once it has finished', async () => {
+    // The settings tab's mount effect runs twice in a dev build, so two refreshes arrive together.
+    const rig = makeRig();
+    const runs = versionRuns(rig);
+
+    const together = await Promise.all([rig.admin.detectClient({ refresh: true }), rig.admin.detectClient({ refresh: true })]);
+    expect(together.map((answer) => answer.found)).toEqual([true, true]);
+    expect(runs.count).toBe(1);
+
+    await rig.admin.detectClient({ refresh: true });
+    expect(runs.count).toBe(2);
+  });
+});
+
 describe('listing hosts', () => {
   it('shows each host with its state and how many projects are on it', async () => {
     const rig = makeRig();

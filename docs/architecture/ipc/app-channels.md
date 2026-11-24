@@ -78,7 +78,7 @@ Machine-global like the mobile bridge, so none takes a trailing `projectId`: a h
 
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `ssh:detectClient` | invoke | The `ssh` program on this computer: found, its version line, or the raw error |
+| `ssh:detectClient` | invoke | The `ssh` program on this computer: found, its version line, or the raw error. Main runs `ssh -V` once and answers later calls from that check; `{ refresh: true }`, which the SSH settings tab passes when it opens, runs it again |
 | `ssh:listHosts` | invoke | Every host with its connection state, the link's own words about it, when the state last changed, and how many projects live on it |
 | `ssh:probeHostKey` | invoke | Learn the key a host presents (type and fingerprint) without trusting it. Rejects with ssh's words when the host cannot be reached |
 | `ssh:addHost` | invoke | Add a host: re-verify the fingerprint the user saw, set up how Kangentic signs in (SSH config, key file copy, or a created key installed with a password used once), install the host program, connect. Undoes its steps on a failure |

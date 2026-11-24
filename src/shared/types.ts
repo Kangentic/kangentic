@@ -10601,8 +10601,11 @@ export interface ElectronAPI {
 
   // SSH hosts (#913): machine-global, like the mobile bridge, not project-scoped.
   ssh: {
-    /** The `ssh` program on this computer, or the raw error when it cannot be started. */
-    detectClient: () => Promise<SshClientStatus>;
+    /**
+     * The `ssh` program on this computer, or the raw error when it cannot be started. Main answers
+     * from its first check; `refresh` runs the check again.
+     */
+    detectClient: (options?: { refresh?: boolean }) => Promise<SshClientStatus>;
     /** Every host with its connection state, in the order they were added. */
     listHosts: () => Promise<SshHostStatus[]>;
     /**

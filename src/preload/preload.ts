@@ -932,7 +932,7 @@ const api: ElectronAPI = {
   },
 
   ssh: {
-    detectClient: () => ipcRenderer.invoke(IPC.SSH_DETECT_CLIENT),
+    detectClient: (options) => ipcRenderer.invoke(IPC.SSH_DETECT_CLIENT, options),
     listHosts: () => ipcRenderer.invoke(IPC.SSH_LIST_HOSTS),
     probeHostKey: (destination) => ipcRenderer.invoke(IPC.SSH_PROBE_HOST_KEY, destination),
     listConfigHosts: () => ipcRenderer.invoke(IPC.SSH_LIST_CONFIG_HOSTS),

@@ -9,7 +9,11 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { readPopOutDescriptor } from './pop-out/read-descriptor';
 import { PopOutSurfaceRoot } from './pop-out/PopOutSurfaceRoot';
 import { initRendererErrorReporting, reportCaughtRenderError } from './error-reporting';
-import { rejectionMessage } from './lib/ipc-error';
+// From the shared leaf, never from './lib/ipc-error': this file has no HMR boundary
+// above it, so an edit to any plain module it imports reloads the whole dev app and
+// every live Browser pane guest with it. ipc-error.ts is edited often; this is not.
+// tests/unit/hmr-resync.test.ts lists what the entry may import.
+import { rejectionMessage } from '../shared/reported-failure-marker';
 import faviconHref from '@kangentic/branding/assets/brandmark-small.svg?url';
 import './index.css';
 

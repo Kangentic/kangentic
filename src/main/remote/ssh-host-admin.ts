@@ -140,11 +140,34 @@ export interface SshHostAdminDeps {
 export class SshHostAdmin {
   /** Addresses being added right now, so a second add of one cannot start before the first has made its row. */
   private readonly adding = new Set<string>();
+  /** The latest check of the `ssh` program, kept so a repeat ask starts no process. */
+  private clientCheck: Promise<SshClientStatus> | null = null;
+  /** The check that is running now, or null. Every ask joins it, a refresh included: it is as fresh as a new one. */
+  private clientCheckInFlight: Promise<SshClientStatus> | null = null;
 
   constructor(private readonly deps: SshHostAdminDeps) {}
 
-  detectClient(): Promise<SshClientStatus> {
-    return detectSshClient(this.deps.setup);
+  /**
+   * The `ssh` program on this computer. The first ask runs `ssh -V`, and every later ask gets that
+   * answer, found or not, until one asks with `refresh`. The check never rejects, so the promise
+   * itself is kept and asks that arrive together share one process, refreshes included.
+   *
+   * It is cached because starting a process blocks main's thread (17 to 117 ms measured), and the
+   * dev re-sync asks on every hot-reload burst. The SSH settings tab refreshes when it opens, so a
+   * client installed while the app runs shows there.
+   */
+  detectClient(options: { refresh?: boolean } = {}): Promise<SshClientStatus> {
+    if (this.clientCheckInFlight !== null) return this.clientCheckInFlight;
+    if (this.clientCheck !== null && options.refresh !== true) return this.clientCheck;
+
+    // No check starts while one runs, so the one that settles here is always the one in flight.
+    const check = detectSshClient(this.deps.setup);
+    this.clientCheck = check;
+    this.clientCheckInFlight = check;
+    void check.then(() => {
+      this.clientCheckInFlight = null;
+    });
+    return check;
   }
 
   listHosts(): SshHostStatus[] {

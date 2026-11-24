@@ -6330,6 +6330,8 @@
     // of the test. Escape hatches for specs:
     //   - window.__mockSshHosts: overrides listHosts()'s return value
     //   - window.__mockSshClient: overrides detectClient()'s result
+    //   - window.__mockSshForgetClient(): drops the answer detectClient() has kept, so the next call reads
+    //     __mockSshClient again
     //   - window.__mockSshProbeError / __mockSshAddError / __mockSshFolderError / __mockSshListError: a
     //     string that makes that call reject with it, to drive the error shapes
     //   - window.__mockSshProbeGate: a promise probeHostKey() awaits before it answers
@@ -6347,6 +6349,10 @@
       var hiddenProjects = [];
       var listeners = [];
       var counter = 0;
+      // The last answer detectClient() gave, as main caches its `ssh -V` check.
+      var cachedClient = null;
+      // Forget that answer, so the one a spec left behind never reaches the next spec on the same page.
+      if (typeof window !== 'undefined') window.__mockSshForgetClient = function () { cachedClient = null; };
       function fire() { listeners.slice().forEach(function (listener) { listener(); }); }
       if (typeof window !== 'undefined') window.__mockFireSshHostsChanged = fire;
       // Forget the removed hosts and their hidden projects, so a spec that adds an address again starts clean.
@@ -6368,8 +6374,12 @@
         return Object.assign({}, status, { projectCount: count });
       }
       return {
-        detectClient: async function () {
-          return win().__mockSshClient || { found: true, version: 'OpenSSH_9.6p1', error: null };
+        // Main keeps its first check and answers from it until a caller passes `refresh`.
+        detectClient: async function (options) {
+          if (cachedClient === null || (options && options.refresh === true)) {
+            cachedClient = win().__mockSshClient || { found: true, version: 'OpenSSH_9.6p1', error: null };
+          }
+          return cachedClient;
         },
         listHosts: async function () {
           if (win().__mockSshListError) throw new Error(win().__mockSshListError);
