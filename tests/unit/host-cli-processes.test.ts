@@ -9,6 +9,8 @@
  * nothing, except the one that checks the refusal.
  */
 
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import type { spawn } from 'node:child_process';
@@ -324,5 +326,184 @@ describe('host CLI runs', () => {
     processes.endInput(99, undefined);
     processes.stop(99);
     expect(events).toEqual([]);
+  });
+});
+
+/**
+ * What main's own children need of a run that an agent CLI never did: a script
+ * nobody reads, a command the user started to outlast the app, input too large
+ * for a pipe write, and a stop that is not the tree stop with a grace. Each of
+ * these ran on main's thread until the run moved here, and a move must not
+ * change what the run does.
+ */
+describe('host runs: no pipes, a file as stdin, and a run the app leaves alone', () => {
+  function spawnedCount(events: PtyHostEvent[]): number {
+    return events.filter((event) => event.type === 'cliSpawned').length;
+  }
+
+  async function waitFor(condition: () => boolean): Promise<void> {
+    await new Promise<void>((resolve) => {
+      const check = () => (condition() ? resolve() : setTimeout(check, 20));
+      check();
+    });
+  }
+
+  it('gives a run with ignored stdio no pipes: it runs to its exit and none of its output crosses', async () => {
+    const { processes, events, closed } = runner();
+    // More than a pipe holds, so a run with an unread pipe would block here.
+    processes.start({ ...nodeRun(20, 'process.stdout.write("x".repeat(400000)); process.exitCode = 4;'), stdio: 'ignore' });
+    await closed(20);
+
+    expect(events.some((event) => event.type === 'cliData')).toBe(false);
+    expect(events.find((event) => event.type === 'cliExit')).toMatchObject({ code: 4 });
+    // A write to a run with no stdin is dropped, as one to an unknown run is.
+    expect(() => processes.write(20, 'late')).not.toThrow();
+  }, 20_000);
+
+  it('opens a file as the run\'s stdin, whole, with no pipe write', async () => {
+    const inputDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'host-cli-stdin-'));
+    try {
+      const inputFile = path.join(inputDirectory, 'input.bin');
+      fs.writeFileSync(inputFile, 'y'.repeat(300_000));
+      const { processes, events, closed } = runner();
+      processes.start({
+        ...nodeRun(21, 'let total = 0; process.stdin.on("data", (chunk) => { total += chunk.length; }); process.stdin.on("end", () => process.stdout.write(String(total)));'),
+        stdinFile: inputFile,
+      });
+      await closed(21);
+
+      expect(text(events, 'stdout')).toBe('300000');
+    } finally {
+      fs.rmSync(inputDirectory, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  it('reports a stdin file that is not there as a run that could not start', async () => {
+    const { processes, events, closed } = runner();
+    processes.start({ ...nodeRun(22, 'process.exit(0)'), stdinFile: path.join(os.tmpdir(), 'no-such-host-cli-stdin-file') });
+    await closed(22);
+
+    expect(events.map((event) => event.type)).toEqual(['cliError', 'cliClose']);
+    expect(processes.liveCount).toBe(0);
+  });
+
+  it('leaves a run that outlives the app running at shutdown, never waits for it, and still stops it when asked', async () => {
+    const { processes, events, closed } = runner();
+    processes.start({ ...nodeRun(23, 'setInterval(() => {}, 1000);'), outlivesApp: true });
+    processes.start(nodeRun(24, 'setInterval(() => {}, 1000);'));
+    try {
+      await waitFor(() => spawnedCount(events) === 2);
+      // Only the ordinary run is one a shutdown waits for.
+      expect(processes.liveCount).toBe(1);
+
+      processes.stopAll();
+      await closed(24);
+
+      expect(events.some((event) => event.type === 'cliExit' && event.processId === 23)).toBe(false);
+      expect(processes.liveCount).toBe(0);
+    } finally {
+      processes.stop(23);
+    }
+    await closed(23);
+  }, 20_000);
+});
+
+/**
+ * The stop modes over a stand-in child, so no real pid or process group is
+ * signalled: `process.kill` is captured, and `taskkill` is the injected spawn.
+ */
+describe('host runs: how a stop ends the run', () => {
+  const RUN_PID = 4321;
+
+  function standInRun(exited: boolean) {
+    const kill = vi.fn(() => true);
+    const child = Object.assign(new EventEmitter(), {
+      pid: RUN_PID,
+      exitCode: exited ? 0 : null,
+      signalCode: null,
+      stdout: new EventEmitter(),
+      stderr: new EventEmitter(),
+      stdin: Object.assign(new EventEmitter(), { write: () => true, end: () => undefined }),
+      kill,
+      unref: () => undefined,
+    });
+    const started: string[] = [];
+    const taskkillHandle = { on: () => taskkillHandle, unref: () => taskkillHandle };
+    const spawnChild = ((command: string, args: readonly string[]) => {
+      if (command !== 'taskkill') return child;
+      started.push(`taskkill ${args.join(' ')}`);
+      return taskkillHandle;
+    }) as unknown as typeof spawn;
+    const processes = new HostCliProcesses(() => undefined, spawnChild, NOT_THIS_PROCESS);
+    processes.start({ ...nodeRun(1, ''), detached: true });
+    return { processes, kill, started };
+  }
+
+  function onPlatform<Result>(platform: NodeJS.Platform, work: () => Result): Result {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+    try {
+      return work();
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+    }
+  }
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it('ends the one process and starts no taskkill when asked for the process alone', () => {
+    onPlatform('win32', () => {
+      const { processes, kill, started } = standInRun(false);
+
+      processes.stop(1, 'process');
+
+      expect(kill).toHaveBeenCalledTimes(1);
+      expect(started).toEqual([]);
+    });
+  });
+
+  it('takes the whole tree at once on Windows, for a run that has not exited', () => {
+    onPlatform('win32', () => {
+      const { processes, started } = standInRun(false);
+
+      processes.stop(1, 'treeNow');
+
+      expect(started).toEqual([`taskkill /pid ${RUN_PID} /T /F`]);
+    });
+  });
+
+  it('kills the process group at once on POSIX, with no SIGTERM first', () => {
+    onPlatform('linux', () => {
+      const signals = vi.spyOn(process, 'kill').mockImplementation(() => true);
+      const { processes } = standInRun(false);
+
+      processes.stop(1, 'treeNow');
+
+      expect(signals.mock.calls).toEqual([[-RUN_PID, 'SIGKILL']]);
+    });
+  });
+
+  it('reaches what an exited run left holding its output open (POSIX), which the stop with a grace never does', () => {
+    onPlatform('linux', () => {
+      const signals = vi.spyOn(process, 'kill').mockImplementation(() => true);
+      const { processes } = standInRun(true);
+
+      // The run exited and its output is still open: the default stop has nothing to stop.
+      processes.stop(1);
+      expect(signals).not.toHaveBeenCalled();
+
+      processes.stop(1, 'treeNow');
+      expect(signals.mock.calls).toEqual([[-RUN_PID, 'SIGKILL']]);
+    });
+  });
+
+  it('never tree-kills by a pid whose run already exited on Windows, where the pid may name a stranger', () => {
+    onPlatform('win32', () => {
+      const { processes, started } = standInRun(true);
+
+      processes.stop(1, 'treeNow');
+
+      expect(started).toEqual([]);
+    });
   });
 });

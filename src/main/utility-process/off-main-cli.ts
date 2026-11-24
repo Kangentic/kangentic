@@ -1,20 +1,25 @@
 /**
- * `spawnOffMainCli`: an agent CLI's headless run (an Ask answer, a task
- * summary, an auto-name, a warm answer session) started in the pty host when
- * one is registered. On Windows libuv runs CreateProcess synchronously on the
- * calling thread, and these runs come in bursts: the summary backfill spawned
- * the CLI 39 times in 100 s, 13 to 67 ms each on main.
+ * `spawnOffMainCli`: a child process with streamed stdio, started in the pty
+ * host when one is registered. An agent CLI's headless run (an Ask answer, a
+ * task summary, an auto-name, a warm answer session) was the first, and git, a
+ * script and `ssh` run the same way. On Windows libuv runs CreateProcess
+ * synchronously on the calling thread, and these runs come in bursts: the
+ * summary backfill spawned the CLI 39 times in 100 s, 13 to 67 ms each on main.
  *
  * The run is a command, not a request, so the handle comes back at once, as
  * `child_process.spawn`'s does, and a spawn that fails in the host reaches it
  * as an `error` event. Once posted it never falls back to a local spawn: a
  * second run would be a second paid answer. With no spawner registered (unit
  * tests, startup before the host exists) the caller spawns locally.
+ * `spawnOffMain` (`off-main-spawn.ts`) is that pair in one call.
  */
 
 import type { EventEmitter } from 'node:events';
 import { describeSpawnCaller } from '../diagnostics/spawn-caller';
+import type { CliStopMode } from '../pty/host/protocol';
 import { withoutCrashpadPipeName } from '../shared/child-env';
+
+export type { CliStopMode };
 
 /** A run's stdout or stderr: `data` events carrying Buffers. */
 export interface CliOutput extends EventEmitter {
@@ -45,8 +50,9 @@ export interface CliChildProcess extends EventEmitter {
   readonly stderr: CliOutput;
   readonly stdin: CliStdin;
   kill(signal?: NodeJS.Signals | number): boolean;
-  /** A process running elsewhere stops its own tree (`stopCli`). */
-  stopTree?(): void;
+  /** A process running elsewhere stops itself there (`stopCli`): its whole
+   *  tree with the grace when no mode is given (`CliStopMode`). */
+  stopTree?(mode?: CliStopMode): void;
 }
 
 export interface OffMainCliOptions {
@@ -57,6 +63,15 @@ export interface OffMainCliOptions {
   env: Record<string, string>;
   /** Lead a process group of its own (POSIX), so a stop reaches its children. */
   detached: boolean;
+  /** `ignore` gives the run no pipes at all. Piped when omitted. */
+  stdio?: 'pipe' | 'ignore';
+  /** Windows: false shows the run's console window. Hidden when omitted. */
+  windowsHide?: boolean;
+  /** The app never stops this run by itself: not at quit, and not when its
+   *  host is lost (`PtyHostCliSpawnParams.outlivesApp`). */
+  outlivesApp?: boolean;
+  /** A file opened as the run's stdin in place of a pipe. */
+  stdinFile?: string;
   /** Dev builds: who asked for the run, set by `spawnOffMainCli` for the
    *  host's spawn span (`spawn-caller.ts`). */
   caller?: string;

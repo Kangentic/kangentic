@@ -1065,7 +1065,7 @@ export class PtyHostCore {
         this.spawnService.endCliInput(command.processId, command.data);
         return;
       case 'cliStop':
-        this.spawnService.stopCli(command.processId);
+        this.spawnService.stopCli(command.processId, command.mode);
         return;
       case 'shutdown':
         // Main's killAll has already posted every kill, a young session's

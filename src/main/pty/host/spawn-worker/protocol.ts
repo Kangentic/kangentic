@@ -12,7 +12,7 @@
  */
 
 import type { ProcessInfo } from '../../../activity-engine/background-shell/process-tree';
-import type { HostExecRequest, HostExecResult, PtyHostCliSpawnParams, PtyHostEvent } from '../protocol';
+import type { CliStopMode, HostExecRequest, HostExecResult, PtyHostCliSpawnParams, PtyHostEvent } from '../protocol';
 
 /** What the worker is given when it starts (`workerData`). */
 export interface SpawnWorkerData {
@@ -32,8 +32,8 @@ export type ToSpawnWorkerMessage =
   | { type: 'cliSpawn'; params: PtyHostCliSpawnParams }
   | { type: 'cliWrite'; processId: number; data: string }
   | { type: 'cliEndInput'; processId: number; data?: string }
-  | { type: 'cliStop'; processId: number }
-  /** The host is quitting: stop every run still going. */
+  | { type: 'cliStop'; processId: number; mode?: CliStopMode }
+  /** The host is quitting: stop every run still going, but for one that outlives the app. */
   | { type: 'cliStopAll' };
 
 /** Worker to terminal thread. */

@@ -120,7 +120,24 @@ export type PtyHostRawSpawnResult =
   | { ok: true; pid: number }
   | { ok: false; error: PtyHostError };
 
-/** An agent CLI's headless run with piped stdio (`off-main-cli.ts`). */
+/**
+ * How a run started for main is stopped (`child-tree-stop.ts`).
+ * - `tree`: the run and what it started, with the grace: `taskkill /T /F` on
+ *   Windows, the process group's SIGTERM then SIGKILL on POSIX. Nothing once
+ *   the run has exited.
+ * - `treeNow`: the same tree with no grace, and on POSIX the group even after
+ *   the run exited, until its output closes. A script that timed out or was
+ *   aborted is stopped this way: what it left running in the background still
+ *   holds its output open, and the caller settles only once that closes.
+ * - `process`: the one process, with no `taskkill`. For a program known to
+ *   start nothing, stopped early because its answer is already in hand.
+ */
+export type CliStopMode = 'tree' | 'treeNow' | 'process';
+
+/**
+ * A child process the host runs for main with its stdio streamed
+ * (`off-main-cli.ts`): an agent CLI's headless run, git, a script, `ssh`.
+ */
 export interface PtyHostCliSpawnParams {
   /** Main's id for this run, unique for the life of the main process. */
   processId: number;
@@ -132,6 +149,26 @@ export interface PtyHostCliSpawnParams {
   env: Record<string, string>;
   /** Lead a process group (POSIX), so a stop signals what the CLI started. */
   detached: boolean;
+  /**
+   * `ignore` gives the run no pipes: its stdin is closed and its output goes
+   * nowhere, so nothing of it crosses the host. For a run nobody reads, which
+   * an unread pipe would block once it fills. Piped when omitted.
+   */
+  stdio?: 'pipe' | 'ignore';
+  /** Windows: false shows the run's console window. Hidden when omitted. */
+  windowsHide?: boolean;
+  /**
+   * A run the app never stops by itself: the host's shutdown leaves it running
+   * and does not wait for it, and a lost host or spawn worker ends only main's
+   * handle on it, never its process. For what a user started to outlast the
+   * app (a shortcut command, a script). An explicit stop still stops it.
+   */
+  outlivesApp?: boolean;
+  /**
+   * A file opened as the run's stdin in place of a pipe. For input too large
+   * to send as `cliWrite` text, which has no backpressure.
+   */
+  stdinFile?: string;
   /** Dev builds: the main-side code that asked for the run, for the spawn
    *  span's label (`spawn-caller.ts`). */
   caller?: string;
@@ -210,9 +247,9 @@ export type PtyHostCommand =
   | { type: 'cliWrite'; processId: number; data: string }
   /** End the run's stdin, after writing `data` when given. */
   | { type: 'cliEndInput'; processId: number; data?: string }
-  /** Stop the run and what it started (`taskkill /T /F` on Windows, the
-   *  process group's SIGTERM then SIGKILL on POSIX). */
-  | { type: 'cliStop'; processId: number }
+  /** Stop the run. With no `mode`, the run and what it started (`taskkill /T
+   *  /F` on Windows, the process group's SIGTERM then SIGKILL on POSIX). */
+  | { type: 'cliStop'; processId: number; mode?: CliStopMode }
   /** The app is quitting: flush every transcript. Main has already posted
    *  every kill (a young session's after its grace). The utility process then
    *  waits for the exit callbacks and exits itself, so none lands after Node

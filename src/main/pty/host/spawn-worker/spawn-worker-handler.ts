@@ -86,7 +86,7 @@ export class SpawnWorkerHandler {
         this.cliProcesses.endInput(message.processId, message.data);
         return;
       case 'cliStop':
-        this.cliProcesses.stop(message.processId);
+        this.cliProcesses.stop(message.processId, message.mode);
         return;
       case 'cliStopAll':
         this.cliProcesses.stopAll();

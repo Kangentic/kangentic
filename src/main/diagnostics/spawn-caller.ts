@@ -22,7 +22,7 @@ const CALLER_LABEL = 'diag:spawn-caller';
  * Frames that only pass a spawn along. Skipped so the label names the code
  * that wanted the process, not the plumbing between it and the spawn.
  */
-const WRAPPER_FRAME = /\b(stackCallerLabel|describeSpawnCaller|spawnTraced|callerLabel|execAsync|execFileAsync|runRemote|spawnOffMainCli|spawnWithAbort|runGitCommand|gitAt|spawnCli|localExec|localExecFile)\b/;
+const WRAPPER_FRAME = /\b(stackCallerLabel|describeSpawnCaller|spawnTraced|callerLabel|execAsync|execFileAsync|runRemote|spawnOffMainCli|spawnOffMain|spawnHere|spawnWithAbort|runGitCommand|gitAt|spawnCli|localExec|localExecFile)\b/;
 
 /**
  * The first few named frames of the app's own bundle on the current stack,
