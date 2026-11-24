@@ -61,7 +61,19 @@ export function AccountLoginDialog() {
           </p>
         ) : (
           <>
-            <LoginTerminal loginId={login.loginId} label={t`${agentName} sign-in`} />
+            {login.loginId ? (
+              <LoginTerminal loginId={login.loginId} label={t`${agentName} sign-in`} />
+            ) : (
+              // Main is still starting the sign-in (it may first look for the CLI): the terminal's
+              // box, empty, so the window opens on the click and does not grow when it starts.
+              <div
+                role="group"
+                aria-label={t`${agentName} sign-in`}
+                aria-busy="true"
+                className="h-[320px] w-full overflow-hidden rounded-md border border-edge"
+                data-testid="account-login-terminal-starting"
+              />
+            )}
             {/* Under the terminal, as on the canvas. The sign-in itself happens in the browser;
                 the terminal takes a pasted code only when the browser cannot hand it back. */}
             <p className="text-xs text-fg-muted" data-testid="account-login-hint">

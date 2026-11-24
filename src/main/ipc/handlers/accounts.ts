@@ -1,4 +1,5 @@
 import { accountsReporter, reportAccountProblem, scrubFailureDetail } from '../../accounts/account-report';
+import { listedAgentsPath, readListedAgentsFile, writeListedAgentsFile } from '../../accounts/listed-agents-file';
 import { dialog, ipcMain } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import {
@@ -11,8 +12,8 @@ import {
   type AgentAccountSwitched,
   type AgentAccountSwitchResult,
   type AgentAccountsAllFull,
-  type AgentAccountsCard,
   type AgentAccountsFollowing,
+  type AgentAccountsList,
 } from '../../../shared/agent-accounts';
 import { EventType, type Session, type SessionEvent, type SessionUsage } from '../../../shared/types';
 import { isCommandTerminalSession, isWorkflowAgentSession } from '../../../shared/session-owner';
@@ -125,12 +126,15 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
     void continuation?.recheck();
   };
 
+  const listedAgentsFile = listedAgentsPath(PATHS.configDir);
   const service = new AccountService({
     repository,
     getAdapter: (agent) => agentRegistry.get(agent),
     listAdapters: () => agentRegistry.list().flatMap((name) => agentRegistry.get(name) ?? []),
     configDir: PATHS.configDir,
     readConfig,
+    readListedAgents: () => readListedAgentsFile(listedAgentsFile),
+    saveListedAgents: (agents) => writeListedAgentsFile(listedAgentsFile, agents),
     writeConfig: (next) => {
       context.configManager.save({ agent: { ...context.configManager.load().agent, accounts: next } });
     },
@@ -582,7 +586,7 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
   });
   loginRunner = runner;
 
-  ipcMain.handle(IPC.ACCOUNTS_LIST, (): Promise<AgentAccountsCard[]> => service.cards());
+  ipcMain.handle(IPC.ACCOUNTS_LIST, (): Promise<AgentAccountsList> => service.listForTab());
 
   ipcMain.handle(IPC.ACCOUNTS_START_LOGIN, async (_event, rawRequest: unknown): Promise<AgentAccountLoginStart> => {
     const request = parseLoginRequest(rawRequest);

@@ -155,11 +155,22 @@ interface SettingsCardProps {
    * switch would. Never set together with `checked`.
    */
   headerAction?: React.ReactNode;
+  /** A small mark right after the title, such as the spinner of a read in progress (Accounts). */
+  titleAdornment?: React.ReactNode;
+  /**
+   * The card stands in for one whose subject is not known yet (task #1202): the icon and the title
+   * draw as still skeleton bars, `label` stays the card's name for assistive tech, and the card is
+   * marked busy. Its body and `headerAction` are the caller's skeleton tiles.
+   */
+  placeholder?: boolean;
   testId?: string;
 }
 
+/** The fill of a skeleton bar: lighter than a tile, still, with no pulse. */
+export const SKELETON_BAR_CLASS = 'rounded-sm bg-fg/[0.08]';
+
 export function SettingsCard({
-  icon, label, description, searchId, searchIds, checked, onChange, info, requirement, tag, children, headerAction, testId,
+  icon, label, description, searchId, searchIds, checked, onChange, info, requirement, tag, children, headerAction, titleAdornment, placeholder, testId,
 }: SettingsCardProps) {
   const visible = useAnySettingVisible([...(searchId ? [searchId] : []), ...(searchIds ?? [])]);
   if (!visible) return null;
@@ -176,6 +187,7 @@ export function SettingsCard({
       className="rounded-lg border border-edge"
       data-testid={testId ?? (searchId ? `settings-card-${searchId}` : undefined)}
       aria-label={label}
+      aria-busy={placeholder ? true : undefined}
     >
       {/* The outer layer insets the header like a tile and leaves a tile gap
           above and below; the inner layer is the click target, so its hover
@@ -203,11 +215,19 @@ export function SettingsCard({
             style={{ width: HEADER_ICON_COLUMN_PX }}
             aria-hidden="true"
           >
-            {icon}
+            {placeholder ? <span className={`block h-4 w-4 ${SKELETON_BAR_CLASS}`} /> : icon}
           </span>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
-              <h3 className={`${SETTING_LABEL_CLASS} font-semibold ${dimmed}`}>{label}</h3>
+              <h3 className={`${SETTING_LABEL_CLASS} font-semibold ${dimmed}`}>
+                {placeholder ? (
+                  <>
+                    <span className={`my-1 block h-3 w-[84px] ${SKELETON_BAR_CLASS}`} aria-hidden="true" />
+                    <span className="sr-only">{label}</span>
+                  </>
+                ) : label}
+              </h3>
+              {titleAdornment}
               {info ? <InfoTip label={label} text={info} /> : null}
               {requirement ? <SettingTag>{requirement}</SettingTag> : null}
               {tag ? <SettingTag>{tag}</SettingTag> : null}

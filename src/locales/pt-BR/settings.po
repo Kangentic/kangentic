@@ -289,6 +289,7 @@ msgstr "Troca de contas"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
+#: src/renderer/components/settings/tabs/AccountsTab.tsx
 #, fuzzy
 msgid "Accounts"
 msgstr "Contas"
@@ -2654,6 +2655,10 @@ msgstr "Acessível"
 #, fuzzy
 msgid "Reachable, {relayLatencyMs} ms"
 msgstr "Acessível, {relayLatencyMs} ms"
+
+#: src/renderer/components/settings/tabs/AccountsTab.tsx
+msgid "Reading usage"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
 #, fuzzy

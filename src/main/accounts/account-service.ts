@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { AgentAdapter } from '../agent/agent-adapter';
-import type { AgentAccount, AgentAccountStatus, AgentAccountsCard, AgentAccountsConfig } from '../../shared/agent-accounts';
+import type { AgentAccount, AgentAccountStatus, AgentAccountsCard, AgentAccountsConfig, AgentAccountsList, ListedAgent } from '../../shared/agent-accounts';
 import type { RateLimitWindow, ResumeAccountMatch } from '../../shared/types';
 import type { AgentAccountRepository } from '../db/repositories/agent-account-repository';
 import { accountsRootOf, provisionAccountFolder, type AccountFolderProblemCode } from './account-folder';
@@ -15,9 +15,10 @@ import {
   UnreadableUsageError,
   sessionsCanMove,
   type AccountIdentity,
+  type AgentAccountSupport,
   type EmptyUsageReadReason,
 } from './account-support';
-import type { AccountProblem, AccountProblemFacts, AccountProblemTags } from './account-report';
+import { accountsReporter, type AccountProblem, type AccountProblemFacts, type AccountProblemTags } from './account-report';
 import { cliVersionTag } from '../agent/shared/cli-version-tag';
 
 /**
@@ -117,6 +118,17 @@ export interface AccountServiceDependencies {
    * that already holds the CLI's path passes it, and is answered about that path.
    */
   usesRemoteTarget?: (agent: string, knownCliPath?: string) => Promise<boolean>;
+  /**
+   * The agents the last checked list held, saved between launches, so the tab's first answer after
+   * a restart needs no CLI check. Null when nothing is saved or it cannot be read. Absent: nothing is
+   * saved, and the tab's first answer is empty until the check lands.
+   */
+  readListedAgents?: () => ListedAgent[] | null;
+  /**
+   * Saves the agents a checked list held. Called only when they changed. False when the write
+   * failed, so the next check tries again.
+   */
+  saveListedAgents?: (agents: ListedAgent[]) => boolean;
   /** Saves the global accounts settings (a drag or Switch to sets Manual). */
   writeConfig?: (next: AgentAccountsConfig) => void;
   /** Called after any change the Accounts tab shows. */
@@ -166,6 +178,13 @@ export class AccountService {
    * again, and some reasons are reported only once they repeat (`REPORTED_WHEN_REPEATED`).
    */
   private readonly emptyUsageStreaks = new Map<string, EmptyUsageStreak>();
+
+  /** The agents the last checked list held, as saved. Undefined until read; null when nothing is saved. */
+  private listedAgents: ListedAgent[] | null | undefined;
+  /** This run's first CLI check for the tab, while it runs. */
+  private tabCheck: Promise<void> | null = null;
+  /** A CLI check finished in this run, so the tab's list is the live one. */
+  private tabChecked = false;
 
   constructor(private readonly dependencies: AccountServiceDependencies) {}
 
@@ -335,6 +354,82 @@ export class AccountService {
     }
   }
 
+  /** One agent's card, from its saved rows. The live list and the saved one build it the same way. */
+  private cardFor(
+    adapter: AgentAdapter,
+    support: AgentAccountSupport,
+    unsupportedTarget: boolean,
+    environment: NodeJS.ProcessEnv,
+  ): AgentAccountsCard {
+    const accounts = this.ordered(adapter.name);
+    return {
+      agent: adapter.name,
+      kind: support.kind,
+      accounts,
+      activeAccountId: topAccountWithRoom(accounts, this.nowSeconds())?.id ?? null,
+      reportsUsage: adapterReportsUsage(adapter),
+      usageWindows: [...(support.usageWindows ?? [])],
+      signInIsInteractive: support.kind === 'folder' && support.loginIsInteractive === true,
+      switchMovesSessions: sessionsCanMove(support) === true,
+      overrides: support.overridingCredentialEnvVars
+        .filter((variable) => (environment[variable] ?? '').trim() !== '')
+        .map((variable) => ({ variable, source: 'environment' as const })),
+      unsupportedTarget,
+    };
+  }
+
+  /** The agents the last checked list held, as saved, read from the dependency once. */
+  private savedListedAgents(): ListedAgent[] | null {
+    if (this.listedAgents === undefined) this.listedAgents = this.dependencies.readListedAgents?.() ?? null;
+    return this.listedAgents;
+  }
+
+  /**
+   * Saves the agents a checked list held, when they differ from what is saved. The copy in memory
+   * moves only once the write lands, so a failed write is tried again by the next check.
+   */
+  private rememberListedAgents(cards: readonly AgentAccountsCard[]): void {
+    const listed = cards.map((card) => ({ agent: card.agent, unsupportedTarget: card.unsupportedTarget }));
+    if (JSON.stringify(listed) === JSON.stringify(this.savedListedAgents())) return;
+    if (this.dependencies.saveListedAgents?.(listed) === false) return;
+    this.listedAgents = listed;
+  }
+
+  /**
+   * What Settings > Accounts lists (task #1202). Once this run's CLI check has landed it is the live
+   * list. Before that it answers at once from the agents the last checked list held and their saved
+   * rows and usage, starts the check, and pushes a change when the check lands. Detecting every
+   * agent's CLI took 12 s after a restart, and the tab was blank all that time.
+   */
+  async listForTab(): Promise<AgentAccountsList> {
+    if (this.tabChecked) return { cards: await this.cards(), checked: true };
+    this.tabCheck ??= this.cards().then(
+      () => {
+        this.tabChecked = true;
+        this.tabCheck = null;
+        this.changed();
+      },
+      (error: unknown) => {
+        // The tab keeps the saved cards, and its next open checks again.
+        this.tabCheck = null;
+        accountsReporter.report(error, { tags: { stage: 'tab_list_check' } });
+      },
+    );
+    return { cards: this.savedCards(), checked: false };
+  }
+
+  /** The cards the last checked list held, from their saved rows. Writes nothing and starts no CLI. */
+  private savedCards(): AgentAccountsCard[] {
+    const environment = this.dependencies.environment?.() ?? process.env;
+    return (this.savedListedAgents() ?? []).flatMap((listed) => {
+      const adapter = this.dependencies.getAdapter(listed.agent);
+      const support = adapter?.accounts;
+      // An agent with no rows was never listed by this database, so it has nothing saved to show.
+      if (!adapter || !support || this.dependencies.repository.listForAgent(listed.agent).length === 0) return [];
+      return [this.cardFor(adapter, support, listed.unsupportedTarget, environment)];
+    });
+  }
+
   /** One card per installed agent that declares accounts, its accounts in run order. */
   async cards(): Promise<AgentAccountsCard[]> {
     const cards: AgentAccountsCard[] = [];
@@ -349,26 +444,13 @@ export class AccountService {
     }));
     // The rows are written and read in adapter order, as before.
     for (const [index, adapter] of adapters.entries()) {
-      const support = adapter.accounts;
       const { cliPath, unsupportedTarget } = places[index];
+      const support = adapter.accounts;
       if (!support || !cliPath) continue;
       this.ensureDefaultAccount(adapter.name);
-      const accounts = this.ordered(adapter.name);
-      cards.push({
-        agent: adapter.name,
-        kind: support.kind,
-        accounts,
-        activeAccountId: topAccountWithRoom(accounts, this.nowSeconds())?.id ?? null,
-        reportsUsage: adapterReportsUsage(adapter),
-        usageWindows: [...(support.usageWindows ?? [])],
-        signInIsInteractive: support.kind === 'folder' && support.loginIsInteractive === true,
-        switchMovesSessions: sessionsCanMove(support) === true,
-        overrides: support.overridingCredentialEnvVars
-          .filter((variable) => (environment[variable] ?? '').trim() !== '')
-          .map((variable) => ({ variable, source: 'environment' as const })),
-        unsupportedTarget,
-      });
+      cards.push(this.cardFor(adapter, support, unsupportedTarget, environment));
     }
+    this.rememberListedAgents(cards);
     return cards;
   }
 

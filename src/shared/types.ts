@@ -31,9 +31,9 @@ import {
   type AgentAccountSwitched,
   type AgentAccountSwitchResult,
   type AgentAccountsAllFull,
-  type AgentAccountsCard,
   type AgentAccountsConfig,
   type AgentAccountsFollowing,
+  type AgentAccountsList,
 } from './agent-accounts';
 import { COMMAND_RAIL_DEFAULT_WIDTH_PX, type CommandTerminalRailState } from './command-terminal-rail';
 
@@ -10038,8 +10038,12 @@ export interface ElectronAPI {
 
   // Agent accounts (Settings > Accounts, task #1057). Global, never project-scoped.
   accounts: {
-    /** One card per installed agent that declares accounts, its accounts in run order. */
-    list: () => Promise<AgentAccountsCard[]>;
+    /**
+     * One card per installed agent that declares accounts, its accounts in run order. Until this
+     * run's CLI check lands the cards are the saved ones and `checked` is false; main pushes
+     * `onChanged` when it lands.
+     */
+    list: () => Promise<AgentAccountsList>;
     /**
      * Starts the CLI's own sign-in in a terminal: for a new account of `agent`, or again for
      * the signed-out account `accountId`. Its screen arrives on `onLoginOutput`.

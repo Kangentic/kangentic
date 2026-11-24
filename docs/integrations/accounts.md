@@ -479,13 +479,26 @@ never runs sooner than 20 s after registration. It runs a CLI per account, and o
 20 s timer those runs landed while the resumed agents were still starting. A read a spawn asks for
 (`readBeforeRanking`) and the tab's own read do not wait.
 
-Listing the cards (`accounts:list`, `AccountService.cards`) runs no account CLI. Every field of a
-card is a row in `agent_accounts`, and the one thing the list waits for is whether each agent's
-CLI is installed. It asks for all of them at once through `listCliPath`, which takes a remembered
+Building the cards (`AccountService.cards`) runs no account CLI. Every field of a card is a row in
+`agent_accounts`, and the one thing it waits for is whether each agent's CLI is installed. The
+tab's answer (`accounts:list`, `AccountService.listForTab`) does not wait for that, as below. The
+build asks for all of them at once through `listCliPath`, which takes a remembered
 detection ([Shells and paths](../platforms/shells-and-paths.md)) where nothing has started the
 agent this launch, so drawing a card never starts a CLI nobody is using. Everything that runs a
 CLI (a sign-in read, a usage read, a spawn) detects it through `resolveCliPath`, which always
 probes.
+
+The tab still waited for that check, though. After a restart the first two lists took 12.3 s and
+the next two 4.3 s, while the startup detection ran, and Settings > Accounts drew nothing all that
+time (task #1202). So the tab lists through `AccountService.listForTab`, and `accounts:list` answers
+`{ cards, checked }`. Until a check has landed in this run, it answers at once from the agents the
+last checked list held (`<configDir>/accounts-listed.json`, `listed-agents-file.ts`, each with its `unsupportedTarget`) and
+their saved rows and usage, with `checked: false`. It writes no row and starts no CLI. It also starts
+one check, and when that lands it saves the listed agents (only when they changed, and again on the next check when the write failed) and pushes
+`accounts:changed`, so the tab lists again, checked. A saved agent with no rows, or whose adapter no
+longer declares accounts, is left out. A check that fails is reported (`stage: tab_list_check`), and
+the tab keeps the saved cards until its next open checks again. With nothing saved, which is the
+first launch or the first after this file was added, the first answer is empty and unchecked.
 
 A read that gives no windows keeps the last values and its read time, and is logged and reported
 (`usage-read-empty`) with why: the run failed, the state file was missing or unreadable
@@ -736,6 +749,16 @@ so two rows of one agent can differ in height. A reset reads as a countdown (`41
 the moment. The percent beside the bar is what is used. The bar's tip says how much of the window
 has passed, which is what the tick on the bar marks.
 
+While it waits, the tab never goes blank (task #1202). An empty, unchecked list draws one skeleton
+card: its icon and name are still bars (`SettingsCard`'s `placeholder`), the header has an empty
+outline the size of Add account, and one `AccountRowSkeleton` row is built on `AccountRow`'s own
+layout. That row is 104 px, the same as a real row with two usage lines, so a first account lands
+in its place. "No agents with accounts" shows only once a checked list is empty. The tab's own usage
+read takes 13 to 35 s, and while it runs each card whose agent reports usage has a spinner after its
+name, with the tip "Reading usage" (`usageReads` in the accounts store). The bars meanwhile show the
+last saved read, and a window whose reset has passed draws as Not started. None of these swaps
+animates, so a restore replays nothing.
+
 ## Signing in
 
 Add account runs the CLI's own sign-in (`claude auth login`) in a terminal of its own
@@ -744,7 +767,9 @@ agent session, so it has no registry row, no hooks and no task tag. Kangentic re
 that screen. When the terminal ends, `identify` asks the CLI who signed in. A login already in the
 list (the same email and, when both report one, the same organization) adds nothing, and the dialog
 names the existing account. A sign-in that did not finish removes
-the row it made, and so does one whose terminal could not start. The folder stays.
+the row it made, and so does one whose terminal could not start. The folder stays. The dialog opens
+on the click, with the terminal's box empty, because main may first have to find the CLI. Closing it
+before main answers cancels the sign-in that then starts.
 
 ## Per agent
 

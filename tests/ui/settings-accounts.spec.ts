@@ -105,6 +105,144 @@ test.describe('Settings > Accounts', () => {
     }
   });
 
+  // Task #1202: the first open after an install waits on main's CLI check with nothing saved to
+  // show, and every open waits on a usage read. A browser is what shows the skeleton lands at the
+  // real row's height and the spinner rides only the usage agent's card.
+  test('loading: a skeleton card until the CLI check lands, a spinner while usage is read, a sign-in dialog at once', async () => {
+    const cards = [
+      ...THREE_ACCOUNTS,
+      // Two accounts and no usage: a card of its own that never reads usage.
+      { agent: 'droid', reportsUsage: false, usageWindows: [], accounts: [{ id: 'droid-1' }, { id: 'droid-2', email: 'droid@example.com' }] },
+    ];
+    const { browser, page } = await launchPage({
+      beforeLoad: async (target) => {
+        await seedAccounts(cards)(target);
+        await target.addInitScript(() => {
+          const flags = window as unknown as { __mockAccountsUnchecked: boolean; __mockHoldAccountUsage: boolean };
+          flags.__mockAccountsUnchecked = true;
+          flags.__mockHoldAccountUsage = true;
+        });
+      },
+    });
+    try {
+      await createProject(page, `settings-accounts-loading-${Date.now()}`);
+      await page.locator('[data-testid="settings-button"]').click();
+      await page.locator('h2:has-text("Settings")').waitFor({ state: 'visible', timeout: 5000 });
+      await page.getByTestId('settings-tab-list').getByRole('button', { name: 'Accounts', exact: true }).click();
+
+      let skeletonRowHeight = 0;
+      await test.step('nothing saved and the check running: the skeleton card, and no empty state', async () => {
+        const skeleton = page.getByTestId('settings-card-accounts-skeleton');
+        await expect(skeleton).toBeVisible();
+        await expect(skeleton).toHaveAttribute('aria-busy', 'true');
+        await expect(page.getByTestId('settings-card-accounts-empty')).toHaveCount(0);
+        await expect(page.getByTestId('settings-card-accounts-claude')).toHaveCount(0);
+        skeletonRowHeight = (await page.getByTestId('account-row-skeleton').boundingBox())?.height ?? 0;
+        expect(skeletonRowHeight).toBeGreaterThan(0);
+      });
+
+      await test.step('the check lands: the real cards replace it, a two-line row as tall as the skeleton row', async () => {
+        await page.evaluate(() => (window as unknown as { __mockFinishAccountsCheck: () => void }).__mockFinishAccountsCheck());
+        await expect(page.getByTestId('settings-card-accounts-claude')).toBeVisible();
+        await expect(page.getByTestId('settings-card-accounts-skeleton')).toHaveCount(0);
+        // account-2 reported both windows, so it draws two usage lines, as the skeleton does.
+        const realRow = page.getByTestId('account-row-account-2');
+        await expect(realRow.getByTestId('account-usage-line')).toHaveCount(2);
+        const realRowHeight = (await realRow.boundingBox())?.height ?? 0;
+        expect(Math.abs(realRowHeight - skeletonRowHeight)).toBeLessThanOrEqual(1);
+      });
+
+      await test.step('while the tab reads usage, a spinner rides the usage agent card only', async () => {
+        await expect(page.getByTestId('settings-card-accounts-claude').getByTestId('accounts-usage-reading')).toBeVisible();
+        await expect(page.getByTestId('settings-card-accounts-droid')).toBeVisible();
+        await expect(page.getByTestId('accounts-usage-reading')).toHaveCount(1);
+        await page.evaluate(() => (window as unknown as { __mockReleaseAccountUsage: () => void }).__mockReleaseAccountUsage());
+        await expect(page.getByTestId('accounts-usage-reading')).toHaveCount(0);
+      });
+
+      await test.step('Add account opens its dialog before main has started the sign-in', async () => {
+        await page.evaluate(() => {
+          (window as unknown as { __mockHoldAccountLoginStart: boolean }).__mockHoldAccountLoginStart = true;
+        });
+        await page.getByTestId('accounts-add-claude').click();
+        await expect(page.getByTestId('account-login-dialog')).toBeVisible();
+        await expect(page.getByTestId('account-login-terminal-starting')).toBeVisible();
+        await page.evaluate(() => (window as unknown as { __mockReleaseAccountLoginStart: () => void }).__mockReleaseAccountLoginStart());
+        await expect(page.getByTestId('account-login-terminal')).toBeVisible();
+        await expect(page.getByTestId('account-login-terminal-starting')).toHaveCount(0);
+      });
+    } finally {
+      await browser.close();
+    }
+  });
+
+  async function openAccountsTab(page: Page, name: string): Promise<void> {
+    await createProject(page, `${name}-${Date.now()}`);
+    await page.locator('[data-testid="settings-button"]').click();
+    await page.locator('h2:has-text("Settings")').waitFor({ state: 'visible', timeout: 5000 });
+    await page.getByTestId('settings-tab-list').getByRole('button', { name: 'Accounts', exact: true }).click();
+  }
+
+  // Task #1202, the usual restart: main answers the saved cards before its CLI check lands, so
+  // the tab paints them at once, each with its saved unsupportedTarget, and neither the skeleton
+  // nor the empty state shows at any point.
+  test('saved cards before the CLI check: drawn at once with no skeleton or empty state, and kept when it lands', async () => {
+    const cards = [
+      THREE_ACCOUNTS[0],
+      // A WSL-style target: Kangentic cannot add an account there, so no Add account button.
+      { agent: 'droid', reportsUsage: false, usageWindows: [], unsupportedTarget: true, accounts: [{ id: 'droid-1' }, { id: 'droid-2', email: 'droid@example.com' }] },
+    ];
+    const { browser, page } = await launchPage({
+      beforeLoad: async (target) => {
+        await seedAccounts(cards)(target);
+        await target.addInitScript(() => {
+          const flags = window as unknown as { __mockAccountsUnchecked: boolean; __mockAccountsUncheckedCards: boolean };
+          flags.__mockAccountsUnchecked = true;
+          flags.__mockAccountsUncheckedCards = true;
+        });
+      },
+    });
+    try {
+      await openAccountsTab(page, 'settings-accounts-saved');
+      await test.step('the check is still running: the saved cards draw, with no skeleton and no empty state', async () => {
+        await expect(page.getByTestId('settings-card-accounts-claude')).toBeVisible();
+        await expect(page.getByTestId('settings-card-accounts-droid')).toBeVisible();
+        await expect(page.getByTestId('settings-card-accounts-skeleton')).toHaveCount(0);
+        await expect(page.getByTestId('settings-card-accounts-empty')).toHaveCount(0);
+      });
+
+      await test.step('a card whose target is unsupported has no Add account, a supported one does', async () => {
+        await expect(page.getByTestId('accounts-remote-note')).toBeVisible();
+        await expect(page.getByTestId('accounts-add-droid')).toHaveCount(0);
+        await expect(page.getByTestId('accounts-add-claude')).toBeVisible();
+      });
+
+      await test.step('the check lands: the same cards stay, still no skeleton, still no Add on the unsupported one', async () => {
+        await page.evaluate(() => (window as unknown as { __mockFinishAccountsCheck: () => void }).__mockFinishAccountsCheck());
+        await expect(page.getByTestId('settings-card-accounts-claude')).toBeVisible();
+        await expect(page.getByTestId('settings-card-accounts-droid')).toBeVisible();
+        await expect(page.getByTestId('settings-card-accounts-skeleton')).toHaveCount(0);
+        await expect(page.getByTestId('settings-card-accounts-empty')).toHaveCount(0);
+        await expect(page.getByTestId('accounts-add-droid')).toHaveCount(0);
+      });
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // Task #1202: a checked answer with no agent that signs in is the empty state, never the
+  // skeleton, which is only for an unchecked answer with nothing saved.
+  test('checked and no cards: the empty state shows and the skeleton does not', async () => {
+    const { browser, page } = await launchPage({ beforeLoad: seedAccounts([]) });
+    try {
+      await openAccountsTab(page, 'settings-accounts-empty');
+      await expect(page.getByTestId('settings-card-accounts-empty')).toBeVisible();
+      await expect(page.getByTestId('settings-card-accounts-skeleton')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
   // A login replaced in its home (a /login in a session) reads as signed out: the row keeps its
   // email, says Not signed in, draws no usage, and a folder row offers Sign in.
   test('a replaced account reads as signed out: its label, no usage, and Sign in on a folder row only', async () => {

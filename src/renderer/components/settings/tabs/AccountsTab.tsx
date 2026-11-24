@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeftRight, Bot, ChevronDown, Plus, TriangleExclamationPoint } from 'lucide-react';
+import { ArrowLeftRight, Bot, ChevronDown, LoaderCircle, Plus, TriangleExclamationPoint } from 'lucide-react';
 import { AgentLogo } from '../../VendorMark';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { DndContext, DragOverlay, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core';
@@ -23,15 +23,15 @@ import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
 import { KebabMenu, KebabMenuItem } from '../../KebabMenu';
 import { AccountLoginDialog } from '../accounts/AccountLoginDialog';
 import { AccountRow, AccountRowOverlay } from '../accounts/AccountRow';
+import { AccountRowSkeleton } from '../accounts/AccountRowSkeleton';
+import { ADD_ACCOUNT_BUTTON_CLASS, ADD_ACCOUNT_SKELETON_CLASS } from '../accounts/account-row-layout';
+import { Tooltip } from '../../Tooltip';
 import { useScopedUpdate } from '../shared';
 import { SettingsCard, CardChoiceRow, CardTile, CardToggleRow, InfoTip } from '../settings-card';
 import { settingProps } from '../settings-registry';
 
 /** How often the reset times and the tracks' time marks move. */
 const CLOCK_TICK_MS = 30_000;
-
-/** The header button that adds an account, on an agent's card and on More agents. */
-const ADD_ACCOUNT_BUTTON_CLASS = 'flex h-7 items-center gap-1.5 rounded-md border border-edge-input bg-surface-control px-2.5 text-xs text-fg hover:bg-surface-hover focus:outline-none focus-visible:ring-1 focus-visible:ring-accent';
 
 /** Past this many agents the switching card's description names none, to stay on one line. */
 const MAX_NAMED_SWITCHING_AGENTS = 2;
@@ -47,6 +47,8 @@ export function AccountsTab({ globalConfig }: { globalConfig: AppConfig }) {
   const updateGlobal = useScopedUpdate('global');
   const cards = useAccountsStore((state) => state.cards);
   const loaded = useAccountsStore((state) => state.loaded);
+  const checked = useAccountsStore((state) => state.checked);
+  const readingUsage = useAccountsStore((state) => state.usageReads > 0);
   const [now, setNow] = useState(() => Date.now());
   const [draggedAccountId, setDraggedAccountId] = useState<string | null>(null);
   const [accountToRemove, setAccountToRemove] = useState<AgentAccount | null>(null);
@@ -58,7 +60,8 @@ export function AccountsTab({ globalConfig }: { globalConfig: AppConfig }) {
   );
 
   useEffect(() => {
-    // The saved cards first, so the tab paints at once; then who is signed in and the usage.
+    // The saved cards first, so the tab paints at once (main answers from what the last checked
+    // list held until this run's CLI check lands, task #1202); then who is signed in and the usage.
     void useAccountsStore.getState().loadAccounts().then(() => useAccountsStore.getState().refreshUsage());
     const clock = window.setInterval(() => setNow(Date.now()), CLOCK_TICK_MS);
     return () => window.clearInterval(clock);
@@ -188,6 +191,19 @@ export function AccountsTab({ globalConfig }: { globalConfig: AppConfig }) {
             label={agentName}
             searchIds={['accounts.list']}
             testId={`settings-card-accounts-${card.agent}`}
+            titleAdornment={readingUsage && card.reportsUsage ? (
+              // The bars show the last saved read until this one lands (task #1202).
+              <Tooltip label={t`Reading usage`}>
+                <span
+                  className="flex flex-shrink-0 animate-spin text-fg-faint"
+                  role="status"
+                  aria-label={t`Reading usage`}
+                  data-testid="accounts-usage-reading"
+                >
+                  <LoaderCircle size={13} aria-hidden="true" />
+                </span>
+              </Tooltip>
+            ) : undefined}
             headerAction={card.unsupportedTarget ? undefined : (
               <button
                 type="button"
@@ -303,7 +319,22 @@ export function AccountsTab({ globalConfig }: { globalConfig: AppConfig }) {
         </SettingsCard>
       ) : null}
 
-      {loaded && cards.length === 0 ? (
+      {/* Nothing saved yet and the CLI check still running: the first open after an install. */}
+      {/* One card shaped like an agent's with one account, so the real one lands in its place. */}
+      {loaded && !checked && cards.length === 0 ? (
+        <SettingsCard
+          icon={<Bot size={16} />}
+          label={t`Accounts`}
+          placeholder
+          searchIds={['accounts.list']}
+          testId="settings-card-accounts-skeleton"
+          headerAction={<span className={ADD_ACCOUNT_SKELETON_CLASS} aria-hidden="true" />}
+        >
+          <AccountRowSkeleton />
+        </SettingsCard>
+      ) : null}
+
+      {loaded && checked && cards.length === 0 ? (
         <SettingsCard
           icon={<Bot size={16} />}
           label={t`No agents with accounts`}
