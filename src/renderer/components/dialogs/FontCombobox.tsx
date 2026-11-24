@@ -9,8 +9,8 @@ interface FontComboboxProps {
   value: string;
   onChange: (value: string) => void;
   /** Detected system fonts (monospace-filtered when available; see
-   *  FontResolver). Empty when enumeration is unsupported or fails - the
-   *  field then behaves exactly like a plain text input. */
+   *  src/preload/local-fonts.ts). Empty when enumeration is unsupported or
+   *  fails - the field then behaves exactly like a plain text input. */
   fonts: string[];
   placeholder?: string;
   className?: string;

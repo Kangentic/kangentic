@@ -118,10 +118,8 @@ Machine-global like the mobile bridge, so none takes a trailing `projectId`: a h
 | `shell:showItemInFolder` | invoke | Reveal a file or directory in the native file manager (Explorer on Windows, Finder on macOS); the path is normalized to platform separators before dispatch |
 | `shell:exec` | invoke | Execute shell command |
 
-## Fonts (1 channel)
-| Channel | Pattern | Purpose |
-|---------|---------|---------|
-| `font:getAvailable` | invoke | List detected system fonts (monospace-filtered when detectable) for the Terminal tab's Font Family picker |
+## Fonts (no channel)
+The Terminal tab's Font Family picker has no channel. `font.getAvailable` on the bridge reads Chromium's own font list in the window (`window.queryLocalFonts()`, in `src/preload/local-fonts.ts`) and keeps the families that measure fixed width, so listing fonts never reaches main and starts no process. The default session grants the app window the `local-fonts` permission for it (`src/main/permission-policy.ts`), and the Browser pane's session does not.
 
 ## Git (22 channels)
 | Channel | Pattern | Purpose |

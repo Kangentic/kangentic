@@ -7,7 +7,6 @@ import type { BoardConfigManager } from '../config/board-config-manager';
 import type { DiffWatcher } from '../git/diff-watcher';
 import type { GitDetector } from '../git/git-detector';
 import type { ShellResolver } from '../pty/spawn/shell-resolver';
-import type { FontResolver } from '../font-resolver';
 import type { TerminalSubmitScheduler } from '../transition-engine/terminal-submit-scheduler';
 import type { TerminalSubmit } from '../pty/terminal-submit';
 import type { McpHttpServerHandle } from '../agent/mcp-http-server';
@@ -36,7 +35,6 @@ export interface IpcContext {
   diffWatcher: DiffWatcher;
   gitDetector: GitDetector;
   shellResolver: ShellResolver;
-  fontResolver: FontResolver;
   /**
    * Task-keyed lifecycle wrapper around `TerminalSubmit.submitKeystrokes`.
    * Owns: cancel-on-rerun, fresh-spawn `'thinking'` wait, drag-burst

@@ -147,7 +147,7 @@ async function buildBundles() {
     platform: 'node',
     target: 'node24',
     format: 'cjs',
-    external: ['electron', 'better-sqlite3', 'node-pty', 'sherpa-onnx-node', 'sqlite-vec', '@huggingface/transformers', 'font-list', 'koffi'],
+    external: ['electron', 'better-sqlite3', 'node-pty', 'sherpa-onnx-node', 'sqlite-vec', '@huggingface/transformers', 'koffi'],
     conditions: ['require'],
     define: { MAIN_WINDOW_VITE_DEV_SERVER_URL: JSON.stringify(''), MAIN_WINDOW_VITE_NAME: JSON.stringify('main_window'), __KANGENTIC_DEV__: 'false' },
     logLevel: 'warning',

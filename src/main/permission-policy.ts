@@ -14,6 +14,11 @@
  *    `NotAllowedError` and the actions silently no-op. The permission strings are
  *    Electron's exact values for both `setPermissionCheckHandler` and
  *    `setPermissionRequestHandler`.
+ *  - `local-fonts`: `window.queryLocalFonts()`, which lists installed fonts for
+ *    the Terminal Font Family picker (`src/preload/local-fonts.ts`). Chromium
+ *    enumerates on its own thread pool, so the list starts no process. It used
+ *    to come from an OS command run from main, which held main for 3,850 ms at
+ *    launch on Windows.
  *
  * Everything else (geolocation, notifications, openExternal, ...) stays denied.
  *
@@ -24,6 +29,7 @@ const ALLOWED_FIRST_PARTY_PERMISSIONS = new Set<string>([
   'media',
   'clipboard-read',
   'clipboard-sanitized-write',
+  'local-fonts',
 ]);
 
 /**

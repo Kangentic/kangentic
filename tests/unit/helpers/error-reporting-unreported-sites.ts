@@ -307,7 +307,6 @@ export const UNREPORTED_CATCH_SITES: Readonly<Record<string, number>> = {
   'src/main/diagnostics/ipc-recorder.ts': 2,
   'src/main/diagnostics/linux-gpu-zygote.ts': 6,
   'src/main/diagnostics/log-mirror.ts': 2,
-  'src/main/font-resolver.ts': 1,
   'src/main/fs/directory-move.ts': 1,
   'src/main/git/base-branch.ts': 1,
   'src/main/git/base-ref.ts': 4,

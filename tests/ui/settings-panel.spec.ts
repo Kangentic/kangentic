@@ -889,7 +889,7 @@ test.describe('Settings Panel', () => {
   });
 
   test('Terminal tab Font Family offers detected system fonts and accepts a typed value', async () => {
-    // FontResolver is mocked (mock-electron-api.js font.getAvailable) to a
+    // The font list is mocked (mock-electron-api.js font.getAvailable) to a
     // fixed list so this stays deterministic across dev machines and CI.
     await openSettings();
     await page.getByRole('button', { name: 'Terminal', exact: true }).click();

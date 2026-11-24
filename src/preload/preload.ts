@@ -10,6 +10,7 @@ import { installRendererCrashCapture, reportPushCallbackFailure } from './diagno
 import { guardPushCallbacks } from './push-callback-guard';
 import { createBufferedPush } from './buffered-push';
 import { PtyPortClient } from './pty-port-client';
+import { createLocalFontList } from './local-fonts';
 import type { ScrollbackInvokeResult } from '../shared/pty-port-protocol';
 import { installDevtoolsPreloadHooks } from '../devtools/preload/install-globals';
 import type { AgentAccountLoginEnded, AgentAccountSwitched, AgentAccountsAllFull } from '../shared/agent-accounts';
@@ -47,6 +48,9 @@ const popOutDescriptor = readPopOutDescriptor();
 // language main loaded at startup. Read once, synchronously, so the renderer can
 // load its catalog before the first render. Anything missing or unknown is English.
 const bootLocale = readLocaleArgument(process.argv);
+
+// The Terminal Font Family picker's list, asked for when Settings first opens.
+const listLocalFonts = createLocalFontList();
 
 // This renderer's direct port to the pty host: a terminal's keystrokes and
 // output travel on it and never wait on main's event loop. Asked for once per
@@ -575,7 +579,8 @@ const api: ElectronAPI = {
   },
 
   font: {
-    getAvailable: () => ipcRenderer.invoke(IPC.FONT_GET_AVAILABLE),
+    // Chromium's own font list, read in this window: no IPC and no process (local-fonts.ts).
+    getAvailable: () => listLocalFonts(),
   },
 
   git: {

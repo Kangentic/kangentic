@@ -28,6 +28,12 @@ describe('first-party renderer permission policy', () => {
     expect(isFirstPartyPermissionAllowed('clipboard-sanitized-write')).toBe(true);
   });
 
+  it('allows listing local fonts for the Terminal font picker', () => {
+    // Electron's permission string for window.queryLocalFonts(), which
+    // src/preload/local-fonts.ts reads so the list starts no process.
+    expect(isFirstPartyPermissionAllowed('local-fonts')).toBe(true);
+  });
+
   it('denies every other permission', () => {
     const deniedPermissions = [
       'geolocation',
@@ -75,6 +81,9 @@ describe('embedded browser guest permission policy', () => {
   it('denies every other permission, including camera/mic/geo/notifications and the device APIs', () => {
     const deniedPermissions = [
       'media',
+      // A page an agent opens must not be able to list the machine's fonts,
+      // which the first-party policy grants the app window.
+      'local-fonts',
       'geolocation',
       'notifications',
       'midi',
