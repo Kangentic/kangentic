@@ -113,7 +113,7 @@ That covers what a tree kill finds under a pid. The pid itself must still name t
 | Stop from the leftover list (`subtreeOf`) | the report's pid and start key | the same | the same |
 | Dead-shell orphan cleanup | children created inside the shell's own lifetime | children created after their parent | creation time re-checked on the terminating handle |
 | Removal-failure reap (`reapProcessesForWorktree`) | path needle and orphan gate | the Stop's walk | on Windows, the pty host's Stop by the `CreationDate` its scan read (a Stop that cannot answer leaves the holder running and named, never killed by pid) |
-| CLI runs, init script, run-script, project search | Node's own child | `taskkill /T` | only while Node has not handled the child's exit, so its handle still pins the pid; the pty host also pins its runs' pids until taskkill exits |
+| CLI runs, a project's scripts, run-script, the project search's git, one-shot `ssh` | the run's own child, in the pty host (in main only when no host is registered) | `taskkill /T` | pinned by the pty host until taskkill exits (`pinRun`); a child main started itself is stopped only while Node has not handled its exit, so its handle still pins the pid |
 | PTY shells (node-pty's kill) | the session | none | pinned by the pty host from its pid to its exit (`pinRoot`) |
 | Quit failsafe | this process | `taskkill /T` | this running process |
 
@@ -125,8 +125,8 @@ None of this arises on Linux or macOS: an orphan is handed to init, a subreaper 
 
 What still names a bare pid, and why it stays:
 
-- After a pty host crash, main stops each lost PTY's tree, and each run the host was running, by pid (`stopLostPtyTree`, the `RemoteCliProcess` orphan stop), and at quit it stops every CLI run's tree by pid (`stopAllCliRuns`). The host that held their handles is gone or going, and main loads no Windows process API to pin with.
-- A local child's taskkill (a CLI run in main when no host is registered, the init script, a run-script, the project search's git) starts while Node still pins the pid, but taskkill opens it about 550 ms later. The child would have to exit by itself inside that window and Windows hand its pid to another process inside it too, where reusing one given pid took 359 to 1,035 process starts in the probe.
+- After a pty host crash, main stops each lost PTY's tree, and each run the host was running, by pid (`stopLostPtyTree`, the `RemoteCliProcess` orphan stop), and at quit it stops every CLI run's tree by pid (`stopAllCliRuns`). The host that held their handles is gone or going, and main loads no Windows process API to pin with. A run that outlives the app is left out of both: a quit stops no script, run-script row or shortcut command, and after a host crash the caller that was waiting on a script or a run-script row ends what it left by pid itself (`spawn-with-abort.ts`, the run-script adapter), while a shortcut command is never stopped.
+- A local child's taskkill (any of the runs above that main started itself because no host was registered) starts while Node still pins the pid, but taskkill opens it about 550 ms later. The child would have to exit by itself inside that window and Windows hand its pid to another process inside it too, where reusing one given pid took 359 to 1,035 process starts in the probe.
 - The in-process host that takes over after five host crashes has no Windows process API, so it pins no PTY root and runs no orphan cleanup.
 - The E2E leak janitor kills its candidates by pid, and so would the removal-failure reap on Windows where no identity Stop is registered (`endCandidates` falls back to `killProcess`). Registration runs at startup, so a running app does not reach that fallback.
 - The removal-failure reap off Windows signals one pid from a scan up to 5 s old. Linux and macOS hand out pids in order.
