@@ -1,9 +1,10 @@
 // kangentic-activity
 // OpenCode plugin that emits structured activity events into the
-// Kangentic events.jsonl pipeline. Discovered automatically by
-// OpenCode via the project-shared `.opencode/plugins/` directory, where
-// hook-manager.ts installs it as `kangentic-activity.js`: OpenCode 1.18.31
-// loads only `{plugin,plugins}/*.{ts,js}`, so a `.mjs` copy never ran.
+// Kangentic events.jsonl pipeline. OpenCode 1 loads this file from where it
+// is packaged: Kangentic names its file URL in `OPENCODE_CONFIG_CONTENT`
+// (command-builder.ts). On a remote host over SSH, hook-manager.ts installs a
+// copy in the working folder's `.opencode/plugins/` as `kangentic-activity.js`:
+// OpenCode 1.18.31 discovers only `{plugin,plugins}/*.{ts,js}` there.
 //
 // The plugin runs inline in the OpenCode process and writes JSONL
 // entries that match the shape produced by Kangentic's other agent
@@ -32,8 +33,9 @@
 // Hook and event shapes are OpenCode 1.18.31's own: the `Hooks` interface in
 // `packages/plugin/src/index.ts` and the `Event` union of `@opencode-ai/sdk`
 // (`packages/sdk/js/src/gen/types.gen.ts`), both at tag v1.18.31. The subagent,
-// prompt, compaction and telemetry mappings below were built from those types
-// and have not been run against a real OpenCode session.
+// prompt, compaction and telemetry mappings below were built from those types.
+// The prompt and telemetry ones have since run on a real 1.18.31 session
+// against a stub model; the subagent and compaction ones have not.
 import fs from 'node:fs';
 import path from 'node:path';
 

@@ -7858,9 +7858,15 @@ export interface AdapterRuntimeStrategy {
       cwd: string;
       /** Where the CLI runs when it is not this machine (a WSL distro): it writes its files there. */
       cliTarget?: StoredCliTarget | null;
+      /**
+       * Whether a found id would still be used. False once this run reported its
+       * own id, or the session is gone or was respawned. A poll that reads on the
+       * main thread asks between its reads and stops.
+       */
+      shouldContinue?: () => boolean;
     }): Promise<string | null>;
     /**
-     * Whether the folder or file `fromFilesystem` reads exists at all, for a
+     * Whether the store `fromFilesystem` reads holds this session, for a
      * session whose id the capture window did not see: `absent` says the store
      * holds no conversation for this session yet, which no capture path could fix. A fixed word,
      * never a path. Read only by the session-id capture reports (late and
@@ -7868,9 +7874,9 @@ export interface AdapterRuntimeStrategy {
      *
      * With `spawnedAt`, an agent whose store holds every earlier run's files
      * answers about THIS session: `present` only for a conversation written
-     * since the spawn (Codex's rollout folder holds all of the day's runs, so
-     * the folder alone said nothing about one session). An agent whose store is
-     * its own for the machine ignores it.
+     * since the spawn (Codex's rollout folder holds all of the day's runs, and
+     * OpenCode's database every run on the machine, so neither alone said
+     * anything about one session).
      */
     storeEvidence?(options: { cwd: string; cliTarget?: StoredCliTarget | null; spawnedAt?: Date }): Promise<SessionIdStoreEvidence>;
     /**

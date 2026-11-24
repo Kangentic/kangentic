@@ -8,7 +8,7 @@ import { ensureLocalGitExcludes } from '../../shared/git-exclude';
  * OpenCode plugin events mapped to event-bridge event types. Documented
  * here to give tests a canonical mapping to assert against. The actual
  * event-handler logic lives inside the plugin file
- * (`plugin/kangentic-activity.mjs`, installed as `kangentic-activity.js`),
+ * (`plugin/kangentic-activity.mjs`),
  * because OpenCode plugins run inline in the OpenCode process and write
  * JSONL directly rather than shelling out to event-bridge.
  *
@@ -33,12 +33,15 @@ export const OPENCODE_HOOK_EVENTS: Array<{
 ];
 
 /**
- * The installed copy's name. OpenCode loads a project plugin only when its
+ * The installed OpenCode 1 copy's name, which only a host over SSH still gets:
+ * a spawn on this machine or in a distro names the packaged `.mjs` by its URL
+ * (`namesActivityPlugin`). OpenCode loads a plugin from a folder only when its
  * file matches `{plugin,plugins}/*.{ts,js}` (read from the 1.18.31 binary's
  * plugin loader), so the packaged `.mjs` is installed under a `.js` name.
  * OpenCode's Bun runtime loads ES module syntax from a `.js` file. Earlier
  * builds installed `kangentic-activity.mjs`, which OpenCode never loaded,
- * so every OpenCode session ran on the PTY fallback alone.
+ * and later ones this `.js` in the project root, which OpenCode 1 never reads
+ * from a worktree.
  */
 const PLUGIN_FILENAME = 'kangentic-activity.js';
 /** The name earlier builds installed, removed so a project keeps no dead copy. */
@@ -93,6 +96,42 @@ function removeKangenticPluginFile(file: string): boolean {
 }
 
 /**
+ * Best-effort removal of `.opencode/plugins/` and `.opencode/` once empty.
+ * Errors are ignored: a folder that is not empty holds the user's own plugins or
+ * OpenCode's `node_modules`, neither of which is ours.
+ */
+function removeEmptyPluginFolders(projectRoot: string): void {
+  try { fs.rmdirSync(pluginsDir(projectRoot)); } catch { /* not empty or already gone */ }
+  try { fs.rmdirSync(path.join(projectRoot, '.opencode')); } catch { /* not empty or already gone */ }
+}
+
+/** The two OpenCode 1 copies, the current name and the `.mjs` of earlier builds. True when either was ours. */
+function removeOpenCode1Plugin(projectRoot: string): boolean {
+  const removedCurrent = removeKangenticPluginFile(pluginPath(projectRoot));
+  const removedLegacy = removeKangenticPluginFile(path.join(pluginsDir(projectRoot), LEGACY_PLUGIN_FILENAME));
+  return removedCurrent || removedLegacy;
+}
+
+/**
+ * Remove an OpenCode 1 copy an earlier build, or a crash, left in a project
+ * root. The sentinel check keeps a user's own plugin, and OpenCode 2's copy,
+ * which another session may hold, is not touched.
+ */
+export function removeLeftoverPlugin(projectRoot: string): void {
+  if (removeOpenCode1Plugin(projectRoot)) removeEmptyPluginFolders(projectRoot);
+}
+
+/** The packaged plugin for a major, or null, with a warning, when it is not on disk. */
+export function packagedPluginScript(openCode2: boolean): string | null {
+  const scriptPath = openCode2
+    ? resolvePluginScript('opencode', 'kangentic-activity-v2')
+    : resolvePluginScript('opencode', 'kangentic-activity');
+  if (fs.existsSync(scriptPath)) return scriptPath;
+  console.warn(`[opencode-hooks] Plugin source not found at ${scriptPath}; the session runs without it.`);
+  return null;
+}
+
+/**
  * Copy the Kangentic OpenCode plugin into `<projectRoot>/.opencode/plugins/`.
  * OpenCode auto-discovers plugins in this directory at TUI startup, so no
  * mutation of `opencode.json` is required.
@@ -106,16 +145,12 @@ function removeKangenticPluginFile(file: string): boolean {
  * earlier build installed, when its sentinel says Kangentic wrote it.
  *
  * `openCode2` installs OpenCode 2's plugin instead, as
- * `.opencode/plugins/kangentic-activity/index.js`.
+ * `.opencode/plugins/kangentic-activity/index.js`. The OpenCode 1 copy is for a
+ * host over SSH alone (`namesActivityPlugin`).
  */
 export function buildHooks(projectRoot: string, openCode2 = false): void {
-  const sourcePath = openCode2
-    ? resolvePluginScript('opencode', 'kangentic-activity-v2')
-    : resolvePluginScript('opencode', 'kangentic-activity');
-  if (!fs.existsSync(sourcePath)) {
-    console.warn(`[opencode-hooks] Plugin source not found at ${sourcePath}; skipping install.`);
-    return;
-  }
+  const sourcePath = packagedPluginScript(openCode2);
+  if (!sourcePath) return;
 
   const { directory: destinationDir, file: destinationFile, excludePattern } = installLayout(projectRoot, openCode2);
 
@@ -173,16 +208,12 @@ export function buildHooks(projectRoot: string, openCode2 = false): void {
 export function removeHooks(directory: string): void {
   // The current copy, the `.mjs` an earlier build left, and OpenCode 2's
   // directory copy; any of them may be there.
-  const removedCurrent = removeKangenticPluginFile(pluginPath(directory));
-  const removedLegacy = removeKangenticPluginFile(path.join(pluginsDir(directory), LEGACY_PLUGIN_FILENAME));
+  const removedV1 = removeOpenCode1Plugin(directory);
   const removedV2 = removeKangenticPluginFile(path.join(v2PluginDir(directory), V2_PLUGIN_ENTRY));
-  if (!removedCurrent && !removedLegacy && !removedV2) return;
+  if (!removedV1 && !removedV2) return;
 
-  // Best-effort directory cleanup. Ignore errors: a non-empty directory
-  // means the user has other plugins or assets we should not touch.
   if (removedV2) {
     try { fs.rmdirSync(v2PluginDir(directory)); } catch { /* not empty or already gone */ }
   }
-  try { fs.rmdirSync(pluginsDir(directory)); } catch { /* not empty or already gone */ }
-  try { fs.rmdirSync(path.join(directory, '.opencode')); } catch { /* not empty or already gone */ }
+  removeEmptyPluginFolders(directory);
 }

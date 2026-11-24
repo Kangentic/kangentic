@@ -63,29 +63,47 @@ export class OpenCodeSessionHistoryParser {
    * SQLite DB for a row whose `directory` matches our cwd and whose
    * `time_created` falls within the spawn window.
    *
+   * The poll runs to the end of that window: every 500 ms for the first 10 s,
+   * when almost every row lands, then every 2 s, since each read opens the
+   * database on the main process. It used to stop at 10 s, so a row made in the
+   * 20 s after that was accepted and never looked for (Sentry DESKTOP-3A). It
+   * ends early once `shouldContinue` answers no, which is when the id came
+   * another way (the plugin's) or the session is gone.
+   *
    * Returns null if the DB does not exist (OpenCode never run on this
    * machine), the table is missing (older format), or no row matches
-   * within the polling budget.
+   * before the poll ends.
    */
   static async captureSessionIdFromFilesystem(options: {
     spawnedAt: Date;
     cwd: string;
+    /** For tests and the probe script. Without it the window alone ends the poll. */
     maxAttempts?: number;
     getAgentVersion?: () => string | null;
+    shouldContinue?: () => boolean;
+    /** Injected so tests need no real wait. */
+    sleep?: (milliseconds: number) => Promise<void>;
   }): Promise<string | null> {
     const spawnedAtMs = options.spawnedAt.getTime();
     // Match the Codex parser's window shape: ±a few seconds for clock
     // skew on the floor, generous +30s on the ceil because OpenCode
     // may take a moment to insert the row after CLI startup.
     const createdFloorMs = spawnedAtMs - 5_000;
-    const createdCeilMs = spawnedAtMs + 30_000;
-    const normalizedCwd = normalizeCwdForCompare(options.cwd);
-    const maxAttempts = options.maxAttempts ?? 20; // ~10s
+    const createdCeilMs = spawnedAtMs + CREATED_WINDOW_MS;
+    const cwdKeys = await cwdComparisonKeys(options.cwd);
+    const wait = options.sleep ?? sleep;
+    const maxAttempts = options.maxAttempts ?? Infinity;
 
+    let waitedMs = 0;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const id = readMatchingSessionId(createdFloorMs, createdCeilMs, normalizedCwd, options.getAgentVersion);
+      const id = readMatchingSessionId(createdFloorMs, createdCeilMs, cwdKeys, options.getAgentVersion);
       if (id) return id;
-      await sleep(POLL_INTERVAL_MS);
+      // Past the window by now: this read saw every row the window can hold.
+      if (waitedMs > CREATED_WINDOW_MS) return null;
+      const delayMs = waitedMs < FAST_POLL_SPAN_MS ? FAST_POLL_INTERVAL_MS : SLOW_POLL_INTERVAL_MS;
+      await wait(delayMs);
+      waitedMs += delayMs;
+      if (options.shouldContinue && !options.shouldContinue()) return null;
     }
     return null;
   }
@@ -102,23 +120,46 @@ export class OpenCodeSessionHistoryParser {
   }): Promise<string | null> {
     const dbPath = openCodeDbPath();
     if (!fs.existsSync(dbPath)) return null;
-    const found = sessionIdExists(dbPath, options.agentSessionId);
-    return found ? dbPath : null;
+    return sessionIdExists(options.agentSessionId) ? dbPath : null;
   }
 
   /**
-   * Whether `opencode.db` exists on this machine, the file
+   * Whether `opencode.db` holds this session, the file
    * `captureSessionIdFromFilesystem` reads. For the session-id report only. A
    * fixed word, never a path.
+   *
+   * With `spawnedAt`, `present` needs a row made at or after the spawn in this
+   * session's cwd, with no upper bound, because OpenCode makes its session at
+   * the first prompt, which can come minutes later. The file alone said nothing
+   * about one session, because it holds every run on the machine, so a Command
+   * Terminal no one typed into read `present` and reported (Sentry DESKTOP-3A on
+   * 0.59.0). `absent` is what drops that report, so it needs a read that worked.
+   * A database that cannot be opened or queried, or holds no session table, is
+   * `unknown`. A sibling started later in the same cwd can read as this
+   * session's, which only moves the answer toward `present`, the side that
+   * reports. Without `spawnedAt` it is the file check.
    */
-  static storeEvidence(): Promise<SessionIdStoreEvidence> {
-    return pathStoreEvidence(openCodeDbPath(), 'file');
+  static async storeEvidence(options: { cwd: string; spawnedAt?: Date }): Promise<SessionIdStoreEvidence> {
+    const file = await pathStoreEvidence(openCodeDbPath(), 'file');
+    if (file !== 'present' || !options.spawnedAt) return file;
+    const createdFloorMs = options.spawnedAt.getTime() - SPAWN_CLOCK_SLACK_MS;
+    const cwdKeys = await cwdComparisonKeys(options.cwd);
+    const read = readSessionDatabase((database) => readRootSessionRows(database, createdFloorMs, null));
+    if (!read) return 'unknown';
+    if (read.rows.some((row) => cwdKeys.has(normalizeCwdForCompare(row.directory)))) return 'present';
+    return read.complete ? 'absent' : 'unknown';
   }
 }
 
 // ---------- Internal helpers ----------
 
-const POLL_INTERVAL_MS = 500;
+/** How long after the spawn a row may be made and still be taken as this spawn's. */
+const CREATED_WINDOW_MS = 30_000;
+const FAST_POLL_INTERVAL_MS = 500;
+const FAST_POLL_SPAN_MS = 10_000;
+const SLOW_POLL_INTERVAL_MS = 2_000;
+/** `storeEvidence`'s slack below the spawn time, as Codex's. */
+const SPAWN_CLOCK_SLACK_MS = 1_000;
 
 // Verified-against versions baked into the warning so future readers
 // know which OpenCode releases we last observed the schema match.
@@ -207,18 +248,17 @@ interface SessionIdRow {
   id: string;
 }
 
+interface SessionRow extends SessionIdRow {
+  directory: string;
+  time_created: number;
+}
+
 /**
- * Open the OpenCode DB read-only (WAL-friendly) and return the most
- * recently created session row matching `directory` whose
- * `time_created` is within the window. Returns null if the DB or
- * table is unavailable, or no row matches.
+ * Open the OpenCode DB read-only (WAL-friendly) for one read, or null when it
+ * cannot be opened or read. OpenCode opens its DB in WAL mode; we must NOT
+ * change journal mode from a read-only handle. Just read.
  */
-function readMatchingSessionId(
-  createdFloorMs: number,
-  createdCeilMs: number,
-  normalizedCwd: string,
-  getAgentVersion?: () => string | null,
-): string | null {
+function readSessionDatabase<Result>(read: (database: DatabaseType.Database) => Result): Result | null {
   const dbPath = openCodeDbPath();
   if (!fs.existsSync(dbPath)) return null;
   const DatabaseConstructor = loadBetterSqlite3();
@@ -227,75 +267,85 @@ function readMatchingSessionId(
   let database: DatabaseType.Database | null = null;
   try {
     database = new DatabaseConstructor(dbPath, { readonly: true, fileMustExist: true });
-    verifyOpenCodeSchemaOnce(database, getAgentVersion);
-    // OpenCode opens its DB in WAL mode; we must NOT change journal
-    // mode from a read-only handle. Just read. A table this database does
-    // not have is skipped.
-    const rows: Array<SessionIdRow & { directory: string; time_created: number }> = [];
-    for (const table of SESSION_TABLES) {
-      try {
-        rows.push(...database.prepare<[number, number], SessionIdRow & { directory: string; time_created: number }>(
-          `SELECT id, directory, time_created FROM ${table}
-           WHERE time_created >= ? AND time_created <= ?
-           ORDER BY time_created DESC
-           LIMIT 25`,
-        ).all(createdFloorMs, createdCeilMs));
-      } catch {
-        // No such table (an OpenCode 1 database, or a fresh OpenCode 2 one).
-      }
-    }
-    rows.sort((left, right) => right.time_created - left.time_created);
-    for (const row of rows) {
-      if (normalizeCwdForCompare(row.directory) === normalizedCwd) {
-        return row.id;
-      }
-    }
-    return null;
+    return read(database);
   } catch {
-    // DB locked, schema mismatch, file disappeared mid-read - all
-    // recoverable. The poll loop will retry.
+    // report-ok: DB locked, schema mismatch, file disappeared mid-read. The poll retries, the report reads `unknown`, and `locate` finds no file.
     return null;
   } finally {
-    if (database) {
-      try {
-        database.close();
-      } catch {
-        // ignore
-      }
+    try {
+      database?.close();
+    } catch {
+      // report-ok: a handle that will not close held nothing but a read.
     }
   }
+}
+
+/**
+ * The sessions made in the span (`createdCeilMs` null: no end), newest first,
+ * from whichever session tables this database has. A subagent's session is
+ * left out. It is a row in the same folder, newer than the session that started
+ * it, and its id would resume the subagent. `complete` says every session table
+ * there was read, and that there was one, so no match means no row.
+ */
+function readRootSessionRows(
+  database: DatabaseType.Database,
+  createdFloorMs: number,
+  createdCeilMs: number | null,
+): { rows: SessionRow[]; complete: boolean } {
+  const rows: SessionRow[] = [];
+  let tablesRead = 0;
+  let tablesFailed = 0;
+  for (const table of SESSION_TABLES) {
+    try {
+      const columns = database.prepare<[], { name: string }>(`PRAGMA table_info("${table}")`).all();
+      // No such table (an OpenCode 1 database, or a fresh OpenCode 2 one).
+      if (columns.length === 0) continue;
+      const rootsOnly = columns.some((column) => column.name === 'parent_id') ? 'AND parent_id IS NULL' : '';
+      rows.push(...database.prepare<[number, number], SessionRow>(
+        `SELECT id, directory, time_created FROM ${table}
+         WHERE time_created >= ? AND time_created <= ? ${rootsOnly}`,
+      ).all(createdFloorMs, createdCeilMs ?? Number.MAX_SAFE_INTEGER));
+      tablesRead += 1;
+    } catch {
+      // report-ok: a table another release changed. The schema canary logs it, and `complete` carries it.
+      tablesFailed += 1;
+    }
+  }
+  rows.sort((left, right) => right.time_created - left.time_created);
+  return { rows, complete: tablesRead > 0 && tablesFailed === 0 };
+}
+
+/**
+ * The id of the most recently created session row in this cwd whose
+ * `time_created` is within the window, or null when the DB or table is
+ * unavailable, or no row matches.
+ */
+function readMatchingSessionId(
+  createdFloorMs: number,
+  createdCeilMs: number,
+  cwdKeys: ReadonlySet<string>,
+  getAgentVersion?: () => string | null,
+): string | null {
+  return readSessionDatabase((database) => {
+    verifyOpenCodeSchemaOnce(database, getAgentVersion);
+    const { rows } = readRootSessionRows(database, createdFloorMs, createdCeilMs);
+    return rows.find((row) => cwdKeys.has(normalizeCwdForCompare(row.directory)))?.id ?? null;
+  });
 }
 
 /**
  * Confirm a session ID exists in the DB. Used by `locate()` to avoid
  * returning the DB path for a row that was never persisted.
  */
-function sessionIdExists(dbPath: string, sessionId: string): boolean {
-  const DatabaseConstructor = loadBetterSqlite3();
-  if (!DatabaseConstructor) return false;
-  let database: DatabaseType.Database | null = null;
-  try {
-    database = new DatabaseConstructor(dbPath, { readonly: true, fileMustExist: true });
-    for (const table of SESSION_TABLES) {
-      try {
-        const row = database.prepare<[string], SessionIdRow>(`SELECT id FROM ${table} WHERE id = ? LIMIT 1`).get(sessionId);
-        if (row !== undefined) return true;
-      } catch {
-        // No such table in this database.
-      }
+function sessionIdExists(sessionId: string): boolean {
+  return readSessionDatabase((database) => SESSION_TABLES.some((table) => {
+    try {
+      return database.prepare<[string], SessionIdRow>(`SELECT id FROM ${table} WHERE id = ? LIMIT 1`).get(sessionId) !== undefined;
+    } catch {
+      // report-ok: no such table in this database, so the id is not in it.
+      return false;
     }
-    return false;
-  } catch {
-    return false;
-  } finally {
-    if (database) {
-      try {
-        database.close();
-      } catch {
-        // ignore
-      }
-    }
-  }
+  })) ?? false;
 }
 
 /**
@@ -337,6 +387,22 @@ export function openCodeDbPath(): string {
 function normalizeCwdForCompare(raw: string): string {
   const normalized = path.normalize(raw).replace(/[\\/]+$/, '');
   return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
+/**
+ * The cwd as a row's `directory` may hold it: as given, and as its real path.
+ * OpenCode stores the resolved real path of the folder it runs in
+ * (`FSUtil.resolve`, native `realpathSync`), so a project reached through a
+ * junction, a symlink or a subst drive never matched the path we spawned with.
+ */
+async function cwdComparisonKeys(cwd: string): Promise<ReadonlySet<string>> {
+  const keys = new Set([normalizeCwdForCompare(cwd)]);
+  try {
+    keys.add(normalizeCwdForCompare(await fs.promises.realpath(cwd)));
+  } catch {
+    // report-ok: a folder with no real path to read (gone, or no access) is compared as given.
+  }
+  return keys;
 }
 
 function sleep(ms: number): Promise<void> {

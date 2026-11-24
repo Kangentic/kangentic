@@ -88,6 +88,8 @@ describe('an OpenCode 1 session on a remote host', () => {
       environment: { KANGENTIC_MCP_TOKEN: MCP_TOKEN },
       enabled: true,
     });
+    // The packaged script's URL names a file on this computer, so a host gets the installed copy instead.
+    expect(config).not.toHaveProperty('plugin');
     expectNoLocalPaths(workspace, spawn);
   });
 

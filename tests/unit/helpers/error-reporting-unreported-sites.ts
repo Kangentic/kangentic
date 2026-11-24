@@ -151,7 +151,7 @@ export const UNREPORTED_CATCH_SITES: Readonly<Record<string, number>> = {
   'src/main/agent/adapters/opencode/project-relocation.ts': 3,
   'src/main/agent/adapters/opencode/remote-client-v2.ts': 6,
   'src/main/agent/adapters/opencode/remote-client.ts': 4,
-  'src/main/agent/adapters/opencode/session-history-parser.ts': 9,
+  'src/main/agent/adapters/opencode/session-history-parser.ts': 3,
   'src/main/agent/adapters/opencode/status-parser.ts': 1,
   'src/main/agent/adapters/opencode/transcript-parser.ts': 5,
   'src/main/agent/adapters/opencode/v2-messages.ts': 1,

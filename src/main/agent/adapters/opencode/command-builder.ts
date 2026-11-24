@@ -1,9 +1,10 @@
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import { interpolateTemplate } from '../../shared/template-utils';
-import { pulledProjectRoot, type CliTarget } from '../../shared/cli-target';
+import { cliPathForTarget, pulledProjectRoot, type CliPlace, type CliTarget } from '../../shared/cli-target';
 import { kangenticMcpServer, type KangenticMcpServer } from '../../shared/kangentic-mcp-server';
-import { buildHooks } from './hook-manager';
+import { buildHooks, packagedPluginScript, removeLeftoverPlugin } from './hook-manager';
 import { isOpenCodeV2, OPENCODE_REMOTE_NEEDS_V1, openCodeSupportsAutoApprove } from './version';
 import type { PermissionMode, ResolvedExecutionTarget } from '../../../../shared/types';
 
@@ -35,9 +36,10 @@ export interface OpenCodeCommandOptions {
   /**
    * An OpenCode installed in a WSL distro (`CommandOptions.cliTarget`): started
    * by the path the distro sees, and on NAT networking given Kangentic's server
-   * as the WSL hook transport's bridge. The activity plugin needs nothing more:
-   * it is a file in the project, which the distro reads at its `/mnt` path, and
-   * the spawn hands it `KANGENTIC_EVENTS_PATH` in the distro's form.
+   * as the WSL hook transport's bridge. The activity plugin is a file on this
+   * machine, which the distro reads at its `/mnt` path (OpenCode 1 is given its
+   * URL in that form, OpenCode 2 finds its copy in the project), and the spawn
+   * hands it `KANGENTIC_EVENTS_PATH` in the distro's form.
    */
   cliTarget?: CliTarget | null;
 }
@@ -54,16 +56,52 @@ export function openCodeKangenticMcpEntry(server: KangenticMcpServer): Record<st
     : { type: 'remote', url: server.url, enabled: true, headers: { 'X-Kangentic-Token': server.token } };
 }
 
-/**
- * Whether a spawn installs the activity plugin into the project's
- * `.opencode/plugins/`: a local spawn with an events pipeline. The builder
- * installs it and the adapter holds the project root for it, so both read
- * this one answer. Which plugin is the builder's to pick: OpenCode 2 does not
- * run OpenCode 1 plugins, so a V2 spawn gets its own (`buildHooks`).
- */
-export function installsActivityPlugin(options: Pick<OpenCodeCommandOptions, 'eventsOutputPath' | 'executionTarget'>): boolean {
-  // A host over SSH installs it too: its events ride the hook folder (see the plugin script).
+/** What decides how a spawn gets the activity plugin, if it gets one. */
+type ActivityPluginOptions = Pick<OpenCodeCommandOptions, 'eventsOutputPath' | 'executionTarget' | 'cliTarget' | 'cliVersion'>;
+
+/** Whether a spawn runs the activity plugin at all: any but a remote server's, with an events pipeline. */
+function runsActivityPlugin(options: Pick<ActivityPluginOptions, 'eventsOutputPath' | 'executionTarget'>): boolean {
   return Boolean(options.eventsOutputPath) && !options.executionTarget;
+}
+
+/**
+ * Whether a spawn names the packaged plugin by its file URL in
+ * `OPENCODE_CONFIG_CONTENT` and installs nothing: OpenCode 1, on this machine or
+ * in a WSL distro. OpenCode 1 walks up from its cwd for `.opencode` and stops at
+ * `git rev-parse --show-toplevel`, so a task in a linked worktree never read a
+ * copy in the project root (Sentry DESKTOP-3A). A copy in the worktree would be
+ * read, but OpenCode 1 runs an npm install in every `.opencode` it finds and
+ * waits for it: measured on 1.18.31, 3,672 files and 66 s, against 1.1 s named.
+ */
+export function namesActivityPlugin(options: ActivityPluginOptions): boolean {
+  return runsActivityPlugin(options) && !isOpenCodeV2(options.cliVersion) && options.cliTarget?.kind !== 'ssh';
+}
+
+/**
+ * Whether a spawn installs the activity plugin into a folder's
+ * `.opencode/plugins/`: OpenCode 2, which walks up past the worktree and finds
+ * the project root's copy, and either major on a host over SSH, whose copy goes
+ * in its working folder (its events ride the hook folder, see the plugin
+ * script). The builder installs it and the adapter holds the folder for it, so
+ * both read this one answer. Which plugin is the builder's to pick: OpenCode 2
+ * does not run OpenCode 1 plugins, so it gets its own (`buildHooks`).
+ */
+export function installsActivityPlugin(options: ActivityPluginOptions): boolean {
+  return runsActivityPlugin(options) && !namesActivityPlugin(options);
+}
+
+/**
+ * The packaged plugin as OpenCode 1 names it in config: a file URL, in the
+ * distro's form for an OpenCode there. Null for a path the distro has no path
+ * for, since OpenCode reports a plugin it cannot load.
+ */
+export function activityPluginUrl(scriptPath: string, place: CliPlace | null): string | null {
+  if (!place) return pathToFileURL(scriptPath).href;
+  const distroPath = cliPathForTarget(scriptPath, place);
+  // A UNC share other than the distro's own comes back as `//server/...`, which is no path in there.
+  if (!distroPath.startsWith('/') || distroPath.startsWith('//')) return null;
+  // `windows: false`: on Windows the default would read `/mnt/c` as a path on the current drive.
+  return pathToFileURL(distroPath, { windows: false }).href;
 }
 
 /** The folder whose `.opencode/plugins/` gets the activity plugin. */
@@ -116,7 +154,8 @@ export function activityPluginRoot(options: Pick<OpenCodeCommandOptions, 'projec
  *   OpenCode reads MCP and provider config from `opencode.json` (project)
  *   or `~/.config/opencode/opencode.json` (global), plus the
  *   `OPENCODE_CONFIG_CONTENT` env var for inline overrides. The Kangentic
- *   MCP server is wired via `buildOpenCodeEnv()` below, which emits
+ *   MCP server and OpenCode 1's activity plugin are wired via
+ *   `buildOpenCodeEnv()` below, which emits
  *   `OPENCODE_CONFIG_CONTENT` per PTY spawn so we never have to touch
  *   the user's checked-in `opencode.json`. Configs are deep-merged across
  *   sources, so user-defined `mcp.*` entries are preserved.
@@ -140,12 +179,16 @@ export class OpenCodeCommandBuilder {
       return buildOpenCodeAttachCommand(options, options.executionTarget, shell);
     }
 
-    // Install the activity-stream plugin into the project's
-    // `.opencode/plugins/` directory before the CLI launches. OpenCode
-    // auto-discovers plugins from that directory at TUI startup, so no
-    // CLI flag or `opencode.json` mutation is required. Mirrors the
-    // `buildHooks` side effect in CodexCommandBuilder.buildCodexCommand.
-    if (installsActivityPlugin(options)) {
+    if (namesActivityPlugin(options)) {
+      // OpenCode 1 is given the packaged plugin by URL (`buildOpenCodeEnv`). It
+      // dedupes local plugins on the exact URL, so a copy an earlier build or a
+      // crash left in the project root would load beside it wherever the root is
+      // read, and write every event twice.
+      removeLeftoverPlugin(activityPluginRoot(options));
+    } else if (installsActivityPlugin(options)) {
+      // Installed before the CLI launches: OpenCode discovers plugins from
+      // `.opencode/plugins/` at TUI startup. Mirrors the `buildHooks` side
+      // effect in CodexCommandBuilder.buildCodexCommand.
       buildHooks(activityPluginRoot(options), openCode2);
     }
 
@@ -202,25 +245,28 @@ export class OpenCodeCommandBuilder {
   }
 
   /**
-   * Build env vars that inject the Kangentic MCP server into OpenCode.
+   * Build env vars that inject the Kangentic MCP server into OpenCode, and on
+   * OpenCode 1 name the activity plugin (`namesActivityPlugin`).
    *
    * OpenCode loads config from multiple sources and deep-merges them by
    * key. The `OPENCODE_CONFIG_CONTENT` env var is one of those sources,
    * with higher precedence than the project's `opencode.json`, so the
    * launch-fresh URL + token always win. Because the merge is per-key,
    * any user-defined `mcp.*` entries (filesystem, github, etc.) are
-   * preserved alongside our `mcp.kangentic` entry.
+   * preserved alongside our `mcp.kangentic` entry. OpenCode 1 collects `plugin`
+   * across every source and drops only exact repeats (`mergePluginOrigins` in
+   * its `config/config.ts`, read at 1.18.31), so ours is added to the user's.
    *
    * Schema verified against /anomalyco/opencode docs: remote MCP servers
    * use `type: "remote"` (not Claude's `"http"`), `url`, and optional
    * `headers`. We pass the per-launch token via the `X-Kangentic-Token`
    * header that the in-process MCP HTTP server expects.
    *
-   * This only wires MCP for a LOCAL spawn (`opencode [project]`), where
+   * This only applies to a LOCAL spawn (`opencode [project]`), where
    * the process we spawn is the server itself and legitimately reads its
    * own `OPENCODE_CONFIG_CONTENT` at startup. Returns `null` when there is
-   * nothing to say: MCP wiring is disabled or missing its URL or token, and
-   * (OpenCode 2 only) the spawn names no agent or model.
+   * nothing to say: MCP wiring is disabled or missing its URL or token, the
+   * spawn names no plugin, and (OpenCode 2 only) it names no agent or model.
    */
   buildOpenCodeEnv(options: OpenCodeCommandOptions): Record<string, string> | null {
     // Remote mode (`options.executionTarget` set): the process Kangentic
@@ -249,6 +295,12 @@ export class OpenCodeCommandBuilder {
       if (agentName) inlineConfig.default_agent = agentName;
       const model = options.model?.trim();
       if (model) inlineConfig.model = model;
+    }
+
+    if (namesActivityPlugin(options)) {
+      const script = packagedPluginScript(false);
+      const pluginUrl = script ? activityPluginUrl(script, options.cliTarget ?? null) : null;
+      if (pluginUrl) inlineConfig.plugin = [pluginUrl];
     }
 
     if (options.mcpServerEnabled && options.mcpServerUrl && options.mcpServerToken) {

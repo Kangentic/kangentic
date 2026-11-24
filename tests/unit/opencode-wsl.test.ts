@@ -1,8 +1,8 @@
 /**
  * An OpenCode installed in a WSL distro (#286).
  *
- * The session starts the distro's binary; the activity plugin is a file in the
- * project, so only the MCP entry changes: on NAT networking Kangentic's server
+ * The session starts the distro's binary; OpenCode 1 is given the activity
+ * plugin's URL in the distro's form, and on NAT networking Kangentic's server
  * is the WSL hook transport's bridge, as OpenCode's `local` entry. The
  * distro's sessions live in its own SQLite database, which is never opened over
  * the share: the session id, the transcript and the auto_command check ask the
@@ -54,6 +54,8 @@ import {
   parseOpenCodeSessionList,
   type DistroOpenCodeSession,
 } from '../../src/main/agent/adapters/opencode/distro-sessions';
+import { activityPluginUrl } from '../../src/main/agent/adapters/opencode/command-builder';
+import { resolvePluginScript } from '../../src/main/agent/shared/bridge-utils';
 import { createOpenCodeCommandInjectionVerifier, findOpenCodeSubmittedTextInMessages } from '../../src/main/agent/adapters/opencode/command-injection-verifier';
 import { cliPathForTarget, placeFromStored, toStoredCliTarget, type CliTarget, type execCliForTarget } from '../../src/main/agent/shared/cli-target';
 import { wslHookPaths } from '../../src/main/agent/shared/wsl-hook-transport';
@@ -115,8 +117,8 @@ function sessionOptions(cliTarget: CliTarget): SpawnCommandOptions {
   };
 }
 
-function configOf(env: Record<string, string> | null): { mcp: Record<string, unknown> } {
-  return JSON.parse(env?.OPENCODE_CONFIG_CONTENT ?? '{}') as { mcp: Record<string, unknown> };
+function configOf(env: Record<string, string> | null): { mcp: Record<string, unknown>; plugin?: string[] } {
+  return JSON.parse(env?.OPENCODE_CONFIG_CONTENT ?? '{}') as { mcp: Record<string, unknown>; plugin?: string[] };
 }
 
 function exportOf(messages: OpenCodeRemoteMessageEntry[]): string {
@@ -155,6 +157,28 @@ describe('an OpenCode session in a WSL distro', () => {
     expect(configOf(adapter.buildEnv(sessionOptions(targetOn('mirrored')))).mcp.kangentic).toEqual({
       type: 'remote', url: MCP_URL, enabled: true, headers: { 'X-Kangentic-Token': TOKEN },
     });
+  });
+
+  it('names the packaged plugin by the URL the distro reads it at, and installs nothing', () => {
+    expect(activityPluginUrl('C:\\Program Files\\Kangentic\\resources\\app.asar.unpacked\\.vite\\build\\plugins\\opencode\\kangentic-activity.mjs', targetOn('nat')))
+      .toBe('file:///mnt/c/Program%20Files/Kangentic/resources/app.asar.unpacked/.vite/build/plugins/opencode/kangentic-activity.mjs');
+    // A distro has no path for another machine's share, and naming one would fail in the TUI.
+    expect(activityPluginUrl('\\\\fileserver\\apps\\kangentic-activity.mjs', targetOn('nat'))).toBeNull();
+    expect(activityPluginUrl('\\\\wsl.localhost\\Debian\\opt\\kangentic-activity.mjs', targetOn('nat'))).toBeNull();
+    expect(activityPluginUrl('\\\\wsl.localhost\\Ubuntu\\opt\\kangentic-activity.mjs', targetOn('nat'))).toBe('file:///opt/kangentic-activity.mjs');
+
+    const adapter = new OpenCodeAdapter();
+    const target = targetOn('nat');
+    const options = { ...sessionOptions(target), mcpServerEnabled: false };
+    // A copy an earlier release installed in the project is removed, and a distro spawn installs none.
+    const leftover = path.join(options.cwd, '.opencode', 'plugins', 'kangentic-activity.js');
+    fs.mkdirSync(path.dirname(leftover), { recursive: true });
+    fs.writeFileSync(leftover, '// kangentic-activity\nexport default {};\n');
+    adapter.buildCommand(options);
+    const expected = activityPluginUrl(resolvePluginScript('opencode', 'kangentic-activity'), target);
+    expect(expected).toMatch(/^file:\/\/\//);
+    expect(configOf(adapter.buildEnv(options))).toEqual({ plugin: [expected] });
+    expect(fs.existsSync(path.join(options.cwd, '.opencode'))).toBe(false);
   });
 
   it('reads the transcript from the distro CLI\'s export, never this machine\'s database', async () => {

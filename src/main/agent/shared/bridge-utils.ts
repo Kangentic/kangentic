@@ -30,9 +30,10 @@ export function resolveBridgeScript(name: string): string {
  * and get copied into `.vite/build/plugins/<adapterName>/` by the build
  * step so production resolution mirrors source layout.
  *
- * Used by adapters whose target CLI loads ESM plugins from a project
- * directory (e.g. OpenCode's `.opencode/plugins/`). Kangentic copies
- * the resolved file into the project at spawn time.
+ * Used by adapters whose target CLI loads ESM plugins: OpenCode 1 is given
+ * the resolved file's URL, and OpenCode 2 a copy in a project directory
+ * (`.opencode/plugins/`) at spawn time. The CLI reads the file itself, so it
+ * must be outside the asar.
  */
 export function resolvePluginScript(adapterName: string, name: string): string {
   const candidates = [
