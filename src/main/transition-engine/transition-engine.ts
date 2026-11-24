@@ -255,8 +255,6 @@ interface ResolvedLaunch {
   followUpJoined: boolean;
   /** How the opening prompt reaches the agent, for the session-id report. */
   openingPrompt: OpeningPromptDelivery;
-  /** `launchKeyOf` for this launch, which an adoption compares. */
-  launchKey: string;
   /**
    * The adapter may take this launch's first prompt typed
    * (`firstPromptMayBeTyped`): it draws its input box in the alternate screen
@@ -786,7 +784,7 @@ export class TransitionEngine {
    * of building the command: the session's output paths, the shell, the CLI
    * path the shell can run, and the command options. It starts nothing, so an
    * adoption can compute the launch it would make and compare it with the one
-   * an early agent made (`launchKey`). Resolving the account may refresh the
+   * an early agent made (`launchKeyOf`). Resolving the account may refresh the
    * account folder and copy a resumed conversation's plan file into it; both
    * leave the same files however often they run.
    */
@@ -911,7 +909,6 @@ export class TransitionEngine {
       prompt,
       followUpJoined,
       openingPrompt: promptText === null ? 'none' : promptKeptOff ? 'typed' : 'command_line',
-      launchKey: launchKeyOf(input.agentName, commandOptions),
       inputInAlternateScreen,
       resumeAccount: resumeAccountMatch(conversationAccountId, account),
     };
@@ -1215,8 +1212,10 @@ export class TransitionEngine {
 
     // Resolved before a fresh conversation's id, which depends on the prompt the
     // command ends up carrying: the handoff and a follow-up are in it by now, and
-    // one that will be typed in is not. It starts nothing, so an abort below
-    // leaves nothing behind.
+    // one that will be typed in is not. So nothing it decides may depend on that
+    // id, which the command options get below. It starts nothing, so an abort
+    // below leaves nothing behind, and a spawn aborted already resolves nothing.
+    signal?.throwIfAborted();
     const launch = await this.resolveLaunch({
       ...launchBase, canResume, ptySessionId, agentSessionId: canResume ? resumedAgentSessionId : null, prompt,
       promptFollowUp: carriedFollowUp,
@@ -1520,8 +1519,8 @@ export class TransitionEngine {
       console.log(`[spawnAgent] Early agent for task ${taskLabel} not adopted: it is no longer running`);
       return null;
     }
-    const { launchKey, commandOptions: adoptedOptions } = await this.resolveLaunch(launchInput);
-    if (launchKey !== earlyAgent.launchKey) {
+    const { commandOptions: adoptedOptions } = await this.resolveLaunch(launchInput);
+    if (launchKeyOf(agentName, adoptedOptions) !== earlyAgent.launchKey) {
       console.log(`[spawnAgent] Early agent for task ${taskLabel} not adopted: the spawn now launches it differently`);
       return null;
     }
@@ -1727,7 +1726,7 @@ export class TransitionEngine {
       agentSessionId,
       command,
       cwd,
-      launchKey: launch.launchKey,
+      launchKey: launchKeyOf(agentName, launch.commandOptions),
       launchedAt,
       teardown: async () => {
         // pty-teardown-grace: kill, take the exit wait while the row exists,

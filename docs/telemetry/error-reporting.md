@@ -726,7 +726,7 @@ in one Sentry org, one triage surface.
     or `unknown` where the spawn did not say), `create_chat` (how a fresh start got the id before
     launch: `ok`, or the CLI's miss, `failed`, `timeout` or `no_id`, from the adapter's
     `createSessionId`; `aborted` when the spawn stopped waiting for it; `not_asked` for a CLI that
-    takes Kangentic's id, one that cannot create one, a run that reports its own, and a resume;
+    takes Kangentic's id, one that cannot create one, a run that reports its own, an agent started during a worktree's setup script, and a resume;
     `unknown` where the spawn did not say), `hook_seen`, `agent_started` and `first_output`
     (`yes`, `no`, at the window; `hook_seen` is a line the agent's own hooks wrote to the
     session's events file, and no longer counts PTY output or the engine's watchdog standing in
