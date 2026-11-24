@@ -27,6 +27,13 @@ const HELP_TIMEOUT_MS = 5000;
 const MODELS_TIMEOUT_MS = 10000;
 
 let cache: { cliPath: string; capabilities: AgentCapabilities } | null = null;
+/**
+ * The unforced read still running. A second unforced caller for the same CLI
+ * shares it and starts no process of its own: a spawn reads the help before it
+ * builds its command, and the agent list reads the same CLI a few seconds after
+ * that spawn, while a slow CLI is still answering the first.
+ */
+let inFlight: { cliPath: string; read: Promise<AgentCapabilities> } | null = null;
 
 /** Flags whose presence the command builder checks before passing them. */
 export interface AntigravityHelpFeatures {
@@ -51,6 +58,7 @@ export function antigravityHelpFeatures(cliPath: string): AntigravityHelpFeature
 /** Test-only: reset the discovery caches between cases. */
 export function resetAntigravityCapabilityCacheForTests(): void {
   cache = null;
+  inFlight = null;
   helpFeaturesByCliPath.clear();
 }
 
@@ -141,14 +149,24 @@ export function parseModelsOutput(stdout: string): { models: string[]; displayNa
  * failed help read yields no override support, a failed models fetch yields
  * override support with no list (the renderer falls back to a free-form
  * input). Cached per cliPath because the models list is a network fetch;
- * `forceRefresh` (the settings panel's refresh affordance) bypasses it.
+ * `forceRefresh` (the settings panel's refresh affordance) bypasses it. An
+ * unforced call made while another is reading the same CLI shares that read.
  */
 export async function discoverAntigravityCapabilities(
   cliPath: string,
   forceRefresh = false,
 ): Promise<AgentCapabilities> {
-  if (!forceRefresh && cache && cache.cliPath === cliPath) return cache.capabilities;
+  if (forceRefresh) return readAntigravityCapabilities(cliPath);
+  if (cache && cache.cliPath === cliPath) return cache.capabilities;
+  if (inFlight?.cliPath === cliPath) return inFlight.read;
+  const read = readAntigravityCapabilities(cliPath).finally(() => {
+    if (inFlight?.read === read) inFlight = null;
+  });
+  inFlight = { cliPath, read };
+  return read;
+}
 
+async function readAntigravityCapabilities(cliPath: string): Promise<AgentCapabilities> {
   // A distro whose facts cannot be read cannot be asked either.
   const target = await resolveCliTarget(cliPath, true).catch(() => undefined);
   if (target === undefined) return { supportsModelOverride: false, effortLevels: [] };

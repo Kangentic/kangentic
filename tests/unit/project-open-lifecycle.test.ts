@@ -300,6 +300,7 @@ vi.mock('../../src/main/workflows/workflow-agent', async (importOriginal) => ({
 // Import under test (after all vi.mock declarations)
 // ---------------------------------------------------------------------------
 
+import { BOOT_SETTLE_FLOOR_MS, beginBoot, isBootSettled, noteWindowLoaded, resetBootSettleForTests } from '../../src/main/boot-settle';
 import { trackEvent } from '../../src/main/analytics/analytics';
 import { reportHandledError } from '../../src/main/analytics/error-reporting';
 import fs from '../../src/main/git/original-fs';
@@ -558,6 +559,53 @@ describe('the ownership gate at a cold open', () => {
       expect(state.callOrder).toEqual(['sweepAutomationRuns', 'resumeSuspendedSessions', 'autoSpawnTasks']);
       expect(state.restoreTimeline).toContain('startCommandTerminalRestore');
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 1a. The cold-open pass is launch work (boot-settle.ts)
+// ---------------------------------------------------------------------------
+
+describe('the cold-open pass of openProjectByPath holds the launch from settling', () => {
+  /** Lets setImmediate-scheduled work and the promise chains behind it run. */
+  async function flushUntil(condition: () => boolean): Promise<void> {
+    for (let attempt = 0; attempt < 100 && !condition(); attempt += 1) {
+      await flushSetImmediate();
+    }
+    expect(condition()).toBe(true);
+  }
+
+  afterEach(() => {
+    resetBootSettleForTests();
+    vi.useRealTimers();
+  });
+
+  // Red-green: drop the `trackBootWork(...)` wrapper in openProjectByPath and the floor runs
+  // out while the pass is held, so the launch settles and the first assertion fails.
+  it('does not settle past the floor while the pass runs, and settles once it returns', async () => {
+    // Real setImmediate stays, for the flush above. Only the settle timers and the clock are fake.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    beginBoot();
+    noteWindowLoaded();
+    const resumeGate = createDeferred();
+    vi.mocked(resumeSuspendedSessions).mockImplementationOnce(async () => {
+      state.callOrder.push('resumeSuspendedSessions');
+      await resumeGate.promise;
+    });
+    const context = createMockContext();
+    const project = makeProject();
+    context.projectRepo.list.mockReturnValue([project]);
+    state.existingPaths.add(project.path);
+
+    await openProjectByPath(asIpcContext(context), project.path);
+    await flushUntil(() => state.callOrder.includes('resumeSuspendedSessions'));
+
+    await vi.advanceTimersByTimeAsync(BOOT_SETTLE_FLOOR_MS + 5_000);
+    expect(isBootSettled()).toBe(false);
+
+    resumeGate.resolve();
+    await flushUntil(() => isBootSettled());
+    expect(isBootSettled()).toBe(true);
   });
 });
 

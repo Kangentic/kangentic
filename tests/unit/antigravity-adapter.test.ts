@@ -60,6 +60,13 @@ vi.mock('../../src/main/agent/adapters/antigravity/print-runner', async (importO
   return { ...actual, runAntigravityPrint: vi.fn() };
 });
 
+// ensureTrust seeds the real agy settings file under the home directory before
+// it waits for discovery. The warm-up tests below care about the wait only.
+vi.mock('../../src/main/agent/adapters/antigravity/trust-manager', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/agent/adapters/antigravity/trust-manager')>();
+  return { ...actual, ensureWorkspaceTrust: vi.fn(async () => undefined) };
+});
+
 import { exec, execFile } from 'node:child_process';
 import {
   AntigravityAdapter,
@@ -1507,6 +1514,107 @@ describe('discoverAntigravityCapabilities', () => {
 
     expect(capabilities.effortLevels).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
     expect(antigravityHelpFeatures('/usr/bin/agy')).toEqual(AGY_1_4_12_FEATURES);
+  });
+});
+
+describe('discoverAntigravityCapabilities shares a read that is still running', () => {
+  const execMock = exec as unknown as ReturnType<typeof vi.fn>;
+  const execFileMock = execFile as unknown as ReturnType<typeof vi.fn>;
+  const HELP_WITH_MODEL = 'Usage: agy\n  --model <name>  Model for the current CLI session\n';
+  type ExecCallback = (error: Error | null, result?: { stdout: string; stderr: string }) => void;
+
+  let releaseHelp: () => void;
+  /** Starts of the help read: one per read of the CLI, since a read starts with --help. */
+  function helpStarts(): number {
+    return [...execMock.mock.calls, ...execFileMock.mock.calls].filter((invocation) => {
+      const [first, second] = invocation as unknown[];
+      return (typeof first === 'string' && first.includes('--help')) || (Array.isArray(second) && second.includes('--help'));
+    }).length;
+  }
+
+  beforeEach(() => {
+    execMock.mockReset();
+    execFileMock.mockReset();
+    resetAntigravityCapabilityCacheForTests();
+    // Every --help answers once released, so a read stays in flight until the test says.
+    const helpGate = new Promise<void>((resolve) => {
+      releaseHelp = resolve;
+    });
+    const respond = (...invocationArguments: unknown[]): void => {
+      const callback = invocationArguments[invocationArguments.length - 1] as ExecCallback;
+      void helpGate.then(() => callback(null, { stdout: HELP_WITH_MODEL, stderr: '' }));
+    };
+    execMock.mockImplementation(respond);
+    execFileMock.mockImplementation(respond);
+  });
+
+  it('starts the CLI once for two unforced calls made while the first is in flight', async () => {
+    const first = discoverAntigravityCapabilities('/usr/bin/agy');
+    await vi.waitFor(() => expect(helpStarts()).toBe(1));
+    const second = discoverAntigravityCapabilities('/usr/bin/agy');
+
+    releaseHelp();
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+
+    expect(helpStarts()).toBe(1);
+    expect(secondResult).toBe(firstResult);
+    expect(firstResult.supportsModelOverride).toBe(true);
+  });
+
+  it('starts its own read for a forced call made during an unforced one', async () => {
+    const unforced = discoverAntigravityCapabilities('/usr/bin/agy');
+    await vi.waitFor(() => expect(helpStarts()).toBe(1));
+
+    const forced = discoverAntigravityCapabilities('/usr/bin/agy', true);
+    await vi.waitFor(() => expect(helpStarts()).toBe(2));
+
+    releaseHelp();
+    await Promise.all([unforced, forced]);
+  });
+
+  it('answers a new unforced call from the cache once the read has landed', async () => {
+    const read = discoverAntigravityCapabilities('/usr/bin/agy');
+    await vi.waitFor(() => expect(helpStarts()).toBe(1));
+    releaseHelp();
+    const landed = await read;
+    const callsAfterRead = execMock.mock.calls.length + execFileMock.mock.calls.length;
+
+    const later = await discoverAntigravityCapabilities('/usr/bin/agy');
+
+    expect(later).toBe(landed);
+    expect(execMock.mock.calls.length + execFileMock.mock.calls.length).toBe(callsAfterRead);
+  });
+});
+
+describe('AntigravityAdapter.ensureTrust warms capability discovery', () => {
+  function adapterWithLiveCli(): { fresh: AntigravityAdapter; discover: ReturnType<typeof vi.fn> } {
+    const fresh = new AntigravityAdapter();
+    const internals = fresh as unknown as { detector: { liveFoundPaths: () => string[] } };
+    vi.spyOn(internals.detector, 'liveFoundPaths').mockReturnValue(['/usr/local/bin/agy']);
+    const discover = vi.spyOn(fresh, 'discoverCapabilities').mockResolvedValue({ supportsModelOverride: true }) as unknown as ReturnType<typeof vi.fn>;
+    return { fresh, discover };
+  }
+
+  it('reads the capabilities of the CLI the spawn detected, once', async () => {
+    const { fresh, discover } = adapterWithLiveCli();
+
+    await fresh.ensureTrust('/some/dir');
+    await fresh.ensureTrust('/some/other/dir');
+
+    expect(discover).toHaveBeenCalledTimes(1);
+    expect(discover).toHaveBeenCalledWith('/usr/local/bin/agy');
+  });
+
+  it('reads them again after the detection cache was invalidated', async () => {
+    // A changed CLI path is detected anew, and its help flags are read again only
+    // because invalidating the cache also forgot the warm-up's finished reads.
+    const { fresh, discover } = adapterWithLiveCli();
+
+    await fresh.ensureTrust('/some/dir');
+    fresh.invalidateDetectionCache();
+    await fresh.ensureTrust('/some/dir');
+
+    expect(discover).toHaveBeenCalledTimes(2);
   });
 });
 

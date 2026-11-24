@@ -112,6 +112,9 @@ const { AccountUsageRefresher } = await import('../../src/main/accounts/account-
 const { AgentAccountRepository } = await import('../../src/main/db/repositories/agent-account-repository');
 const { runGlobalMigrations } = await import('../../src/main/db/migrations/global-schema');
 const { IPC } = await import('../../src/shared/ipc-channels');
+const { beginBoot, noteWindowLoaded, resetBootSettleForTests, isBootSettled, BOOT_SETTLE_FLOOR_MS } = await import('../../src/main/boot-settle');
+// The mock above stands in for the refresher everywhere else; the startup gate needs the real one.
+const { AccountUsageRefresher: ActualAccountUsageRefresher } = await vi.importActual<typeof import('../../src/main/accounts/account-usage')>('../../src/main/accounts/account-usage');
 const { EventType } = await import('../../src/shared/types');
 const { forgetRecapSession, markRecapSession, recapKindOf, resetRecapSessionsForTests, whenRecapTurnEnds } = await import('../../src/main/automations/turn-end/recap-turns');
 
@@ -802,6 +805,82 @@ describe('checking a home for a replaced login', () => {
     sessionManager.emit('session-removed', 'gone');
     expect(hoisted.refresher.checkHome).toHaveBeenCalledTimes(1);
     expect(hoisted.refresher.checkHome).toHaveBeenCalledWith(own.id);
+  });
+});
+
+// The cards may be answered from an earlier launch; everything that runs the CLI detects it for
+// real. account-service-behavior.test.ts injects its own lookups, so only registration shows
+// which of the two a path got. Red-green: swap the `forList` argument of `listCliPath` and
+// `resolveCliPath` in handlers/accounts.ts and both tests fail.
+describe('which detection each account path asks the adapter for', () => {
+  function seedDetectingAgent(): ReturnType<typeof vi.fn> {
+    const detect = vi.fn(async () => ({ found: true, path: '/usr/bin/test-cli', version: '1.0.0' }));
+    hoisted.adapters = { 'move-agent': { ...(adapterFor('move-agent') as Record<string, unknown>), detect } };
+    seedAccounts('move-agent');
+    return detect;
+  }
+
+  it('lets the account cards read a remembered detection, and nothing else', async () => {
+    const detect = seedDetectingAgent();
+    register();
+    detect.mockClear();
+
+    await invoke(IPC.ACCOUNTS_LIST);
+
+    expect(detect).toHaveBeenCalled();
+    for (const call of detect.mock.calls) {
+      expect(call).toEqual([null, { allowRemembered: true }]);
+    }
+  });
+
+  it('detects for real, with no options, for the CLI path and the CLI version that a run uses', async () => {
+    const detect = seedDetectingAgent();
+    const dependencies = dependenciesOf(register());
+    detect.mockClear();
+
+    await dependencies.resolveCliPath('move-agent');
+    await dependencies.resolveCliVersion('move-agent');
+
+    expect(detect.mock.calls).toEqual([[null], [null]]);
+  });
+});
+
+// The usage pass starts a CLI per account, so registration holds it behind the launch's settle
+// signal. The refresher itself is the real class here, built from the options registration gave
+// the mocked constructor. Red-green: drop `startupGate: whenBootSettled` and the pass runs at the
+// startup delay, which fails the first assertion.
+describe('the startup usage pass waits for the launch to settle', () => {
+  const STARTUP_DELAY_MS = 20_000;
+
+  afterEach(() => {
+    resetBootSettleForTests();
+  });
+
+  it('does not run at the startup delay while the launch is unsettled, and runs once it settles', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+    hoisted.adapters = { 'move-agent': adapterFor('move-agent') };
+    beginBoot();
+    register();
+    const constructions = vi.mocked(AccountUsageRefresher).mock.calls as unknown as Array<[unknown, ConstructorParameters<typeof ActualAccountUsageRefresher>[1]]>;
+    const [service, options] = constructions[constructions.length - 1];
+    const refresher = new ActualAccountUsageRefresher(service as ConstructorParameters<typeof ActualAccountUsageRefresher>[0], options);
+    const refreshAll = vi.spyOn(refresher, 'refreshAll').mockResolvedValue(undefined);
+    refresher.start();
+
+    await vi.advanceTimersByTimeAsync(STARTUP_DELAY_MS + 1);
+    expect(isBootSettled()).toBe(false);
+    expect(refreshAll).not.toHaveBeenCalled();
+
+    // The window loads, and the floor after it is the earliest the launch can settle.
+    noteWindowLoaded();
+    await vi.advanceTimersByTimeAsync(BOOT_SETTLE_FLOOR_MS - 1);
+    expect(refreshAll).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(isBootSettled()).toBe(true);
+    expect(refreshAll).toHaveBeenCalledTimes(1);
+    expect(refreshAll).toHaveBeenCalledWith('startup');
+    refresher.dispose();
   });
 });
 

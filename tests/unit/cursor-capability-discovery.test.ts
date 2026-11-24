@@ -241,6 +241,66 @@ describe('discoverCursorCapabilities', () => {
       expect(execMock.mock.calls.length + execFileMock.mock.calls.length).toBeGreaterThan(callsAfterFirst);
     });
 
+    describe('a read that is still running', () => {
+      /** Starts of the help read: every read of the CLI starts with one. */
+      function helpStarts(): number {
+        return [...execMock.mock.calls, ...execFileMock.mock.calls].filter(
+          (invocation) => !isListModelsCall(invocation as unknown[]),
+        ).length;
+      }
+
+      let releaseHelp: () => void;
+      beforeEach(() => {
+        // Every help read answers once released, so a read stays in flight until the test says.
+        const helpGate = new Promise<void>((resolve) => {
+          releaseHelp = resolve;
+        });
+        const respond = (...args: unknown[]): Promise<{ stdout: string; stderr: string }> => {
+          if (isListModelsCall(args)) return Promise.resolve({ stdout: LIST_MODELS_OUTPUT, stderr: '' });
+          return helpGate.then(() => ({ stdout: HELP_WITH_MODEL, stderr: '' }));
+        };
+        execMock.mockImplementation(respond);
+        execFileMock.mockImplementation(respond);
+      });
+
+      it('is shared by a second unforced call for the same cliPath, which starts no CLI', async () => {
+        const first = discoverCursorCapabilities('/usr/bin/cursor-agent');
+        await vi.waitFor(() => expect(helpStarts()).toBe(1));
+        const second = discoverCursorCapabilities('/usr/bin/cursor-agent');
+
+        releaseHelp();
+        const [firstResult, secondResult] = await Promise.all([first, second]);
+
+        expect(helpStarts()).toBe(1);
+        expect(secondResult).toBe(firstResult);
+        expect(firstResult.models).toContain('gpt-5.3-codex-high');
+      });
+
+      it('is not shared by a forced call, which starts its own read', async () => {
+        const unforced = discoverCursorCapabilities('/usr/bin/cursor-agent');
+        await vi.waitFor(() => expect(helpStarts()).toBe(1));
+
+        const forced = discoverCursorCapabilities('/usr/bin/cursor-agent', true);
+        await vi.waitFor(() => expect(helpStarts()).toBe(2));
+
+        releaseHelp();
+        await Promise.all([unforced, forced]);
+      });
+
+      it('leaves the next unforced call answered from the cache once it has landed', async () => {
+        const read = discoverCursorCapabilities('/usr/bin/cursor-agent');
+        await vi.waitFor(() => expect(helpStarts()).toBe(1));
+        releaseHelp();
+        const landed = await read;
+        const callsAfterRead = execMock.mock.calls.length + execFileMock.mock.calls.length;
+
+        const later = await discoverCursorCapabilities('/usr/bin/cursor-agent');
+
+        expect(later).toBe(landed);
+        expect(execMock.mock.calls.length + execFileMock.mock.calls.length).toBe(callsAfterRead);
+      });
+    });
+
     it('caches a failed discovery until forceRefresh (pins current behavior)', async () => {
       // This pins the CURRENT implementation: `discoverCursorCapabilities` writes
       // `cache = { cliPath, capabilities }` unconditionally, even when the listing

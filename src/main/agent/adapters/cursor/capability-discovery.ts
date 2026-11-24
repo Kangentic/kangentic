@@ -30,10 +30,18 @@ const HELP_TIMEOUT_MS = 5000;
 const MODELS_TIMEOUT_MS = 10000;
 
 let cache: { cliPath: string; capabilities: AgentCapabilities } | null = null;
+/**
+ * The unforced read still running. A second unforced caller for the same CLI
+ * shares it and starts no process of its own: a spawn reads the list before it
+ * builds its command, and the agent list reads the same CLI a few seconds after
+ * that spawn, while a slow CLI is still answering the first.
+ */
+let inFlight: { cliPath: string; read: Promise<AgentCapabilities> } | null = null;
 
 /** Test-only: reset the discovery cache between cases. */
 export function resetCursorCapabilityCacheForTests(): void {
   cache = null;
+  inFlight = null;
 }
 
 /**
@@ -138,14 +146,24 @@ export function parseCursorModelsOutput(
  * read yields no override support, a failed listing yields override support
  * with no list (the renderer falls back to a free-form input). Cached per
  * cliPath because the listing is a network fetch; `forceRefresh` (the model
- * dropdown's rescan-on-open) bypasses it.
+ * dropdown's rescan-on-open) bypasses it. An unforced call made while another
+ * is reading the same CLI shares that read.
  */
 export async function discoverCursorCapabilities(
   cliPath: string,
   forceRefresh = false,
 ): Promise<AgentCapabilities> {
-  if (!forceRefresh && cache && cache.cliPath === cliPath) return cache.capabilities;
+  if (forceRefresh) return readCursorCapabilities(cliPath);
+  if (cache && cache.cliPath === cliPath) return cache.capabilities;
+  if (inFlight?.cliPath === cliPath) return inFlight.read;
+  const read = readCursorCapabilities(cliPath).finally(() => {
+    if (inFlight?.read === read) inFlight = null;
+  });
+  inFlight = { cliPath, read };
+  return read;
+}
 
+async function readCursorCapabilities(cliPath: string): Promise<AgentCapabilities> {
   // A distro whose facts cannot be read cannot be asked either: no override
   // support, as for a help read that failed. Not cached, since the facts read
   // keeps no failure either: a distro still booting answers the next ask.
