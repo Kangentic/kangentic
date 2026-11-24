@@ -62,9 +62,9 @@ function collectSourceFiles(directory: string): string[] {
 
 /** Every `file:line` of code under src/main matching `pattern`, outside
  *  `allowed`. Comment lines are skipped: prose may name what code may not do. */
-function findOutside(pattern: RegExp, allowed: ReadonlySet<string>): string[] {
+function findOutside(pattern: RegExp, allowed: ReadonlySet<string>, roots: readonly string[] = ['src/main']): string[] {
   const offenders: string[] = [];
-  for (const filePath of collectSourceFiles(path.join(REPO_ROOT, 'src/main'))) {
+  for (const filePath of roots.flatMap((root) => collectSourceFiles(path.join(REPO_ROOT, root)))) {
     const relativePath = path.relative(REPO_ROOT, filePath).replace(/\\/g, '/');
     if (allowed.has(relativePath)) continue;
     fs.readFileSync(filePath, 'utf-8').split('\n').forEach((line, index) => {
@@ -225,13 +225,14 @@ describe('pty host out-of-process boundary', () => {
     expect(hostExec).toMatch(/launchesOwnBinary\(request\)/);
     // Every promisified exec on main goes through off-main-exec.ts, so its
     // spawn runs in the host. The exception runs where no host is reachable.
+    // Dev tooling runs in main too, so it is scanned with it.
     const allowed = new Set([
       'src/main/utility-process/off-main-exec.ts',
       // Captures the login shell's environment at startup, before the host exists.
       'src/main/shell-env.ts',
     ]);
     expect(
-      findOutside(/promisify\((exec|execFile)\)/, allowed),
+      findOutside(/promisify\((exec|execFile)\)/, allowed, ['src/main', 'src/devtools']),
       'Import execAsync / execFileAsync from src/main/utility-process/off-main-exec.ts instead.',
     ).toEqual([]);
   });

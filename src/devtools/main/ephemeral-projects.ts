@@ -26,18 +26,15 @@
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { ipcMain } from 'electron';
 import { IPC } from '../../shared/ipc-channels';
 import { getProjectDb } from '../../main/db/database';
+import { execFileAsync } from '../../main/utility-process/off-main-exec';
 import { agentRegistry } from '../../main/agent/agent-registry';
 import { DEFAULT_AGENT } from '../../shared/types';
 import { isSamePath } from '../../shared/paths';
 import type { BoardColumnConfig, PermissionMode, Project } from '../../shared/types';
 import type { IpcContext } from '../../main/ipc/ipc-context';
-
-const execFileAsync = promisify(execFile);
 
 // Module state; resets to 0 when the main process restarts (fresh preview boot).
 let previewProjectIndex = 0;

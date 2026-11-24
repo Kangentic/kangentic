@@ -7,8 +7,8 @@ const mocks = vi.hoisted(() => ({
   machineId: vi.fn(),
 }));
 
-vi.mock('node-machine-id', () => ({
-  machineId: mocks.machineId,
+vi.mock('../../src/main/analytics/machine-id', () => ({
+  readHashedMachineId: mocks.machineId,
 }));
 
 import { deriveClientId, resolveClientId } from '../../src/main/analytics/client-id';
@@ -80,11 +80,11 @@ describe('resolveClientId', () => {
     expect(JSON.parse(fs.readFileSync(cacheFilePath, 'utf-8'))).toEqual({ clientId });
   });
 
-  it('falls back to a random id when machineId() hangs past the 3000ms timeout, without waiting for it to ever settle', async () => {
-    // machineId() never resolves or rejects on its own (simulates a hung
-    // subprocess, e.g. reg.exe/ioreg/dbus blocked by AV or a locked-down
-    // environment). Only the internal `withTimeout` race should be able to
-    // unblock resolveClientId here.
+  it('falls back to a random id when the machine id read hangs past the 3000ms timeout, without waiting for it to ever settle', async () => {
+    // The read never resolves or rejects on its own (simulates a hung
+    // subprocess, e.g. reg.exe or ioreg blocked by AV or a locked-down
+    // environment, or a pty host that never answers). Only the internal
+    // `withTimeout` race should be able to unblock resolveClientId here.
     mocks.machineId.mockReturnValue(new Promise<string>(() => {}));
 
     vi.useFakeTimers();
@@ -93,7 +93,7 @@ describe('resolveClientId', () => {
 
       // Advance exactly to the documented MACHINE_ID_TIMEOUT_MS boundary so
       // this test is falsifiable against a regression that widens or removes
-      // the timeout (a change back to a bare `await machineId()` would leave
+      // the timeout (a change back to a bare `await readHashedMachineId()` would leave
       // `pending` unresolved forever and this awaited assertion would hang
       // until vitest's own test timeout fails the test).
       await vi.advanceTimersByTimeAsync(3000);

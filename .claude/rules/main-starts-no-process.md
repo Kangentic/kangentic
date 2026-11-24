@@ -31,8 +31,9 @@ every start on it.
 - **Never a synchronous start.** `execSync`, `execFileSync` and `spawnSync` hold main for the
   child's whole run, not only its start. The quit failsafe in `shutdown.ts` is the one place where
   that is the point.
-- **A package that starts a process from its caller's thread stays out of main.** `font-list` is
-  banned by name. Read a new dependency for `child_process` before main imports it.
+- **A package that starts a process from its caller's thread stays out of main.** `font-list` and
+  `node-machine-id` are banned by name, each replaced by code of ours. Read a new dependency for
+  `child_process` before main imports it.
 - **An exception is classified with its reason, in the test below.** The reasons that hold: the
   start is a drop-in's own no-host fallback, it runs before the host exists, it is the quit, it
   stops a run whose host died, the file is a host module main bundles only for the in-process host
