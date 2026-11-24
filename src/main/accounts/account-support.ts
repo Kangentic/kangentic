@@ -159,6 +159,7 @@ export function unreadableUsageKeysOf(record: Record<string, unknown>): string {
  * - `state-not-record`: that file parsed, but not to a record.
  * - `no-cache`: the file holds no usage reading, as before the CLI's first usage fetch in that
  *   home. Not reported for an account that never stored a reading (Sentry DESKTOP-4E).
+ * - `cache-stale`: the run worked and left a usage reading too old to count as its answer.
  */
 export type EmptyUsageReadReason =
   | 'run-failed'
@@ -169,12 +170,25 @@ export type EmptyUsageReadReason =
   | 'no-windows'
   | 'no-answer';
 
-/** What an adapter knows about a `run-failed` read: the error it caught, and how the run ended. */
+/** How old the usage a `cache-stale` read found was, as a fixed word for a report's tag. */
+export type UsageCacheAge = 'under_1h' | '1h_to_1d' | 'over_1d';
+
+const HOUR_MS = 60 * 60 * 1000;
+
+/** A cache's age as its fixed word: a cache that never refreshes reads apart from one that missed a pass. */
+export function usageCacheAgeOf(ageMs: number): UsageCacheAge {
+  if (ageMs < HOUR_MS) return 'under_1h';
+  return ageMs < 24 * HOUR_MS ? '1h_to_1d' : 'over_1d';
+}
+
+/** What an adapter knows about an empty read: for `run-failed`, the error and how the run ended; for `cache-stale`, the cache's age. */
 export interface EmptyUsageReadDetail {
   /** The error the CLI run rejected with. The service reports its class and errno, never its text. */
   cause?: unknown;
   /** How the run ended (`execRunFailureOf`), as fixed words. */
   runFailure?: ExecRunFailure;
+  /** How old the cache was (`usageCacheAgeOf`). */
+  cacheAge?: UsageCacheAge;
 }
 
 /**
@@ -185,11 +199,13 @@ export interface EmptyUsageReadDetail {
  */
 export class EmptyUsageReadError extends Error {
   readonly runFailure: ExecRunFailure | null;
+  readonly cacheAge: UsageCacheAge | null;
 
   constructor(readonly reason: EmptyUsageReadReason, detail: EmptyUsageReadDetail = {}) {
     super(`A usage read gave no windows (${reason})`, detail.cause === undefined ? undefined : { cause: detail.cause });
     this.name = 'EmptyUsageReadError';
     this.runFailure = detail.runFailure ?? null;
+    this.cacheAge = detail.cacheAge ?? null;
   }
 }
 

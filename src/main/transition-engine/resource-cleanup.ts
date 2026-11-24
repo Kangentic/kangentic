@@ -208,20 +208,23 @@ async function runTerminalTaskSweep(
     if (terminalTasks.size === 0) return NOTHING_LEFT_RUNNING;
     // Only what this sweep did. A process it left running (a window, a tmux
     // server) was reported when its task ended and is still there at every
-    // launch; naming it again would put the same toast up on every start.
-    const reportActed = (entries: LeftoverProcessEntry[]): void => {
+    // launch; naming it again would put the same toast up on every start. It goes
+    // to `onKept` instead, which shows nothing.
+    const reportActedAndHandOnKept = (entries: LeftoverProcessEntry[]): void => {
       const acted = entries.filter((entry) => entry.outcome !== 'kept');
       if (acted.length > 0) {
         leftovers.onReport(acted, new Map([...terminalTasks].map(([id, task]) => [id, task.title])), true);
       }
+      const kept = entries.filter((entry) => entry.outcome === 'kept');
+      if (kept.length > 0) leftovers.onKept?.(kept);
     };
     const entries = await sessionManager.reapTaskProcesses(
       projectPath,
       [...terminalTasks].map(([id, task]) => ({ id, worktreePath: task.worktreePath })),
-      // A reap the host finishes after main stopped waiting is reported then.
-      { stop: true, onLateEntries: reportActed, wslDistros: leftovers.wslDistrosOf?.([...terminalTasks.keys()]) ?? [] },
+      // A reap the host finishes after main stopped waiting is handled the same way then.
+      { stop: true, onLateEntries: reportActedAndHandOnKept, wslDistros: leftovers.wslDistrosOf?.([...terminalTasks.keys()]) ?? [] },
     );
-    reportActed(entries);
+    reportActedAndHandOnKept(entries);
     return reapVerdictOf(entries);
   } catch (error) {
     console.warn('[TASK-REAP] Startup sweep failed (non-fatal):', error);
@@ -234,6 +237,8 @@ export interface LeftoverSweepOptions {
   /** The user's "Stop leftover processes" setting, read when the sweep runs. */
   stoppingEnabled: () => boolean;
   onReport: (entries: LeftoverProcessEntry[], taskTitles: ReadonlyMap<string, string>, stoppingEnabled: boolean) => void;
+  /** What the sweep left running on purpose, which is never shown: a Done removal's retry asks whether it still runs. */
+  onKept?: (entries: LeftoverProcessEntry[]) => void;
   /** The WSL distros the tasks' sessions ran a CLI in, so the sweep reaps there too. */
   wslDistrosOf?: (taskIds: readonly string[]) => string[];
 }

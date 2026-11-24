@@ -3,7 +3,7 @@ import path from 'node:path';
 import PQueue from 'p-queue';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
-import { WorktreeManager, prepareWorktreeForRemoval, GitQueuePriority, type WorktreeRemovalCaller, type WorktreeRemovalOptions } from '../../git/worktree-manager';
+import { WorktreeManager, prepareWorktreeForRemoval, GitQueuePriority, type DoneRetryCaller, type WorktreeRemovalOptions } from '../../git/worktree-manager';
 import { NOTHING_LEFT_RUNNING, reapVerdictOf, type ReapVerdict } from './reap-verdict';
 import { waitForWorktreeCreation } from '../../git/worktree-creation-registry';
 import { scheduleRemovedWorktreeDeletion } from '../../git/removed-worktrees';
@@ -118,10 +118,11 @@ export async function reapTaskLeftovers(
         // The host finished a reap this call stopped waiting for. By now a Done
         // move has tried its worktree removal, which a process the reap had not
         // yet stopped can fail on Windows: retry it as a Stop from the list does.
+        // Published first, so the retry can ask about what this answer kept.
         onLateEntries: (lateEntries) => {
           publishLeftoverProcesses(context.mainWindow, lateEntries, taskTitles, stoppingEnabled, projectPath ?? null);
           const stoppedTaskIds = new Set(lateEntries.filter((entry) => entry.outcome === 'stopped').map((entry) => entry.taskId));
-          for (const taskId of stoppedTaskIds) void retryDoneWorktreeRemoval(context, projectPath ?? null, taskId);
+          for (const taskId of stoppedTaskIds) void retryDoneWorktreeRemoval(context, projectPath ?? null, taskId, { caller: 'done_retry_late_reap' });
         },
       },
     );
@@ -281,19 +282,43 @@ export function leftoverSweepOptions(context: IpcContext, projectPath: string): 
     onReport: (entries, taskTitles, stoppingEnabled) => {
       publishLeftoverProcesses(context.mainWindow, entries, taskTitles, stoppingEnabled, projectPath);
     },
+    // Never toasted: kept in mind for a later Done removal retry to ask about.
+    onKept: (entries) => leftoverProcessReports.rememberLeft(entries, projectPath),
   };
 }
 
 /**
- * After the user stopped a leftover process from the list, or a reap main had
- * stopped waiting for stopped one, retry removing its task's worktree when the
- * task is in Done and the worktree is still on disk.
+ * Whether a process a reap reported as left working inside this task's worktree
+ * still runs, so it holds the folder on Windows. Asked by identity of the pty
+ * host, never by a scan (`.claude/rules/task-process-tag.md`), and not at all when
+ * nothing was reported there. A process the host cannot answer for reads as not
+ * running, so a failure beside it still reports. One just stopped answers for
+ * itself, so no caller has to leave it out. Never throws, and waits at most the
+ * 5 s `checkReportedProcesses` gives the host, so the task lock is held no longer.
+ */
+async function reportedProcessStillInWorktree(context: IpcContext, projectPath: string, taskId: string): Promise<boolean> {
+  const left = leftoverProcessReports.leftInWorktree(projectPath, taskId);
+  if (left.length === 0) return false;
+  const answers = await context.sessionManager.checkReportedProcesses(left);
+  return answers.includes(true);
+}
+
+/**
+ * Retry removing a Done task's worktree that is still on disk: once, a little
+ * after the Done move failed to (`scheduleDoneWorktreeRemovalRetry`), after the
+ * user stopped a leftover process from the list or its recheck found one ended,
+ * and after a reap main had stopped waiting for stopped one. `caller` says which.
  * On Windows a process working in a directory blocks its removal, so a window
  * or a server the Done move left running is what kept it; without this, the
  * worktree waits for the next project open (`retryFailedDoneCleanups`).
  *
  * Best-effort and quiet: if something else still holds the directory, the
- * removal fails as it did at Done, and the same startup retry takes it.
+ * removal fails as it did at Done, and the same startup retry takes it. When
+ * that something is a process a reap reported in the worktree, the failure is
+ * counted and not reported: the process this retry waited for is gone, and the
+ * others the same reap kept are not (Sentry DESKTOP-3P on 0.62.0). Asked inside
+ * the lock, so it is current when two Stops queue and costs nothing once the
+ * worktree is gone.
  *
  * Main closes a project's database only to delete the project, and a late
  * reap answer can land after that close while the project is still listed.
@@ -304,8 +329,11 @@ export async function retryDoneWorktreeRemoval(
   context: IpcContext,
   projectPath: string | null,
   taskId: string,
-  /** The Done move's reap left a process in the worktree, and this retry comes before anything says it ended. */
-  options: Pick<WorktreeRemovalOptions, 'reapLeftRunning'> = {},
+  options: {
+    caller: DoneRetryCaller;
+    /** The Done move's reap left a process in the worktree, and this retry comes before anything says it ended. */
+    reapLeftRunning?: boolean;
+  },
 ): Promise<boolean> {
   if (!projectPath) return false;
   try {
@@ -317,10 +345,11 @@ export async function retryDoneWorktreeRemoval(
     return await withTaskLock(taskId, async () => {
       const task = tasks.getById(taskId);
       if (!task?.worktree_path || task.swimlane_id !== doneLane.id) return false;
-      return deleteTaskWorktree(context, task, tasks, projectPath, { caller: 'done_retry', reapLeftRunning: options.reapLeftRunning });
+      const reapLeftRunning = options.reapLeftRunning === true || await reportedProcessStillInWorktree(context, projectPath, taskId);
+      return deleteTaskWorktree(context, task, tasks, projectPath, { caller: options.caller, reapLeftRunning });
     });
   } catch (error) {
-    console.warn(`[TASK-REAP] Worktree removal retry after a stop failed for ${taskId.slice(0, 8)} (non-fatal):`, error);
+    console.warn(`[TASK-REAP] Worktree removal retry (${options.caller}) failed for ${taskId.slice(0, 8)} (non-fatal):`, error);
     return false;
   }
 }
@@ -352,7 +381,9 @@ const CHURN_READ_WAIT_MS = 15_000;
  *
  * `reapLeftRunning` is the Done move's reap verdict. A process the reap kept is
  * usually still there ten seconds later, so a retry that fails on it is counted
- * and not reported, as the Done move's own removal was.
+ * and not reported, as the Done move's own removal was. With a verdict that named
+ * nothing the retry still asks, since a reap that answered late may have named a
+ * process by now.
  */
 export function scheduleDoneWorktreeRemovalRetry(
   context: IpcContext,
@@ -364,7 +395,7 @@ export function scheduleDoneWorktreeRemovalRetry(
   if (!projectPath) return;
   const timer = setTimeout(() => {
     if (isShuttingDown()) return;
-    void retryDoneWorktreeRemoval(context, projectPath, taskId, options).then((removed) => {
+    void retryDoneWorktreeRemoval(context, projectPath, taskId, { caller: 'done_retry_delayed', reapLeftRunning: options.reapLeftRunning }).then((removed) => {
       if (removed) console.log(`[TASK_MOVE] Deleted worktree for task ${taskId.slice(0, 8)} on its retry after the Done move`);
     });
   }, delayMs);
@@ -716,7 +747,7 @@ export async function deleteTaskWorktree(
    * reap before it left a process in the worktree. Both reach the in-place
    * removal's failure report, never the move aside, which reports nothing.
    */
-  options: Pick<WorktreeRemovalOptions, 'reapLeftRunning'> & { caller?: Extract<WorktreeRemovalCaller, 'done_fallback' | 'done_retry'> } = {},
+  options: Pick<WorktreeRemovalOptions, 'reapLeftRunning'> & { caller?: 'done_fallback' | DoneRetryCaller } = {},
 ): Promise<boolean> {
   const resolvedProjectPath = projectPath ?? context.currentProjectPath;
   if (!task.worktree_path || !resolvedProjectPath) return false;

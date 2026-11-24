@@ -775,6 +775,11 @@ in one Sentry org, one triage surface.
     is what tells it. The caught error goes as its class and errno in the `cause` context. A
     failed run is sent from the second read in a row that fails for one account: one failed run
     during a network drop is not a defect, and a flag the CLI does not know fails every time.
+    A `cache-stale` read waits for a second in a row the same way, counted apart from failed runs.
+    Its run exited 0 and its own usage fetch refreshed nothing, which a network drop, a refused fetch
+    and a sign-in that needs renewing all look like. DESKTOP-4E's one on 0.62.0 was a first read, and
+    its cause is not known. It carries `cache_age` (`under_1h`, `1h_to_1d`, `over_1d`, or `unknown`)
+    and `agent_cli_version`, so a cache that never refreshes reads apart from one that missed a pass.
     A `no-windows` read carries `agent_cli_version` too. DESKTOP-4E's 0.61.0 event was one with
     no version, and a plan whose windows are all null looked the same as a Claude Code release
     that renamed them. The renamed case now has its own problem: a Claude cache whose
@@ -1242,12 +1247,18 @@ this".
   removal with that set sends `app_error` (`source: worktree_removal`, `reason: reap_left_running`,
   with `caller`, `profile`, `errno`) instead of an issue. The Done move hands the same verdict to its
   delayed retry ten seconds later, since the kept process is usually still there. A retry that a
-  Stop, a late reap answer or the row's recheck starts carries none: the process it waited for is
-  gone, so a failure then is reported. A reap that failed, or that the host had not answered in time,
-  names no task, and a failure after it reports. Sentry DESKTOP-3P was 15 events, every one `EBUSY`
-  on Windows. Its `holders: none` on 11 of them is no evidence against a kept process: the holder
-  scan (`findWorktreePathHolders`) reads command lines, and a process holding the folder only as its
-  working directory cannot be seen on Windows.
+  Stop, a late reap answer or the row's recheck starts has no verdict of its own. The process it
+  waited for is gone, and any other process the same reap kept in that worktree is not. DESKTOP-3P
+  came back on 0.62.0 from one of these three. So a retry with no verdict that names the task, the
+  delayed one included, first asks whether a process reported as left in that worktree still runs
+  (`leftInWorktree` in `leftover-process-reports.ts`, then `checkReportedProcesses`, by identity and
+  never by a scan). If one does, a failure is counted. If none does, or the host cannot say, it is
+  reported. What a startup sweep kept is remembered for the same question (`rememberLeft`), and
+  still never shown. A reap that failed, or that the host had not answered in time, names no task,
+  and a failure after it reports unless a late answer has named a process there since. Sentry
+  DESKTOP-3P was 15 events, every one `EBUSY` on Windows. Its `holders: none` on 11 of them is no
+  evidence against a kept process: the holder scan (`findWorktreePathHolders`) reads command lines,
+  and a process holding the folder only as its working directory cannot be seen on Windows.
 
   The cold open's retry of a Done task's removal (`caller: startup_retry`) takes the startup
   sweep's verdict the same way. The 0.62.0 recurrence of DESKTOP-3P was this retry, before it was
@@ -1262,7 +1273,10 @@ this".
 
   What still reports carries three more fixed values to split the rest. `caller` names the path
   that asked: `done_fallback` (a Done move's in-place delete after its move aside failed),
-  `done_retry`, `cleanup` (To Do, Backlog, delete), `stale_cleanup` (a failed creation's leftovers),
+  `done_retry_delayed` (its one retry ten seconds later), `done_retry_stop` (a Stop from the leftover
+  list, one that finished late included), `done_retry_recheck` (the list found a process had ended),
+  `done_retry_late_reap` (a reap main had stopped waiting for stopped one; 0.62.0 sent all four as
+  `done_retry`), `cleanup` (To Do, Backlog, delete), `stale_cleanup` (a failed creation's leftovers),
   `startup_retry`, `mcp_delete`, `project_delete`, `spare`, `create_clear`, or `other`. The stack
   cannot say: DESKTOP-3P's frames were cut at an `await` inside the removal. `path_class` is where
   the manual removal last failed: `root`, `.git`, `node_modules`, `other`, or `none` when the error

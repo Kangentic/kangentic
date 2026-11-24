@@ -90,7 +90,7 @@ describe('LEFTOVER_PROCESSES_STOP', () => {
     const { context, stopReportedProcess, stop } = setup('stopped');
     expect(await stop(processId)).toBe('stopped');
     expect(stopReportedProcess).toHaveBeenCalledWith(4242, 'start-4242', expect.any(Function));
-    expect(retryDoneWorktreeRemoval).toHaveBeenCalledWith(context, PROJECT_PATH, TASK);
+    expect(retryDoneWorktreeRemoval).toHaveBeenCalledWith(context, PROJECT_PATH, TASK, { caller: 'done_retry_stop' });
   });
 
   it('retries in the project the report was minted for, not the one open when Stop is pressed', async () => {
@@ -102,8 +102,8 @@ describe('LEFTOVER_PROCESSES_STOP', () => {
     const { context, stop } = setup('stopped', { currentProjectPath: OTHER_PROJECT_PATH });
     expect(await stop(processId)).toBe('stopped');
     expect(retryDoneWorktreeRemoval).toHaveBeenCalledTimes(1);
-    expect(retryDoneWorktreeRemoval).toHaveBeenCalledWith(context, PROJECT_PATH, TASK);
-    expect(retryDoneWorktreeRemoval).not.toHaveBeenCalledWith(expect.anything(), OTHER_PROJECT_PATH, expect.anything());
+    expect(retryDoneWorktreeRemoval).toHaveBeenCalledWith(context, PROJECT_PATH, TASK, { caller: 'done_retry_stop' });
+    expect(retryDoneWorktreeRemoval).not.toHaveBeenCalledWith(expect.anything(), OTHER_PROJECT_PATH, expect.anything(), expect.anything());
   });
 
   it('retries too when the process had already ended, since the worktree may be free now', async () => {
@@ -155,7 +155,7 @@ describe('LEFTOVER_PROCESSES_STOP', () => {
       settleLate('stopped');
 
       expect(sendToRenderer).toHaveBeenCalledWith(mainWindow, IPC.LEFTOVER_PROCESSES_STOP_SETTLED, { processId, outcome: 'stopped' });
-      expect(retryDoneWorktreeRemoval).toHaveBeenCalledWith(context, PROJECT_PATH, TASK);
+      expect(retryDoneWorktreeRemoval).toHaveBeenCalledWith(context, PROJECT_PATH, TASK, { caller: 'done_retry_stop' });
     });
 
     it('pushes a late failure too, and retries nothing: the process still holds the directory', async () => {
@@ -205,7 +205,7 @@ describe('LEFTOVER_PROCESSES_CHECK', () => {
     expect(await check([endedId, runningId])).toEqual([endedId]);
     expect(checkReportedProcesses).toHaveBeenCalledWith([{ pid: 4242, startKey: 'start-4242' }, { pid: 4242, startKey: 'start-4242' }]);
     expect(retryDoneWorktreeRemoval).toHaveBeenCalledTimes(1);
-    expect(retryDoneWorktreeRemoval).toHaveBeenCalledWith(context, PROJECT_PATH, TASK);
+    expect(retryDoneWorktreeRemoval).toHaveBeenCalledWith(context, PROJECT_PATH, TASK, { caller: 'done_retry_recheck' });
   });
 
   it('reads unknown as still running, and retries nothing for it', async () => {
@@ -250,9 +250,9 @@ describe('LEFTOVER_PROCESSES_CHECK', () => {
     // Positive control: all four processes were asked about, so the retries below are the dedupe's doing.
     expect(checkReportedProcesses.mock.calls[0][0]).toHaveLength(4);
     expect(retryDoneWorktreeRemoval.mock.calls).toEqual([
-      [context, PROJECT_PATH, TASK],
-      [context, PROJECT_PATH, OTHER_TASK],
-      [context, OTHER_PROJECT_PATH, TASK],
+      [context, PROJECT_PATH, TASK, { caller: 'done_retry_recheck' }],
+      [context, PROJECT_PATH, OTHER_TASK, { caller: 'done_retry_recheck' }],
+      [context, OTHER_PROJECT_PATH, TASK, { caller: 'done_retry_recheck' }],
     ]);
   });
 

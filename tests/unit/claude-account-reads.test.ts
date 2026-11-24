@@ -214,6 +214,29 @@ describe('CLAUDE_ACCOUNT_SUPPORT.readIdleUsage', () => {
     expect(await emptyReason()).toBe('cache-stale');
   });
 
+  // Sentry DESKTOP-4E on 0.62.0 was one stale read, which could not be told from a cache that never
+  // refreshes. The bounds are the report's tag, so each side of one is pinned.
+  const MINUTE_MS = 60 * 1000;
+  const HOUR_MS = 60 * MINUTE_MS;
+  it.each([
+    ['eleven minutes', 11 * MINUTE_MS, 'under_1h'],
+    ['a millisecond short of an hour', HOUR_MS - 1, 'under_1h'],
+    ['an hour', HOUR_MS, '1h_to_1d'],
+    ['a millisecond short of a day', 24 * HOUR_MS - 1, '1h_to_1d'],
+    ['a day', 24 * HOUR_MS, 'over_1d'],
+    ['a month', 30 * 24 * HOUR_MS, 'over_1d'],
+  ])('hands on the age of a stale cache %s old as a fixed word', async (_label, ageMs, cacheAge) => {
+    const now = Date.UTC(2026, 10, 23, 19, 18, 35);
+    vi.spyOn(Date, 'now').mockReturnValue(now);
+    writeState(cachedUsage(now - ageMs, { seven_day: SEVEN_DAY }));
+
+    const failure = await CLAUDE_ACCOUNT_SUPPORT.readIdleUsage!('claude', accountFolder).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(EmptyUsageReadError);
+    expect((failure as EmptyUsageReadError).reason).toBe('cache-stale');
+    expect((failure as EmptyUsageReadError).cacheAge).toBe(cacheAge);
+  });
+
   it('names a fresh cache with no window in it, which used to replace good windows with none', async () => {
     writeState(cachedUsage(Date.now(), { seven_day: null, five_hour: null }));
     expect(await emptyReason()).toBe('no-windows');
