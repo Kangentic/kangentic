@@ -1,6 +1,6 @@
 /**
  * UI tests for a task's PR in the Changes panel (#1032, #1060): the Pull
- * request section above History, Send to agent, and the Changes button's count.
+ * request section above History, Send to agent, and the Changes button's badge.
  *
  * What only a browser proves here: the section's presence rules against real
  * task rows, that the count on the Changes button is the count in the section
@@ -152,21 +152,21 @@ async function recordOpenedUrls(): Promise<() => Promise<string[]>> {
 }
 
 test.describe('Changes panel: the pull request section', () => {
-  test('the Changes button counts what to fix while the panel is closed', async () => {
+  test('the Changes button marks a PR with problems while the panel is closed', async () => {
     await openTask('Failing PR Task', false);
     // Two failed checks; the skipped one counts for nothing.
-    await expect(page.locator('[data-testid="changes-toggle-fix-count"]')).toHaveText('2', { timeout: 10000 });
+    await expect(page.locator('[data-testid="changes-toggle-badge"]')).toHaveAttribute('data-badge', 'problems', { timeout: 10000 });
     await closeTask();
     await openTask('Conflict PR Task', false);
-    await expect(page.locator('[data-testid="changes-toggle-fix-count"]')).toHaveText('1', { timeout: 10000 });
+    await expect(page.locator('[data-testid="changes-toggle-badge"]')).toHaveAttribute('data-badge', 'problems', { timeout: 10000 });
     await closeTask();
     await openTask('Running PR Task', false);
     await expect(page.locator('[data-testid="changes-toggle"]')).toBeVisible();
-    await expect(page.locator('[data-testid="changes-toggle-fix-count"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="changes-toggle-badge"]')).toHaveCount(0);
     await closeTask();
   });
 
-  test('something to fix opens the section itself, its header repeats the button\'s count, and the remembered choice is never written', async () => {
+  test('something to fix opens the section itself, its header counts them, and the remembered choice is never written', async () => {
     await setRememberedOpen(false);
     await openTask('Failing PR Task');
     // No PR pill in the panel header: the section is where the PR lives. Any PR
@@ -177,12 +177,12 @@ test.describe('Changes panel: the pull request section', () => {
 
     const toggle = page.locator('[data-testid="changes-pr-toggle"]');
     await expect(toggle).toHaveAttribute('aria-expanded', 'true');
-    // One count in the header, and it is the Changes button's: two failed
-    // checks, the skipped one counted for nothing. No check progress beside it.
+    // One count in the header: two failed checks, the skipped one counted for
+    // nothing. No check progress beside it. The Changes button marks them.
     await expect(toggle.locator('[data-testid="changes-pr-fix-count"]')).toHaveText('2');
-    await expect(page.locator('[data-testid="changes-toggle-fix-count"]')).toHaveText('2');
+    await expect(page.locator('[data-testid="changes-toggle-badge"]')).toHaveAttribute('data-badge', 'problems');
     // The visible badge is aria-hidden, so the toggle's own text carries the count.
-    await expect(toggle).toContainText('2 things on the PR to fix');
+    await expect(toggle).toContainText('2 problems on the PR');
     await expect(page.locator('[data-testid="changes-pr-progress"]')).toHaveCount(0);
     expect(await readRememberedOpen()).toBe(false);
 
@@ -237,7 +237,7 @@ test.describe('Changes panel: the pull request section', () => {
     await expect(page.locator('[data-testid="changes-pr-toggle"]')).toHaveAttribute('aria-expanded', 'true');
     await expect(page.locator('[data-testid="changes-pr-conflict"]')).toContainText('Conflicts with main');
     await expect(page.locator('[data-testid="changes-pr-fix-count"]')).toHaveText('1');
-    await expect(page.locator('[data-testid="changes-pr-toggle"]')).toContainText('1 thing on the PR to fix');
+    await expect(page.locator('[data-testid="changes-pr-toggle"]')).toContainText('1 problem on the PR');
     await page.locator('[data-testid="changes-pr-send"]').click();
     await expect(page.getByText('Held for the next agent')).toBeVisible({ timeout: 5000 });
     await page.evaluate(() => { delete (window as unknown as { __mockSendPrChecksResult?: unknown }).__mockSendPrChecksResult; });
@@ -312,7 +312,7 @@ test.describe('Changes panel: the pull request section', () => {
     await openTask('Swap PR Task', false);
     await page.locator('[data-testid="changes-toggle"]').click();
     await expect(page.locator('[data-testid="changes-pr-fix-count"]')).toHaveText('1', { timeout: 10000 });
-    await expect(page.locator('[data-testid="changes-toggle-fix-count"]')).toHaveText('1');
+    await expect(page.locator('[data-testid="changes-toggle-badge"]')).toHaveAttribute('data-badge', 'problems');
     const callsFor = () => page.evaluate(() => ((window as unknown as { __mockListPrChecksCalls?: { taskId: string }[] }).__mockListPrChecksCalls ?? [])
       .filter((call) => call.taskId === 'task-swap').length);
     const callsBefore = await callsFor();
@@ -332,11 +332,11 @@ test.describe('Changes panel: the pull request section', () => {
     });
 
     await expect.poll(callsFor).toBeGreaterThan(callsBefore);
-    // Nothing left to fix: both red counts go, and the header falls back to the check progress.
+    // Nothing left to fix: both red marks go, and the header falls back to the check progress.
     await expect(page.locator('[data-testid="changes-pr-progress"]')).toHaveText('2/2');
     await expect(page.locator('[data-testid="changes-pr-progress"]')).toHaveAttribute('data-progress-state', 'passed');
     await expect(page.locator('[data-testid="changes-pr-fix-count"]')).toHaveCount(0);
-    await expect(page.locator('[data-testid="changes-toggle-fix-count"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="changes-toggle-badge"]')).toHaveCount(0);
     await closeTask();
   });
 
@@ -375,7 +375,7 @@ test.describe('Changes panel: the pull request section', () => {
     await closeTask();
   });
 
-  test('both fix badges draw the danger fill, not the accent fill, and the open button does not toggle the section and says which PR it opens', async () => {
+  test('the count and the button badge draw the same danger fill, not the accent fill, and the open button does not toggle the section and says which PR it opens', async () => {
     await setRememberedOpen(false);
     await openTask('Failing PR Task');
     const toggle = page.locator('[data-testid="changes-pr-toggle"]');
@@ -391,7 +391,7 @@ test.describe('Changes panel: the pull request section', () => {
       const accent = fillOf(probe);
       probe.remove();
       const sectionBadge = document.querySelector('[data-testid="changes-pr-fix-count"]');
-      const buttonBadge = document.querySelector('[data-testid="changes-toggle-fix-count"]');
+      const buttonBadge = document.querySelector('[data-testid="changes-toggle-badge"]');
       return {
         accent,
         section: sectionBadge ? fillOf(sectionBadge) : null,

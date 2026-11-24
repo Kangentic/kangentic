@@ -27,6 +27,11 @@ export const PROJECT_SCOPED_MUTATION_CHANNELS: ReadonlySet<string> = new Set([
   // Deletes a board task as it creates the backlog item, and the Agent Monitor
   // demotes a task of a project the board is not on.
   'BACKLOG_DEMOTE',
+  // Commit, push and create a pull request in a task's checkout, or a Command
+  // Terminal's: each can write the task's row.
+  'GIT_COMMIT',
+  'GIT_PUSH',
+  'GIT_CREATE_PULL_REQUEST',
   'SESSION_SPAWN',
   'SESSION_SUSPEND',
   'SESSION_RESUME',

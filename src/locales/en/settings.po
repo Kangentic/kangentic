@@ -1474,8 +1474,8 @@ msgid "Installing the app, pairing a phone, and push notifications."
 msgstr "Installing the app, pairing a phone, and push notifications."
 
 #: src/renderer/components/settings/settings-registry.ts
-msgid "Judges conditions and workflow steps, and names tasks."
-msgstr "Judges conditions and workflow steps, and names tasks."
+msgid "Judges conditions and steps, names tasks, drafts commits."
+msgstr "Judges conditions and steps, names tasks, drafts commits."
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Kangentic browser"
@@ -3170,8 +3170,8 @@ msgid "Whether agents can reach the MCP server, here and from any WSL distro a C
 msgstr "Whether agents can reach the MCP server, here and from any WSL distro a CLI path points into."
 
 #: src/renderer/components/settings/settings-registry.ts
-msgid "Which agent answers Conditions and names tasks and Command Terminals; nothing runs until one is chosen."
-msgstr "Which agent answers Conditions and names tasks and Command Terminals; nothing runs until one is chosen."
+msgid "Which agent answers Conditions, names tasks and Command Terminals, and drafts commit messages; nothing runs until one is chosen."
+msgstr "Which agent answers Conditions, names tasks and Command Terminals, and drafts commit messages; nothing runs until one is chosen."
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Which agent answers your questions and writes the task summaries."

@@ -105,7 +105,7 @@ Both go through one shared helper, `prNumberFromUrl` in `src/shared/pr-url.ts`, 
 
 ### IPC channel
 
-`task:resolvePr` (`IPC.TASK_RESOLVE_PR`) is the renderer-facing, on-demand resolver behind the task detail header's "Link / refresh PR" control. Per `.claude/rules/project-scoped-ipc.md` it forwards an explicit interaction-time `projectId`. The handler (in `src/main/ipc/handlers/sessions.ts`) calls `linkPR` with `force: true` and returns a `TaskResolvePrResult`:
+`task:resolvePr` (`IPC.TASK_RESOLVE_PR`) is the renderer-facing, on-demand resolver behind the task window menu's "Refresh pull request". Per `.claude/rules/project-scoped-ipc.md` it forwards an explicit interaction-time `projectId`. The handler (in `src/main/ipc/handlers/sessions.ts`) calls `linkPR` with `force: true` and returns a `TaskResolvePrResult`:
 
 | Field | Purpose |
 |-------|---------|
@@ -114,4 +114,4 @@ Both go through one shared helper, `prNumberFromUrl` in `src/shared/pr-url.ts`, 
 | `reason` | The `PRLinkStatus` outcome, so the UI/MCP can show an accurate message. |
 | `message` | Detail for `resolver-unavailable` / `transient-error`. |
 
-`PRLinkStatus` is `'linked' | 'unchanged' | 'not-found' | 'no-anchor' | 'resolver-unavailable' | 'transient-error'`. `not-found` and `no-anchor` are different answers: the first searched and matched nothing, the second had nothing to search by (no PR number, worktree, branch, commit, or pushed branch), and the header toasts them differently. The handler's own no-project early return reports `resolver-unavailable` with a message, so `no-anchor` keeps that one meaning. The kebab entry is shown for any of those anchors, so a no-worktree task whose push was recorded, or one that names its PR by number, gets the control too.
+`PRLinkStatus` is `'linked' | 'unchanged' | 'not-found' | 'no-anchor' | 'resolver-unavailable' | 'transient-error'`. `not-found` and `no-anchor` are different answers: the first searched and matched nothing, the second had nothing to search by (no PR number, worktree, branch, commit, or pushed branch), and the MCP tool words them differently. The handler's own no-project early return reports `resolver-unavailable` with a message, so `no-anchor` keeps that one meaning. The menu item shows only once a PR is linked by its URL or its number: a task with a branch and no PR has nothing to ask for, because the idle auto-link, the agent's own PR command and the refresh queue find its PR without a click. A pull request Kangentic creates (`git:createPullRequest`) is written to the task with its URL and number and then read once through `linkPR`.

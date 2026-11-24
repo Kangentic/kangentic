@@ -1810,9 +1810,8 @@ msgid "Installing the app, pairing a phone, and push notifications."
 msgstr "앱 설치, 휴대폰 페어링 및 푸시 알림."
 
 #: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Judges conditions and workflow steps, and names tasks."
-msgstr "조건과 워크플로 단계를 판단하고 작업 이름을 짓습니다."
+msgid "Judges conditions and steps, names tasks, drafts commits."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -3879,9 +3878,8 @@ msgid "Whether agents can reach the MCP server, here and from any WSL distro a C
 msgstr "에이전트가 이곳과 CLI 경로가 가리키는 모든 WSL 배포판에서 MCP 서버에 연결할 수 있는지 여부입니다."
 
 #: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Which agent answers Conditions and names tasks and Command Terminals; nothing runs until one is chosen."
-msgstr "조건에 답하고 작업과 명령 터미널의 이름을 짓는 에이전트입니다. 선택하기 전에는 아무것도 실행되지 않습니다."
+msgid "Which agent answers Conditions, names tasks and Command Terminals, and drafts commit messages; nothing runs until one is chosen."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy

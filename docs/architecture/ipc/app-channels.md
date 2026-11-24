@@ -123,7 +123,7 @@ Machine-global like the mobile bridge, so none takes a trailing `projectId`: a h
 |---------|---------|---------|
 | `font:getAvailable` | invoke | List detected system fonts (monospace-filtered when detectable) for the Terminal tab's Font Family picker |
 
-## Git (17 channels)
+## Git (22 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `git:detect` | invoke | Detect git installation (path, version, minimum version check) |
@@ -135,7 +135,7 @@ Machine-global like the mobile bridge, so none takes a trailing `projectId`: a h
 | `git:fileImage` | invoke | Fetch both sides of a changed raster image or SVG as bytes for the Changes panel's image view, with the same per-scope revisions as `git:fileContent`. Each side is fingerprinted and sized before its bytes are read: a side from git from the header of one `git cat-file --batch` process (`src/main/git/git-object-reader.ts`), a working-tree side from `stat`. A side whose fingerprint (its blob id, or a working-tree file's size and modified time) matches one the caller passes in `knownFingerprints` answers `unchanged` without bytes, so a diff refresh does not resend an image that did not change. A working-tree side read within 2 seconds of its last write gets a fingerprint marked racy, which never matches, so the next refresh reads it again. A side over 10 MB returns its size alone. A Git LFS pointer answers `lfs-pointer`, and a side that cannot be read (a refused path, a missing object or file, a failed read) answers `unreadable`; a refused or missing path is quiet and any other failure is logged. A separate channel because the mobile bridge forwards `git:fileContent`'s result to the phone as JSON |
 | `git:diffSubscribe` | send | Subscribe to file-system watcher for live diff updates on a worktree (working tree plus git metadata). Refcounted per sender window, so N windows (the in-app panel, the detached Changes window, per-file diff windows) can watch one path; the underlying watch arms once |
 | `git:diffUnsubscribe` | send | Release THIS window's subscription for a worktree; the watcher and merge-base cache are torn down only when the path's last subscriber leaves (a destroyed window releases its subscriptions automatically) |
-| `git:diffChanged` | on | Debounced event fired when watched worktree files or git metadata change on disk |
+| `git:diffChanged` | on | Debounced event fired when watched worktree files or git metadata change on disk. Carries the watched folder's path, so a reader of one checkout (`useGitWorkState`) ignores every other |
 | `git:checkPendingChanges` | invoke | Check whether a path has uncommitted or unpushed changes |
 | `git:prefetchRemotes` | invoke | Warm the throttled all-remotes fetch for a worktree (fire-and-forget, non-interactive) so a following `checkPendingChanges` skips or joins it rather than starting its own; the board calls it when a worktree-backed card drag begins, and main skips it when the `git.autoFetch` switch is off |
 | `git:branchSummary` | invoke | Lightweight branch summary for the Changes panel header: current branch and ahead/behind commit counts vs the base branch. It also returns the HEAD tip commit (hash, subject, timestamp), which the header no longer draws (History lists every commit). Cheap enough to run on every panel open and watcher fire. An optional `refreshRemote` flag makes the handler run the throttled all-remotes fetch first so `behind` reflects the actual remote; the panel passes it once per mount, never on watcher fires |
@@ -143,6 +143,11 @@ Machine-global like the mobile bridge, so none takes a trailing `projectId`: a h
 | `git:commitGraph` | invoke | Topo-ordered commit history (commits with parent links plus resolved tip / base / merge-base anchors) for the Changes panel's commit-history browser. Each commit the primary remote has (one bounded `git rev-list ... --not --remotes`) carries a `webUrl` built by the PR connector that claims that remote (`commitWebUrl`, GitHub or Azure DevOps), and the result names the host in `webProviderName`; a commit only this clone has gets none. Local-only and fail-safe, like `git:branchSummary` |
 | `git:fileHistory` | invoke | Commits touching a single file (`git log --follow`), newest first, for the Changes panel's per-file history popover. Local-only and fail-safe |
 | `git:blame` | invoke | Per-line blame (`git blame --line-porcelain`) - short hash, author, date per line of the file's current content - for the DiffViewer blame gutter. Local-only and fail-safe |
+| `git:workState` | invoke | A checkout's `GitWorkState` (`src/main/git/work-state.ts`): its branch, the uncommitted, staged and conflicted file counts, commits no remote has, commits ahead of the base, where a push goes, and whether a pull request can be created. Null when git could not answer. Read by the Changes button's badge, the Changes panel's line and the window menus through `useGitWorkState` |
+| `git:commit` | invoke | Commit a checkout, and push it with `pushAfter`. Takes a `GitActionTarget` (a task id or a Command Terminal's slot, never a folder), the message, and a trailing `projectId`. Returns a `GitActionResult`. See [Git actions](../worktrees/git-actions.md) |
+| `git:push` | invoke | Push a checkout's commits to its branch on the remote, with `-u` on the first push. Same target, result and `projectId` |
+| `git:createPullRequest` | invoke | Push when needed, then create the pull request through the PR connector and link it to the task. Same target, result and `projectId` |
+| `git:draftText` | invoke | A commit message or pull request description drafted by the Automation agent, or the stand-in with `drafted: false` |
 
 ## Dialog (2 channels)
 | Channel | Pattern | Purpose |

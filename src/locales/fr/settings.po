@@ -1810,9 +1810,8 @@ msgid "Installing the app, pairing a phone, and push notifications."
 msgstr "Installation de l'application, association d'un téléphone et notifications push."
 
 #: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Judges conditions and workflow steps, and names tasks."
-msgstr "Évalue les conditions et étapes de workflow, et nomme les tâches."
+msgid "Judges conditions and steps, names tasks, drafts commits."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -3879,9 +3878,8 @@ msgid "Whether agents can reach the MCP server, here and from any WSL distro a C
 msgstr "Indique si les agents peuvent joindre le serveur MCP, ici et depuis toute distribution WSL ciblée par un chemin de CLI."
 
 #: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Which agent answers Conditions and names tasks and Command Terminals; nothing runs until one is chosen."
-msgstr "Agent qui évalue les conditions et nomme les tâches et les terminaux de commande ; rien ne s'exécute tant qu'aucun n'est choisi."
+msgid "Which agent answers Conditions, names tasks and Command Terminals, and drafts commit messages; nothing runs until one is chosen."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy

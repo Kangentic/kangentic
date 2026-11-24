@@ -19,6 +19,18 @@ export class PRResolverUnavailableError extends Error {
 }
 
 /**
+ * Thrown when the platform answered and refused to create a pull request (no
+ * commits between the branches, a branch policy, a malformed base). `output` is
+ * what its CLI printed, for the agent that fixes it.
+ */
+export class PRCreateError extends Error {
+  constructor(readonly output: string) {
+    super('The platform refused to create the pull request');
+    this.name = 'PRCreateError';
+  }
+}
+
+/**
  * Thrown when resolution failed transiently (network / platform 5xx / rate-limit
  * / timeout) rather than because there is no PR. Callers preserve the existing
  * link and report a distinct status instead of "not found".

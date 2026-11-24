@@ -1,6 +1,6 @@
 import type { ComponentType, MouseEvent } from 'react';
 import { Pill } from './Pill';
-import { Tooltip, type TooltipRow } from './Tooltip';
+import { Tooltip, type TooltipFact, type TooltipRow } from './Tooltip';
 import { showsDisabledReason, tipLabel } from '../utils/tooltip';
 
 interface HeaderActionButtonProps {
@@ -25,6 +25,8 @@ interface HeaderActionButtonProps {
   keys?: string;
   /** A muted second line under the tip, for a fact the action's name does not say. */
   detail?: string;
+  /** Facts about what the button opens, each led by its mark, under the tip and its shortcut. */
+  facts?: readonly TooltipFact[];
   /** Why a disabled button does nothing. It replaces the tip while disabled, and it is read as
    *  the button's description. */
   disabledReason?: string;
@@ -78,6 +80,7 @@ export function HeaderActionButton({
   tip,
   keys,
   detail,
+  facts,
   disabledReason,
   ariaLabel,
   label,
@@ -106,13 +109,14 @@ export function HeaderActionButton({
   // The reason replaces the whole tip, shortcut and detail included: a disabled button's combo
   // does nothing.
   const showReason = showsDisabledReason(disabled, disabledReason);
+  const factRows = facts && facts.length > 0 ? facts.map((fact) => ({ ...fact, keys: [] })) : undefined;
 
   return (
     <Tooltip
       label={tipLabel({ disabled, disabledReason, tip })}
       keys={showReason ? undefined : keys}
       detail={showReason ? undefined : detail}
-      rows={showReason ? undefined : linkTip?.rows}
+      rows={showReason ? undefined : linkTip?.rows ?? factRows}
       destination={showReason ? undefined : linkTip?.destination}
       enabled={tipEnabled}
     >

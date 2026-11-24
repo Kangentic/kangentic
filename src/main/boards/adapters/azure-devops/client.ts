@@ -1,3 +1,4 @@
+import path from 'node:path';
 import which from 'which';
 import { execFileAsync } from '../../../utility-process/off-main-exec';
 import type { ExternalIssue } from '../../../../shared/types';
@@ -68,7 +69,7 @@ const IS_WINDOWS = process.platform === 'win32';
 /** Run an az CLI command, handling Windows .cmd wrapper transparently. */
 function execAz(
   args: string[],
-  options: { timeout?: number; maxBuffer?: number },
+  options: { timeout?: number; maxBuffer?: number; cwd?: string },
 ): Promise<{ stdout: string; stderr: string }> {
   const fullOptions = { ...options, encoding: 'utf-8' as const };
   if (IS_WINDOWS) {
@@ -82,6 +83,18 @@ function execAz(
 // GitHub ones live in `github-common/gh-client.ts`: `az` detection and error
 // classification are shared with the import path rather than duplicated, and
 // `src/main/pr/adapters/azure-devops/` deep-imports them.
+
+/** Azure DevOps answered and refused to create a pull request. `output` is what az printed. */
+export class AzPrCreateError extends Error {
+  constructor(readonly output: string) {
+    super('Azure DevOps refused to create the pull request');
+    this.name = 'AzPrCreateError';
+  }
+}
+
+/** A create waits on the server's merge preview being queued, so it gets longer than a read. */
+const CREATE_PR_TIMEOUT = 60_000;
+const CREATE_PR_API_VERSION = '7.1';
 
 /** Azure's own PR states, before normalization to the app-wide `PRState`. */
 export type AzurePrStatus = 'active' | 'completed' | 'abandoned';
@@ -279,10 +292,31 @@ function classifyAzError(error: unknown): 'unavailable' | 'transient' | 'not-fou
   if (/az login|AADSTS\d+|refresh token|HTTP 401|Unauthorized|TF400813|VS30063|no subscription/i.test(text)) {
     return 'unavailable';
   }
-  if (/HTTP 4(03|29)|HTTP 5\d\d|ECONNRESET|ENOTFOUND|EAI_AGAIN|timed? ?out|network|temporar|ServiceUnavailable/i.test(text)) {
+  // The last four are Python's: az offline on Windows prints requests' own error, which names no network.
+  if (/HTTP 4(03|29)|HTTP 5\d\d|ECONNRESET|ENOTFOUND|EAI_AGAIN|timed? ?out|network|temporar|ServiceUnavailable|Max retries exceeded|getaddrinfo failed|NameResolutionError|requests\.exceptions\.ConnectionError/i.test(text)) {
     return 'transient';
   }
   return 'not-found';
+}
+
+/**
+ * The throw for a failed pull request create. Classified on az's own answer and
+ * never on `message`, which opens with the command line: an organization, project
+ * or repository named "network" must not read as a connection failure. A server
+ * code means Azure DevOps answered, and its text echoes the user's names too.
+ */
+function createPrAzErrorToThrow(error: unknown): Error {
+  const failure = readExecFailure(error);
+  const stderrWithoutUrls = failure.stderr.replace(/https?:\/\/\S+/g, '');
+  const serverCodes: string[] = stderrWithoutUrls.match(AZ_SERVER_CODE_PATTERN) ?? [];
+  const refused = serverCodes.some((code) => !AZ_SIGN_IN_SERVER_CODES.has(code));
+  if (!refused) {
+    const judged = azErrorToThrow({ message: '', stderr: stderrWithoutUrls, code: failure.code, killed: failure.killed });
+    const reason = describeAzFailure({ message: 'Azure DevOps did not answer.', stderr: failure.stderr });
+    if (judged instanceof AzTransientError) return new AzTransientError(reason);
+    if (judged) return new AzUnavailableError('Azure CLI is not ready. Check: az login, az extension add --name azure-devops');
+  }
+  return new AzPrCreateError(failure.stderr.trim() || 'az exited with no message');
 }
 
 /** Map a classified az failure to the throw the resolvers use (null = swallow as not-found). */
@@ -905,6 +939,40 @@ export class AzureDevOpsImporter {
       if (toThrow) throw toThrow;
       return null;
     }
+  }
+
+  /**
+   * Create a pull request (`_apis/git/repositories/{repo}/pullrequests`). The
+   * body travels in `bodyFile`, never on the command line: `execAz` goes through
+   * cmd.exe on Windows, where newlines and `%NAME%` in a description would break
+   * it. az runs in the file's folder and is given its bare name, so a temp folder
+   * whose path holds `&` or `^` never reaches cmd.exe. Returns the new PR's id.
+   */
+  async createPullRequest(organization: string, project: string, repository: string, bodyFile: string): Promise<number> {
+    await this.requireAz();
+    let stdout: string;
+    try {
+      ({ stdout } = await execAz(
+        [
+          'rest', '--method', 'post',
+          '--url', `${azureOrgUrl(organization)}/${encodeURIComponent(project)}/_apis/git/repositories/${encodeURIComponent(repository)}/pullrequests`,
+          '--resource', AZURE_DEVOPS_RESOURCE_ID,
+          '--url-parameters', `api-version=${CREATE_PR_API_VERSION}`,
+          '--headers', 'Content-Type=application/json',
+          '--body', `@${path.basename(bodyFile)}`,
+          '--output', 'json',
+          '--query', 'pullRequestId',
+        ],
+        { timeout: CREATE_PR_TIMEOUT, maxBuffer: PR_MAX_BUFFER, cwd: path.dirname(bodyFile) },
+      ));
+    } catch (error) {
+      throw createPrAzErrorToThrow(error);
+    }
+    const pullRequestId = Number(stdout.trim());
+    if (!Number.isInteger(pullRequestId) || pullRequestId <= 0) {
+      throw new AzPrCreateError(stdout.trim() || 'Azure DevOps returned no pull request id');
+    }
+    return pullRequestId;
   }
 
   /**

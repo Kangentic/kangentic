@@ -168,7 +168,7 @@ src/main/workflows/
   panel's diff and file reads moved too, since they share `DiffService` with the churn capture. So
   did three calls that run repository hooks, filters or merge drivers, for a different reason:
   `gitAt`'s env drops Crashpad's pipe name (see "PTY children and Crashpad's handler" in
-  `docs/platforms/windows.md`). They are Update from base's merge, the carry of uncommitted changes
+  `docs/platforms/windows.md`). They are Pull from base's merge, the carry of uncommitted changes
   into a new worktree, and the Command Terminal's cold-start checkout and merge. Still on main
   through simple-git, and outside a workflow's lifecycle: the Changes panel's ahead and behind count
   and its watcher, blame, file history, the commit graph, a task's branch switch config write, and

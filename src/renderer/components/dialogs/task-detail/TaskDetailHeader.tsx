@@ -2,7 +2,7 @@ import { useState, useRef, useMemo, useEffect, type ReactNode } from 'react';
 import { useLingui } from '@lingui/react/macro';
 import { plural } from '@lingui/core/macro';
 import { useCopyDisplayId } from './useCopyDisplayId';
-import { X, Trash2, Pencil, LoaderCircle, FolderGit2, FolderGit, GitPullRequest, GitCompare, GitMerge, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, CircleStop, Clock, SquareChevronRight, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2, MessageSquare, AlignLeft, Search, Workflow as WorkflowIcon } from 'lucide-react';
+import { X, Trash2, Pencil, LoaderCircle, ArrowDown, FolderGit2, FolderGit, GitPullRequest, GitCompare, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, CircleStop, Clock, SquareChevronRight, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2, MessageSquare, AlignLeft, Search, Workflow as WorkflowIcon } from 'lucide-react';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
 import { ShortcutGlyph, SwimlaneIcon, shortcutIcon } from '../../../utils/swimlane-icons';
 import { ActivityMark } from '../../ActivityMark';
@@ -27,7 +27,11 @@ import { useLinkOpener } from '../../../hooks/useLinkOpener';
 import { ArtifactsChip } from '../../artifacts/ArtifactsChip';
 import { ArtifactsKebabItems } from '../../artifacts/ArtifactsKebabItems';
 import { requestArtifactsFocus } from '../../artifacts/artifacts-focus';
-import { CountBadge } from '../../CountBadge';
+import { IconBadge } from '../../IconBadge';
+import { changesBadgeKind, useChangesFacts } from '../git/git-badge';
+import { GitMenuItems } from '../git/GitMenuItems';
+import { useGitActions, type GitActions, type GitCheckout } from '../git/useGitActions';
+import { taskGitBase } from '../../../../shared/git-work-state';
 import { asSentence, ipcFailureToastFields, rejectionMessage } from '../../../lib/ipc-error';
 import type { Task, AgentCommand, ShortcutConfig, Swimlane } from '../../../../shared/types';
 
@@ -134,6 +138,8 @@ interface TaskDetailHeaderProps {
   executeShortcut: (action: ShortcutConfig) => void;
   projectPath: string | null;
   canShowChanges: boolean;
+  /** The window is on screen: not parked, and not held for another project. */
+  windowShowing: boolean;
   changesOpen: boolean;
   onToggleChanges: () => void;
   canShowBrowser: boolean;
@@ -183,6 +189,7 @@ export function TaskDetailHeader({
   executeShortcut,
   projectPath,
   canShowChanges,
+  windowShowing,
   changesOpen,
   onToggleChanges,
   canShowBrowser,
@@ -207,10 +214,10 @@ export function TaskDetailHeader({
   const trailingRef = useRef<HTMLDivElement>(null);
   const pillsRef = useRef<HTMLDivElement>(null);
   const titleSpanRef = useRef<HTMLSpanElement>(null);
-  const { projectId: hostProjectId, canOpenConversation } = useTaskDetailHost();
+  const { projectId: hostProjectId, canOpenConversation, config: { defaultBaseBranch } } = useTaskDetailHost();
   const { copied: displayIdCopied, copy: copyDisplayId } = useCopyDisplayId(task.display_id);
-  // The Changes button's count: what an agent could fix on the PR. Shares one
-  // read with the Changes panel's Pull request section (usePrChecks' cache).
+  // What an agent could fix on the PR, for the Changes button's badge and tip. Shares
+  // one read with the Changes panel's Pull request section (usePrChecks' cache).
   const { checks: prChecks } = usePrChecks(task, hostProjectId ?? null);
   const prFixes = prFixCount(task, prChecks);
 
@@ -249,6 +256,21 @@ export function TaskDetailHeader({
   }, [task.id, taskSessionId, liveSessionRunning, hostProjectId, historyKey]);
   const conversationAvailable = liveSessionRunning || historicalConversationAvailable;
   const terminalFind = useTerminalFindControl(taskSessionId);
+
+  // The checkout's git state and the actions on it. One read is shared with the
+  // Changes panel's line, and this window's menu opens the same dialogs.
+  const checkout = useMemo<GitCheckout | null>(() => (projectPath ? {
+    target: { kind: 'task', taskId: task.id },
+    projectId: hostProjectId || null,
+    projectPath,
+    worktreePath: task.worktree_path,
+    baseBranch: taskGitBase(task, defaultBaseBranch || 'main'),
+    task,
+    sessionId: taskSessionId,
+  } : null), [projectPath, hostProjectId, task, defaultBaseBranch, taskSessionId]);
+  const git = useGitActions(canShowChanges ? checkout : null, windowShowing);
+  const changesBadge = changesBadgeKind(prFixes, git.state);
+  const changesFacts = useChangesFacts(prFixes, git.state);
 
   // Quick-access pills, highest priority collapses LAST. The title is reserved only
   // up to a ~50ch floor (useHeaderPillOverflow); these compete for whatever is left
@@ -419,24 +441,15 @@ export function TaskDetailHeader({
                 active={changesOpen}
                 tip={changesOpen ? t`Hide changes` : t`Show changes`}
                 keys="taskDetail.toggleChanges"
-                // The count overlay is decorative; the tip says it in words.
-                detail={prFixes > 0 ? t`${plural(prFixes, { one: '# thing on the PR to fix', other: '# things on the PR to fix' })}` : undefined}
+                // The badge is decorative; the tip says each fact in words.
+                facts={changesFacts}
                 ariaLabel={t`Toggle changes`}
                 testId="changes-toggle"
               />
-              {/* What an agent could fix on the PR (each failed check, plus a
-                  conflict), so a closed panel still says there is something to
-                  look at. The title bar's solid overlay badge, hidden at zero,
-                  in red because everything it counts is a failure. The Changes
-                  panel's Pull request section repeats this same badge. The ring
-                  is the window's own surface (WindowFrame's bg-surface-raised),
-                  so the red stands clear of the button's accent fill while the
-                  panel is open. */}
-              {prFixes > 0 && (
-                <span aria-hidden="true" className="pointer-events-none absolute -top-0.5 -right-1 flex rounded-full ring-2 ring-surface-raised">
-                  <CountBadge count={prFixes} variant="solid" size="xs" tone="danger" testId="changes-toggle-fix-count" />
-                </span>
-              )}
+              {/* One badge, the most important fact: problems on the PR, then files
+                  not committed, then commits on no remote. With the panel open too:
+                  the ring stands it clear of the button's accent fill. */}
+              {changesBadge && <IconBadge kind={changesBadge} testId="changes-toggle-badge" />}
             </div>
           )}
 
@@ -454,22 +467,13 @@ export function TaskDetailHeader({
                 ariaLabel={t`Toggle browser`}
                 testId="browser-toggle"
               />
-              {/* Running dot: a browser guest is alive for this task, in ANY
-                  state (showing, hidden, or parked), the way the Command
-                  Terminal toggle shows a live PTY. Green and pulsing because
-                  it is a process that is running and costing memory until Stop
-                  browser ends it; the task card's globe carries the same fact
-                  in the same colour, and whether the agent is DRIVING the page
-                  is shown by the pane's accent border and "Agent typing here",
-                  in neither place. Tailwind's stock pulse: an opacity keyframe,
-                  so it composites. */}
+              {/* A browser guest is alive for this task, in ANY state (showing, hidden,
+                  or parked). Green and pulsing because it is a process that is
+                  running and costing memory until Close browser ends it. Play is the
+                  inverse of that item's stop mark. Whether the agent is DRIVING the
+                  page is shown by the pane's accent border and "Agent typing here". */}
               {browserAlive && (
-                <span
-                  aria-hidden="true"
-                  data-testid="browser-toggle-alive"
-                  data-driving={browserDriving ? 'true' : undefined}
-                  className="pointer-events-none absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-surface-raised bg-active animate-pulse"
-                />
+                <IconBadge kind="running" pulse driving={browserDriving} testId="browser-toggle-alive" />
               )}
             </div>
           )}
@@ -576,6 +580,8 @@ export function TaskDetailHeader({
               onToggleBrowser={onToggleBrowser}
               browserAlive={browserAlive}
               onCloseBrowser={onCloseBrowser}
+              git={git}
+              pullBase={task.base_branch || defaultBaseBranch || 'main'}
               canShowDescription={canShowDescription}
               descriptionPeekOpen={descriptionPeekOpen}
               onToggleDescription={onToggleDescription}
@@ -620,6 +626,7 @@ export function TaskDetailHeader({
           </button>
         </Tooltip>
       </div>
+      {git.dialogs}
     </div>
   );
 }
@@ -654,6 +661,9 @@ interface TaskDetailKebabItemsProps {
   onToggleBrowser: () => void;
   browserAlive: boolean;
   onCloseBrowser: () => void;
+  git: GitActions;
+  /** What "Pull from" pulls: the base main's own pull uses (`resolveEffectiveBaseBranch`). */
+  pullBase: string;
   canShowDescription?: boolean;
   descriptionPeekOpen?: boolean;
   onToggleDescription?: () => void;
@@ -699,6 +709,8 @@ function TaskDetailKebabItems({
   onToggleBrowser,
   browserAlive,
   onCloseBrowser,
+  git,
+  pullBase,
   canShowDescription = false,
   descriptionPeekOpen = false,
   onToggleDescription,
@@ -710,7 +722,7 @@ function TaskDetailKebabItems({
   const [showMoveSubmenu, setShowMoveSubmenu] = useState(false);
   const [showCommandsSubmenu, setShowCommandsSubmenu] = useState(false);
   const prNumber = task.pr_number;
-  // View PR opens the way the PR pill does: the chosen browser, or the other on Ctrl or Cmd.
+  // View pull request opens the way the PR pill does: the chosen browser, or the other on Ctrl or Cmd.
   const linkOpener = useLinkOpener(task.id);
   const [linkingPr, setLinkingPr] = useState(false);
   const [updatingFromBase, setUpdatingFromBase] = useState(false);
@@ -719,6 +731,9 @@ function TaskDetailKebabItems({
   const taskBase = task.base_branch ?? '';
   const baseRef = useBaseRefKind(taskBase, hostProjectId || null, Boolean(task.worktree_path) && taskBase.trim() !== '');
   const shortBase = shortRefLabel(taskBase, baseRef?.kind);
+  const pullBaseLabel = shortRefLabel(pullBase, baseRef?.kind);
+  const canPull = Boolean(task.worktree_path) && !isArchived;
+  const hasGitGroup = canPull || Boolean(task.pr_url) || task.pr_number != null || git.available.commit || git.available.push !== null || git.available.createPullRequest;
   const fixedBaseReason = baseRef?.kind === 'tag'
     ? t`The base is the tag ${shortBase}, which does not move`
     : baseRef?.kind === 'commit'
@@ -737,7 +752,7 @@ function TaskDetailKebabItems({
           // turned into one after the menu opened (an MCP update).
           const baseLabel = shortRefLabel(result.baseBranch, result.baseKind);
           toast.addToast({
-            title: t`Nothing to update from`,
+            title: t`Nothing to pull`,
             message: result.baseKind === 'tag'
               ? t`The base is the tag ${baseLabel}, which does not move.`
               : t`The base is the commit ${baseLabel}, which does not move.`,
@@ -749,7 +764,7 @@ function TaskDetailKebabItems({
           const baseBranch = result.baseBranch;
           const commitCount = result.commitCount;
           toast.addToast({
-            title: t`Updated from ${baseBranch}`,
+            title: t`Pulled from ${baseBranch}`,
             message: t`Fast-forwarded ${plural(commitCount, { one: '# commit', other: '# commits' })}.`,
             variant: 'success',
           });
@@ -770,7 +785,7 @@ function TaskDetailKebabItems({
         case 'dirty-tree': {
           const baseBranch = result.baseBranch;
           toast.addToast({
-            title: t`Can't update from ${baseBranch}`,
+            title: t`Can't pull from ${baseBranch}`,
             message: t`The worktree has uncommitted changes.`,
             variant: 'warning',
           });
@@ -800,7 +815,7 @@ function TaskDetailKebabItems({
     } catch (error) {
       const message = rejectionMessage(error);
       useToastStore.getState().addToast({
-        title: t`Update from base failed`,
+        title: t`Couldn't pull`,
         message: asSentence(message),
         variant: 'warning',
       });
@@ -809,7 +824,7 @@ function TaskDetailKebabItems({
     }
   };
 
-  const handleLinkPr = async () => {
+  const handleRefreshPr = async () => {
     if (linkingPr) return;
     setLinkingPr(true);
     try {
@@ -830,14 +845,6 @@ function TaskDetailKebabItems({
           title: t`PR host unreachable`,
           message: result.message ? asSentence(result.message) : t`Try again in a moment.`,
           variant: 'error',
-        });
-      } else if (result.reason === 'no-anchor') {
-        // Nothing was searched. Distinct from not-found so the user does not
-        // conclude the PR does not exist when the task simply has no anchor.
-        useToastStore.getState().addToast({
-          title: t`Nothing to search by`,
-          message: t`This task has no branch, commit or PR number yet.`,
-          variant: 'info',
         });
       } else if (result.linked && result.task?.pr_number != null) {
         // The same word the card's chip shows, so a refresh that changed only
@@ -885,12 +892,98 @@ function TaskDetailKebabItems({
 
   return (
     <>
+      {/* Groups, divided: the task, what this window shows, its git, the shortcuts, and removal. */}
       {/* Edit */}
       <KebabMenuItem
         icon={<Pencil size={14} />}
         label={t({ message: 'Edit', context: 'task action' })}
         onClick={() => { closeAll(); setIsEditing(true); }}
       />
+
+      {/* Pause / Resume */}
+      {canToggle && (
+        <KebabMenuItem
+          icon={isSessionActive ? <CirclePause size={14} /> : <CirclePlay size={14} />}
+          label={isSessionActive ? t`Pause session` : t`Resume session`}
+          onClick={() => { closeAll(); onToggle(); }}
+          disabled={toggling}
+          data-testid="toggle-session-btn"
+        />
+      )}
+
+      {/* Commands - searchable flyout (shares CommandSearchList with the header
+          pill). Hover to open / leave to close, like Move to: the flyout is a DOM
+          child of this container, so moving the pointer INTO it (to type in the
+          search) stays within the container and keeps it open; the search input
+          auto-focuses on open so you can type immediately. */}
+      {isSessionActive && (
+        <div
+          ref={commandsFlyoutTriggerRef}
+          className="relative"
+          onMouseEnter={() => setShowCommandsSubmenu(true)}
+          onMouseLeave={() => setShowCommandsSubmenu(false)}
+        >
+          <button
+            onClick={() => setShowCommandsSubmenu(!showCommandsSubmenu)}
+            className={`w-full text-left px-3 py-1.5 [@media(max-height:720px)]:py-1 text-xs text-fg-tertiary hover:bg-surface-hover hover:text-fg transition-colors flex items-center gap-2 ${showCommandsSubmenu ? 'bg-surface-hover text-fg' : ''}`}
+            data-testid="kebab-commands-button"
+          >
+            <SquareChevronRight size={14} />
+            <span className="flex-1">{t`Commands`}</span>
+            {commandsFlyoutPlacement.horizontal === 'left' ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
+          </button>
+          {showCommandsSubmenu && (
+            <div
+              ref={commandsFlyoutRef}
+              style={{ transformOrigin: commandsFlyoutPlacement.horizontal === 'left' ? 'right center' : 'left center' }}
+              className="absolute w-[280px] max-h-[300px] flex flex-col bg-surface-raised border border-edge-input rounded-md shadow-xl z-50 overflow-hidden overlay-popover-in"
+            >
+              <CommandSearchList
+                cwd={task.worktree_path ?? projectPath ?? undefined}
+                onSelect={(command) => { closeAll(); onCommandSelect(command); }}
+                onClose={() => setShowCommandsSubmenu(false)}
+              />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Move to - flyout submenu */}
+      {moveTargets.length > 0 && (
+        <div
+          ref={moveFlyoutTriggerRef}
+          className="relative"
+          onMouseEnter={() => setShowMoveSubmenu(true)}
+          onMouseLeave={() => setShowMoveSubmenu(false)}
+        >
+          <button
+            onClick={() => setShowMoveSubmenu(!showMoveSubmenu)}
+            className={`w-full text-left px-3 py-1.5 [@media(max-height:720px)]:py-1 text-xs text-fg-tertiary hover:bg-surface-hover hover:text-fg transition-colors flex items-center gap-2 ${showMoveSubmenu ? 'bg-surface-hover text-fg' : ''}`}
+          >
+            <ArrowRightLeft size={14} />
+            <span className="flex-1">{t`Move to`}</span>
+            {moveFlyoutPlacement.horizontal === 'left' ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
+          </button>
+          {showMoveSubmenu && (
+            <div ref={moveFlyoutRef} style={{ transformOrigin: moveFlyoutPlacement.horizontal === 'left' ? 'right center' : 'left center' }} className="absolute min-w-[150px] bg-surface-raised border border-edge-input rounded-md shadow-xl z-50 py-1 overlay-popover-in">
+              {moveTargets.map((swimlane) => (
+                <button
+                  key={swimlane.id}
+                  onClick={() => onMoveTo(swimlane.id)}
+                  className="w-full text-left px-3 py-1.5 text-xs text-fg-tertiary hover:bg-surface-hover hover:text-fg transition-colors flex items-center gap-2"
+                >
+                  <span className="flex-shrink-0" style={{ color: swimlane.color }}>
+                    <SwimlaneIcon swimlane={swimlane} size={14} dotClassName="w-2 h-2 rounded-full" />
+                  </span>
+                  {swimlane.name}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      <KebabMenuDivider />
 
       {/* Find in terminal (parity with the header pill when it folds) */}
       {terminalFindAvailable && (
@@ -978,41 +1071,20 @@ function TaskDetailKebabItems({
         />
       )}
 
-      {/* View PR */}
-      {task.pr_url && (
-        <KebabMenuItem
-          icon={<GitPullRequest size={14} />}
-          label={t`View PR #${prNumber}`}
-          onClick={(event) => { closeAll(); linkOpener.open(task.pr_url!, event); }}
-        />
-      )}
-
       {/* Artifacts (parity with the header button, so the overflow holds it when it folds) */}
       <ArtifactsKebabItems task={task} close={closeAll} />
 
-      {/* Link / refresh PR (authoritative branch->PR resolve; works with no live
-          session). Shown for any anchor the ladder can search by, so a task with
-          no worktree whose push was recorded, or that names its PR by number,
-          gets the control too. For a linked PR it is the one control that
-          re-checks merge readiness between background sweeps. */}
-      {(task.branch_name || task.worktree_path || task.pushed_branch || task.pr_number != null) && (
-        <KebabMenuItem
-          icon={linkingPr ? <LoaderCircle size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-          label={task.pr_url ? t`Refresh PR` : t`Link PR`}
-          onClick={() => { closeAll(); void handleLinkPr(); }}
-          disabled={linkingPr}
-        />
-      )}
+      {hasGitGroup && <KebabMenuDivider />}
 
-      {/* Update from base - fetch the base and fast-forward the worktree.
+      {/* Pull from the base: fetch it and fast-forward the worktree.
           Disabled while a session is active. isSessionActive is a SUPERSET of
           the handler's running/queued guard (it also covers initializing /
           preparing), so this conservatively over-disables and the click can
           never land on the handler's error path. */}
-      {Boolean(task.worktree_path) && !isArchived && (
+      {canPull && (
         <KebabMenuItem
-          icon={updatingFromBase ? <LoaderCircle size={14} className="animate-spin" /> : <GitMerge size={14} />}
-          label={t`Update from base`}
+          icon={updatingFromBase ? <LoaderCircle size={14} className="animate-spin" /> : <ArrowDown size={14} />}
+          label={t`Pull from ${pullBaseLabel}`}
           onClick={() => { closeAll(); void handleUpdateFromBase(); }}
           disabled={updatingFromBase || isSessionActive || fixedBaseReason !== null}
           disabledReason={fixedBaseReason}
@@ -1020,87 +1092,30 @@ function TaskDetailKebabItems({
         />
       )}
 
-      {/* Pause / Resume */}
-      {canToggle && (
+      {/* Commit, push and create pull request, each only when its step applies. */}
+      <GitMenuItems git={git} close={closeAll} />
+
+      {/* View pull request */}
+      {task.pr_url && (
         <KebabMenuItem
-          icon={isSessionActive ? <CirclePause size={14} /> : <CirclePlay size={14} />}
-          label={isSessionActive ? t`Pause session` : t`Resume session`}
-          onClick={() => { closeAll(); onToggle(); }}
-          disabled={toggling}
-          data-testid="toggle-session-btn"
+          icon={<GitPullRequest size={14} />}
+          label={t`View pull request #${prNumber}`}
+          onClick={(event) => { closeAll(); linkOpener.open(task.pr_url!, event); }}
         />
       )}
 
-      {/* Commands - searchable flyout (shares CommandSearchList with the header
-          pill). Hover to open / leave to close, like Move to: the flyout is a DOM
-          child of this container, so moving the pointer INTO it (to type in the
-          search) stays within the container and keeps it open; the search input
-          auto-focuses on open so you can type immediately. */}
-      {isSessionActive && (
-        <div
-          ref={commandsFlyoutTriggerRef}
-          className="relative"
-          onMouseEnter={() => setShowCommandsSubmenu(true)}
-          onMouseLeave={() => setShowCommandsSubmenu(false)}
-        >
-          <button
-            onClick={() => setShowCommandsSubmenu(!showCommandsSubmenu)}
-            className={`w-full text-left px-3 py-1.5 text-xs text-fg-tertiary hover:bg-surface-hover hover:text-fg transition-colors flex items-center gap-2 ${showCommandsSubmenu ? 'bg-surface-hover text-fg' : ''}`}
-            data-testid="kebab-commands-button"
-          >
-            <SquareChevronRight size={14} />
-            <span className="flex-1">{t`Commands`}</span>
-            {commandsFlyoutPlacement.horizontal === 'left' ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
-          </button>
-          {showCommandsSubmenu && (
-            <div
-              ref={commandsFlyoutRef}
-              style={{ transformOrigin: commandsFlyoutPlacement.horizontal === 'left' ? 'right center' : 'left center' }}
-              className="absolute w-[280px] max-h-[300px] flex flex-col bg-surface-raised border border-edge-input rounded-md shadow-xl z-50 overflow-hidden overlay-popover-in"
-            >
-              <CommandSearchList
-                cwd={task.worktree_path ?? projectPath ?? undefined}
-                onSelect={(command) => { closeAll(); onCommandSelect(command); }}
-                onClose={() => setShowCommandsSubmenu(false)}
-              />
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Move to - flyout submenu */}
-      {moveTargets.length > 0 && (
-        <div
-          ref={moveFlyoutTriggerRef}
-          className="relative"
-          onMouseEnter={() => setShowMoveSubmenu(true)}
-          onMouseLeave={() => setShowMoveSubmenu(false)}
-        >
-          <button
-            onClick={() => setShowMoveSubmenu(!showMoveSubmenu)}
-            className={`w-full text-left px-3 py-1.5 text-xs text-fg-tertiary hover:bg-surface-hover hover:text-fg transition-colors flex items-center gap-2 ${showMoveSubmenu ? 'bg-surface-hover text-fg' : ''}`}
-          >
-            <ArrowRightLeft size={14} />
-            <span className="flex-1">{t`Move to`}</span>
-            {moveFlyoutPlacement.horizontal === 'left' ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
-          </button>
-          {showMoveSubmenu && (
-            <div ref={moveFlyoutRef} style={{ transformOrigin: moveFlyoutPlacement.horizontal === 'left' ? 'right center' : 'left center' }} className="absolute min-w-[150px] bg-surface-raised border border-edge-input rounded-md shadow-xl z-50 py-1 overlay-popover-in">
-              {moveTargets.map((swimlane) => (
-                <button
-                  key={swimlane.id}
-                  onClick={() => onMoveTo(swimlane.id)}
-                  className="w-full text-left px-3 py-1.5 text-xs text-fg-tertiary hover:bg-surface-hover hover:text-fg transition-colors flex items-center gap-2"
-                >
-                  <span className="flex-shrink-0" style={{ color: swimlane.color }}>
-                    <SwimlaneIcon swimlane={swimlane} size={14} dotClassName="w-2 h-2 rounded-full" />
-                  </span>
-                  {swimlane.name}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+      {/* Refresh the linked pull request: the one control that re-checks its state
+          and merge readiness between background checks, and the only one with
+          Auto-refresh PRs off. A task with none needs no control: the linker finds
+          its branch's pull request by itself, and Create pull request links one
+          that is already open. */}
+      {(task.pr_url || task.pr_number != null) && (
+        <KebabMenuItem
+          icon={linkingPr ? <LoaderCircle size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+          label={t`Refresh pull request`}
+          onClick={() => { closeAll(); void handleRefreshPr(); }}
+          disabled={linkingPr}
+        />
       )}
 
       {/* Shortcuts */}

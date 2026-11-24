@@ -476,6 +476,10 @@ msgstr "Almanca"
 msgid "Git branch name (empty if the task has none)."
 msgstr "Git dal adı (görevin dalı yoksa boş)."
 
+#: src/shared/background-call-jobs.ts
+msgid "Git drafts"
+msgstr ""
+
 #: src/shared/automation-manifest.ts
 #, fuzzy
 msgid "Give up after"

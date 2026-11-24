@@ -71,6 +71,7 @@ import { registerBoardHandlers } from './handlers/board';
 import { registerSystemHandlers, showDesktopNotification } from './handlers/system';
 import { registerBacklogHandlers } from './handlers/backlog';
 import { registerGitDiffHandlers } from './handlers/git-diff';
+import { registerGitActionHandlers } from './handlers/git-actions';
 import { registerBrowserHandlers } from './handlers/browser';
 import { registerSearchHandlers } from './handlers/search';
 import { registerTranscriptHandlers } from './handlers/transcripts';
@@ -530,6 +531,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   registerBoardHandlers(context);
   registerBacklogHandlers(context);
   registerGitDiffHandlers(context);
+  registerGitActionHandlers(context);
   registerBrowserHandlers(context);
   registerSearchHandlers(context);
   registerTranscriptHandlers(context);

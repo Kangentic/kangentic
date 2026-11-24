@@ -14,6 +14,9 @@ import { DiffViewOptionsMenu } from './DiffViewOptionsMenu';
 import { DiffErrorBoundary } from './DiffErrorBoundary';
 import { ChangesHistorySection } from './ChangesHistorySection';
 import { RAIL_SECTION_HEADER_PX } from './ChangesRailSection';
+import { ChangesNextStep } from './ChangesNextStep';
+import { useGitActions, type GitCheckout } from '../../git/useGitActions';
+import { taskGitBase, type GitActionTarget } from '../../../../../shared/git-work-state';
 import { ChangesPullRequestSection } from './ChangesPullRequestSection';
 import { ipcFailureToastFields, rejectionMessage } from '../../../../lib/ipc-error';
 import { usePrChecks, prFixCount } from '../../../../hooks/usePrChecks';
@@ -71,6 +74,10 @@ const TREE_REGION_DRAG_MIN = 160;
 
 interface ChangesPanelProps {
   entityId: string;
+  /** The checkout's actions for a host with no task (a Command Terminal). A task's are made from `task`. */
+  gitTarget?: { target: GitActionTarget; projectId: string | null; sessionId: string | null };
+  /** The panel is on screen. A parked, retained or concealed window keeps it mounted and watches no git. */
+  showing?: boolean;
   /** Whether the containing task window is focused (gates keyboard navigation
    *  so only the focused window's Changes panel reacts). */
   isFocused?: boolean;
@@ -135,7 +142,7 @@ interface DisplayedFileContent {
   filePath: string;
 }
 
-export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPath, worktreePath, baseBranch, emptyMessage, panelMode, onExpand, onCollapse, task, popOutParams, filePopOutParams, completedChanges }: ChangesPanelProps) {
+export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPath, worktreePath, baseBranch, emptyMessage, panelMode, onExpand, onCollapse, task, popOutParams, filePopOutParams, completedChanges, gitTarget, showing = true }: ChangesPanelProps) {
   const { t } = useLingui();
   const effectiveScrollKey = scrollKey ?? entityId;
   const completed = completedChanges ?? null;
@@ -492,6 +499,9 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   // fetchFiles completes and flips initialFetchDoneRef (refs don't trigger renders).
   const restoredRef = useRef(false);
   useEffect(() => {
+    // A commit empties the diff under an open panel. Start over, or the file
+    // that left stays selected and shows as modified beside the next change.
+    if (files.length === 0 && loaded) restoredRef.current = false;
     if (restoredRef.current || !initialFetchDoneRef.current) return;
     // A file opens through the newest commit that touched it
     // (handleSelectFile), so nothing auto-selects at a no-range rest.
@@ -1055,6 +1065,17 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
     </DetachableSurfaceHeader>
   ) : null;
 
+  // What this checkout needs next. A completed task has no checkout.
+  const taskSessionId = useSessionStore((state) => (task ? state._sessionByTaskId.get(task.id)?.id ?? null : null));
+  const checkout = useMemo<GitCheckout | null>(() => {
+    if (isCompleted || !projectPath) return null;
+    if (task) {
+      return { target: { kind: 'task', taskId: task.id }, projectId: checksProjectId, projectPath, worktreePath, baseBranch: taskGitBase(task, baseBranch), task, sessionId: taskSessionId };
+    }
+    return gitTarget ? { ...gitTarget, projectPath, worktreePath, baseBranch, task: null } : null;
+  }, [isCompleted, projectPath, task, checksProjectId, worktreePath, baseBranch, taskSessionId, gitTarget]);
+  const git = useGitActions(checkout, showing);
+
   // The detail pane (error / empty / two-pane), scoped to the current
   // selection (the scope, a completed task's change, or a commit). Rendered as
   // a helper so the history region above stays mounted regardless of which
@@ -1335,6 +1356,8 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   return (
     <div className="flex flex-col h-full min-h-0">
       {surfaceHeader}
+      <ChangesNextStep git={git} />
+      {git.dialogs}
       {/* The review surface: rail (tree + History section) beside the diff. */}
       <div className="flex-1 min-h-0">
         {renderFilesBody()}

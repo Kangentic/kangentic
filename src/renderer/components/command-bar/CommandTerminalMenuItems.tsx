@@ -11,6 +11,8 @@ import { CircleStop, FolderOpen, GitBranch, GitCompare, Globe, Pencil, Search, S
 import { useLingui } from '@lingui/react/macro';
 import { KebabMenuItem, KebabMenuDivider } from '../KebabMenu';
 import { ShortcutGlyph } from '../../utils/swimlane-icons';
+import { GitMenuItems } from '../dialogs/git/GitMenuItems';
+import type { GitActions } from '../dialogs/git/useGitActions';
 import type { ShortcutConfig } from '../../../shared/types';
 
 export interface CommandTerminalMenuActions {
@@ -33,6 +35,8 @@ export interface CommandTerminalMenuActions {
   onCloseBrowser: () => void;
   /** Find in terminal, from the header's menu only: a Running row's terminal may be behind another. */
   terminalFind?: { open: boolean; onToggle: () => void };
+  /** The checkout's commit, push and create pull request, from the header's menu only, as Find is. */
+  git?: GitActions;
   /** The board's shortcuts the menu lists, in order. */
   shortcuts: ShortcutConfig[];
   onShortcut: (action: ShortcutConfig) => void;
@@ -63,6 +67,7 @@ export function CommandTerminalMenuItems({
   browserAlive,
   onCloseBrowser,
   terminalFind,
+  git,
   shortcuts,
   onShortcut,
   stopping,
@@ -116,6 +121,7 @@ export function CommandTerminalMenuItems({
           data-testid={`${testIdPrefix}-toggle-changes`}
         />
       )}
+      {git && <GitMenuItems git={git} close={close} />}
       {/* The task window's pair: Hide keeps the page for the agent, Close ends it. */}
       <KebabMenuItem
         icon={<Globe size={14} />}

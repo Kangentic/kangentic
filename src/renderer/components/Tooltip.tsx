@@ -90,6 +90,8 @@ import {
   LABEL_TIP_TEXT_CLASS,
   STACK_TIP_CLASS,
   STACK_TIP_DESTINATION_CLASS,
+  STACK_TIP_FACTS_CLASS,
+  STACK_TIP_FACTS_HEAD_CLASS,
   STACK_TIP_HEAD_CLASS,
   STACK_TIP_TITLE_CLASS,
   STACK_TIP_ROWS_CLASS,
@@ -111,13 +113,25 @@ export interface TooltipHeader {
   title: string;
 }
 
-/** One action of a stacked tip: what a click does, and the key chips that do it. */
+/**
+ * One row of a stacked tip: an action, with the key chips that do it, or a fact led by its mark
+ * (`icon`). A tip's rows are all one or all the other.
+ */
 export interface TooltipRow {
   label: string;
   /** Key chips as drawn, already formatted for the platform (`formatComboSegments`). */
   keys: readonly string[];
+  /** The mark that leads a fact. Decorative: the label says it. */
+  icon?: ReactNode;
   /** Stamped on the row as `data-tooltip-row`, for a test to find it. */
   id?: string;
+}
+
+/** A row that is a fact: its mark, its words, and an id for a test. */
+export interface TooltipFact {
+  icon: ReactNode;
+  label: string;
+  id: string;
 }
 
 export interface TooltipProps {
@@ -130,6 +144,8 @@ export interface TooltipProps {
    * The stacked shape, for a control with more than one way to act on it (a link a click and a
    * Ctrl+click open in different browsers): `label` and `detail` become a muted head line, and
    * each row is an action with its chips. One row with no head draws as the plain label tip.
+   * Rows with an `icon` are facts about the control instead: the head line keeps the tip's own
+   * tone and the control's own shortcut, and each fact follows its mark.
    */
   rows?: readonly TooltipRow[];
   /**
@@ -551,8 +567,9 @@ function TipLayer(props: TipLayerProps): ReactElement | null {
   // The stacked shape: a head line over the actions, or two actions and more. One
   // action with nothing above it is the plain label tip, drawn below as one.
   const head = [label, detail ?? ''].filter((part) => part !== '').join('. ');
-  const stacked = !rich && rows !== undefined && (rows.length > 1 || head !== '');
+  const stacked = !rich && rows !== undefined && (rows.length > 1 || head !== '' || rows.some((row) => row.icon !== undefined));
   const soleRow = !rich && rows !== undefined && !stacked ? rows[0] : undefined;
+  const facts = stacked && rows !== undefined && rows.some((row) => row.icon !== undefined);
   const [shown, setShown] = useState<'cold' | 'warm' | null>(null);
   const shownRef = useRef<'cold' | 'warm' | null>(null);
   const tipRef = useRef<HTMLDivElement | null>(null);
@@ -666,7 +683,12 @@ function TipLayer(props: TipLayerProps): ReactElement | null {
         <>
           {head !== '' && (
             <>
-              {destination !== undefined && destination !== '' ? (
+              {facts ? (
+                <div data-tooltip-part="head" className={STACK_TIP_FACTS_HEAD_CLASS}>
+                  <span>{head}</span>
+                  {combo !== '' && <TipChips segments={formatComboSegments(combo)} className={TIP_KEYS_CLASS} />}
+                </div>
+              ) : destination !== undefined && destination !== '' ? (
                 <>
                   <div data-tooltip-part="head" className={STACK_TIP_TITLE_CLASS}>{head}</div>
                   <div data-tooltip-part="destination" className={STACK_TIP_DESTINATION_CLASS}>{destination}</div>
@@ -677,11 +699,12 @@ function TipLayer(props: TipLayerProps): ReactElement | null {
               <div aria-hidden="true" className={STACK_TIP_RULE_CLASS} />
             </>
           )}
-          <div className={STACK_TIP_ROWS_CLASS}>
+          <div className={facts ? STACK_TIP_FACTS_CLASS : STACK_TIP_ROWS_CLASS}>
             {rows.map((row) => (
               <Fragment key={row.id ?? row.label}>
+                {facts && <span aria-hidden="true" className="flex">{row.icon}</span>}
                 <span data-tooltip-row={row.id}>{row.label}</span>
-                <TipChips segments={row.keys} className={STACK_TIP_ROW_KEYS_CLASS} />
+                {!facts && <TipChips segments={row.keys} className={STACK_TIP_ROW_KEYS_CLASS} />}
               </Fragment>
             ))}
           </div>

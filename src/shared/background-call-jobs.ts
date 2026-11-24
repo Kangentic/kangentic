@@ -12,6 +12,7 @@ export const BACKGROUND_CALL_JOBS: readonly BackgroundCallJob[] = [
   'task_summary',
   'task_title',
   'terminal_name',
+  'git_draft',
 ];
 
 /**
@@ -24,6 +25,7 @@ export const BACKGROUND_CALL_JOB_LABELS: Record<BackgroundCallJob, MessageDescri
   task_summary: msg`Task summaries`,
   task_title: msg`Task titles`,
   terminal_name: msg`Terminal names`,
+  git_draft: msg`Git drafts`,
 };
 
 export function isBackgroundCallJob(value: string): value is BackgroundCallJob {

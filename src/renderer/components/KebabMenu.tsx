@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { Ellipsis, Check } from 'lucide-react';
 import { useLingui } from '@lingui/react/macro';
 import { usePopoverPosition } from '../hooks/usePopoverPosition';
@@ -29,6 +29,9 @@ interface KebabMenuProps {
   labelShown?: boolean;
 }
 
+/** The least distance a menu keeps from the window's edge. */
+const MENU_EDGE_GAP_PX = 8;
+
 const DEFAULT_TRIGGER_CLASS = 'p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors';
 
 /**
@@ -46,6 +49,25 @@ export function KebabMenu({ children, icon, label: labelProp, triggerClassName, 
   // a clipping ancestor - a window frame's `overflow-hidden` was cropping the
   // "Move to" / "Commands" flyouts when the task detail became a window.
   const { style } = usePopoverPosition(containerRef, popoverRef, open, { mode: 'dropdown', strategy: 'fixed' });
+
+  // A menu taller than the room under its trigger moves up to stay in the window,
+  // over the trigger, as an OS menu does. It cannot scroll instead: its flyouts are
+  // its own children, and a scroller clips them. After the hook's own layout effect,
+  // which wrote the anchor; `offsetTop` ignores the entrance transform. Again whenever the
+  // menu changes size: items whose state is still being read arrive after it opens.
+  useLayoutEffect(() => {
+    const popover = popoverRef.current;
+    if (!open || !popover) return;
+    const keepInWindow = (): void => {
+      popover.style.marginTop = '';
+      const overflow = popover.offsetTop + popover.offsetHeight - (window.innerHeight - MENU_EDGE_GAP_PX);
+      if (overflow > 0) popover.style.marginTop = `-${Math.min(overflow, Math.max(0, popover.offsetTop - MENU_EDGE_GAP_PX))}px`;
+    };
+    keepInWindow();
+    const observer = new ResizeObserver(keepInWindow);
+    observer.observe(popover);
+return () => observer.disconnect();
+  }, [open, style]);
 
   // Close on click outside. The popover is portaled OUT of `containerRef`, so a
   // click inside it must also count as "inside" (else selecting an item, or
@@ -117,8 +139,8 @@ export function KebabMenu({ children, icon, label: labelProp, triggerClassName, 
 // Reusable menu item primitives
 // ---------------------------------------------------------------------------
 
-const ITEM_CLASS = 'w-full text-left px-3 py-1.5 text-xs transition-colors flex items-center gap-2 text-fg-tertiary hover:bg-surface-hover hover:text-fg';
-const DESTRUCTIVE_CLASS = 'w-full text-left px-3 py-1.5 text-xs transition-colors flex items-center gap-2 text-red-400 hover:bg-red-400/10 hover:text-red-300';
+const ITEM_CLASS = 'w-full text-left px-3 py-1.5 [@media(max-height:720px)]:py-1 text-xs transition-colors flex items-center gap-2 text-fg-tertiary hover:bg-surface-hover hover:text-fg';
+const DESTRUCTIVE_CLASS = 'w-full text-left px-3 py-1.5 [@media(max-height:720px)]:py-1 text-xs transition-colors flex items-center gap-2 text-red-400 hover:bg-red-400/10 hover:text-red-300';
 
 interface MenuItemProps {
   icon: ReactNode;

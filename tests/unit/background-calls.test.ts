@@ -496,7 +496,7 @@ describe('foldBackgroundUsage', () => {
   it('lists every job in order, a job with no calls at zero', () => {
     const usage = foldBackgroundUsage([group({})]);
 
-    expect(usage.byJob.map((row) => row.job)).toEqual(['condition_check', 'workflow_step', 'task_summary', 'task_title', 'terminal_name']);
+    expect(usage.byJob.map((row) => row.job)).toEqual(['condition_check', 'workflow_step', 'task_summary', 'task_title', 'terminal_name', 'git_draft']);
     expect(usage.byJob[0]).toMatchObject({ calls: 1, costUsd: 0.01 });
     expect(usage.byJob[1]).toMatchObject({ calls: 0, costUsd: null, models: [] });
   });

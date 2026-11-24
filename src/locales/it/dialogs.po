@@ -111,10 +111,18 @@ msgstr "{removedCount, plural, one {{columnName}: rimossa # automazione} many {{
 msgid "{commitCount, plural, one {# commit for this task} other {# commits for this task}}"
 msgstr "{commitCount, plural, one {# commit per questa attività} many {# commit per questa attività} other {# commit per questa attività}}"
 
+#: src/renderer/components/dialogs/git/git-badge.tsx
+msgid "{commitCount, plural, one {# commit not pushed} other {# commits not pushed}}"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
 #, fuzzy
 msgid "{commitCount, plural, one {# commit on this branch} other {# commits on this branch}}"
 msgstr "{commitCount, plural, one {# commit su questo ramo} many {# commit su questo ramo} other {# commit su questo ramo}}"
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesNextStep.tsx
+msgid "{commitCount, plural, one {# local commit} other {# local commits}}"
+msgstr ""
 
 #: src/renderer/components/dialogs/ModelCombobox.tsx
 #, fuzzy
@@ -126,10 +134,22 @@ msgstr "Finestra di contesto {contextLabel}"
 msgid "{count, plural, one {# tool call, by tool} other {# tool calls, by tool}}"
 msgstr "{count, plural, one {# chiamata agli strumenti, per strumento} many {# di chiamate agli strumenti, per strumento} other {# chiamate agli strumenti, per strumento}}"
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesNextStep.tsx
+msgid "{fileCount, plural, one {# changed file} other {# changed files}}"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 #, fuzzy
 msgid "{fileCount, plural, one {# file} other {# files}}"
 msgstr "{fileCount, plural, one {# file} many {# di file} other {# file}}"
+
+#: src/renderer/components/dialogs/git/CommitDialog.tsx
+msgid "{fileCount, plural, one {# file} other {# files}} on {branch}"
+msgstr ""
+
+#: src/renderer/components/dialogs/git/git-badge.tsx
+msgid "{fileCount, plural, one {# uncommitted file} other {# uncommitted files}}"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
 #, fuzzy
@@ -224,9 +244,12 @@ msgstr "{pillLabel}: {reason}"
 msgid "{position} of {total}"
 msgstr "{position} di {total}"
 
+#: src/renderer/components/dialogs/git/git-badge.tsx
+msgid "{prFixCount, plural, one {# problem on the PR} other {# problems on the PR}}"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
-#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-msgid "{prFixes, plural, one {# thing on the PR to fix} other {# things on the PR to fix}}"
+msgid "{prFixes, plural, one {# problem on the PR} other {# problems on the PR}}"
 msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
@@ -329,6 +352,14 @@ msgstr "{fileCount, plural, one {{viewedCount} di # file visualizzato} many {{vi
 msgid "*: any text. Use it anywhere. Without one, a pattern must match the whole line."
 msgstr ""
 
+#: src/renderer/components/dialogs/git/useGitActions.tsx
+msgid "#{number} is open on its host."
+msgstr ""
+
+#: src/renderer/components/dialogs/git/CreatePullRequestDialog.tsx
+msgid "<0>{headBranch}</0> into <1/>"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "<0>Any case.</0> Punctuation is ignored too, so \"READY for review.\" matches."
 msgstr ""
@@ -347,6 +378,10 @@ msgstr ""
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "A folder inside your home on the host, such as ~/code/api"
+msgstr ""
+
+#: src/renderer/components/dialogs/git/useGitActions.tsx
+msgid "A git action is running"
 msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
@@ -569,6 +604,10 @@ msgstr "Automazioni modificate in:"
 msgid "automations on {savedAutomationColumns, plural, one {# column} other {# columns}}"
 msgstr "{savedAutomationColumns, plural, one {automazioni su # colonna} many {automazioni su # colonne} other {automazioni su # colonne}}"
 
+#: src/renderer/components/dialogs/git/useGitActions.tsx
+msgid "Available when the agent finishes its turn"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 #, fuzzy
 msgid "Back to all changes"
@@ -671,6 +710,10 @@ msgctxt "git area"
 msgid "Branch"
 msgstr "Ramo"
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesNextStep.tsx
+msgid "Branch not published"
+msgstr ""
+
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "Browse"
 msgstr ""
@@ -698,15 +741,14 @@ msgstr "Chiamata"
 msgid "Can't fast-forward"
 msgstr "Impossibile eseguire il fast-forward"
 
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Can't pull from {baseBranch}"
+msgstr ""
+
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
 msgid "Can't remove \"{name}\""
 msgstr "Impossibile rimuovere \"{name}\""
-
-#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
-msgid "Can't update from {baseBranch}"
-msgstr "Impossibile aggiornare da {baseBranch}"
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #: src/renderer/components/dialogs/BaseDialog.tsx
@@ -927,10 +969,24 @@ msgstr "Terminale comandi"
 msgid "Commands"
 msgstr "Comandi"
 
+#: src/renderer/components/dialogs/git/CommitDialog.tsx
+#: src/renderer/components/dialogs/task-detail/changes/ChangesNextStep.tsx
+msgctxt "git action"
+msgid "Commit"
+msgstr ""
+
+#: src/renderer/components/dialogs/git/CommitDialog.tsx
+msgid "Commit changes"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphSvg.tsx
 #, fuzzy
 msgid "Commit graph"
 msgstr "Grafico dei commit"
+
+#: src/renderer/components/dialogs/git/GitMenuItems.tsx
+msgid "Commit..."
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
 #, fuzzy
@@ -1094,10 +1150,18 @@ msgstr "Impossibile aggiungere \"{filename}\""
 msgid "Couldn't archive task"
 msgstr "Impossibile archiviare l'attività"
 
+#: src/renderer/components/dialogs/git/useGitActions.tsx
+msgid "Couldn't commit"
+msgstr ""
+
 #: src/renderer/components/dialogs/image-compress.ts
 #, fuzzy
 msgid "Couldn't compress image"
 msgstr "Impossibile comprimere l'immagine"
+
+#: src/renderer/components/dialogs/git/useGitActions.tsx
+msgid "Couldn't create pull request"
+msgstr ""
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
 #, fuzzy
@@ -1128,6 +1192,14 @@ msgstr "Impossibile aprire \"{filename}\""
 #, fuzzy
 msgid "Couldn't open file diff"
 msgstr "Impossibile aprire il diff del file"
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Couldn't pull"
+msgstr ""
+
+#: src/renderer/components/dialogs/git/useGitActions.tsx
+msgid "Couldn't push"
+msgstr ""
 
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
 #, fuzzy
@@ -1203,6 +1275,15 @@ msgstr "Conta le attività il cui agente è al lavoro o in attesa di una tua ris
 #, fuzzy
 msgid "Create"
 msgstr "Crea"
+
+#: src/renderer/components/dialogs/git/CreatePullRequestDialog.tsx
+#: src/renderer/components/dialogs/task-detail/changes/ChangesNextStep.tsx
+msgid "Create pull request"
+msgstr ""
+
+#: src/renderer/components/dialogs/git/GitMenuItems.tsx
+msgid "Create pull request..."
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -1294,6 +1375,7 @@ msgid "Deleting {deleteCompleted} of {deleteTotal}"
 msgstr "Eliminazione di {deleteCompleted} su {deleteTotal}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#: src/renderer/components/dialogs/git/CreatePullRequestDialog.tsx
 #, fuzzy
 msgid "Description"
 msgstr "Descrizione"
@@ -1358,6 +1440,31 @@ msgstr "Completato"
 #, fuzzy
 msgid "Double-click to reset"
 msgstr "Doppio clic per reimpostare"
+
+#: src/renderer/components/dialogs/git/CreatePullRequestDialog.tsx
+msgid "Draft a description"
+msgstr ""
+
+#: src/renderer/components/dialogs/git/CommitDialog.tsx
+msgid "Draft again"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgid "Draft commit or PR text"
+msgstr ""
+
+#: src/renderer/components/dialogs/git/CreatePullRequestDialog.tsx
+msgctxt "pull request state"
+msgid "Draft PR"
+msgstr ""
+
+#: src/renderer/components/dialogs/git/CreatePullRequestDialog.tsx
+msgid "Drafting a description..."
+msgstr ""
+
+#: src/renderer/components/dialogs/git/CommitDialog.tsx
+msgid "Drafting a message..."
+msgstr ""
 
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
 #, fuzzy
@@ -1624,6 +1731,7 @@ msgstr "Passaggio"
 msgid "Handoff Chain"
 msgstr "Catena di passaggi di consegne"
 
+#: src/renderer/components/dialogs/git/useGitActions.tsx
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 msgid "Held for the next agent"
 msgstr ""
@@ -1819,11 +1927,6 @@ msgctxt "column header"
 msgid "Lines"
 msgstr "Righe"
 
-#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
-msgid "Link PR"
-msgstr "Collega PR"
-
 #: src/renderer/components/dialogs/BranchPicker.tsx
 #, fuzzy
 msgid "Loading branches..."
@@ -1880,6 +1983,11 @@ msgstr "Ingrandisci finestra di dialogo"
 #, fuzzy
 msgid "Maximum runs"
 msgstr "Esecuzioni massime"
+
+#: src/renderer/components/dialogs/git/CommitDialog.tsx
+msgctxt "commit message"
+msgid "Message"
+msgstr ""
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
@@ -2136,6 +2244,10 @@ msgstr "Nessun resolver di PR"
 msgid "No profiles yet - create one in Edit Columns"
 msgstr "Nessun profilo: creane uno in Modifica colonne"
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesNextStep.tsx
+msgid "No pull request"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 #, fuzzy
 msgid "No staged changes"
@@ -2212,12 +2324,7 @@ msgid "Nothing runs at a turn end in {terminalName}."
 msgstr "Nessuna esecuzione a fine turno in {terminalName}."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
-msgid "Nothing to search by"
-msgstr "Nessun criterio di ricerca"
-
-#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-msgid "Nothing to update from"
+msgid "Nothing to pull"
 msgstr ""
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
@@ -2358,6 +2465,11 @@ msgstr "Apri cartella dell'albero di lavoro"
 #, fuzzy
 msgid "Opens this part of the conversation"
 msgstr "Apre questa parte della conversazione"
+
+#: src/renderer/components/dialogs/git/CreatePullRequestDialog.tsx
+msgctxt "pull request description"
+msgid "Optional"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -2553,6 +2665,15 @@ msgctxt "condition kind"
 msgid "Prompt"
 msgstr ""
 
+#: src/renderer/components/dialogs/git/GitMenuItems.tsx
+#: src/renderer/components/dialogs/task-detail/changes/ChangesNextStep.tsx
+msgid "Publish branch"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Pull from {pullBaseLabel}"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailEditForm.tsx
 msgid "Pull request"
@@ -2563,6 +2684,24 @@ msgstr ""
 msgctxt "completed task metric"
 msgid "Pull request"
 msgstr "Pull request"
+
+#: src/renderer/components/dialogs/git/useGitActions.tsx
+msgid "Pull request created"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Pulled from {baseBranch}"
+msgstr ""
+
+#: src/renderer/components/dialogs/git/GitMenuItems.tsx
+#: src/renderer/components/dialogs/task-detail/changes/ChangesNextStep.tsx
+msgctxt "git action"
+msgid "Push"
+msgstr ""
+
+#: src/renderer/components/dialogs/git/CommitDialog.tsx
+msgid "Push after committing"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
 #, fuzzy
@@ -2595,9 +2734,8 @@ msgid "Reconnecting…"
 msgstr "Riconnessione…"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
-msgid "Refresh PR"
-msgstr "Aggiorna PR"
+msgid "Refresh pull request"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -2693,6 +2831,10 @@ msgstr "Ridimensiona elenco file"
 #, fuzzy
 msgid "Resize history"
 msgstr "Ridimensiona cronologia"
+
+#: src/renderer/components/dialogs/git/useGitActions.tsx
+msgid "Resolve the conflicts first"
+msgstr ""
 
 #: src/renderer/components/dialogs/ReleaseNotesDialog.tsx
 #, fuzzy
@@ -3298,6 +3440,10 @@ msgstr "Il nuovo agente riprende la conversazione dell'agente precedente invece 
 msgid "The next agent on this task gets the failed checks in its first message."
 msgstr ""
 
+#: src/renderer/components/dialogs/git/useGitActions.tsx
+msgid "The next agent on this task gets the failure in its first message."
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
 msgid "The PR host returned an error."
@@ -3374,11 +3520,6 @@ msgstr "Ora è gestito dalle impostazioni della colonna. Rimuovilo per usarle."
 msgid "This project is not a git repository"
 msgstr ""
 
-#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
-msgid "This task has no branch, commit or PR number yet."
-msgstr "Questa attività non ha ancora un ramo, un commit o un numero di PR."
-
 #: src/renderer/components/dialogs/task-detail/completed/CompletedConversationTab.tsx
 #, fuzzy
 msgid "This task has no conversation history"
@@ -3414,6 +3555,11 @@ msgstr "Verranno eliminati definitivamente l'attività, la relativa cronologia d
 msgctxt "column header"
 msgid "Title"
 msgstr "Titolo"
+
+#: src/renderer/components/dialogs/git/CreatePullRequestDialog.tsx
+msgctxt "pull request"
+msgid "Title"
+msgstr ""
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
@@ -3555,21 +3701,6 @@ msgstr "Non tracciato"
 msgid "Up to {maxConcurrent, plural, one {# agent runs} other {# agents run}} at a time"
 msgstr "{maxConcurrent, plural, one {Fino a # agente in esecuzione alla volta} many {Fino a # di agenti in esecuzione alla volta} other {Fino a # agenti in esecuzione alla volta}}"
 
-#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
-msgid "Update from base"
-msgstr "Aggiorna dalla base"
-
-#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
-msgid "Update from base failed"
-msgstr "Aggiornamento dalla base non riuscito"
-
-#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
-msgid "Updated from {baseBranch}"
-msgstr "Aggiornato da {baseBranch}"
-
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
 msgid "updated the column order"
@@ -3611,9 +3742,8 @@ msgid "View options"
 msgstr "Opzioni di visualizzazione"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
-msgid "View PR #{prNumber}"
-msgstr "Visualizza PR #{prNumber}"
+msgid "View pull request #{prNumber}"
+msgstr ""
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 #, fuzzy

@@ -37,7 +37,8 @@ only for main-process internal callers (engine, auto-move, MCP command handlers)
 
 The mutation set today: tasks `create`/`update`/`delete`/`move`/`unarchive`/`bulkDelete`/
 `bulkUnarchive`/`switchBranch`/`updateFromBase`/`setRuntimeOverride`/`resolvePr`/`sendPrChecks`/
-`setDetailViewState`; backlog `demote` (it deletes a board task, and the Agent Monitor demotes a
+`setDetailViewState`; git `commit`/`push`/`createPullRequest` (each can write the row of the task
+whose checkout it runs in); backlog `demote` (it deletes a board task, and the Agent Monitor demotes a
 task of a project the board is not on); sessions `spawn`/`suspend`/`resume`/`resumeOnOpen`/`reset`/`reconcile`. Reads (`list`, `listArchived`, `listPrChecks`, the `get*` probes) and
 by-session-id / project-agnostic channels (`kill`, `write`, `resize`, `resetTerminal`,
 `openHistoryView`, `closeHistoryView`, the transient session channels) are NOT stamped: a read against the wrong project shows stale data for a frame
@@ -47,7 +48,8 @@ by-session-id / project-agnostic channels (`kill`, `write`, `resize`, `resetTerm
 
 New IPC channels are added regularly, and the read-trigger gap means this rule may not be loaded
 when a new channel is created. The CI test below is the backstop: it classifies every
-`ipcRenderer.invoke(IPC.TASK_* | IPC.SESSION_*)` (plus `IPC.BACKLOG_DEMOTE`, claimed by name) in
+`ipcRenderer.invoke(IPC.TASK_* | IPC.SESSION_*)` (plus `IPC.BACKLOG_DEMOTE` and the three git
+actions, claimed by name) in
 `preload.ts` as either a stamped mutation or
 an explicit allowlist entry, and FAILS on an unclassified channel. A new mutation therefore cannot
 ship without a deliberate decision: forward `projectId`, or justify an allowlist entry. When the

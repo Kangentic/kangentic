@@ -1,4 +1,5 @@
 import { spawn, type SpawnOptions } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
 import { resolveShellLaunch } from '../pty/spawn/shell-launch';
 import { withoutCrashpadPipeName } from '../shared/child-env';
 import { killChildTreeNow } from '../shared/child-tree-stop';
@@ -36,6 +37,8 @@ export interface SpawnWithAbortOptions {
    * variables set; see `nonInteractiveGitEnv` in fetch-throttle.ts.
    */
   env?: NodeJS.ProcessEnv;
+  /** Which end of output past the cap is kept: the start (default), or the end, where a hook says why it failed. */
+  keepOutput?: 'head' | 'tail';
 }
 
 export interface SpawnWithAbortTarget {
@@ -78,6 +81,25 @@ function withExitFields(error: Error, fields: SpawnExitFields): Error & SpawnExi
   return Object.assign(error, fields);
 }
 
+/** What a child printed before it failed, both streams. */
+export interface CapturedOutput {
+  /** Null when the child did not exit on its own (a timeout or a kill). */
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+}
+
+const capturedOutputs = new WeakMap<Error, CapturedOutput>();
+
+/**
+ * Both streams of a run `spawnWithAbort` rejected, or null for any other error.
+ * Kept beside the error rather than on it: a hook's output is the user's own
+ * text, and a field on the error could ride a report.
+ */
+export function capturedOutputOf(error: unknown): CapturedOutput | null {
+  return error instanceof Error ? capturedOutputs.get(error) ?? null : null;
+}
+
 /**
  * Shared `child_process.spawn` lifecycle behind runGitWithTimeout and
  * runInitScript: an internal AbortController on a wall-clock timeout, optional
@@ -106,7 +128,7 @@ export function spawnWithAbort(
   options: SpawnWithAbortOptions,
 ): Promise<{ stdout: string; stderr: string }> {
   const { command, args, cwd, label, signalKillAssertsTimeout } = target;
-  const { timeoutMs, signal: externalSignal } = options;
+  const { timeoutMs, signal: externalSignal, keepOutput = 'head' } = options;
   // Always passed, never inherited: git runs repository hooks and the init
   // script can start anything, so neither gets Crashpad's pipe name
   // (child-env.ts).
@@ -154,6 +176,10 @@ export function spawnWithAbort(
       if (settled) return;
       settled = true;
       cleanup();
+      const { exitCode, timedOut, signal: exitSignal } = error as Error & SpawnExitFields;
+      if (exitCode !== undefined || timedOut || exitSignal) {
+        capturedOutputs.set(error, { exitCode: exitCode ?? null, stdout, stderr });
+      }
       reject(error);
     };
 
@@ -165,12 +191,16 @@ export function spawnWithAbort(
 
     let stdout = '';
     let stderr = '';
-    const onStdout = (chunk: Buffer): void => {
-      if (stdout.length < MAX_CAPTURED_OUTPUT_CHARS) stdout += chunk.toString('utf8');
+    // A decoder per stream: a chunk can end inside a multi-byte character.
+    const stdoutDecoder = new StringDecoder('utf8');
+    const stderrDecoder = new StringDecoder('utf8');
+    const appendCapped = (captured: string, text: string): string => {
+      if (keepOutput === 'head') return captured.length < MAX_CAPTURED_OUTPUT_CHARS ? captured + text : captured;
+      const joined = captured + text;
+      return joined.length > 2 * MAX_CAPTURED_OUTPUT_CHARS ? joined.slice(-MAX_CAPTURED_OUTPUT_CHARS) : joined;
     };
-    const onStderr = (chunk: Buffer): void => {
-      if (stderr.length < MAX_CAPTURED_OUTPUT_CHARS) stderr += chunk.toString('utf8');
-    };
+    const onStdout = (chunk: Buffer): void => { stdout = appendCapped(stdout, stdoutDecoder.write(chunk)); };
+    const onStderr = (chunk: Buffer): void => { stderr = appendCapped(stderr, stderrDecoder.write(chunk)); };
     const onError = (error: NodeJS.ErrnoException): void => {
       if (error.name === 'AbortError' || error.code === 'ABORT_ERR') {
         settleReject(abortedError());

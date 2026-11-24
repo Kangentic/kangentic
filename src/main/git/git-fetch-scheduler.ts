@@ -19,7 +19,7 @@
  *
  * It only fetches. It never pulls, merges, or rebases: keeping a tree current
  * under a running agent is out of scope (#558), and the remedy stays explicit
- * ("Update from base").
+ * ("Pull from <base>").
  *
  * The lifecycle (`startForProject` / `stop`, the single active project, the
  * deferred first sweep) mirrors `src/main/pr/pr-refresh-scheduler.ts`,

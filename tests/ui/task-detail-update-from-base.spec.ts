@@ -1,5 +1,5 @@
 /**
- * UI test for the task-detail kebab "Update from base" action
+ * UI test for the task-detail kebab "Pull from <base>" action
  * (TaskDetailKebabItems.handleUpdateFromBase, TaskDetailHeader.tsx).
  *
  * Covers the three renderer-only decisions main cannot exercise:
@@ -170,7 +170,7 @@ async function launch(): Promise<{ browser: Browser; page: Page }> {
         taskId: '${NO_WORKTREE_TASK_ID}',
       }));
 
-      // Worktree task based on a tag: nothing to update from, so the item is
+      // Worktree task based on a tag: nothing to pull, so the item is
       // disabled with the reason. main's git:resolveRef answer is seeded.
       window.__mockGitRefs = { 'v2.4.0': { kind: 'tag', sha: 'b'.repeat(40) } };
       state.tasks.push(makeTask({
@@ -258,7 +258,7 @@ async function openDetailWindow(page: Page, taskId: string): Promise<string> {
 async function openKebab(page: Page, windowId: string): Promise<void> {
   await page.locator(`[data-testid="window-frame-${windowId}"] button[aria-label="Actions"]`).click();
   // The menu really opened: an item that is rendered unconditionally, so an
-  // absent "Update from base" item below cannot just be a menu that never
+  // absent "Pull from" item below cannot just be a menu that never
   // appeared.
   await expect(page.locator('[data-testid="view-conversation-btn"]')).toBeVisible({ timeout: 5000 });
 }
@@ -278,7 +278,7 @@ async function closeDetailWindow(page: Page, windowId: string): Promise<void> {
   await expect(page.locator(`[data-testid="window-frame-${windowId}"]`)).toHaveCount(0, { timeout: 5000 });
 }
 
-test.describe('Task detail kebab: Update from base', () => {
+test.describe('Task detail kebab: Pull from the base', () => {
   let browser: Browser;
   let page: Page;
 
@@ -377,13 +377,13 @@ test.describe('Task detail kebab: Update from base', () => {
       {
         name: 'updated, plural commit count',
         result: { status: 'updated', baseBranch: 'main', commitCount: 3 },
-        expectedTitle: 'Updated from main',
+        expectedTitle: 'Pulled from main',
         expectedBody: 'Fast-forwarded 3 commits.',
       },
       {
         name: 'updated, singular commit count',
         result: { status: 'updated', baseBranch: 'main', commitCount: 1 },
-        expectedTitle: 'Updated from main',
+        expectedTitle: 'Pulled from main',
         expectedBody: 'Fast-forwarded 1 commit.',
       },
       {
@@ -401,7 +401,7 @@ test.describe('Task detail kebab: Update from base', () => {
       {
         name: 'dirty-tree',
         result: { status: 'dirty-tree', baseBranch: 'main' },
-        expectedTitle: "Can't update from main",
+        expectedTitle: "Can't pull from main",
         expectedBody: 'The worktree has uncommitted changes.',
       },
       {
@@ -422,14 +422,14 @@ test.describe('Task detail kebab: Update from base', () => {
         // item was enabled for a branch, and main answers that nothing moves.
         name: 'fixed-base',
         result: { status: 'fixed-base', baseBranch: 'v2.4.0', baseKind: 'tag' },
-        expectedTitle: 'Nothing to update from',
+        expectedTitle: 'Nothing to pull',
         expectedBody: 'The base is the tag v2.4.0, which does not move.',
       },
       {
         // A base that became a commit after the menu opened: named by its short SHA.
         name: 'fixed-base, commit',
         result: { status: 'fixed-base', baseBranch: COMMIT_BASE_SHA, baseKind: 'commit' },
-        expectedTitle: 'Nothing to update from',
+        expectedTitle: 'Nothing to pull',
         expectedBody: 'The base is the commit 3f9c2a1, which does not move.',
       },
     ];

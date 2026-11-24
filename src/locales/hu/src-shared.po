@@ -476,6 +476,10 @@ msgstr "német"
 msgid "Git branch name (empty if the task has none)."
 msgstr "Git-ág neve (üres, ha a feladatnak nincs ilyen)."
 
+#: src/shared/background-call-jobs.ts
+msgid "Git drafts"
+msgstr ""
+
 #: src/shared/automation-manifest.ts
 #, fuzzy
 msgid "Give up after"

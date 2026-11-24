@@ -154,4 +154,7 @@ export const ANNOUNCED_TASK_WRITE_CHANNELS = [
   'TASK_SET_RUNTIME_OVERRIDE',
   'TASK_RESOLVE_PR',
   'BACKLOG_DEMOTE',
+  'GIT_COMMIT',
+  'GIT_PUSH',
+  'GIT_CREATE_PULL_REQUEST',
 ] as const satisfies readonly (keyof typeof IPC)[];

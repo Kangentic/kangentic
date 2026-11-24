@@ -866,6 +866,19 @@
   animation: pr-pulse 2800ms ease-in-out infinite;
 }
 
+/* The sparkle over a field an agent is drafting (the Commit and Create pull request
+   dialogs): a small turn and swell on the activity marks' shared 1400ms. Transform
+   and opacity only, so it keeps moving while the main thread is busy. At rest it is
+   full size and full strength. */
+.kng-twinkle {
+  animation: twinkle 1400ms ease-in-out infinite;
+}
+
+@keyframes twinkle {
+  0%, 100% { transform: scale(0.8) rotate(0deg); opacity: 0.55; }
+  50%      { transform: scale(1.12) rotate(18deg); opacity: 1; }
+}
+
 @keyframes pr-pulse {
   0%, 100% { opacity: 1; }
   50%      { opacity: 0.15; }
@@ -1070,6 +1083,11 @@
   /* The PR pill's ring rests at full strength; the sky tint and the pill's tip
      carry "checks in flight" on their own. */
   .kng-pr-pulse {
+    animation: none;
+  }
+
+  /* The drafting sparkle rests at full size; its label carries the state. */
+  .kng-twinkle {
     animation: none;
   }
 

@@ -212,6 +212,34 @@ test.describe('Changes panel: a persisted selection missing from the diff', () =
     await expect(dialog).not.toBeVisible({ timeout: 8000 });
   });
 
+  test('a commit under an open panel lets go of the committed file, so the next change is what shows', async () => {
+    const setDiff = (files: Array<{ path: string; status: string; insertions: number; deletions: number; binary: boolean }>) => page.evaluate((next) => {
+      const mock = window as unknown as { __mockGitDiff: unknown; __mockFireDiffChanged: (path: string) => void };
+      mock.__mockGitDiff = { files: next, totalInsertions: next.length, totalDeletions: 0 };
+      mock.__mockFireDiffChanged('/mock/worktrees/stale-selection');
+    }, files);
+    await setDiff([{ path: 'src/committed.ts', status: 'M', insertions: 1, deletions: 0, binary: false }]);
+    await page.locator('[data-swimlane-name="Code Review"]').locator('text=Stale Selection Task').first().click();
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 8000 });
+    await page.locator('[data-testid="changes-toggle"]').click();
+    const editorArea = page.locator('[data-testid="diff-editor-area"]');
+    await expect(editorArea).toBeVisible({ timeout: 10000 });
+    await setDiff([]);
+    await expect(page.locator('[data-testid="diff-no-changes"]')).toBeVisible({ timeout: 10000 });
+    await setDiff([{ path: 'src/next.ts', status: 'M', insertions: 1, deletions: 0, binary: false }]);
+    await expect(editorArea).toBeVisible({ timeout: 10000 });
+    await expect(dialog.getByText('committed.ts')).toHaveCount(0);
+    await expect.poll(() => page.evaluate((taskId) => {
+      const stores = (window as unknown as { __zustandStores: { session: { getState: () => { changesSelectedFile: Record<string, string | null> } } } }).__zustandStores;
+      return stores.session.getState().changesSelectedFile[taskId];
+    }, CLEAN_TASK_ID)).toBe('src/next.ts');
+    await setDiff([]);
+    await page.locator('[data-testid="changes-toggle"]').click();
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
+
   test('the initial fetch paints no empty-diff message beside the rail skeleton', async () => {
     // The rail gates its own empty shape on `loaded`; now that the diff pane is
     // the ONLY voice for emptiness, it needs the same gate. Ungated, the first

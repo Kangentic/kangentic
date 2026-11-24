@@ -476,6 +476,10 @@ msgstr "독일어"
 msgid "Git branch name (empty if the task has none)."
 msgstr "Git 분기 이름(작업에 없으면 비어 있음)."
 
+#: src/shared/background-call-jobs.ts
+msgid "Git drafts"
+msgstr ""
+
 #: src/shared/automation-manifest.ts
 #, fuzzy
 msgid "Give up after"

@@ -111,8 +111,8 @@ interface ChangesPullRequestSectionProps {
  * task with a linked PR. It is where the pull request lives in this panel: no
  * PR pill is drawn in the panel header.
  *
- * The header reads "Pull request", then ONE count: the same red badge as the
- * task window's Changes button while there is something to fix (each failed
+ * The header reads "Pull request", then ONE count: in the red the Changes
+ * button marks a problem with while there is something to fix (each failed
  * check, plus a conflict), otherwise the checks' progress. The button at its
  * right end opens the PR, collapsed or not.
  *
@@ -148,7 +148,7 @@ export function ChangesPullRequestSection({ task, checks, open, onToggle, sendin
           <span aria-hidden="true" className="flex flex-shrink-0">
             <CountBadge count={prFixes} variant="solid" size="xs" tone="danger" testId="changes-pr-fix-count" />
           </span>
-          <span className="sr-only">{t`${plural(prFixes, { one: '# thing on the PR to fix', other: '# things on the PR to fix' })}`}</span>
+          <span className="sr-only">{t`${plural(prFixes, { one: '# problem on the PR', other: '# problems on the PR' })}`}</span>
         </>
       ) : <ChecksProgressBadge checks={all} />}
       actions={task.pr_url ? (

@@ -48,7 +48,7 @@ fetched first; a commit that exists only on origin is not. An expression such as
 `origin/main` is refused: type the branch, tag or SHA itself.
 
 A branch base is cut from origin's copy, unless your local branch has commits origin does not have
-yet. A tag or a commit is cut from as it is. It does not move, so Update from base is off for that
+yet. A tag or a commit is cut from as it is. It does not move, so Pull from base is off for that
 task. A tag or commit base in the project folder needs a branch name to cut from it, since
 checking either out there would leave the folder on no branch.
 

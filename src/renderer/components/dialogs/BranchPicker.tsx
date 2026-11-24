@@ -29,8 +29,10 @@ interface BranchPickerProps {
    * 'chip' = small pill (the Command Terminal header's pill row)
    * 'input' = full-width field (Settings > Git)
    * 'segment' = flush segment inside a composed field (the task dialogs' Branch row)
+   * 'subtitle' = compact chip inside a dialog's subtitle (Create pull request), listing only
+   * branches on the remote, where a pull request can go
    */
-  variant?: 'chip' | 'input' | 'segment';
+  variant?: 'chip' | 'input' | 'segment' | 'subtitle';
   className?: string;
   /** Controlled open state. When provided, the parent owns open/close (e.g. to
    *  re-open the picker from an overflow kebab after the chip has folded). */
@@ -127,11 +129,12 @@ export function BranchPicker({
       } catch {
         result = [];
       }
-      if (!cancelled) setFetched({ openGeneration, branches: result });
+      const listed = variant === 'subtitle' ? result.filter((branch) => !branch.local) : result;
+      if (!cancelled) setFetched({ openGeneration, branches: listed });
     })();
     requestAnimationFrame(() => searchRef.current?.focus());
     return () => { cancelled = true; };
-  }, [open, openGeneration, projectId]);
+  }, [open, openGeneration, projectId, variant]);
 
   // Close on click outside (consider both the position anchor and the dropdown).
   useEffect(() => {
@@ -315,6 +318,21 @@ export function BranchPicker({
     </Tooltip>
   );
 
+  const subtitleButton = (
+    <button
+      type="button"
+      onClick={() => setOpen(!open)}
+      className={`inline-flex h-5 max-w-[200px] shrink-0 cursor-pointer items-center gap-1 rounded-[5px] border px-1.5 text-xs transition-colors ${
+        open ? 'border-accent bg-accent/10 text-accent-fg' : 'border-edge/50 bg-surface-hover/30 text-fg-secondary hover:border-edge hover:bg-surface-hover hover:text-fg'
+      }`}
+      data-testid="branch-picker-chip"
+    >
+      <GitBranch size={11} className="shrink-0" />
+      <span className="truncate">{displayBranch}</span>
+      <ChevronDown size={11} className="shrink-0 text-fg-faint" />
+    </button>
+  );
+
   const inputButton = (
     <button
       type="button"
@@ -451,7 +469,7 @@ export function BranchPicker({
       ? 'flex shrink-0 min-w-0'
       : `relative ${variant === 'input' ? 'w-full' : 'inline-block'}`;
 
-  const trigger = variant === 'input' ? inputButton : variant === 'segment' ? segmentButton : chipButton;
+  const trigger = variant === 'input' ? inputButton : variant === 'segment' ? segmentButton : variant === 'subtitle' ? subtitleButton : chipButton;
 
   return (
     <div className={wrapperClass} ref={containerRef}>

@@ -173,7 +173,7 @@ everywhere. Each check peels with `^{commit}`, because a bare
 | Reader | A branch | A tag or a commit |
 |---|---|---|
 | Worktree creation | Fetched; cut from `origin/<base>` unless the local branch is ahead of it (a merge not pushed yet) | Cut from `refs/tags/<tag>` or the full SHA when it resolves locally, with no fetch. When it does not, the creation fetch runs, and a tag that exists only on origin is fetched as `refs/tags/<tag>` |
-| Update from base | Fetch and fast-forward from `origin/<base>` | `fixed-base`: nothing to update from |
+| Pull from base | Fetch and fast-forward from `origin/<base>` | `fixed-base`: nothing to pull |
 | Project folder, no worktree | `git checkout <base>` | Refused unless the task names a branch to cut from it, since a checkout would detach the folder's HEAD |
 | Changes panel | `origin/<base>` unless the local base is ahead | The tag ref or the SHA |
 | PR linking, last tier | `refs/heads/<base>` or a remote's `<base>` at the sha is a base tip | `refs/tags/<base>` at the sha, or a commit base that names the sha, is a base tip |
@@ -305,7 +305,7 @@ the branch picker, or by an earlier move of a long-lived task) never re-fetches 
 tree. `ensureTaskWorktree` instead runs a fire-and-forget drift probe (throttled base fetch plus
 one `rev-list` against `origin/<base>`) and, when the tree's base is behind, decorates the card's
 spawn-progress labels with `(base N behind)`. The remedy is explicit, never automatic: the
-task-detail kebab's "Update from base" (`TASK_UPDATE_FROM_BASE`, same file) fetches the effective
+task-detail kebab's "Pull from <base>" (`TASK_UPDATE_FROM_BASE`, same file) fetches the effective
 base and fast-forwards the worktree, refusing cleanly when the branch carries its own commits or
 the tree is dirty. A base fetch that genuinely fails (network, credentials) during any spawn path
 decorates the labels with `(base fetch failed)` and pushes one cooldown-guarded `task:spawnWarning`
@@ -359,7 +359,7 @@ throttle cache unset, and degrades to "no refresh". An inherited `GIT_ASKPASS` /
 helper or an ssh passphrase prompt is not suppressed; the fetch's 5s timeout bounds those. And the
 sweep only fetches. It never pulls, merges, or rebases:
 keeping a tree current under a running agent is out of scope (#558), so this keeps the signal
-current while the action stays explicit ("Update from base").
+current while the action stays explicit ("Pull from <base>").
 
 Only the focused project is swept. Sweeping every registered repo multiplies network cost by the
 project count and risks prompting on repos the user is not looking at; it is deferred, not

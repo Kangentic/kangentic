@@ -23,13 +23,18 @@ import type {
   PRResolveOptions,
   PRCheck,
   PRChecks,
+  PRCreateInput,
+  PRCreated,
 } from '../../shared/pr-connector';
-import { PRResolverUnavailableError, PRResolverTransientError } from '../../shared/pr-errors';
+import { PRCreateError, PRResolverUnavailableError, PRResolverTransientError } from '../../shared/pr-errors';
+import { withTempTextFile } from '../../../shared/temp-text-file';
+import { readRemoteUrls } from '../../../git/git-remotes';
 import { stripLogTimestamp, tailRawLog } from '../../shared/ci-log-tail';
 import {
   GitHubImporter,
   GhUnavailableError,
   GhTransientError,
+  GhPrCreateError,
   type GhPrListItem,
   type GhMergeable,
   type GhMergeStateStatus,
@@ -70,6 +75,7 @@ async function viaGh<T>(fn: () => Promise<T>): Promise<T> {
     } catch (error) {
       if (error instanceof GhUnavailableError) throw new PRResolverUnavailableError(error.message);
       if (error instanceof GhTransientError) throw new PRResolverTransientError(error.message);
+      if (error instanceof GhPrCreateError) throw new PRCreateError(error.output);
       throw error;
     }
   }) as Promise<T>;
@@ -903,6 +909,25 @@ export const gitHubPRConnector: PRConnector = {
       const raw = await ghImporter.viewJobFailedLog(repoCwd, jobId);
       if (raw === null) return null;
       return tailRawLog(raw, stripActionsLogPrefix, maxChars);
+    });
+  },
+
+  async createPullRequest(repoCwd: string, input: PRCreateInput): Promise<PRCreated> {
+    const remoteUrls = await readRemoteUrls(repoCwd);
+    const remote = remoteUrls ? firstGitHubRemote(remoteUrls.slice(0, 1)) : null;
+    if (!remote) throw new PRResolverUnavailableError('This repository has no GitHub remote.');
+    return viaGh(async () => {
+      const printed = await withTempTextFile(input.body, (bodyFile) => ghImporter.createPullRequest({
+        repository: `${remote.host}/${remote.owner}/${remote.repo}`,
+        head: input.head,
+        base: input.base,
+        title: input.title,
+        bodyFile,
+        draft: input.draft,
+      }));
+      const created = /https?:\/\/\S+\/pull\/(\d+)/.exec(printed);
+      if (!created) throw new PRCreateError(printed || 'gh printed no pull request URL');
+      return { number: Number(created[1]), url: created[0] };
     });
   },
 };

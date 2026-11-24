@@ -95,9 +95,17 @@ msgstr "{removedCount, plural, other {{columnName}：已移除 # 項自動化}}"
 msgid "{commitCount, plural, one {# commit for this task} other {# commits for this task}}"
 msgstr "{commitCount, plural, other {此任務有 # 個提交}}"
 
+#: src/renderer/components/dialogs/git/git-badge.tsx
+msgid "{commitCount, plural, one {# commit not pushed} other {# commits not pushed}}"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
 msgid "{commitCount, plural, one {# commit on this branch} other {# commits on this branch}}"
 msgstr "{commitCount, plural, other {此分支上有 # 個提交}}"
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesNextStep.tsx
+msgid "{commitCount, plural, one {# local commit} other {# local commits}}"
+msgstr ""
 
 #: src/renderer/components/dialogs/ModelCombobox.tsx
 msgid "{contextLabel} context window"
@@ -107,9 +115,21 @@ msgstr "{contextLabel} 上下文視窗"
 msgid "{count, plural, one {# tool call, by tool} other {# tool calls, by tool}}"
 msgstr "{count, plural, other {# 次工具呼叫，依工具分類}}"
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesNextStep.tsx
+msgid "{fileCount, plural, one {# changed file} other {# changed files}}"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 msgid "{fileCount, plural, one {# file} other {# files}}"
 msgstr "{fileCount, plural, other {# 個檔案}}"
+
+#: src/renderer/components/dialogs/git/CommitDialog.tsx
+msgid "{fileCount, plural, one {# file} other {# files}} on {branch}"
+msgstr ""
+
+#: src/renderer/components/dialogs/git/git-badge.tsx
+msgid "{fileCount, plural, one {# uncommitted file} other {# uncommitted files}}"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
 msgid "{filesChanged, plural, one {# file changed} other {# files changed}}"
@@ -188,10 +208,13 @@ msgstr "{pillLabel}：{reason}"
 msgid "{position} of {total}"
 msgstr "第 {position} 個，共 {total} 個"
 
+#: src/renderer/components/dialogs/git/git-badge.tsx
+msgid "{prFixCount, plural, one {# problem on the PR} other {# problems on the PR}}"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
-#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-msgid "{prFixes, plural, one {# thing on the PR to fix} other {# things on the PR to fix}}"
-msgstr "{prFixes, plural, other {提取要求上有 # 項待修復}}"
+msgid "{prFixes, plural, one {# problem on the PR} other {# problems on the PR}}"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "{reason} Saved {savedBeforeFailing} before failing."
@@ -274,6 +297,14 @@ msgstr "{fileCount, plural, other {已檢視 {viewedCount} / # 個檔案}}"
 msgid "*: any text. Use it anywhere. Without one, a pattern must match the whole line."
 msgstr "* 表示任意文字，可放在任何位置。沒有 * 時，模式必須符合整行。"
 
+#: src/renderer/components/dialogs/git/useGitActions.tsx
+msgid "#{number} is open on its host."
+msgstr ""
+
+#: src/renderer/components/dialogs/git/CreatePullRequestDialog.tsx
+msgid "<0>{headBranch}</0> into <1/>"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "<0>Any case.</0> Punctuation is ignored too, so \"READY for review.\" matches."
 msgstr "<0>不區分大小寫。</0>標點也會忽略，因此 “READY for review.” 也能符合。"
@@ -293,6 +324,10 @@ msgstr "<0>每行一條。</0>作用於普通列，從不作用於以 ! 開頭�
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "A folder inside your home on the host, such as ~/code/api"
 msgstr "主機上你家目錄裡的資料夾，例如 ~/code/api"
+
+#: src/renderer/components/dialogs/git/useGitActions.tsx
+msgid "A git action is running"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
 msgid "A narrow pane renders inline"
@@ -480,6 +515,10 @@ msgstr "以下欄的自動化已變更："
 msgid "automations on {savedAutomationColumns, plural, one {# column} other {# columns}}"
 msgstr "{savedAutomationColumns, plural, other {# 個欄的自動化}}"
 
+#: src/renderer/components/dialogs/git/useGitActions.tsx
+msgid "Available when the agent finishes its turn"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 msgid "Back to all changes"
 msgstr "返回所有變更"
@@ -564,6 +603,10 @@ msgctxt "git area"
 msgid "Branch"
 msgstr "分支"
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesNextStep.tsx
+msgid "Branch not published"
+msgstr ""
+
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "Browse"
 msgstr "瀏覽"
@@ -587,13 +630,13 @@ msgstr "呼叫"
 msgid "Can't fast-forward"
 msgstr "無法快進"
 
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Can't pull from {baseBranch}"
+msgstr ""
+
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Can't remove \"{name}\""
 msgstr "無法移除「{name}」"
-
-#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-msgid "Can't update from {baseBranch}"
-msgstr "無法從 {baseBranch} 更新"
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #: src/renderer/components/dialogs/BaseDialog.tsx
@@ -779,9 +822,23 @@ msgstr "命令終端機"
 msgid "Commands"
 msgstr "命令"
 
+#: src/renderer/components/dialogs/git/CommitDialog.tsx
+#: src/renderer/components/dialogs/task-detail/changes/ChangesNextStep.tsx
+msgctxt "git action"
+msgid "Commit"
+msgstr ""
+
+#: src/renderer/components/dialogs/git/CommitDialog.tsx
+msgid "Commit changes"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphSvg.tsx
 msgid "Commit graph"
 msgstr "提交圖"
+
+#: src/renderer/components/dialogs/git/GitMenuItems.tsx
+msgid "Commit..."
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
 msgid "Commits"
@@ -918,9 +975,17 @@ msgstr "無法加入「{filename}」"
 msgid "Couldn't archive task"
 msgstr "無法封存任務"
 
+#: src/renderer/components/dialogs/git/useGitActions.tsx
+msgid "Couldn't commit"
+msgstr ""
+
 #: src/renderer/components/dialogs/image-compress.ts
 msgid "Couldn't compress image"
 msgstr "無法壓縮圖片"
+
+#: src/renderer/components/dialogs/git/useGitActions.tsx
+msgid "Couldn't create pull request"
+msgstr ""
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
 msgid "Couldn't create task"
@@ -945,6 +1010,14 @@ msgstr "無法開啟「{filename}」"
 #: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 msgid "Couldn't open file diff"
 msgstr "無法開啟檔案差異"
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Couldn't pull"
+msgstr ""
+
+#: src/renderer/components/dialogs/git/useGitActions.tsx
+msgid "Couldn't push"
+msgstr ""
 
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
 msgid "Couldn't relocate project"
@@ -1007,6 +1080,15 @@ msgstr "計入代理正在工作或等待你回應的任務。設定中的「最
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
 msgid "Create"
 msgstr "建立"
+
+#: src/renderer/components/dialogs/git/CreatePullRequestDialog.tsx
+#: src/renderer/components/dialogs/task-detail/changes/ChangesNextStep.tsx
+msgid "Create pull request"
+msgstr ""
+
+#: src/renderer/components/dialogs/git/GitMenuItems.tsx
+msgid "Create pull request..."
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "created {savedCreates, plural, one {# column} other {# columns}}"
@@ -1082,6 +1164,7 @@ msgid "Deleting {deleteCompleted} of {deleteTotal}"
 msgstr "正在刪除 {deleteCompleted}/{deleteTotal}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#: src/renderer/components/dialogs/git/CreatePullRequestDialog.tsx
 msgid "Description"
 msgstr "描述"
 
@@ -1135,6 +1218,31 @@ msgstr "已完成"
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 msgid "Double-click to reset"
 msgstr "按兩下以重設"
+
+#: src/renderer/components/dialogs/git/CreatePullRequestDialog.tsx
+msgid "Draft a description"
+msgstr ""
+
+#: src/renderer/components/dialogs/git/CommitDialog.tsx
+msgid "Draft again"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgid "Draft commit or PR text"
+msgstr ""
+
+#: src/renderer/components/dialogs/git/CreatePullRequestDialog.tsx
+msgctxt "pull request state"
+msgid "Draft PR"
+msgstr ""
+
+#: src/renderer/components/dialogs/git/CreatePullRequestDialog.tsx
+msgid "Drafting a description..."
+msgstr ""
+
+#: src/renderer/components/dialogs/git/CommitDialog.tsx
+msgid "Drafting a message..."
+msgstr ""
 
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
 msgid "Drag to reorder"
@@ -1356,6 +1464,7 @@ msgstr "交接"
 msgid "Handoff Chain"
 msgstr "交接鏈"
 
+#: src/renderer/components/dialogs/git/useGitActions.tsx
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 msgid "Held for the next agent"
 msgstr "留給下一個代理"
@@ -1517,10 +1626,6 @@ msgctxt "column header"
 msgid "Lines"
 msgstr "行數"
 
-#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-msgid "Link PR"
-msgstr "連結 PR"
-
 #: src/renderer/components/dialogs/BranchPicker.tsx
 msgid "Loading branches..."
 msgstr "正在載入分支..."
@@ -1568,6 +1673,11 @@ msgstr "最大化對話方塊"
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 msgid "Maximum runs"
 msgstr "最多執行次數"
+
+#: src/renderer/components/dialogs/git/CommitDialog.tsx
+msgctxt "commit message"
+msgid "Message"
+msgstr ""
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
@@ -1778,6 +1888,10 @@ msgstr "沒有 PR 解析器"
 msgid "No profiles yet - create one in Edit Columns"
 msgstr "尚無設定檔，請在編輯欄中建立一個"
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesNextStep.tsx
+msgid "No pull request"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 msgid "No staged changes"
 msgstr "沒有已暫存的變更"
@@ -1840,12 +1954,8 @@ msgid "Nothing runs at a turn end in {terminalName}."
 msgstr "在 {terminalName} 中，輪次結束時不會執行任何項目。"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-msgid "Nothing to search by"
-msgstr "沒有可搜尋的依據"
-
-#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-msgid "Nothing to update from"
-msgstr "沒有可更新的來源"
+msgid "Nothing to pull"
+msgstr ""
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
 msgid "On enter"
@@ -1964,6 +2074,11 @@ msgstr "開啟工作樹資料夾"
 #: src/renderer/components/dialogs/task-detail/completed/report-parts.tsx
 msgid "Opens this part of the conversation"
 msgstr "開啟這段對話"
+
+#: src/renderer/components/dialogs/git/CreatePullRequestDialog.tsx
+msgctxt "pull request description"
+msgid "Optional"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -2129,6 +2244,15 @@ msgctxt "condition kind"
 msgid "Prompt"
 msgstr "提示詞"
 
+#: src/renderer/components/dialogs/git/GitMenuItems.tsx
+#: src/renderer/components/dialogs/task-detail/changes/ChangesNextStep.tsx
+msgid "Publish branch"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Pull from {pullBaseLabel}"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailEditForm.tsx
 msgid "Pull request"
@@ -2138,6 +2262,24 @@ msgstr "提取要求"
 msgctxt "completed task metric"
 msgid "Pull request"
 msgstr "提取要求"
+
+#: src/renderer/components/dialogs/git/useGitActions.tsx
+msgid "Pull request created"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Pulled from {baseBranch}"
+msgstr ""
+
+#: src/renderer/components/dialogs/git/GitMenuItems.tsx
+#: src/renderer/components/dialogs/task-detail/changes/ChangesNextStep.tsx
+msgctxt "git action"
+msgid "Push"
+msgstr ""
+
+#: src/renderer/components/dialogs/git/CommitDialog.tsx
+msgid "Push after committing"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
 #, fuzzy
@@ -2167,8 +2309,8 @@ msgid "Reconnecting…"
 msgstr "正在重新連線…"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-msgid "Refresh PR"
-msgstr "重新整理 PR"
+msgid "Refresh pull request"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Removal staged"
@@ -2247,6 +2389,10 @@ msgstr "調整檔案清單大小"
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 msgid "Resize history"
 msgstr "調整歷程記錄大小"
+
+#: src/renderer/components/dialogs/git/useGitActions.tsx
+msgid "Resolve the conflicts first"
+msgstr ""
 
 #: src/renderer/components/dialogs/ReleaseNotesDialog.tsx
 msgid "Restart to update"
@@ -2755,6 +2901,10 @@ msgstr "新的代理會接續前一個代理的對話，而不是從任務描述
 msgid "The next agent on this task gets the failed checks in its first message."
 msgstr "該任務的下一個代理會在第一則訊息中收到失敗的檢查。"
 
+#: src/renderer/components/dialogs/git/useGitActions.tsx
+msgid "The next agent on this task gets the failure in its first message."
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "The PR host returned an error."
 msgstr "PR 主機傳回錯誤。"
@@ -2820,10 +2970,6 @@ msgstr "此項目現由欄的設定處理。移除它即可改用這些設定。
 msgid "This project is not a git repository"
 msgstr "此專案不是 git 存放庫"
 
-#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-msgid "This task has no branch, commit or PR number yet."
-msgstr "此任務尚無分支、提交或 PR 編號。"
-
 #: src/renderer/components/dialogs/task-detail/completed/CompletedConversationTab.tsx
 msgid "This task has no conversation history"
 msgstr "此任務沒有對話記錄"
@@ -2852,6 +2998,11 @@ msgstr "這會永久刪除此任務、其工作階段記錄，以及任何相關
 msgctxt "column header"
 msgid "Title"
 msgstr "標題"
+
+#: src/renderer/components/dialogs/git/CreatePullRequestDialog.tsx
+msgctxt "pull request"
+msgid "Title"
+msgstr ""
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
@@ -2971,18 +3122,6 @@ msgstr "未追蹤"
 msgid "Up to {maxConcurrent, plural, one {# agent runs} other {# agents run}} at a time"
 msgstr "{maxConcurrent, plural, other {一次最多執行 # 個代理程式}}"
 
-#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-msgid "Update from base"
-msgstr "從基底更新"
-
-#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-msgid "Update from base failed"
-msgstr "從基底更新失敗"
-
-#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-msgid "Updated from {baseBranch}"
-msgstr "已從 {baseBranch} 更新"
-
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "updated the column order"
 msgstr "已更新欄順序"
@@ -3017,8 +3156,8 @@ msgid "View options"
 msgstr "檢視選項"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-msgid "View PR #{prNumber}"
-msgstr "檢視 PR #{prNumber}"
+msgid "View pull request #{prNumber}"
+msgstr ""
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 msgid "What happens when a task enters this column, each time its agent finishes a turn here, and when it leaves, in this order."

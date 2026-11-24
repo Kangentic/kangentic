@@ -476,6 +476,10 @@ msgstr "Tedesco"
 msgid "Git branch name (empty if the task has none)."
 msgstr "Nome del ramo Git (vuoto se l'attività non ne ha uno)."
 
+#: src/shared/background-call-jobs.ts
+msgid "Git drafts"
+msgstr ""
+
 #: src/shared/automation-manifest.ts
 #, fuzzy
 msgid "Give up after"

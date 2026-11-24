@@ -10,9 +10,10 @@ import type { AppConfig, BackgroundCallJob } from '../../shared/types';
  * Which agent the Automation agent setting (`AppConfig.automation`) resolves to,
  * with the CLI path, model and effort a headless run on it takes.
  *
- * Two jobs run on it: answering a column's Conditions (and a workflow step's
- * check), and naming a task or a Command Terminal. Both resolve here, so the
- * detection cache and the effort rule exist once. There is no fallback to any
+ * Three jobs run on it: answering a column's Conditions (and a workflow step's
+ * check), naming a task or a Command Terminal, and drafting a commit message or
+ * a pull request description. All resolve here, so the detection cache and the
+ * effort rule exist once. There is no fallback to any
  * other agent: nothing spends on an agent nobody chose.
  *
  * Detection and effort levels are cached for a few minutes rather than probed
@@ -26,9 +27,9 @@ export interface AutomationAgentDeps {
   listAgents: () => Promise<ReadonlyArray<{ name: string; adapter: AgentAdapter }>>;
 }
 
-/** What the agent is resolved for: a Condition check runs `answerFromContext`,
- *  naming runs `summarize`. */
-export type AutomationAgentJob = 'check' | 'naming';
+/** What the agent is resolved for: a Condition check and a draft run
+ *  `answerFromContext`, naming runs `summarize`. */
+export type AutomationAgentJob = 'check' | 'naming' | 'drafting';
 
 /**
  * Why a job cannot run: `'unavailable'` is a setup gap a person fixes in
@@ -81,6 +82,13 @@ const REASONS: Record<AutomationAgentJob, {
     notFound: (displayName) => agentCliNotFoundMessage(displayName),
     setupFailed: (detail) => `The Automation agent could not be set up, so the task was not named: ${detail}`,
   },
+  drafting: {
+    agent: 'Set up an Automation agent in Settings > Workflows to draft commit and pull request text.',
+    model: 'Choose a model for the Automation agent in Settings > Workflows to draft commit and pull request text.',
+    unsupported: (agentName) => `The Automation agent "${agentName}" cannot draft commit and pull request text.`,
+    notFound: (displayName) => agentCliNotFoundMessage(displayName),
+    setupFailed: (detail) => `The Automation agent could not be set up, so nothing was drafted: ${detail}`,
+  },
 };
 
 /**
@@ -111,7 +119,7 @@ async function resolveAutomationAgentOrThrow(deps: AutomationAgentDeps, job: Aut
   if (gap) return { ok: false, reason: gap === 'agent' ? reasons.agent : reasons.model, cause: 'unavailable' };
   const agentName = resolveAnswerAgent({ agents: candidates, configured: choice.agent })?.name ?? '';
   const adapter = registered.find((entry) => entry.name === agentName)?.adapter;
-  const canRun = job === 'check' ? typeof adapter?.answerFromContext === 'function' : typeof adapter?.summarize === 'function';
+  const canRun = job === 'naming' ? typeof adapter?.summarize === 'function' : typeof adapter?.answerFromContext === 'function';
   if (!adapter || !canRun) return { ok: false, reason: reasons.unsupported(agentName), cause: 'unavailable' };
 
   const override = config.agent.cliPaths[agentName] ?? null;

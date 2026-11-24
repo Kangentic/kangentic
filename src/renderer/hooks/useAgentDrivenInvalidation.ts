@@ -28,7 +28,7 @@
  *     sends it at its commit point, ahead of its one toast at settle.
  *   - `onPrLinkChanged` fires when the app resolved a task's PR link itself:
  *     the refresh sweep, the session-idle auto-link, the re-resolve that
- *     follows a link write, or the task-detail "Link / refresh PR" control.
+ *     follows a link write, or the task-detail "Refresh pull request" control.
  *     Landing one PR used to raise three "Task updated by agent" toasts per
  *     task, two of them announcing a round trip that netted to no change.
  * The user's own changes made away from the board are quiet too: from the phone

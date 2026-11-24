@@ -1533,8 +1533,8 @@ msgid "Installing the app, pairing a phone, and push notifications."
 msgstr "安装应用、配对手机和推送通知。"
 
 #: src/renderer/components/settings/settings-registry.ts
-msgid "Judges conditions and workflow steps, and names tasks."
-msgstr "判断条件和工作流步骤，并为任务命名。"
+msgid "Judges conditions and steps, names tasks, drafts commits."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -3310,8 +3310,8 @@ msgid "Whether agents can reach the MCP server, here and from any WSL distro a C
 msgstr "智能体能否访问 MCP 服务器，包括本机和 CLI 路径指向的任何 WSL 发行版。"
 
 #: src/renderer/components/settings/settings-registry.ts
-msgid "Which agent answers Conditions and names tasks and Command Terminals; nothing runs until one is chosen."
-msgstr "由哪个智能体判断条件并为任务和命令终端命名；选择之前不会运行任何内容。"
+msgid "Which agent answers Conditions, names tasks and Command Terminals, and drafts commit messages; nothing runs until one is chosen."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Which agent answers your questions and writes the task summaries."

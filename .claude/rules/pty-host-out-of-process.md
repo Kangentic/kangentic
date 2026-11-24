@@ -249,7 +249,7 @@ keep simple-git's method names and results; simple-git has no spawn hook) and
 `tests/unit/git-lifecycle-off-main.test.ts`: 37 git processes per modeled lifecycle, none on main,
 against 49 with 45 on main before. Three calls off the lifecycle use the git client too, because
 they run repository hooks, filters or merge drivers and `gitAt`'s env drops Crashpad's pipe name
-(`src/main/shared/child-env.ts`): Update from base's merge, the carry of uncommitted changes into a
+(`src/main/shared/child-env.ts`): Pull from base's merge, the carry of uncommitted changes into a
 new worktree, and the Command Terminal's cold-start checkout and merge. Still on main, because none
 runs in a lifecycle: the branch summary's ahead and behind count, the diff watcher, blame, file
 history, the commit graph, a task's branch switch config write, and the Done drop's pending-changes
