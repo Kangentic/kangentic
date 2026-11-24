@@ -68,7 +68,8 @@ function link(linked: string, name: string, type: 'file' | 'dir' | 'junction'): 
     // On Windows a junction is a folder to git, which lists what is inside it.
     fs.symlinkSync(linked, path.join(checkout, name), type);
     return true;
-  } catch (error) { // report-ok: a test that cannot make a link is skipped by its caller
+  } catch (error) {
+    // A test that cannot make a link is skipped by its caller.
     if ((error as NodeJS.ErrnoException).code === 'EPERM') return false;
     throw error;
   }
