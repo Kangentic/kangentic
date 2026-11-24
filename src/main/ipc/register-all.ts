@@ -20,6 +20,8 @@ import { setOffMainCliSpawner } from '../utility-process/off-main-cli';
 import { setIdentityTreeStop } from '../git/zombie-reaper';
 import { spareWorktreePool } from '../git/spare-worktree';
 import { PATHS } from '../config/paths';
+import { noteAgentStarting, whenBootSettled } from '../boot-settle';
+import { enableAgentProbeStore } from '../agent/shared/agent-probe-store';
 import { ConfigManager } from '../config/config-manager';
 import { BoardConfigManager } from '../config/board-config-manager';
 import { setBoardPriorityLevelLookup } from '../config/board-config/priority-levels';
@@ -160,6 +162,27 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   });
   const sessionManager = new SessionManager({ ptyHostTransport });
   ptyHostTransport.start();
+  // What each agent CLI answered on an earlier launch, so listing the agents
+  // starts no CLI nobody is using (agent-probe-store.ts). Main is the only
+  // process that turns it on.
+  enableAgentProbeStore(path.join(PATHS.configDir, 'agent-probe-cache.json'));
+  // The launch's settle signal counts an agent as starting when its session
+  // first runs and again when it first draws, so the quiet period ends after
+  // the last resumed agent is up. Both listeners go once the launch settles.
+  const startedSessions = new Set<string>();
+  const onSessionChanged = (sessionId: string, session: Session): void => {
+    if (session.status !== 'running' || startedSessions.has(sessionId)) return;
+    startedSessions.add(sessionId);
+    noteAgentStarting();
+  };
+  const onFirstOutput = (): void => noteAgentStarting();
+  sessionManager.on('session-changed', onSessionChanged);
+  sessionManager.on('first-output', onFirstOutput);
+  void whenBootSettled().then(() => {
+    sessionManager.off('session-changed', onSessionChanged);
+    sessionManager.off('first-output', onFirstOutput);
+    startedSessions.clear();
+  });
   // SSH hosts (#913): the host table, the service that connects them, and the resolver both spawn
   // chokepoints ask. The projects are read through the context, which exists by the first spawn.
   const remoteHosting = createRemoteHosting({

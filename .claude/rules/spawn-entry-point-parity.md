@@ -115,7 +115,10 @@ contract was kept in sync across three files by prose comments alone.
   same receiver first. That is the adapter's pre-spawn global-config step (trust entries; for
   Claude also the `~/.claude.json` diff-panel write in `adapters/claude/diff-panel.ts`), and it
   applies on every path that BUILDS an agent command, including the Command Terminal, which is
-  otherwise allowlisted out of both chokepoints. A path that spawns a caller-supplied command
+  otherwise allowlisted out of both chokepoints. It is also where an adapter whose builder reads
+  what capability discovery learned waits for that discovery (Codex's hook trust and model list,
+  and through `DiscoveryWarmup` Cursor's model list, Ollama's think levels and Antigravity's help
+  flags), because a launch runs no discovery for a CLI nobody has started. A path that spawns a caller-supplied command
   string without going through `buildCommand` (`SESSION_SPAWN` in `handlers/sessions.ts`) is
   outside what the scan verifies; route a new one through a chokepoint instead.
 - Every file that calls `<receiver>.buildCommand(` also calls `resolveShimLaunch(`

@@ -46,6 +46,7 @@ import { IPC, PROJECT_PATH_MISSING_PREFIX } from '../shared/ipc-channels';
 import { ConfigManager } from './config/config-manager';
 import { isShuttingDown, setShuttingDown } from './shutdown-state';
 import { decideSecondInstanceAction, isStartupComplete, markStartupComplete, shouldCreateWindowOnActivate } from './startup-gate';
+import { beginBoot, disposeBootSettle, noteWindowLoaded, trackBootWork } from './boot-settle';
 import { isBenignStreamWriteError } from './diagnostics/benign-stream-error';
 const windowConfigManager = new ConfigManager();
 import { initAnalytics, trackEvent, sanitizeErrorMessage, shouldEmitHeartbeat, setAnalyticsClientId, HEARTBEAT_INTERVAL_MS } from './analytics/analytics';
@@ -1511,6 +1512,10 @@ const createWindow = () => {
       message: 'createWindow ran before startMcpHttpServer settled',
     });
   }
+  // Before anything can spawn: background work that starts processes waits for
+  // the launch to settle (boot-settle.ts). Idempotent, so a window rebuilt
+  // later in the run does not start the wait over.
+  beginBoot();
   registerAllIpc(mainWindow, mcpServerHandle);
 
   // Native right-click context menu (Copy / Paste / Select All).
@@ -1816,14 +1821,24 @@ const createWindow = () => {
     // other projects.
     if (!backgroundActivationScheduled) {
       backgroundActivationScheduled = true;
-      activateAllProjectsTimer = setTimeout(() => {
-        activateAllProjectsTimer = null;
-        phase('activateAllProjects');
-        activateAllProjects()
-          .catch((error) => console.error('[APP] Failed to activate all projects:', error))
-          .finally(() => { endPhase('activateAllProjects'); });
-      }, 5000);
+      // The launch cannot settle in the 5 s before this starts, or while it
+      // runs: it resumes every other project's agents. A quit clears the timer
+      // and leaves this pending, and the settle signal is disposed with it.
+      trackBootWork(new Promise<void>((resolve) => {
+        activateAllProjectsTimer = setTimeout(() => {
+          activateAllProjectsTimer = null;
+          phase('activateAllProjects');
+          activateAllProjects()
+            .catch((error) => console.error('[APP] Failed to activate all projects:', error))
+            .finally(() => {
+              endPhase('activateAllProjects');
+              resolve();
+            });
+        }, 5000);
+      }));
     }
+    // After the tracked work is registered, so the floor cannot run out before it is counted.
+    noteWindowLoaded();
   });
 };
 
@@ -2648,6 +2663,9 @@ function getShutdownDependencies() {
         clearTimeout(activateAllProjectsTimer);
         activateAllProjectsTimer = null;
       }
+      // Synchronous: drops the settle timers and its waiters, so nothing that
+      // waited for the launch (the usage pass, the inventory refresh) starts mid-quit.
+      disposeBootSettle();
       // The recurring heartbeat keeps the event loop alive on its own and
       // would otherwise prevent Node from exiting cleanly during shutdown.
       if (heartbeatInterval) {

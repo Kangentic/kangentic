@@ -601,6 +601,21 @@ describe('OllamaAdapter', () => {
       await expect(adapter.ensureTrust('/some/dir')).resolves.toBeUndefined();
     });
 
+    // A launch no longer runs discovery for an Ollama nobody has started, and
+    // `buildCommand` checks an effort against the levels discovery read. So
+    // the spawn asks for them, for the CLI it just detected, before it builds.
+    it('ensureTrust reads the think levels of the CLI the spawn detected, once', async () => {
+      const internals = adapter as unknown as { detector: { liveFoundPaths: () => string[] } };
+      vi.spyOn(internals.detector, 'liveFoundPaths').mockReturnValue(['/usr/local/bin/ollama']);
+      const discover = vi.spyOn(adapter, 'discoverCapabilities').mockResolvedValue({ supportsModelOverride: true });
+
+      await adapter.ensureTrust('/some/dir');
+      await adapter.ensureTrust('/some/other/dir');
+
+      expect(discover).toHaveBeenCalledTimes(1);
+      expect(discover).toHaveBeenCalledWith('/usr/local/bin/ollama');
+    });
+
     it('removeHooks does not throw', () => {
       expect(() => adapter.removeHooks('/some/dir')).not.toThrow();
     });

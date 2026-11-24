@@ -21,7 +21,7 @@ import { kimiModelByAlias, readKimiCodeConfig } from './config-toml';
 import { contentPartsText } from './wire-parser';
 import type {
   AgentAdapter,
-  AgentInfo,
+  AgentInfo, DetectOptions,
   SpawnCommandOptions,
   SettingsChangeSpec,
   ParsedSubagentUsage,
@@ -174,8 +174,8 @@ export class KimiAdapter implements AgentAdapter {
   /** Sessions relying on a folder's `.kimi-code/mcp.json`. See SharedFolderHolds. */
   private readonly mcpHolds = new SharedFolderHolds();
 
-  async detect(overridePath?: string | null): Promise<AgentInfo> {
-    return this.detector.detect(overridePath);
+  async detect(overridePath?: string | null, options?: DetectOptions): Promise<AgentInfo> {
+    return this.detector.detect(overridePath, options);
   }
 
   invalidateDetectionCache(): void {

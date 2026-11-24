@@ -1116,6 +1116,13 @@ export function App() {
         }
       }));
     }
+    // The list shows an agent nothing has started as its CLI last answered. Main reads an agent
+    // in use from its CLI once the launch settles, and says when that differs.
+    if (window.electronAPI?.agents?.onListChanged) {
+      cleanups.push(window.electronAPI.agents.onListChanged(() => {
+        void useConfigStore.getState().loadAgentList();
+      }));
+    }
     // Agent accounts: main re-lists on any change (a usage read, a sign-in, a reorder), and the
     // sign-in dialog learns who signed in.
     if (window.electronAPI?.accounts?.onChanged) {

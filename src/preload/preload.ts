@@ -552,6 +552,11 @@ const api: ElectronAPI = {
 
   agents: {
     list: (forceRefresh?: boolean, projectPath?: string) => ipcRenderer.invoke(IPC.AGENT_LIST, forceRefresh, projectPath),
+    onListChanged: (callback) => {
+      const handler = () => callback();
+      ipcRenderer.on(IPC.AGENT_LIST_CHANGED, handler);
+      return () => ipcRenderer.removeListener(IPC.AGENT_LIST_CHANGED, handler);
+    },
     probeExecutionServer: (agentName: string) => ipcRenderer.invoke(IPC.AGENT_PROBE_EXECUTION_SERVER, agentName),
   },
 

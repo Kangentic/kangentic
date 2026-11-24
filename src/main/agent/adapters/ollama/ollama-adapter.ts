@@ -1,4 +1,5 @@
 import { AgentDetector } from '../../shared/agent-detector';
+import { DiscoveryWarmup, SPAWN_DISCOVERY_SETTLE_MS } from '../../shared/discovery-warmup';
 import { standardUnixFallbackPaths } from '../../shared/fallback-paths';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
@@ -8,7 +9,7 @@ import { resolveCliTarget } from '../../shared/cli-target';
 import { shimFamilyKey } from '../../shared/shim-family-key';
 import type {
   AgentAdapter,
-  AgentInfo,
+  AgentInfo, DetectOptions,
   AnswerFromContextOptions,
   SettingsChangeSpec,
   SpawnCommandOptions,
@@ -119,13 +120,17 @@ export class OllamaAdapter implements AgentAdapter {
     supportsWslCli: true,
   });
 
-  async detect(overridePath?: string | null): Promise<AgentInfo> {
-    return this.detector.detect(overridePath);
+  async detect(overridePath?: string | null, options?: DetectOptions): Promise<AgentInfo> {
+    return this.detector.detect(overridePath, options);
   }
 
   invalidateDetectionCache(): void {
     this.detector.invalidateCache();
+    this.discoveryWarmup.reset();
   }
+
+  /** The `--think` levels a spawn waits for in `ensureTrust`. */
+  private readonly discoveryWarmup = new DiscoveryWarmup();
 
   /**
    * The `--think` levels each CLI path last reported, keyed by `shimFamilyKey`
@@ -173,8 +178,16 @@ export class OllamaAdapter implements AgentAdapter {
     return level;
   }
 
-  // Ollama has no trust mechanism - no-op
-  async ensureTrust(_workingDirectory: string): Promise<void> {}
+  // Ollama has no trust mechanism. What a spawn waits for here is the `--think`
+  // levels `buildCommand` checks an effort against (`acceptedThinkLevel`): a
+  // launch no longer reads them for an Ollama nobody has started.
+  async ensureTrust(_workingDirectory: string): Promise<void> {
+    await this.discoveryWarmup.settle(
+      this.detector.liveFoundPaths(),
+      (cliPath) => this.discoverCapabilities(cliPath),
+      SPAWN_DISCOVERY_SETTLE_MS,
+    );
+  }
 
   buildCommand(options: SpawnCommandOptions): string {
     const { shell } = options;

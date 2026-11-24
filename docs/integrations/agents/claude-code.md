@@ -45,6 +45,11 @@ On first use, `ClaudeDetector` locates the Claude CLI:
    host that never answered the exec. A NOT FOUND from another tool's output, a missing file, or
    a non-zero exit is still cached
 
+At a launch, the agent list and the account cards take an agent nothing has started from what its
+file answered on an earlier launch, with no probe. A spawn still probes for itself, and the lists
+show that answer from then on. See
+[Shells and paths](../../platforms/shells-and-paths.md).
+
 Every probe runs `claude --version` with a 5s timeout, and a probe that times out is tried once
 more with 15s. A candidate whose output does not parse as
 this agent's version format is passed over and the search continues, so another vendor's binary

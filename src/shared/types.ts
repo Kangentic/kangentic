@@ -10090,6 +10090,14 @@ export interface ElectronAPI {
     // projectPath detects against that project's CLI paths (the Agent tab
     // editing a project other than the open one); omitted, the open project's.
     list: (forceRefresh?: boolean, projectPath?: string) => Promise<AgentDetectionInfo[]>;
+    /**
+     * The list shows an agent nothing has started this launch as its CLI last answered, so no
+     * process is started to draw it. An agent in use is read from its CLI once the launch has
+     * settled, or when something first starts it, and this fires when that read differs from what
+     * was listed (a CLI upgraded behind a version manager, a sign-in that changed, a model list
+     * that grew). A bare signal: list again.
+     */
+    onListChanged: (callback: () => void) => () => void;
     /** Reachability probe for an agent's configured remote execution server
      *  ("Test connection" in the Agent settings tab). Reads the server
      *  record directly from config rather than accepting one as an argument,

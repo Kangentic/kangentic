@@ -23,7 +23,7 @@ import { buildSummarizePrompt, titleFromAnswer } from '../../shared/auto-name';
 import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import { sharedFolderKey } from '../../shared/shared-folder-holds';
 import type {
-  AgentAdapter, AgentInfo, AnswerFromContextOptions, ParsedTranscript, SpawnCommandOptions, SettingsChangeSpec, SummarizeOptions,
+  AgentAdapter, AgentInfo, DetectOptions, AnswerFromContextOptions, ParsedTranscript, SpawnCommandOptions, SettingsChangeSpec, SummarizeOptions,
   TranscriptPageReadRequest, TranscriptPageReadResult,
 } from '../../agent-adapter';
 import type {
@@ -180,8 +180,8 @@ export class CopilotAdapter implements AgentAdapter {
     return identifyCopilotUserSetupFailure(finalOutput);
   }
 
-  async detect(overridePath?: string | null): Promise<AgentInfo> {
-    return this.detector.detect(overridePath);
+  async detect(overridePath?: string | null, options?: DetectOptions): Promise<AgentInfo> {
+    return this.detector.detect(overridePath, options);
   }
 
   invalidateDetectionCache(): void {

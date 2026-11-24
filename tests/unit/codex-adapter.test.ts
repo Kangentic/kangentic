@@ -924,11 +924,27 @@ describe('Codex Adapter', () => {
       const start = vi.spyOn(hookTrust, 'start').mockImplementation(() => undefined);
       const catalogStart = vi.spyOn(modelCatalog, 'start').mockImplementation(() => undefined);
       await expect(adapter.detect('/opt/custom/codex')).resolves.toEqual(found);
-      expect(detect).toHaveBeenCalledWith('/opt/custom/codex');
+      // No options: a detection for a spawn runs every probe.
+      expect(detect).toHaveBeenCalledWith('/opt/custom/codex', undefined);
       expect(start).toHaveBeenCalledTimes(1);
       expect(start).toHaveBeenCalledWith(CODEX_PATH);
       expect(catalogStart).toHaveBeenCalledTimes(1);
       expect(catalogStart).toHaveBeenCalledWith(CODEX_PATH);
+    });
+
+    it('starts neither read for a detection remembered from an earlier launch', async () => {
+      // Each read starts a `codex app-server`, and a remembered detection is only shown at boot.
+      const { detector, hookTrust, modelCatalog } = internalsOf(adapter);
+      const remembered: AgentInfo = { found: true, path: CODEX_PATH, version: '0.163.0', remembered: true };
+      const detect = vi.spyOn(detector, 'detect').mockResolvedValue(remembered);
+      const start = vi.spyOn(hookTrust, 'start').mockImplementation(() => undefined);
+      const catalogStart = vi.spyOn(modelCatalog, 'start').mockImplementation(() => undefined);
+
+      await expect(adapter.detect(null, { allowRemembered: true })).resolves.toEqual(remembered);
+
+      expect(detect).toHaveBeenCalledWith(null, { allowRemembered: true });
+      expect(start).not.toHaveBeenCalled();
+      expect(catalogStart).not.toHaveBeenCalled();
     });
 
     describe('a Codex in a WSL distro', () => {

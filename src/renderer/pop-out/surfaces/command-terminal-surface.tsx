@@ -42,6 +42,10 @@ export const commandTerminalSurface: SurfaceDescriptor<'command-terminal'> = {
       sessions.onActivity((sessionId, state, reason) => {
         enqueueSessionUpdate(() => useSessionStore.getState().updateActivity(sessionId, state, reason));
       }),
+      // The list a launch shows is the last launch's; main says when its own read differs.
+      window.electronAPI.agents.onListChanged(() => {
+        void useConfigStore.getState().loadAgentList();
+      }),
     ];
     for (const unsubscribe of unsubscribers) signal.addEventListener('abort', unsubscribe);
     // Which terminals hold their page OFFSCREEN: the Running row's globe and the

@@ -57,7 +57,7 @@ import { configuredModelFromClaudeCommand, buildModelCapabilityFields, humanizeC
 import { ClaudeSessionHistoryParser } from './session-history-parser';
 import type {
   AgentAdapter,
-  AgentInfo,
+  AgentInfo, DetectOptions,
   SpawnCommandOptions,
   SettingsChangeSpec,
   ParsedTranscript,
@@ -400,8 +400,8 @@ export class ClaudeAdapter implements AgentAdapter {
   private readonly detector = new ClaudeDetector();
   private readonly commandBuilder = new CommandBuilder();
 
-  async detect(overridePath?: string | null): Promise<AgentInfo> {
-    return this.detector.detect(overridePath);
+  async detect(overridePath?: string | null, options?: DetectOptions): Promise<AgentInfo> {
+    return this.detector.detect(overridePath, options);
   }
 
   invalidateDetectionCache(): void {

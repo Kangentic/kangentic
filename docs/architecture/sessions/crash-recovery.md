@@ -23,6 +23,7 @@ sources:
   - resource: src/main/pty/host/spawn-worker/spawn-worker-handler.ts
   - resource: src/main/pty/host/spawn-worker/protocol.ts
   - resource: src/main/diagnostics/thread-cpu-profile.ts
+  - resource: src/main/boot-settle.ts
 ---
 # Crash recovery and PTY host
 
@@ -50,6 +51,18 @@ On project open (`src/main/transition-engine/session-startup/`):
    - **A task that never had an agent** (no session record: a new task, or one a move to To Do reset). A fresh spawn would start it in whatever directory the row names, with no prompt. It goes to the board path instead (`autoSpawnForTask`, wired by the three project-open callers in `handlers/projects.ts`): its worktree first, then the column's enter automations and the task prompt, as the move into the column would have done. That is what finishes a move a quit cut short after its column commit. A row whose `session_id` no record and no registry row backs has that pointer cleared under the task lock first: `spawnAgent` starts no agent for a row that names a session, yet still runs the enter automations. The hand-offs run one at a time after the pass's own spawns, and the pass awaits them, so what a caller chains after it waits too. A read that throws while the pass sorts a task skips that task, not the pass. One exception: when the column's enter automations already recorded a run on the task this visit (`AutomationRunRepository.hasEnterRunSince`, counted from `TaskMoveRepository.visitStartedAt`), the move reached its spawn and the agent failed to start, so the task is left alone rather than run those automations again at every launch. The run log is pruned to 200 rows per project on this same open, unawaited beside the pass, so `pruneTo` keeps the newest enter run of each such task in its current column; it goes once the task has a session record, moves on, or is archived. The prune also keeps every run of a task whose workflow is still going or has been done for less than a day (`workflowIdsKeepingRuns`, task #952), since the newest 200 rows were a few hours of one overnight workflow. The crash's scoped pass hands nothing off: every task it starts had a session.
 
 The background activation of every other project (`activateAllProjects`) runs these passes once per process, 5 s after the first renderer load (`backgroundActivationScheduled` in `src/main/index.ts`). A reload or a rebuilt window does not re-run it: main's sessions and boards outlive the renderer, so a second pass would only replay startup recovery against live boards.
+
+### When a launch has settled
+
+Background work that starts processes waits for the launch to settle (`src/main/boot-settle.ts`). Before the signal existed each piece ran on its own fixed timer, and all of it landed on the seconds the resumed agents were starting in. A launch is settled once:
+
+- the window has loaded,
+- the open project's cold-open passes and the `activateAllProjects` run have returned (`trackBootWork`), and
+- no agent has started for `BOOT_SETTLE_QUIET_MS` (10 s), counted from each session's first `running` status and its first output,
+
+and no sooner than `BOOT_SETTLE_FLOOR_MS` (15 s) after the window loaded. `BOOT_SETTLE_CAP_MS` (90 s) settles it whatever happened, so a recovery pass that hangs holds nothing back for good. One log line, `[BOOT] settled after N ms`, says which bound ended the wait. The quit path drops the timers and the waiters (`disposeBootSettle`), so nothing that waited starts mid-quit.
+
+Two things wait on it: the agent inventory's read of the agents in use ([Agent inventory cache](../../integrations/agents/adapter-types.md#which-agents-a-build-starts-a-cli-for)) and the account usage startup pass ([Agent accounts](../../integrations/accounts.md)). Only `src/main/index.ts` begins a launch, so a unit test and the worker processes read "settled" and wait for nothing.
 
 The same pipeline recovers what a [pty host](#pty-host) crash takes down, mid-run, scoped to
 exactly those sessions: `recoverSessionsAfterPtyHostLoss` passes the lost session ids, so step 3's

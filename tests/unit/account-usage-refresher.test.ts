@@ -182,6 +182,67 @@ describe('AccountUsageRefresher.refreshAll', () => {
     refresher.dispose();
   });
 
+  // The pass runs a CLI per account. Main holds it until the launch has settled, so it does not
+  // land on the seconds the resumed agents are starting in.
+  it('holds the startup pass for its gate, and starts the login watch at the delay all the same', async () => {
+    const accounts = [account('one', 'multi', null), account('two', 'multi', null)];
+    let openGate: () => void = () => undefined;
+    const startupGate = () => new Promise<void>((resolve) => {
+      openGate = resolve;
+    });
+    const onStartup = vi.fn();
+    const { refresher, reads } = rig(accounts, { startupGate, onStartup });
+    refresher.start();
+
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(onStartup).toHaveBeenCalledTimes(1);
+    expect(reads).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(reads).toEqual([]);
+
+    openGate();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(reads).toEqual(['identity:one', 'usage:one', 'identity:two', 'usage:two']);
+    // The pass asks for the watch too, and it has already started.
+    expect(onStartup).toHaveBeenCalledTimes(1);
+    refresher.dispose();
+  });
+
+  it('runs no startup pass for a gate that opens after a dispose', async () => {
+    let openGate: () => void = () => undefined;
+    const startupGate = () => new Promise<void>((resolve) => {
+      openGate = resolve;
+    });
+    const { refresher, reads } = rig([account('one', 'multi', null), account('two', 'multi', null)], { startupGate });
+    refresher.start();
+    await vi.advanceTimersByTimeAsync(20_000);
+    refresher.dispose();
+
+    openGate();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(reads).toEqual([]);
+  });
+
+  // Registration reads no database, and a launch that settled early is no reason to read sooner.
+  it('never brings the startup pass forward for a gate that is already open', async () => {
+    const onStartup = vi.fn();
+    const { refresher, reads } = rig([account('one', 'multi', null), account('two', 'multi', null)], {
+      startupGate: () => Promise.resolve(),
+      onStartup,
+    });
+    refresher.start();
+
+    await vi.advanceTimersByTimeAsync(19_999);
+    expect(onStartup).not.toHaveBeenCalled();
+    expect(reads).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(reads).toEqual(['identity:one', 'usage:one', 'identity:two', 'usage:two']);
+    refresher.dispose();
+  });
+
   it('arms the reset timer when the soonest reset falls within one interval, and reads again when it fires', async () => {
     const resetInSeconds = 5 * 60;
     const accounts = [

@@ -113,9 +113,10 @@ from a host's complete mounted set, never accumulated from claim/release - see
 | `agent:listCommands` | invoke | List available agent commands and skills |
 | `agent:summarize` | invoke | Summarize a free-form prompt into a short task title on the Automation agent (`AppConfig.automation`), its model and effort, in the shared answer home. Input carries the interaction-time `projectId` and `taskId`. Refuses with the setup reason when no Automation agent can name (`namingAgentReady`), before taking a rate-limit slot. Returns `{ ok, title } \| { ok: false, reason }`. Sliding-window rate limit per `AppConfig.autoNameRateLimitPerHour`. |
 
-## Agents (2 channels)
+## Agents (3 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
+| `agent:listChanged` | push | A bare signal: list again. `agent:list` shows an agent nothing has started this launch as its CLI last answered, and reads an agent in use from its CLI once the launch has settled or when something first starts it. This fires when that read differs from what was listed. Sent to the main window and to each pop-out that lists agents (Agent Monitor, Knowledge Graph, Command Terminal). See [Agent inventory cache](../../integrations/agents/adapter-types.md#which-agents-a-build-starts-a-cli-for). |
 | `agent:list` | invoke | List all detected agent CLIs as `AgentDetectionInfo` (name, displayName, found, path, version, authenticated, permissions, defaultPermission, liveTelemetryUnsupported, reportsRateLimits, pastedImageNativeExtensions, pastedImageReferenceTemplate, supportsSummarize, reportsTurnEnd, supportsAnswerFromContext, answerCapabilities, kangenticMcp, supportsWorkflowAgent, supportsPlanAutoApproval, capabilities, remoteExecution, launchOptions, supportsWslCli, cliTarget, detectionError, unsupportedTarget). Takes the open project's path, so detection reads that project's CLI paths |
 | `agent:probeExecutionServer` | invoke | Reachability probe for an agent's configured remote execution server ("Test connection" in the Agent settings tab, shown when the selected agent declares remote-execution support). Returns `RemoteServerStatus`. |
 

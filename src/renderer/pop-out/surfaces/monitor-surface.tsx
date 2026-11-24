@@ -34,6 +34,11 @@ export const monitorSurface: SurfaceDescriptor<'monitor'> = {
     // labels from the installed agents list, and nothing else in this window
     // loads it. Without it every agent's permission read in Claude's wording.
     void useConfigStore.getState().loadAgentList();
+    // The list a launch shows is the last launch's; main says when its own read differs.
+    const unsubscribeAgentList = window.electronAPI.agents.onListChanged(() => {
+      void useConfigStore.getState().loadAgentList();
+    });
+    signal.addEventListener('abort', unsubscribeAgentList);
 
     // Live activity is patched onto rows without a refetch, exactly as in the main
     // window. SESSION_ACTIVITY is declared in this surface's `channels`, so main

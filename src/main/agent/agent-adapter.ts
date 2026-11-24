@@ -220,6 +220,25 @@ export interface AgentInfo {
   detectionError?: string;
   /** The configured path is a WSL path and this agent does not run from WSL. */
   unsupportedTarget?: boolean;
+  /**
+   * Set when at least one version probe was answered from what the file said on
+   * an earlier launch (`DetectOptions.allowRemembered`). Such a result is for
+   * display only: it never fills the cache a spawn or a command builder reads.
+   */
+  remembered?: true;
+}
+
+/** How a detection may be answered. */
+export interface DetectOptions {
+  /**
+   * Let a version probe be answered from what the same, unchanged file said the
+   * last time it was asked (`agent-probe-store.ts`), with no process started.
+   * Only for showing the agent list and the account cards. A caller that starts
+   * the CLI, or builds a command for it, never passes this: a version manager's
+   * shim keeps its identity across an upgrade, so a remembered version can be
+   * the old one.
+   */
+  allowRemembered?: boolean;
 }
 
 /** Options for building a CLI command to spawn an agent. */
@@ -548,8 +567,12 @@ export interface AgentAdapter {
   /** Recommended default permission mode for this agent. */
   readonly defaultPermission: PermissionMode;
 
-  /** Detect whether the agent CLI is installed and return path + version. */
-  detect(overridePath?: string | null): Promise<AgentInfo>;
+  /**
+   * Detect whether the agent CLI is installed and return path + version. With
+   * no `options` every probe runs, which is what a spawn needs. See
+   * `DetectOptions` for the one answer that may come from an earlier launch.
+   */
+  detect(overridePath?: string | null, options?: DetectOptions): Promise<AgentInfo>;
 
   /**
    * True when this adapter runs a CLI installed inside a WSL distro, configured

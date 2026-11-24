@@ -240,6 +240,8 @@ export const IPC = {
 
   // Agents
   AGENT_LIST: 'agent:list',
+  /** Push: an agent in use was read from its CLI, and differs from what the list showed. */
+  AGENT_LIST_CHANGED: 'agent:listChanged',
   AGENT_PROBE_EXECUTION_SERVER: 'agent:probeExecutionServer',
 
   // Handoffs

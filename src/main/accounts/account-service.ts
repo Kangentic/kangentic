@@ -102,10 +102,20 @@ export interface AccountServiceDependencies {
   listAdapters?: () => AgentAdapter[];
   /** The agent's CLI on this machine, or null when it is not installed. Absent: no CLI reads. */
   resolveCliPath?: (agent: string) => Promise<string | null>;
+  /**
+   * The agent's CLI for the Accounts tab's cards alone. Where nothing has started the agent this
+   * launch, main answers it from what the CLI's file said on an earlier one, so drawing a card
+   * never starts a CLI nobody is using. Nothing that runs the CLI asks through this. Absent: the
+   * cards ask `resolveCliPath`.
+   */
+  listCliPath?: (agent: string) => Promise<string | null>;
   /** The version that CLI printed at detection, for a report's tag. Absent: the tag reads `unknown`. */
   resolveCliVersion?: (agent: string) => Promise<string | null>;
-  /** True when the agent's CLI runs somewhere account folders do not reach (a WSL distro). */
-  usesRemoteTarget?: (agent: string) => Promise<boolean>;
+  /**
+   * True when the agent's CLI runs somewhere account folders do not reach (a WSL distro). A caller
+   * that already holds the CLI's path passes it, and is answered about that path.
+   */
+  usesRemoteTarget?: (agent: string, knownCliPath?: string) => Promise<boolean>;
   /** Saves the global accounts settings (a drag or Switch to sets Manual). */
   writeConfig?: (next: AgentAccountsConfig) => void;
   /** Called after any change the Accounts tab shows. */
@@ -313,9 +323,12 @@ export class AccountService {
   }
 
   /** True when the agent's CLI runs where account folders do not reach. False when that cannot be told. */
-  private async usesRemoteTarget(agent: string): Promise<boolean> {
+  private async usesRemoteTarget(agent: string, knownCliPath?: string): Promise<boolean> {
     try {
-      return (await this.dependencies.usesRemoteTarget?.(agent)) ?? false;
+      const answer = knownCliPath === undefined
+        ? await this.dependencies.usesRemoteTarget?.(agent)
+        : await this.dependencies.usesRemoteTarget?.(agent, knownCliPath);
+      return answer ?? false;
     } catch {
       return false;
     }
@@ -325,11 +338,19 @@ export class AccountService {
   async cards(): Promise<AgentAccountsCard[]> {
     const cards: AgentAccountsCard[] = [];
     const environment = this.dependencies.environment?.() ?? process.env;
-    for (const adapter of this.dependencies.listAdapters?.() ?? []) {
+    const adapters = (this.dependencies.listAdapters?.() ?? []).filter((adapter) => adapter.accounts);
+    // Every agent's CLI is looked for at once. One after another, a list that has to probe them
+    // waits out each probe in turn.
+    const lookUpCliPath = this.dependencies.listCliPath ?? this.dependencies.resolveCliPath;
+    const places = await Promise.all(adapters.map(async (adapter) => {
+      const cliPath = lookUpCliPath ? await lookUpCliPath(adapter.name).catch(() => null) : null;
+      return { cliPath, unsupportedTarget: cliPath ? await this.usesRemoteTarget(adapter.name, cliPath) : false };
+    }));
+    // The rows are written and read in adapter order, as before.
+    for (const [index, adapter] of adapters.entries()) {
       const support = adapter.accounts;
-      if (!support) continue;
-      const cliPath = await this.dependencies.resolveCliPath?.(adapter.name).catch(() => null);
-      if (!cliPath) continue;
+      const { cliPath, unsupportedTarget } = places[index];
+      if (!support || !cliPath) continue;
       this.ensureDefaultAccount(adapter.name);
       const accounts = this.ordered(adapter.name);
       cards.push({
@@ -344,7 +365,7 @@ export class AccountService {
         overrides: support.overridingCredentialEnvVars
           .filter((variable) => (environment[variable] ?? '').trim() !== '')
           .map((variable) => ({ variable, source: 'environment' as const })),
-        unsupportedTarget: await this.usesRemoteTarget(adapter.name),
+        unsupportedTarget,
       });
     }
     return cards;

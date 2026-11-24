@@ -24,7 +24,7 @@ import { runCliPrintAnswer } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
 import type {
   AgentAdapter,
-  AgentInfo,
+  AgentInfo, DetectOptions,
   SpawnCommandOptions,
   SettingsChangeSpec,
   ParsedTranscript,
@@ -159,12 +159,16 @@ export class CodexAdapter implements AgentAdapter {
     return codexNamesMissingConversation(finalOutput, agentSessionId);
   }
 
-  async detect(overridePath?: string | null): Promise<AgentInfo> {
-    const info = await this.detector.detect(overridePath);
+  async detect(overridePath?: string | null, options?: DetectOptions): Promise<AgentInfo> {
+    const info = await this.detector.detect(overridePath, options);
     // Read the hook trust as soon as the binary is known, so the first spawn
     // (which awaits it in ensureTrust) rarely waits. A Codex in a WSL distro
     // is read there, for the hooks it runs, keyed by its version.
-    if (info.found && info.path) {
+    //
+    // Not for a detection remembered from an earlier launch: that one is only
+    // shown, and each read starts a `codex app-server`. A spawn detects live,
+    // which starts both reads, and `ensureTrust` waits for them.
+    if (info.found && info.path && !info.remembered) {
       if (!info.cliTarget) {
         this.hookTrust.start(info.path);
         this.modelCatalog.start(info.path);
