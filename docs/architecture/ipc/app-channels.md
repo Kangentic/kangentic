@@ -250,7 +250,7 @@ Detach a registered UI surface (`stats` for usage stats, `changes` for git chang
 Machine-global (like Config), never project-scoped. Backs Settings > Accounts and the toasts of the continuation at a usage limit, through `ElectronAPI.accounts`. Handlers live in `src/main/ipc/handlers/accounts.ts`. See [Agent accounts](../../integrations/accounts.md) for the account model, the sign-in and the continuation.
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `accounts:list` | invoke | One card (`AgentAccountsCard`) per installed agent that declares accounts, its accounts in run order |
+| `accounts:list` | invoke | Resolves `AgentAccountsList`: one card (`AgentAccountsCard`) per installed agent that declares accounts, its accounts in run order, and `checked`. Until this run's CLI check lands the cards are the saved ones and `checked` is false |
 | `accounts:startLogin` | invoke | Run the CLI's own sign-in in a terminal of its own, for a new folder account of an agent or again for a signed-out or `replaced` account. Resolves `AgentAccountLoginStart`: the `loginId` and `accountId`, or a refusal (`unsupported`, `no-cli`, `failed`) |
 | `accounts:loginBacklog` | invoke | What a sign-in printed before its terminal mounted, by `loginId` |
 | `accounts:loginInput` | send | Keys typed into a sign-in's terminal (a pasted code, Enter) |
@@ -263,7 +263,7 @@ Machine-global (like Config), never project-scoped. Backs Settings > Accounts an
 | `accounts:reorder` | invoke | A drag: the agent's list takes the given order, and for an agent that reports usage the run order becomes Manual. New sessions only |
 | `accounts:switchTo` | invoke | Move an account to the top and, for an agent that reports usage, set Manual order, then move the agent's running sessions (task sessions, Command Terminals, workflow agents) to it, each at its first safe point, one at a time. Resolves an `AgentAccountSwitchResult` once each was looked at once (how many moved, how many wait for a safe point, how many could not), which the renderer turns into one toast |
 | `accounts:refreshUsage` | invoke | Ask the CLI who is signed in on each account that is not a key file, then read every account's usage. Resolves once the reads are done. Calls that overlap share one batch |
-| `accounts:changed` | on | Event with no payload: something the tab shows changed, so it re-lists. Main sends it for a service change and when `config:set` saves the accounts settings, and rechecks waiting continuations on it |
+| `accounts:changed` | on | Event with no payload: something the tab shows changed, so it re-lists. Main sends it for a service change, when the tab's first CLI check of a run lands, and when `config:set` saves the accounts settings, and rechecks waiting continuations on it |
 | `accounts:switched` | on | Event: a task's session reached its account's limit and continues on another account (`AgentAccountSwitched`) |
 | `accounts:allFull` | on | Event: every account of an agent is at its limit and a session waits for the first reset (`AgentAccountsAllFull`) |
 | `accounts:following` | on | Event: Automatic order put another account first and the agent's running sessions move to it, each at its next safe point (`AgentAccountsFollowing`). One per order change |

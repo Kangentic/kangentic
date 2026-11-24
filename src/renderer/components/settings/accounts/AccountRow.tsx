@@ -9,6 +9,12 @@ import { KebabMenu, KebabMenuItem } from '../../KebabMenu';
 import { Tooltip } from '../../Tooltip';
 import { RATE_LIMIT_ICON, RateLimitTrack, formatResetMoment, formatResetTime } from '../../terminal/rate-limit-meter';
 import { CardTile } from '../settings-card';
+import {
+  ACCOUNT_ROW_TOP_LINE_CLASS,
+  ACCOUNT_USAGE_GRID_CLASS,
+  ACCOUNT_USAGE_PERCENT_CELL_CLASS,
+  ACCOUNT_USAGE_RESET_CELL_CLASS,
+} from './account-row-layout';
 
 /** A tint of the element's own text color, for a pill's edge and fill. */
 function tint(percent: number): string {
@@ -89,11 +95,11 @@ function UsageLine({ line, now }: { line: AccountUsageLine; now: number }) {
         ) : (
           <RateLimitTrack limitWindow={null} now={now} className="min-w-[40px] flex-1" />
         )}
-        <span className={`w-7 flex-shrink-0 text-right ${line.kind === 'not-started' ? 'text-fg-faint' : ''}`}>
+        <span className={`${ACCOUNT_USAGE_PERCENT_CELL_CLASS} text-right ${line.kind === 'not-started' ? 'text-fg-faint' : ''}`}>
           {percentText}
         </span>
       </span>
-      <span className="flex items-center whitespace-nowrap pl-1.5">
+      <span className={ACCOUNT_USAGE_RESET_CELL_CLASS}>
         {live && live.resetsAt > 0 ? (
           <Tooltip label={formatResetTime(live.resetsAt)}>
             <span className="flex min-w-0 items-center gap-1.5">
@@ -154,7 +160,7 @@ function AccountRowContent({
 
   return (
     <>
-      <div className="flex min-h-6 items-center gap-2" data-skipped={skipped ? '' : undefined}>
+      <div className={ACCOUNT_ROW_TOP_LINE_CLASS} data-skipped={skipped ? '' : undefined}>
         {grip}
         <Tooltip label={name}>
           <span className="min-w-0 truncate text-xs font-medium text-fg" data-testid="account-name">{name}</span>
@@ -241,7 +247,7 @@ function AccountRowContent({
         // The full width of the tile, set off by space alone: the card's border and the tile's
         // fill are the only layers (settings-card-design.md). One grid for every line, so the name
         // column is as wide as the longest name and the bars start together.
-        <div className="mt-3 grid grid-cols-[auto_1fr_minmax(84px,auto)] items-center gap-x-2.5 gap-y-3 text-xs tabular-nums text-fg-muted">
+        <div className={ACCOUNT_USAGE_GRID_CLASS}>
           {lines.map((line, index) => (
             <UsageLine key={usageLineKey(line, index)} line={line} now={now} />
           ))}
