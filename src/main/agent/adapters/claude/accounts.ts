@@ -13,6 +13,7 @@ import {
 } from '../../../accounts/account-support';
 import type { RateLimitWindow } from '../../../../shared/types';
 import { execRunFailureOf } from '../../../utility-process/off-main-exec';
+import { isKangenticMadeFolder } from '../../shared/kangentic-made-folder';
 import { isPlainRecord } from '../../shared/plain-record';
 import { builtinClaudeHomeDir, claudeHomeDir, claudeStatePathForHome, isDefaultClaudeHome, withClaudeJsonFileLock } from './claude-json-lock';
 import { runClaudeCli } from './cli-run';
@@ -190,6 +191,18 @@ export function deriveClaudeAccountState(
       const own = current[key] as Record<string, unknown>;
       const merged: Record<string, unknown> = { ...own, ...value };
       if (key === 'projects') {
+        // Kangentic trusts a folder it made in the home before any account spawns there, so a
+        // Kangentic-made folder the home no longer holds is one its removal dropped. Merged with
+        // `{ ...own, ...home }` alone, every account kept its own copy of thousands of them, and
+        // a sweep of one file was refilled from the other ten minutes later (task #1190). The
+        // home's other folders are not judged: an account may have trusted one by itself.
+        for (const folder of Object.keys(own)) {
+          if (!isKangenticMadeFolder(folder) || Object.hasOwn(value, folder)) continue;
+          delete merged[folder];
+          for (const part of Object.keys(claudeUserConfigParts({ projects: { [folder]: own[folder] } }))) {
+            context.discardedParts?.add(part);
+          }
+        }
         for (const [folder, entry] of Object.entries(value)) {
           const ownEntry = own[folder];
           if (isPlainRecord(ownEntry) && ownEntry.hasTrustDialogAccepted === true && isPlainRecord(entry)) {

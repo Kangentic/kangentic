@@ -704,14 +704,19 @@ async function deriveJson(
     // it removes nothing from the account, and the record stays as it was.
     const homeParts = userParts && sourceState.answered ? userParts(sourceState.value) : null;
     const removedFromHome = recorded && homeParts ? Object.keys(recorded).filter((part) => !Object.hasOwn(homeParts, part)) : [];
-    const context: DeriveContext = { removedFromHome: new Set(removedFromHome) };
+    const discardedParts = new Set<string>();
+    const context: DeriveContext = { removedFromHome: new Set(removedFromHome), discardedParts };
     const next = entry.derive(sourceState.value, current, context);
     let replaced = 0;
     if (JSON.stringify(next) !== JSON.stringify(current)) {
       // Judged only for a write, which is the only thing that replaces anything, and only against
       // an account file that held something. One that is missing, empty or unreadable holds no
       // change of the account's, and every part the home held would read as one it removed.
-      if (userParts && accountState.answered) replaced = countReplaced(recorded, userParts(current), userParts(next));
+      if (userParts && accountState.answered) {
+        const accountParts = { ...userParts(current) };
+        for (const part of discardedParts) delete accountParts[part];
+        replaced = countReplaced(recorded, accountParts, userParts(next));
+      }
       ensureParent(target);
       // A write that did not land replaced nothing, and the record must not say it did.
       if (!safeWriteJson(target, next, 'agent_account_state', { mode: 0o600 })) return;

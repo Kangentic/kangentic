@@ -32,7 +32,10 @@ vi.mock('node:os', async () => {
 });
 
 import { ensureWorktreeTrust, ensureMcpServerTrust } from '../../src/main/agent/adapters/claude';
-import { declineExternalClaudeMdImports, ensureClaudeSpawnConfig } from '../../src/main/agent/adapters/claude/trust-manager';
+import { declineExternalClaudeMdImports, ensureClaudeSpawnConfig, removeWorktreeEntry, sweepRemovedFolderEntries } from '../../src/main/agent/adapters/claude/trust-manager';
+import { ClaudeAdapter } from '../../src/main/agent/adapters/claude/claude-adapter';
+import { CLAUDE_ACCOUNT_SUPPORT } from '../../src/main/agent/adapters/claude/accounts';
+import { provisionAccountFolder } from '../../src/main/accounts/account-folder';
 
 describe('declineExternalClaudeMdImports: the dev preview answers the imports question', () => {
   it('records the question as answered no on the project entry, keeps its trust, and writes once', async () => {
@@ -901,6 +904,182 @@ describe('ensureMcpServerTrust', () => {
     } finally {
       warn.mockRestore();
     }
+  });
+});
+
+// Kangentic trusted every worktree it started Claude in and never dropped the entry again: a
+// dogfooding ~/.claude.json held 6,456 for folders long gone (task #1190).
+describe('the entry of a folder Kangentic made and removed', () => {
+  const projectKeys = (): string[] => {
+    if (!fs.existsSync(claudeJsonPath())) return [];
+    return Object.keys((readClaudeJson().projects ?? {}) as Record<string, unknown>);
+  };
+
+  /** Trust a folder under tmpHome the way a spawn does, and answer the one key that added. */
+  async function trustedKey(folder: string): Promise<string> {
+    const before = new Set(projectKeys());
+    await ensureClaudeSpawnConfig(folder);
+    const added = projectKeys().filter((key) => !before.has(key));
+    if (added.length !== 1) throw new Error(`expected one new entry for ${folder}, got ${added.length}`);
+    return added[0];
+  }
+
+  it('drops a removed worktree\'s entry, and never one for a folder Kangentic did not make', async () => {
+    const worktree = path.join(tmpHome, 'repo', '.kangentic', 'worktrees', 'task-1');
+    const userFolder = path.join(tmpHome, 'repo', 'some-folder');
+    const worktreeKey = await trustedKey(worktree);
+    const userKey = await trustedKey(userFolder);
+
+    await removeWorktreeEntry(worktree);
+    await removeWorktreeEntry(userFolder);
+
+    expect(projectKeys()).not.toContain(worktreeKey);
+    expect(projectKeys()).toContain(userKey);
+  });
+
+  it('sweeps the entries of Kangentic-made folders that are gone, and keeps the ones still there', async () => {
+    const repo = path.join(tmpHome, 'repo');
+    const checkout = path.join(tmpHome, 'checkout');
+    const goneWorktree = path.join(repo, '.kangentic', 'worktrees', 'gone');
+    const liveWorktree = path.join(repo, '.kangentic', 'worktrees', 'live');
+    const gonePreview = path.join(checkout, '.kangentic', 'data', 'preview-projects', 'project-1');
+    const goneUserFolder = path.join(tmpHome, 'user-folder-gone');
+    const keys = new Map<string, string>();
+    for (const folder of [goneWorktree, liveWorktree, gonePreview, goneUserFolder]) keys.set(folder, await trustedKey(folder));
+    fs.mkdirSync(liveWorktree, { recursive: true });
+    fs.mkdirSync(checkout, { recursive: true });
+
+    expect(await sweepRemovedFolderEntries()).toBe(2);
+
+    const left = projectKeys();
+    expect(left).not.toContain(keys.get(goneWorktree));
+    expect(left).not.toContain(keys.get(gonePreview));
+    expect(left).toContain(keys.get(liveWorktree));
+    // Gone, but not Kangentic's: the user opened Claude there.
+    expect(left).toContain(keys.get(goneUserFolder));
+  });
+
+  // Windows answers "not found" for a folder on a drive that is not mounted.
+  it('keeps the entry of a gone worktree whose project folder is gone too', async () => {
+    const worktree = path.join(tmpHome, 'unplugged', '.kangentic', 'worktrees', 'task-1');
+    const key = await trustedKey(worktree);
+
+    expect(await sweepRemovedFolderEntries()).toBe(0);
+    expect(projectKeys()).toContain(key);
+  });
+
+  it('keeps an entry whose folder cannot be read, and writes nothing when nothing is gone', async () => {
+    const worktree = path.join(tmpHome, 'repo', '.kangentic', 'worktrees', 'unreadable');
+    const key = await trustedKey(worktree);
+    const renames = vi.spyOn(fs.promises, 'rename');
+    try {
+      expect(await sweepRemovedFolderEntries(async () => true)).toBe(0);
+      expect(renames).not.toHaveBeenCalled();
+    } finally {
+      renames.mockRestore();
+    }
+    expect(projectKeys()).toContain(key);
+  });
+
+  // What undid the #1182 sweep: each account refresh merged the home's folders into the
+  // account's own, so whichever file still held an entry gave it back to the other.
+  it('stays gone from the home and an account folder across refreshes', async () => {
+    const worktree = path.join(tmpHome, 'repo', '.kangentic', 'worktrees', 'task-1');
+    const key = await trustedKey(worktree);
+    const accountFolder = path.join(tmpHome, 'accounts', 'claude', '2');
+    const refresh = () => provisionAccountFolder({ accountFolder, defaultHome: path.join(tmpHome, '.claude'), entries: CLAUDE_ACCOUNT_SUPPORT.sharedEntries });
+    const accountKeys = (): string[] => Object.keys((JSON.parse(fs.readFileSync(path.join(accountFolder, '.claude.json'), 'utf-8')) as { projects: Record<string, unknown> }).projects);
+    await refresh();
+    expect(accountKeys()).toContain(key);
+
+    await new ClaudeAdapter().onWorktreeRemoved(worktree);
+    await refresh();
+    await refresh();
+
+    expect(projectKeys()).not.toContain(key);
+    expect(accountKeys()).not.toContain(key);
+  });
+
+  // The sweep looks outside the lock and writes inside it. A spawn that recreates and trusts the
+  // worktree in between takes the same lock, so the locked re-check is what keeps its entry.
+  it('keeps the entry of a worktree recreated between the sweep\'s first look and its locked write', async () => {
+    const repo = path.join(tmpHome, 'repo');
+    const worktree = path.join(repo, '.kangentic', 'worktrees', 'recreated');
+    const key = await trustedKey(worktree);
+    fs.mkdirSync(repo, { recursive: true });
+    const lookups = new Map<string, number>();
+    const exists = async (folderPath: string): Promise<boolean> => {
+      if (!folderPath.replace(/\\/g, '/').includes('/.kangentic/worktrees/')) return fs.existsSync(folderPath);
+      const lookup = (lookups.get(folderPath) ?? 0) + 1;
+      lookups.set(folderPath, lookup);
+      // Absent the first time (gone), present from then on (recreated before the locked write).
+      return lookup > 1;
+    };
+
+    expect(await sweepRemovedFolderEntries(exists)).toBe(0);
+
+    expect([...lookups.values()]).toEqual([2]);
+    expect(projectKeys()).toContain(key);
+  });
+
+  // Windows paths compare without case. The key is filed in the case Claude saw, and the path a
+  // removal names can differ from it. `process.platform` is stubbed so Linux CI proves it too.
+  describe('a key filed in another case than the path the removal names', () => {
+    const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform') as PropertyDescriptor;
+    afterEach(() => {
+      Object.defineProperty(process, 'platform', originalPlatform);
+    });
+
+    async function seedRecasedEntry(): Promise<{ worktree: string; recasedKey: string; userKey: string }> {
+      const worktree = path.join(tmpHome, 'repo', '.kangentic', 'worktrees', 'task-1');
+      const userFolder = path.join(tmpHome, 'repo', 'some-folder');
+      const key = await trustedKey(worktree);
+      const userKey = await trustedKey(userFolder);
+      const recasedKey = key.toUpperCase();
+      expect(recasedKey).not.toBe(key);
+      const data = readClaudeJson();
+      const projects = data.projects as Record<string, unknown>;
+      projects[recasedKey] = projects[key];
+      delete projects[key];
+      fs.writeFileSync(claudeJsonPath(), JSON.stringify(data));
+      return { worktree, recasedKey, userKey };
+    }
+
+    it('drops it on Windows', async () => {
+      const { worktree, recasedKey, userKey } = await seedRecasedEntry();
+      Object.defineProperty(process, 'platform', { value: 'win32' });
+
+      await removeWorktreeEntry(worktree);
+
+      expect(projectKeys()).not.toContain(recasedKey);
+      expect(projectKeys()).toContain(userKey);
+    });
+
+    // A case-insensitive macOS volume is not folded, so a key that differs in case is kept.
+    it('keeps it off Windows', async () => {
+      const { worktree, recasedKey } = await seedRecasedEntry();
+      Object.defineProperty(process, 'platform', { value: 'linux' });
+
+      await removeWorktreeEntry(worktree);
+
+      expect(projectKeys()).toContain(recasedKey);
+    });
+  });
+
+  it('drops only the gone entry from a realistic file, and every other key and project survives', async () => {
+    const repo = path.join(tmpHome, 'repo');
+    fs.mkdirSync(repo, { recursive: true });
+    const goneKey = path.join(repo, '.kangentic', 'worktrees', 'gone').replace(/\\/g, '/');
+    const realistic = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'claude-json-realistic.json'), 'utf8')) as Record<string, unknown>;
+    const projects = realistic.projects as Record<string, unknown>;
+    projects[goneKey] = { hasTrustDialogAccepted: true, allowedTools: [], mcpServers: {}, enabledMcpjsonServers: ['kangentic'] };
+    fs.writeFileSync(claudeJsonPath(), JSON.stringify(realistic));
+    const expected = JSON.parse(JSON.stringify(realistic)) as Record<string, unknown>;
+    delete (expected.projects as Record<string, unknown>)[goneKey];
+
+    expect(await sweepRemovedFolderEntries()).toBe(1);
+
+    expect(readClaudeJson()).toEqual(expected);
   });
 });
 

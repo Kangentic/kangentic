@@ -76,6 +76,33 @@ describe('deriveClaudeAccountState', () => {
     expect(hasNoneLeft.mcpServers).toEqual({ mine: { command: 'node' } });
     expect(current.mcpServers).toEqual({ shared: { command: 'npx' }, mine: { command: 'node' } });
   });
+
+  // The guard is "the home holds this key", not "the account trusted it": the re-add loop only
+  // restores a folder whose account copy is trusted, so a folder both files hold and the account
+  // never trusted survives only through the guard.
+  it('keeps a Kangentic-made folder both files hold, whether or not the account trusted it, and names nothing discarded', () => {
+    const worktree = 'C:/Users/dev/site/.kangentic/worktrees/task-1';
+    const discardedParts = new Set<string>();
+    const next = deriveClaudeAccountState(
+      { projects: { [worktree]: { hasTrustDialogAccepted: true, allowedTools: ['Bash'] } } },
+      { projects: { [worktree]: { allowedTools: ['Bash(npm test)'] } } },
+      { removedFromHome: new Set(), discardedParts },
+    );
+    expect(Object.keys(next.projects as Record<string, unknown>)).toEqual([worktree]);
+    expect(discardedParts.size).toBe(0);
+  });
+
+  it('names the parts of a Kangentic-made folder it drops because the home no longer holds it', () => {
+    const worktree = 'C:/Users/dev/site/.kangentic/worktrees/task-1';
+    const discardedParts = new Set<string>();
+    const next = deriveClaudeAccountState(
+      { projects: { 'C:/Users/dev/site': { hasTrustDialogAccepted: true } } },
+      { projects: { [worktree]: { allowedTools: ['Bash(npm test)'] } } },
+      { removedFromHome: new Set(), discardedParts },
+    );
+    expect(Object.keys(next.projects as Record<string, unknown>)).toEqual(['C:/Users/dev/site']);
+    expect(discardedParts.size).toBeGreaterThan(0);
+  });
 });
 
 // What decides whether a replaced change is reported. Too little and a lost `claude mcp add` goes
@@ -190,6 +217,76 @@ describe('a Claude account folder refreshed from the home', () => {
 
     expect(await problemsOf()).toEqual([]);
     expect(readAccountState().mcpServers).toEqual({ mine: { type: 'stdio', command: 'node' } });
+  });
+
+  // Kangentic trusts every worktree in the home first, and each refresh merged the home's folders
+  // into the account's own. An entry dropped from one file came back from the other: a sweep of
+  // 6,456 dead worktree entries was undone ten minutes later (task #1190).
+  it('drops a worktree entry the home no longer holds, and keeps a folder that is not Kangentic\'s', async () => {
+    const worktree = 'C:/Users/dev/Documents/GitHub/site/.kangentic/worktrees/task-1';
+    const preview = 'C:/Users/dev/kangentic/.kangentic/data/preview-projects/project-1';
+    const userOnAccount = 'C:/Users/dev/scratch';
+    const withWorktrees = realisticState();
+    for (const folder of [worktree, preview]) {
+      withWorktrees.projects[folder] = { hasTrustDialogAccepted: true, mcpServers: {}, allowedTools: [] };
+    }
+    writeHomeState(withWorktrees);
+    await provision();
+    const onAccount = readAccountState();
+    onAccount.projects[userOnAccount] = { hasTrustDialogAccepted: true, mcpServers: {}, allowedTools: [] };
+    writeAccountState(onAccount);
+    expect(Object.keys(readAccountState().projects)).toEqual(expect.arrayContaining([worktree, preview]));
+
+    // The worktree went on Done, so its entry left the home. The preview is still open.
+    delete withWorktrees.projects[worktree];
+    writeHomeState(withWorktrees);
+    await provision();
+    await provision();
+
+    const folders = Object.keys(readAccountState().projects);
+    expect(folders).not.toContain(worktree);
+    expect(folders).toEqual(expect.arrayContaining([preview, userOnAccount, SITE, OTHER_APP]));
+  });
+
+  // A worktree's entry inherits its project's approved `.mcp.json` servers (`applyWorktreeTrust`),
+  // which are user parts. Dropping a dead folder's entry is no change of the account's replaced.
+  it('reports nothing when it drops a worktree entry that carries approved servers', async () => {
+    const shared = 'C:/Users/dev/Documents/GitHub/site/.kangentic/worktrees/shared';
+    const accountOnly = 'C:/Users/dev/Documents/GitHub/site/.kangentic/worktrees/account-only';
+    const withServers = { hasTrustDialogAccepted: true, mcpServers: {}, allowedTools: ['Bash(npm test)'], enabledMcpjsonServers: ['kangentic', 'docs'] };
+    const withWorktree = realisticState();
+    withWorktree.projects[shared] = { ...withServers };
+    writeHomeState(withWorktree);
+    expect(await problemsOf()).toEqual([]);
+    // The home's copy of this one went before this change shipped; the account kept its own.
+    const onAccount = readAccountState();
+    onAccount.projects[accountOnly] = { ...withServers };
+    writeAccountState(onAccount);
+
+    delete withWorktree.projects[shared];
+    writeHomeState(withWorktree);
+
+    expect(await problemsOf()).toEqual([]);
+    const folders = Object.keys(readAccountState().projects);
+    expect(folders).not.toContain(shared);
+    expect(folders).not.toContain(accountOnly);
+    expect(await problemsOf()).toEqual([]);
+  });
+
+  it('keeps every worktree entry when the home file holds no folders to judge by', async () => {
+    const worktree = 'C:/Users/dev/Documents/GitHub/site/.kangentic/worktrees/task-1';
+    const withWorktree = realisticState();
+    withWorktree.projects[worktree] = { hasTrustDialogAccepted: true, mcpServers: {}, allowedTools: [] };
+    writeHomeState(withWorktree);
+    await provision();
+
+    // Caught mid-write, then rewritten with no `projects` at all.
+    fs.writeFileSync(path.join(home, '.claude.json'), '{"numStartups": 3');
+    await provision();
+    writeHomeState({ numStartups: 3 });
+    await provision();
+
+    expect(Object.keys(readAccountState().projects)).toContain(worktree);
   });
 
   it('reports a setting changed on the account that the next copy replaces', async () => {

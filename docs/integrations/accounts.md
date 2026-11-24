@@ -66,7 +66,7 @@ a copy there (see below).
 | `history.jsonl` | A hard link, on the same drive only. |
 | `settings.json`, `keybindings.json` | A copy, refreshed before each spawn, since the CLI saves them by replacing the file. A change made on the account is replaced, and reported. |
 | `CLAUDE.md` | One line importing the home's file. Text the account's own file held is moved aside first. |
-| `.claude.json` | Rebuilt from the home's file with the login, the install ids and the caches left out, and each folder's trust merged. A server or approval changed on the account is replaced, and reported. |
+| `.claude.json` | Rebuilt from the home's file with the login, the install ids and the caches left out, and each folder's trust merged. A server or approval changed on the account is replaced, and reported. A folder Kangentic made (a task worktree, a dev preview project) that the home no longer holds is dropped from the account too. Kangentic trusts such a folder in the home before any account spawns there, so its absence means its removal dropped it ([Claude Code](agents/claude-code.md#removed-worktree-entries)). Before this, every account kept its own copy of thousands of them, and a sweep of one file was refilled from the other. |
 | The login, `sessions/`, caches and logs | The account's own. Never shared. |
 
 `provisionAccountFolder` (`account-folder.ts`) makes and refreshes it, before every spawn on that
@@ -296,7 +296,10 @@ nothing gets no card.
   Claude Code declares it. Codex, Gemini CLI and Grok Build have one built and not enabled (see Per agent).
   A shared entry says what a user configures in it when a replaced change should be reported:
   `reportReplaced` on a copied file, `userParts` on a derived one, whose `derive` is also told
-  which parts the home dropped (`removedFromHome`). Claude's `settings.json`, `keybindings.json`
+  which parts the home dropped (`removedFromHome`). A `derive` that drops an account's parts by
+  its own rule names them in `discardedParts`, and the refresh does not report them as replaced:
+  no copy of the home's wrote over them. Claude's derive names a removed worktree's parts there.
+  Claude's `settings.json`, `keybindings.json`
   and `.claude.json` do. The copies Codex and Gemini declare do not: nobody has watched those CLIs
   write them, and a file a CLI rewrites by itself would be reported at every spawn.
 - **Key file** (`KeyFileAccountSupport`): the variable names a key file may set (a name ending

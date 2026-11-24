@@ -2,6 +2,7 @@ import { promises as fsPromises } from 'node:fs';
 import * as path from 'node:path';
 import { toForwardSlash } from '../../../../shared/paths';
 import { cliPathForTarget, type CliPlace } from '../../shared/cli-target';
+import { folderExists, goneKangenticMadeFolders, isKangenticMadeFolder, stillGone } from '../../shared/kangentic-made-folder';
 import { claudeJsonPath, isClaudeJsonLockError, withClaudeJsonLock } from './claude-json-lock';
 import { applyDiffPanelClosed } from './diff-panel';
 import { physicalPath } from './physical-path';
@@ -190,14 +191,14 @@ async function removeKeptCopies(targetPath: string): Promise<void> {
  */
 async function updateClaudeJson(
   purpose: string,
-  apply: (data: Record<string, unknown>) => boolean,
+  apply: (data: Record<string, unknown>) => boolean | Promise<boolean>,
   place: CliPlace | null = null,
 ): Promise<void> {
   try {
     await withClaudeJsonLock(async () => {
       const filePath = claudeJsonPath(place);
       const data = await readClaudeJsonForWrite(filePath);
-      if (!data || !apply(data)) return;
+      if (!data || !(await apply(data))) return;
       await writeClaudeJson(filePath, data);
     }, place);
   } catch (error) {
@@ -288,6 +289,77 @@ export async function ensureClaudeSpawnConfig(workingDirectory: string, place: C
     ];
     return changes.some(Boolean);
   }, place);
+}
+
+/**
+ * A `projects` key as compared: Windows paths compare without case. A
+ * case-insensitive macOS volume is not folded, so a key whose case differs there
+ * is kept, never dropped by mistake.
+ */
+function comparableKey(key: string): string {
+  return process.platform === 'win32' ? key.toLowerCase() : key;
+}
+
+/** Drop every `projects` entry filed under one of `keys`. Answers how many it dropped. */
+function applyEntriesRemoved(data: Record<string, unknown>, keys: readonly string[]): number {
+  if (!data.projects || typeof data.projects !== 'object') return 0;
+  const projects = data.projects as Record<string, unknown>;
+  const targets = new Set(keys.map(comparableKey));
+  let dropped = 0;
+  for (const existing of Object.keys(projects)) {
+    if (!targets.has(comparableKey(existing))) continue;
+    delete projects[existing];
+    dropped += 1;
+  }
+  return dropped;
+}
+
+/**
+ * Drop a removed worktree's entry from ~/.claude.json. Kangentic trusts every
+ * folder it starts Claude in (`ensureClaudeSpawnConfig`), and nothing removed
+ * the entry again: a dogfooding machine held 6,456 of them for folders long
+ * gone, in a 2.6 MB file Claude rewrites whole under its lock. The entry is the
+ * folder's (trust, allowed tools, MCP choices), so all of it goes. Only for a
+ * folder Kangentic made (`isKangenticMadeFolder`).
+ *
+ * Only the home's file: an account's copy follows it at its next refresh
+ * (`deriveClaudeAccountState`), and a running Claude keeps the removal, since
+ * its own save re-reads the file under the lock and merges `projects` from what
+ * it read (measured on 2.1.331, `scripts/probe-claude-json-removal.js`).
+ */
+export async function removeWorktreeEntry(worktreePath: string, place: CliPlace | null = null): Promise<void> {
+  const key = await trustKey(worktreePath, place);
+  if (!isKangenticMadeFolder(key)) return;
+  await updateClaudeJson('removed worktree entry', (data) => applyEntriesRemoved(data, [key]) > 0, place);
+}
+
+/**
+ * Drop the entries of every Kangentic-made folder that is gone: the ones from
+ * before `removeWorktreeEntry` existed, and any whose removal ran while the app
+ * was not (a preview stopped with its terminal closed, a crash). A folder whose
+ * owner is gone too keeps its entry (`goneKangenticMadeFolders`). The folders
+ * are checked outside the lock. Under it the file is read again and the gone
+ * ones are checked once more (`stillGone`), so a worktree a spawn recreated and
+ * trusted meanwhile keeps its entry. Answers how many entries it dropped.
+ */
+export async function sweepRemovedFolderEntries(exists: (folderPath: string) => Promise<boolean> = folderExists): Promise<number> {
+  let snapshot: Record<string, unknown> | null;
+  try {
+    snapshot = parseObject(await fsPromises.readFile(claudeJsonPath(null), 'utf-8'));
+  } catch {
+    // report-ok: no ~/.claude.json, or one that cannot be read, holds nothing to sweep.
+    return 0;
+  }
+  const projects = snapshot?.projects;
+  if (!projects || typeof projects !== 'object') return 0;
+  const gone = await goneKangenticMadeFolders(Object.keys(projects).filter(isKangenticMadeFolder), exists);
+  if (gone.length === 0) return 0;
+  let dropped = 0;
+  await updateClaudeJson('removed folder sweep', async (data) => {
+    dropped = applyEntriesRemoved(data, await stillGone(gone, exists));
+    return dropped > 0;
+  });
+  return dropped;
 }
 
 /** How Windows refuses to replace a file another process holds open: a
