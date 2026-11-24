@@ -227,7 +227,7 @@ describe('captureSessionIdFromFilesystem - schema canary indirect path', () => {
     brokenDb.close();
 
     // Call captureSessionIdFromFilesystem with a non-null getAgentVersion.
-    // maxAttempts: 1 so the test doesn't spin for 10 seconds.
+    // maxAttempts: 1 so the test doesn't poll to the end of the spawn window.
     // The function will return null (schema is broken so the SELECT will
     // fail on the missing time_created column), but the canary MUST warn
     // before that happens.
@@ -345,6 +345,13 @@ describe('captureSessionIdFromFilesystem - an OpenCode 2 database', () => {
     database.close();
   }
 
+  function insertRow(table: 'session' | 'session_v2', id: string, created: number, directory = projectDirectory): void {
+    const database = new Database(path.join(fakeHome, '.local', 'share', 'opencode', 'opencode.db'));
+    database.prepare(`INSERT INTO ${table} (id, project_id, directory, time_created, time_updated) VALUES (?, 'project', ?, ?, ?)`)
+      .run(id, directory.replace(/\\/g, '/'), created, created);
+    database.close();
+  }
+
   beforeEach(() => {
     __resetSchemaCanaryForTests();
     warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -382,6 +389,116 @@ describe('captureSessionIdFromFilesystem - an OpenCode 2 database', () => {
     const result = await OpenCodeSessionHistoryParser.captureSessionIdFromFilesystem({ spawnedAt, cwd: projectDirectory, maxAttempts: 1 });
 
     expect(result).toBe('ses_writtenByOpenCodeOneAfterV2');
+  });
+
+  // The scan accepts a row made up to 30 s after the spawn and used to stop
+  // looking at 10 s, so a row made in between was never found (Sentry DESKTOP-3A,
+  // fs_scan empty). The fake sleep is the clock: it plants the row when it gets there.
+  it('finds a row made 20 s after the spawn', async () => {
+    const spawnedAt = new Date();
+    plantDatabase({});
+    let elapsedMs = 0;
+    const sleep = async (milliseconds: number): Promise<void> => {
+      const before = elapsedMs;
+      elapsedMs += milliseconds;
+      if (before < 20_000 && elapsedMs >= 20_000) insertRow('session', 'ses_madeTwentySecondsIn', spawnedAt.getTime() + 20_000);
+    };
+
+    const result = await OpenCodeSessionHistoryParser.captureSessionIdFromFilesystem({ spawnedAt, cwd: projectDirectory, sleep });
+
+    expect(result).toBe('ses_madeTwentySecondsIn');
+  });
+
+  it('looks past the end of its own window, then stops', async () => {
+    const spawnedAt = new Date();
+    plantDatabase({});
+    let elapsedMs = 0;
+    let reads = 1;
+    const result = await OpenCodeSessionHistoryParser.captureSessionIdFromFilesystem({
+      spawnedAt, cwd: projectDirectory, sleep: async (milliseconds) => { elapsedMs += milliseconds; reads += 1; },
+    });
+
+    expect(result).toBeNull();
+    expect(elapsedMs).toBeGreaterThan(30_000);
+    expect(elapsedMs).toBeLessThanOrEqual(35_000);
+    // Each read opens the database on the main process: every 500 ms for the whole window would be 60 or more.
+    expect(reads).toBeLessThan(40);
+  });
+
+  // OpenCode stores the resolved real path of the folder it runs in.
+  it('finds a row whose directory is the real path behind a linked project', async () => {
+    const spawnedAt = new Date();
+    fs.mkdirSync(projectDirectory);
+    const link = path.join(fakeHome, 'link-to-project');
+    fs.symlinkSync(projectDirectory, link, 'junction');
+    plantDatabase({});
+    insertRow('session', 'ses_rowUnderTheRealPath', spawnedAt.getTime() + 400, fs.realpathSync.native(projectDirectory));
+
+    const result = await OpenCodeSessionHistoryParser.captureSessionIdFromFilesystem({ spawnedAt, cwd: link, maxAttempts: 1 });
+
+    expect(result).toBe('ses_rowUnderTheRealPath');
+  });
+
+  // A subagent's session is a row in the same folder, newer than the session's
+  // own. Its id would resume the subagent.
+  it('never takes a subagent\'s row over the session that started it', async () => {
+    const spawnedAt = new Date();
+    plantDatabase({ session: [['ses_theTaskSessionItself', spawnedAt.getTime() + 400]] });
+    const database = new Database(path.join(fakeHome, '.local', 'share', 'opencode', 'opencode.db'));
+    database.exec('ALTER TABLE session ADD COLUMN parent_id TEXT');
+    database.prepare(`INSERT INTO session (id, project_id, directory, time_created, time_updated, parent_id) VALUES (?, 'project', ?, ?, ?, ?)`)
+      .run('ses_aSubagentOfTheSession', projectDirectory, spawnedAt.getTime() + 900, spawnedAt.getTime() + 900, 'ses_theTaskSessionItself');
+    database.close();
+
+    const result = await OpenCodeSessionHistoryParser.captureSessionIdFromFilesystem({ spawnedAt, cwd: projectDirectory, maxAttempts: 1 });
+
+    expect(result).toBe('ses_theTaskSessionItself');
+  });
+
+  // Both tables are read and merged newest first, whichever table holds the newest.
+  it('takes the newest in-window row across both tables, in either order', async () => {
+    const spawnedAt = new Date();
+    plantDatabase({
+      session: [['ses_olderInSession', spawnedAt.getTime() + 400]],
+      sessionV2: [['ses_newerInSessionV2', spawnedAt.getTime() + 900]],
+    });
+    await expect(OpenCodeSessionHistoryParser.captureSessionIdFromFilesystem({ spawnedAt, cwd: projectDirectory, maxAttempts: 1 }))
+      .resolves.toBe('ses_newerInSessionV2');
+
+    insertRow('session', 'ses_newestInSession', spawnedAt.getTime() + 1_500);
+    await expect(OpenCodeSessionHistoryParser.captureSessionIdFromFilesystem({ spawnedAt, cwd: projectDirectory, maxAttempts: 1 }))
+      .resolves.toBe('ses_newestInSession');
+  });
+
+  it('stops polling once shouldContinue answers no, and keeps looking while it answers yes', async () => {
+    const spawnedAt = new Date();
+    plantDatabase({});
+
+    let waits = 0;
+    const stopAtOnce = await OpenCodeSessionHistoryParser.captureSessionIdFromFilesystem({
+      spawnedAt, cwd: projectDirectory, sleep: async () => { waits += 1; }, shouldContinue: () => false,
+    });
+    expect(stopAtOnce).toBeNull();
+    expect(waits).toBe(1);
+
+    waits = 0;
+    const stopAfterThree = await OpenCodeSessionHistoryParser.captureSessionIdFromFilesystem({
+      spawnedAt, cwd: projectDirectory, sleep: async () => { waits += 1; }, shouldContinue: () => waits < 3,
+    });
+    expect(stopAfterThree).toBeNull();
+    expect(waits).toBe(3);
+
+    waits = 0;
+    const found = await OpenCodeSessionHistoryParser.captureSessionIdFromFilesystem({
+      spawnedAt,
+      cwd: projectDirectory,
+      sleep: async () => {
+        waits += 1;
+        if (waits === 4) insertRow('session', 'ses_madeWhileWanted', spawnedAt.getTime() + 2_000);
+      },
+      shouldContinue: () => true,
+    });
+    expect(found).toBe('ses_madeWhileWanted');
   });
 
   it('locates a session that is only in session_v2', async () => {

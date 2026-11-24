@@ -739,7 +739,9 @@ in one Sentry org, one triage surface.
     `found`, `empty`, `dropped` for a match another session could own, `failed`), `id_store`
     (`present`, `absent`, `unknown`: whether the agent's own store holds this session, from the
     adapter's `sessionId.storeEvidence`: for Codex a rollout in today's or yesterday's UTC folder
-    made since the spawn in the session's cwd, and for OpenCode `opencode.db`), `node_on_path` (`yes`, `no`, `unknown`: whether a bare `node` resolves on
+    made since the spawn in the session's cwd, and for OpenCode a `session` or `session_v2` row
+    of `opencode.db` made since the spawn in the session's cwd, which until DESKTOP-3A was only
+    whether the file existed), `node_on_path` (`yes`, `no`, `unknown`: whether a bare `node` resolves on
     main's PATH, the one a local session's shell starts from, asked at the window. The command
     hooks Kangentic installs start the event bridge as `node`, so `no` says main found none for
     them; OpenCode's hooks run as a plugin inside OpenCode and need none. A session in a WSL
@@ -751,12 +753,12 @@ in one Sentry org, one triage surface.
     runs `codex login status` only when there is none; every other agent, a CLI in a distro or on
     a host, a session whose account is no longer known, and a check that gave no answer within
     25 s read `unknown`). Every
-    value is fixed; no path or id leaves. No `prompt_seen` source has been
-    confirmed in a real run yet. OpenCode's plugin writes `prompt` on `chat.message`, pinned only
-    on a fixture, and Cursor's `beforeSubmitPrompt` hook was written from its docs. DESKTOP-4C's
+    value is fixed; no path or id leaves. One `prompt_seen` source has been
+    confirmed in a real run: OpenCode 1's plugin writes `prompt` on `chat.message` (1.18.31,
+    Windows). Cursor's `beforeSubmitPrompt` hook was written from its docs. DESKTOP-4C's
     `yes` for Codex does not confirm its `UserPromptSubmit` hook either: it was sent before PTY
     output stopped counting, and that run's first frame alone would have set it. Until a run
-    confirms one, a `no` alone is not grounds to stop a report. The signed-out rule above reads
+    confirms an agent's source, its `no` alone is not grounds to stop a report. The signed-out rule above reads
     it only beside the CLI's own answer that it holds no login and a store that is not there.
     The on-time rule needs no such proof, since it acts only on a prompt event that did arrive.
   - `agent_accounts` is a `subsystem` tag, not a chokepoint source: a named account problem from

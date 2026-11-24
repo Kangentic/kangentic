@@ -194,9 +194,11 @@ export function openCodeAnswerConfig(server: KangenticMcpServer | null, openCode
  *    `OPENCODE_CONFIG_CONTENT` env var for inline overrides. The
  *    Kangentic MCP entry is injected via `buildEnv()` so the user's
  *    checked-in `opencode.json` is never touched. The activity-stream
- *    plugin is a separate file, copied into the project-shared
- *    `.opencode/plugins/` directory at spawn (held per session via
- *    `hookHolds` since concurrent sessions share the file).
+ *    plugin is a separate file. OpenCode 1 is given its URL in the same
+ *    variable and nothing is copied. OpenCode 2's is copied into the
+ *    project-shared `.opencode/plugins/` directory at spawn (held per session
+ *    via `hookHolds` since concurrent sessions share the file), and a host
+ *    over SSH gets a copy of either.
  *  - No trust dialog. Modes map to `--agent` on a fresh spawn, and Build
  *    (Auto-approve) adds the TUI's own `--auto` (auto-approve what is not
  *    explicitly denied) on a CLI that has it (1.17.12 and later, and
@@ -274,13 +276,14 @@ export class OpenCodeAdapter implements AgentAdapter {
 
   private readonly detector = new OpenCodeDetector();
   private readonly commandBuilder = new OpenCodeCommandBuilder();
-  // Sessions holding the activity plugin, per project root. OpenCode
+  // Sessions holding an installed activity plugin, per project root
+  // (`installsActivityPlugin`: OpenCode 2, and a host over SSH). OpenCode 2
   // auto-loads plugins from a project-shared `.opencode/plugins/` directory,
   // so concurrent sessions in the same project share one plugin file, and
   // it is deleted only when the root's last session releases. A hold records
   // the project root, so a worktree session's release (which arrives with
-  // the worktree path) removes the plugin the build installed. See
-  // SharedFolderHolds.
+  // the worktree path) removes the plugin the build installed. An OpenCode 1
+  // session here installs nothing and takes no hold. See SharedFolderHolds.
   private readonly hookHolds = new SharedFolderHolds();
 
   // Keyed by spawn cwd, populated in buildCommand whenever a spawn resolves
@@ -498,9 +501,9 @@ export class OpenCodeAdapter implements AgentAdapter {
     // buildOpenCodeCommand copies the activity plugin into
     // `<projectRoot>/.opencode/plugins/` when `installsActivityPlugin` says so.
     // Hold the project root until this session releases, so concurrent
-    // sessions serialize their cleanup in `removeHooks`. Local mode only -
-    // remote mode never installs the plugin (see command-builder.ts).
-    if (installsActivityPlugin(options)) {
+    // sessions serialize their cleanup in `removeHooks`. Remote mode never
+    // runs the plugin, and OpenCode 1 here is given its URL (command-builder.ts).
+    if (installsActivityPlugin({ ...options, cliVersion })) {
       this.hookHolds.retain(options.ptySessionId, activityPluginRoot(options));
     }
     return command;
@@ -545,8 +548,8 @@ export class OpenCodeAdapter implements AgentAdapter {
    *   the capture with a stale id.
    * - sessionId.fromFilesystem: reads the `~/.local/share/opencode/opencode.db`
    *   SQLite database (WAL-friendly readonly handle) and matches a
-   *   `session` row whose `directory` equals our cwd and whose
-   *   `time_created` falls in the spawn window.
+   *   `session` row whose `directory` is our cwd, as given or as its real
+   *   path, and whose `time_created` falls in the spawn window.
    */
   readonly runtime: AdapterRuntimeStrategy = {
     // Its plugin reports the end of a turn as an Idle event.
@@ -608,13 +611,14 @@ export class OpenCodeAdapter implements AgentAdapter {
           spawnedAt: options.spawnedAt,
           cwd: options.cwd,
           getAgentVersion: () => this.detector.getCachedVersion(),
+          shouldContinue: options.shouldContinue,
         });
       },
       // This machine's database only: a distro's or a remote server's is not
       // here to look at.
       storeEvidence: (options) => {
         if (options.cliTarget || this.remoteTargetsByCwd.has(options.cwd)) return Promise.resolve('unknown');
-        return OpenCodeSessionHistoryParser.storeEvidence();
+        return OpenCodeSessionHistoryParser.storeEvidence({ cwd: options.cwd, spawnedAt: options.spawnedAt });
       },
     },
   };

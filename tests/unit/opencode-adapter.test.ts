@@ -21,6 +21,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // `discoverCapabilities` reads `--help` on OpenCode 1 only. The exec seam records
@@ -114,6 +115,7 @@ import { openCodeTranscriptSourcePath } from '../../src/main/agent/adapters/open
 import { isOpenCodeV2, openCodeMajorVersion } from '../../src/main/agent/adapters/opencode/version';
 import { isDistroOpenCodeV2 } from '../../src/main/agent/adapters/opencode/distro-sessions';
 import type { CliPlace, CliTarget } from '../../src/main/agent/shared/cli-target';
+import { resolvePluginScript } from '../../src/main/agent/shared/bridge-utils';
 import { loadBetterSqlite3 } from '../../src/main/agent/adapters/opencode/session-history-parser';
 import type { SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
 import type { PermissionMode } from '../../src/shared/types';
@@ -1174,16 +1176,16 @@ describe('OpenCodeAdapter - removeHooks holds deferral', () => {
   // The plugin file must remain until the LAST holder calls removeHooks.
   //
   // Strategy: use a real temp directory as the project root so buildCommand
-  // actually installs the plugin (via buildHooks). The plugin source file at
-  // src/main/agent/adapters/opencode/plugin/kangentic-activity.mjs is present
-  // in the dev tree, so resolvePluginScript finds it and the copy succeeds. It
-  // installs as `.js`, the extension OpenCode's plugin glob loads.
+  // actually installs the plugin (via buildHooks). Only an OpenCode 2 spawn
+  // (and one on an SSH host) installs a copy and holds it: an OpenCode 1 spawn
+  // names the packaged script instead (the block below), so every build here
+  // is OpenCode 2's.
 
   let projectDir: string;
   let concurrentAdapter: OpenCodeAdapter;
 
   function pluginPath(): string {
-    return path.join(projectDir, '.opencode', 'plugins', 'kangentic-activity.js');
+    return path.join(projectDir, '.opencode', 'plugins', 'kangentic-activity', 'index.js');
   }
 
   function makeBuildOptions(ptySessionId: string, overrides: Partial<SpawnCommandOptions> = {}): SpawnCommandOptions {
@@ -1201,10 +1203,12 @@ describe('OpenCodeAdapter - removeHooks holds deferral', () => {
 
   beforeEach(() => {
     projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kangtest-opencode-refcount-'));
+    vi.spyOn(OpenCodeDetector.prototype, 'getCachedVersion').mockReturnValue('v2.2.5');
     concurrentAdapter = new OpenCodeAdapter();
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     fs.rmSync(projectDir, { recursive: true, force: true });
   });
 
@@ -1245,8 +1249,8 @@ describe('OpenCodeAdapter - removeHooks holds deferral', () => {
     expect(fs.existsSync(pluginPath())).toBe(false);
   });
 
-  it('a worktree session\'s release removes the plugin its build installed in the project root', () => {
-    // The plugin lands in `<projectRoot>/.opencode/plugins/`, while the session
+  it('an OpenCode 2 worktree session\'s release removes the plugin its build installed in the project root', () => {
+    // OpenCode 2 walks up past the worktree, so the plugin lands in `<projectRoot>/.opencode/plugins/`, while the session
     // layer releases with the worktree the session ran in.
     const worktree = path.join(projectDir, '.kangentic', 'worktrees', 'task-a');
     fs.mkdirSync(worktree, { recursive: true });
@@ -1278,6 +1282,149 @@ describe('OpenCodeAdapter - removeHooks holds deferral', () => {
 
     concurrentAdapter.removeHooks(projectDir, undefined);
     expect(fs.existsSync(pluginPath())).toBe(false);
+  });
+});
+
+/**
+ * An OpenCode 1 session loads the packaged plugin by its file URL, named in
+ * `OPENCODE_CONFIG_CONTENT`, and nothing is copied. OpenCode 1 stops its
+ * `.opencode` walk at the git checkout it runs in, which for a board task is
+ * the linked worktree, so a copy in the project root was never loaded there
+ * and the task ran with no tool activity, questions or context usage (GitHub
+ * #929, Sentry DESKTOP-3A).
+ */
+describe('OpenCodeAdapter - the OpenCode 1 activity plugin', () => {
+  const MCP = { mcpServerEnabled: true, mcpServerUrl: 'http://127.0.0.1:51234/mcp/proj-abc', mcpServerToken: 'token-deadbeef' };
+  let projectDir: string;
+  let worktree: string;
+  let adapter: OpenCodeAdapter;
+
+  function worktreeOptions(overrides: Partial<SpawnCommandOptions> = {}): SpawnCommandOptions {
+    return makeOptions({
+      ptySessionId: 'session-v1',
+      cwd: worktree,
+      projectRoot: projectDir,
+      eventsOutputPath: path.join(projectDir, 'events.jsonl'),
+      ...overrides,
+    });
+  }
+
+  function configOf(env: Record<string, string> | null): { plugin?: string[]; mcp?: unknown } {
+    return JSON.parse(env?.OPENCODE_CONFIG_CONTENT ?? 'null') as { plugin?: string[]; mcp?: unknown };
+  }
+
+  /** The packaged script, through the resolver the adapter uses. */
+  function expectNamesPackagedScript(env: Record<string, string> | null): void {
+    const named = configOf(env).plugin;
+    expect(named).toHaveLength(1);
+    expect(fileURLToPath(named![0])).toBe(resolvePluginScript('opencode', 'kangentic-activity'));
+    expect(fs.existsSync(fileURLToPath(named![0]))).toBe(true);
+  }
+
+  function plantLeftover(name = 'kangentic-activity.js'): string {
+    const leftover = path.join(projectDir, '.opencode', 'plugins', name);
+    fs.mkdirSync(path.dirname(leftover), { recursive: true });
+    fs.writeFileSync(leftover, '// kangentic-activity\n// an earlier build\n');
+    return leftover;
+  }
+
+  beforeEach(() => {
+    projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kangtest-opencode-v1-'));
+    worktree = path.join(projectDir, '.kangentic', 'worktrees', 'task-a');
+    fs.mkdirSync(worktree, { recursive: true });
+    vi.spyOn(OpenCodeDetector.prototype, 'getCachedVersion').mockReturnValue('1.19.5');
+    adapter = new OpenCodeAdapter();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(projectDir, { recursive: true, force: true });
+  });
+
+  it('writes no .opencode anywhere for a worktree task, and names the packaged script in the env', () => {
+    const options = worktreeOptions(MCP);
+    adapter.buildCommand(options);
+    const env = adapter.buildEnv(options);
+
+    expect(fs.existsSync(path.join(projectDir, '.opencode'))).toBe(false);
+    expect(fs.existsSync(path.join(worktree, '.opencode'))).toBe(false);
+    expectNamesPackagedScript(env);
+    expect(configOf(env).mcp).toHaveProperty('kangentic');
+  });
+
+  it('still names it with MCP off, and on a resume', () => {
+    expectNamesPackagedScript(adapter.buildEnv(worktreeOptions({ mcpServerEnabled: false })));
+    expectNamesPackagedScript(adapter.buildEnv(worktreeOptions({ ...MCP, resume: true, sessionId: 'ses_abc123def456' })));
+  });
+
+  it('names it when the version cannot be read, which is treated as OpenCode 1', () => {
+    vi.spyOn(OpenCodeDetector.prototype, 'getCachedVersion').mockReturnValue(null);
+    expectNamesPackagedScript(adapter.buildEnv(worktreeOptions()));
+  });
+
+  it('names nothing for a spawn with no events pipeline, for OpenCode 2, and for a remote server', () => {
+    expect(adapter.buildEnv(worktreeOptions({ eventsOutputPath: undefined }))).toBeNull();
+    const executionTarget = { url: 'http://10.0.0.5:4096', auth: { kind: 'none' as const }, workingDirectory: '/srv/project' };
+    expect(adapter.buildEnv(worktreeOptions({ executionTarget }))).toBeNull();
+    vi.spyOn(OpenCodeDetector.prototype, 'getCachedVersion').mockReturnValue('v2.2.5');
+    expect(configOf(adapter.buildEnv(worktreeOptions(MCP)))).not.toHaveProperty('plugin');
+  });
+
+  it('names nothing when the packaged script is not there, so OpenCode is never pointed at a missing file', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const missing = resolvePluginScript('opencode', 'kangentic-activity');
+    const realExists = fs.existsSync;
+    vi.spyOn(fs, 'existsSync').mockImplementation((target) => target !== missing && realExists(target));
+    expect(adapter.buildEnv(worktreeOptions())).toBeNull();
+    expect(warn).toHaveBeenCalled();
+  });
+
+  // OpenCode dedupes local plugins on the exact file URL, so a copy left in the
+  // root would load beside the named one and write every event twice.
+  it('removes a leftover copy from the project root, the .mjs of older builds included', () => {
+    const leftover = plantLeftover();
+    const legacy = plantLeftover('kangentic-activity.mjs');
+    adapter.buildCommand(worktreeOptions());
+    expect(fs.existsSync(leftover)).toBe(false);
+    expect(fs.existsSync(legacy)).toBe(false);
+    expect(fs.existsSync(path.join(projectDir, '.opencode'))).toBe(false);
+  });
+
+  it('keeps a user\'s own plugin, and the node_modules OpenCode installed, beside the leftover it removes', () => {
+    const leftover = plantLeftover();
+    const userPlugin = path.join(projectDir, '.opencode', 'plugins', 'mine.js');
+    fs.writeFileSync(userPlugin, 'export const Mine = async () => ({});\n');
+    const openCodeModules = path.join(projectDir, '.opencode', 'node_modules', '@opencode-ai');
+    fs.mkdirSync(openCodeModules, { recursive: true });
+
+    adapter.buildCommand(worktreeOptions());
+
+    expect(fs.existsSync(leftover)).toBe(false);
+    expect(fs.existsSync(userPlugin)).toBe(true);
+    expect(fs.existsSync(openCodeModules)).toBe(true);
+  });
+
+  it('leaves a user\'s own file at the leftover\'s name alone', () => {
+    const userPlugin = path.join(projectDir, '.opencode', 'plugins', 'kangentic-activity.js');
+    fs.mkdirSync(path.dirname(userPlugin), { recursive: true });
+    fs.writeFileSync(userPlugin, '// mine\nexport const Mine = async () => ({});\n');
+    adapter.buildCommand(worktreeOptions());
+    expect(fs.readFileSync(userPlugin, 'utf8')).toContain('// mine');
+  });
+
+  it('leaves the OpenCode 2 copy a running session holds, at its spawn and its release', () => {
+    const version = vi.spyOn(OpenCodeDetector.prototype, 'getCachedVersion').mockReturnValue('v2.2.5');
+    adapter.buildCommand(worktreeOptions({ ptySessionId: 'session-v2' }));
+    const v2Plugin = path.join(projectDir, '.opencode', 'plugins', 'kangentic-activity', 'index.js');
+    expect(fs.existsSync(v2Plugin)).toBe(true);
+
+    version.mockReturnValue('1.19.5');
+    adapter.buildCommand(worktreeOptions({ cwd: projectDir }));
+    expect(fs.existsSync(v2Plugin)).toBe(true);
+    adapter.removeHooks(projectDir, 'session-v1');
+    expect(fs.existsSync(v2Plugin)).toBe(true);
+    adapter.removeHooks(projectDir, 'session-v2');
+    expect(fs.existsSync(v2Plugin)).toBe(false);
   });
 });
 

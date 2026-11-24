@@ -160,6 +160,11 @@ export function buildCommandContextForProject(
       // and Claude doesn't block on a multi-second PTY spawn.
       autoSpawnForTask(ipcContext, projectId, task, swimlaneId).catch((err) => {
         console.error('[mcp-http auto-spawn] Failed:', err);
+      }).finally(() => {
+        // The push above reloaded the board before the spawn wrote the task's
+        // agent, worktree and session. Quiet re-sync, or the board keeps a task
+        // with none of them and the context bar names the default agent.
+        sendToRenderer(ipcContext.mainWindow, IPC.TASK_SESSION_RESYNC, projectId);
       });
     },
 

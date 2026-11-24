@@ -59,8 +59,9 @@ export async function ensureGitignore(projectPath: string): Promise<void> {
       await fs.promises.writeFile(gitignorePath, content);
     }
 
-    // Note: the OpenCode activity plugin (`.opencode/plugins/kangentic-activity.js`)
-    // is NOT ignored here. The OpenCode adapter's buildHooks() seeds it into the
+    // Note: the OpenCode activity plugin is NOT ignored here. OpenCode 1 loads the
+    // packaged script and installs nothing. For OpenCode 2's copy
+    // (`.opencode/plugins/kangentic-activity/`) the adapter's buildHooks() seeds the
     // local `.git/info/exclude` at spawn time (shared/git-exclude.ts), so projects
     // that never use OpenCode never get a stray entry and the tracked .gitignore
     // is never dirtied.

@@ -177,7 +177,7 @@ import {
   propagateStrategyToLiveSessions,
   buildColumnStrategyChanges,
 } from '../../src/main/ipc/handlers/strategy-propagation';
-import { reapTaskLeftovers } from '../../src/main/ipc/helpers';
+import { autoSpawnForTask, reapTaskLeftovers } from '../../src/main/ipc/helpers';
 import { closeTaskWindows } from '../../src/main/ipc/helpers/task-windows';
 import { handleTaskMove } from '../../src/main/ipc/handlers/task-move';
 import { WorktreeManager, prepareWorktreeForRemoval } from '../../src/main/git/worktree-manager';
@@ -1098,6 +1098,31 @@ describe('buildCommandContextForProject - consolidated board-changed bus fan-out
     context.onTaskCreated({ id: 'task-0', title: 'Task Zero' } as never, 'To Do', 'lane-0');
 
     expect(emitBoardChanged).toHaveBeenCalledWith({ projectId: DEFAULT_ID, change: 'task-created', ids: ['task-0'] });
+  });
+
+  // The create push reloads the board before the spawn it starts has written
+  // the task's agent, worktree and session, so without a second one the board
+  // kept a task with none of them, and the context bar named the project's
+  // default agent for a task another agent runs.
+  it.each(['resolves', 'rejects'] as const)('onTaskCreated re-syncs the board quietly once the spawn it started %s, and not before', async (outcome) => {
+    const { ipcContext, send } = makeFanOutContext();
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID)!;
+    let settleSpawn = (): void => undefined;
+    vi.mocked(autoSpawnForTask).mockReturnValueOnce(new Promise<void>((resolve, reject) => {
+      settleSpawn = outcome === 'resolves' ? resolve : () => reject(new Error('spawn failed'));
+    }));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      context.onTaskCreated({ id: 'task-0', title: 'Task Zero' } as never, 'Executing', 'lane-0');
+      await Promise.resolve();
+      expect(send).not.toHaveBeenCalledWith('TASK_SESSION_RESYNC', DEFAULT_ID);
+
+      settleSpawn();
+      await vi.waitFor(() => expect(send).toHaveBeenCalledWith('TASK_SESSION_RESYNC', DEFAULT_ID));
+      expect(errorSpy).toHaveBeenCalledTimes(outcome === 'rejects' ? 1 : 0);
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   it('onTaskUpdated fires both the IPC push and a task-updated board event', () => {

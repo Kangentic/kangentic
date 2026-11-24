@@ -4,6 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { execSync } from 'node:child_process';
 import { buildHooks, removeHooks } from '../../src/main/agent/adapters/opencode';
+import { removeLeftoverPlugin } from '../../src/main/agent/adapters/opencode/hook-manager';
 
 let projectDir: string;
 
@@ -218,6 +219,29 @@ describe('opencode-hook-manager', () => {
       } finally {
         errorSpy.mockRestore();
       }
+    });
+  });
+
+  // An OpenCode 1 spawn names the packaged script instead of copying it, and
+  // removes what an earlier build left first. An OpenCode 2 session may still
+  // hold its own copy in the same folder.
+  describe('removeLeftoverPlugin', () => {
+    it('removes the OpenCode 1 copies and keeps OpenCode 2\'s', () => {
+      buildHooks(projectDir);
+      buildHooks(projectDir, true);
+      fs.writeFileSync(legacyPluginPath(), '// kangentic-activity\n// earlier build\n');
+
+      removeLeftoverPlugin(projectDir);
+
+      expect(fs.existsSync(pluginPath())).toBe(false);
+      expect(fs.existsSync(legacyPluginPath())).toBe(false);
+      expect(fs.existsSync(path.join(projectDir, '.opencode', 'plugins', 'kangentic-activity', 'index.js'))).toBe(true);
+    });
+
+    it('removes no folder when there was no copy of ours, even an empty one', () => {
+      fs.mkdirSync(path.join(projectDir, '.opencode', 'plugins'), { recursive: true });
+      removeLeftoverPlugin(projectDir);
+      expect(fs.existsSync(path.join(projectDir, '.opencode', 'plugins'))).toBe(true);
     });
   });
 
