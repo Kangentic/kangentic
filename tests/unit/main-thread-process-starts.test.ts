@@ -43,6 +43,10 @@ const CLASSIFIED_STARTS: Record<string, ClassifiedStart> = {
     bindings: ['exec', 'execFile'],
     reason: 'the drop-in itself: a child runs here only when no pty host is registered (unit tests, startup before the host)',
   },
+  'src/main/utility-process/off-main-spawn.ts': {
+    bindings: ['spawn'],
+    reason: 'the drop-in for a streamed child: it asks spawnOffMainCli first and spawns here only when no pty host is registered',
+  },
   'src/main/agent/shared/cli-print.ts': {
     bindings: ['spawn'],
     reason: 'spawnCli asks spawnOffMainCli first and spawns here only when no pty host is registered',
@@ -100,17 +104,9 @@ const CLASSIFIED_STARTS: Record<string, ClassifiedStart> = {
     bindings: ['spawn'],
     reason: 'a run_script automation row starts its shell here, one start per run',
   },
-  'src/main/git/git-object-reader.ts': {
-    bindings: ['spawn'],
-    reason: 'git cat-file --batch for one image preview read in the Changes panel',
-  },
   'src/main/ipc/handlers/system.ts': {
     bindings: ['spawn'],
     reason: 'SHELL_EXEC: a shortcut command the user clicks, detached and never stopped',
-  },
-  'src/main/ipc/helpers/project-entry-search.ts': {
-    bindings: ['spawn'],
-    reason: 'git for the @-file search index, built at most once per 15 seconds per folder',
   },
   'src/main/remote/link/ssh-run.ts': {
     bindings: ['spawn'],
