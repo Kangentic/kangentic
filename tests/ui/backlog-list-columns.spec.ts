@@ -290,6 +290,9 @@ test('backlog table columns', async () => {
     await addPriority.hover({ force: true });
     await expect(page.locator('[data-tooltip]')).toHaveText('Up to 7 levels');
     await page.mouse.move(0, 0);
+    // An open tip takes the first Escape (one press undoes one thing), and whether it is still open
+    // by now depends on its hide delay. A second Escape closes the popover either way.
+    await page.keyboard.press('Escape');
     await page.keyboard.press('Escape');
     await expect(colorButtons).toHaveCount(0);
   });
