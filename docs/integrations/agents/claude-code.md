@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Claude Code
-description: Claude Code detection that skips dead npm shims, the merged --settings file with 18 event-bridge hooks and mcp__kangentic allow rules, how every CLI's hook command paths are quoted per shell, the locked single write to ~/.claude.json for trust and diffSidebarOpen, and the one retry of a headless run on the stored login when Claude refuses an inherited API key.
+description: Claude Code detection that skips dead npm shims, the merged --settings file with 18 event-bridge hooks and mcp__kangentic allow rules, how every CLI's hook command paths are quoted per shell, the locked single write to ~/.claude.json for trust and diffSidebarOpen, the removal of a deleted worktree's entry from it, and the one retry of a headless run on the stored login when Claude refuses an inherited API key.
 tags: [agents, adapter, claude]
 sources:
   - resource: src/main/agent/adapters/claude/claude-adapter.ts
@@ -291,6 +291,17 @@ Before every spawn, `ClaudeAdapter.ensureTrust()` calls `ensureClaudeSpawnConfig
 A rename still refused after its retries (the file held open, usually on Windows) falls back to an in-place write. When that write fails too and leaves the file short, the temp file is the one complete copy, so it is kept and named in the thrown error; when the file still parses, nothing is kept. The first whole write of a run removes copies an earlier failed write kept, and so does the first whole write after a failed write keeps one.
 
 `ensureWorktreeTrust()` and `ensureMcpServerTrust()` remain for callers that need one change alone (the `/model` fallback probe trusts its scratch directory, and the `initialize` handshake needs no trust entry). They share the same reader and writer, so they also leave a file that does not parse untouched and write through a temp file.
+
+### Removed worktree entries
+
+A trusted folder's entry stayed in `~/.claude.json` after Kangentic deleted the folder. On the dogfooding machine the home file and both account files each held about 6,500 entries for task worktrees and dev preview projects that were gone, 2.6 MB per file, which Claude rewrites whole under its lock. Two passes now drop them, both only for a folder Kangentic made (`isKangenticMadeFolder` in `src/main/agent/shared/kangentic-made-folder.ts`):
+
+- `onWorktreeRemoved` calls `removeWorktreeEntry` when a worktree is deleted. It drops the whole entry, keyed as `ensureClaudeSpawnConfig` filed it, in this machine's file and, for a WSL project, in the distro's. The transcripts under `~/.claude/projects` stay.
+- `sweepRemovedFolderTrust` calls `sweepRemovedFolderEntries` once a launch, 60 s after startup. It drops the entries of Kangentic-made folders that are gone while the project folder holding them still exists. A drive that is not mounted reads as not found too, so its worktrees keep their entries, as Codex's do. It reads only this machine's home file. The folders are checked outside the file's lock, and the gone ones once more under it (`stillGone`), so a worktree a spawn recreated and trusted meanwhile keeps its entry.
+
+Neither writes an account's file. An account's `.claude.json` follows at its next refresh, because the account derive drops a Kangentic-made folder the home no longer holds ([Agent accounts](../accounts.md)). That derive is what undid task #1182's sweep. It merged `projects` as `{ ...account, ...home }` before every spawn, so a sweep of one file was refilled from the other ten minutes later.
+
+A running Claude does not put a dropped entry back. Claude Code 2.1.331 reads the file again under its lock before every save, applies its change to that read, and merges `projects` only with keys from what it read. It also re-reads the file within about a second of another process writing it. `scripts/probe-claude-json-removal.js` measured this on Windows against a local API stand-in. The file was seeded with 2,000 worktree entries, and the probe removed them the way Kangentic does while Claude ran. In two rounds Claude sat at its prompt, then rewrote the file three or four times through one turn and `/exit`: once with the turn 3 s after the removal, and once with the turn started the moment it landed. In the third round the removal landed while Claude's trust prompt was open, and accepting the prompt added that folder to `projects`. Claude wrote the file nine times in that round. No entry came back in any round. Only two save paths start from Claude's cached copy: one repairs a file it read torn, and one falls back after the lock fails. Kangentic's writes go through a temp file and a rename under the same lock, so neither path should fire. A remote host's file (`remote-trust.ts`) is not swept, as it is not for any other adapter.
 
 ### Diff Panel
 

@@ -110,6 +110,13 @@ export interface DeriveContext {
    * unreadable): no answer is never "the home removed everything".
    */
   removedFromHome: ReadonlySet<string>;
+  /**
+   * Filled by `derive`: the account's parts it dropped by its own rule rather than by taking the
+   * home's copy (Claude drops a removed worktree's entry). A refresh does not report them as a
+   * change replaced, since no copy of the home's wrote over them. Absent: `derive` still drops
+   * them, and nothing hears of it.
+   */
+  discardedParts?: Set<string>;
 }
 
 /** A resume about to run on `toHome`, for `FolderAccountSupport.carryConversation`. */
