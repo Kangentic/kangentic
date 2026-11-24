@@ -898,8 +898,8 @@ export class OpenCodeAdapter implements AgentAdapter {
    * is kept per CLI path until a forced refresh (a model dropdown opening) or a
    * re-detection, since each read starts the CLI's provider layer.
    *
-   * The agent list waits on every adapter's discovery before it answers
-   * (`agent-list.ts`), so an unforced call starts the read and answers with
+   * The agent list waits on the discovery of every agent it reads before it
+   * answers (`agent-list.ts`), so an unforced call starts the read and answers with
    * the list it has (none on a first call), rather than holding every agent's
    * row for the CLI's provider start. A forced call (an opening dropdown,
    * which re-detects every CLI first) waits for a fresh read.
