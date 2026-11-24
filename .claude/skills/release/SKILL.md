@@ -476,7 +476,7 @@ Generate a concise, user-friendly summary for the GitHub Release draft body. Thi
    - **Bug Fixes** -- fixes
    - **Breaking Changes** -- only if applicable
    - Omit any section that has no entries. Do not include an "Other" section -- skip chores, docs, refactors, CI, and build commits.
-3. **Link one GitHub number per entry.** Every entry ends with the number of what shipped it, as
+3. **Link what shipped each entry.** Every entry ends with the number of what shipped it, as
    a Markdown link: `([#123](https://github.com/Kangentic/kangentic/issues/123))` for an issue,
    `.../pull/123` for a pull request. The number is the closing issue when the PR closed one (a
    fix from error reports whose issue the /sentry sweep opened), otherwise the PR itself. An
@@ -488,7 +488,10 @@ Generate a concise, user-friendly summary for the GitHub Release draft body. Thi
      `gh api repos/Kangentic/kangentic/commits/<sha>/pulls --jq ".[0].number"`
      then its closing issue:
      `gh pr view <number> --repo Kangentic/kangentic --json closingIssuesReferences --jq ".closingIssuesReferences[0].number"`
-   - A commit with no PR (a `/merge-back` direct push) gets no number.
+   - A commit with no PR (a `/merge-back` direct push) links the commit itself, by its 7-character
+     short SHA: `([a1b2c3d](https://github.com/Kangentic/kangentic/commit/<full sha>))`. An entry
+     with both a PR and a direct-push part lists the PR first, then the commit. Link the commit
+     that made the change, not a review, test or docs follow-up.
    - Take the number only from these two answers, never from a board task: a board task number
      looks the same and must never appear in anything public.
    - A lookup that fails is reported, never silently dropped (`.claude/rules/release-gates-fail-loudly.md`):
@@ -503,6 +506,7 @@ Generate a concise, user-friendly summary for the GitHub Release draft body. Thi
 ## Bug Fixes
 - Restart to update did nothing on Linux computers without a graphical password prompt. ([#998](https://github.com/Kangentic/kangentic/issues/998))
 - Fixed crash when opening an empty board ([#124](https://github.com/Kangentic/kangentic/pull/124))
+- Fixed the release notes link on the update dialog ([a1b2c3d](https://github.com/Kangentic/kangentic/commit/a1b2c3d4e5f60718293a4b5c6d7e8f9012345678))
 ```
 
 5. This file is committed in Step 4 and used by CI to populate the draft GitHub Release body automatically.

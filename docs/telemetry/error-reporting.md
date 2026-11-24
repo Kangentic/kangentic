@@ -1245,7 +1245,7 @@ this".
 - **The fix reaches users through the release notes.** `/release` writes a fix whose commit names
   a DESKTOP shortId and carries a `Release-Note:` line as an ordinary Bug Fixes entry in the
   symptom's words, with no shortId, and links one GitHub number per entry (the issue the fix
-  closed, else the PR). A shortId commit with no `Release-Note:` line only improved diagnostics
+  closed, else the PR, else the commit of a direct push). A shortId commit with no `Release-Note:` line only improved diagnostics
   and stays out. The `/sentry` sweep opens a short public GitHub issue for each user-visible bug,
   read for anything sensitive first; Sentry's own GitHub issue automation stays off, because its
   issues carry the event's stack, tags and a link into the project.
