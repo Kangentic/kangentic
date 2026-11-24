@@ -176,6 +176,34 @@ describe('a devtools tool called with no instanceId', () => {
   });
 });
 
+describe('the event-loop-lag tool builds its journal query from `launch`', () => {
+  it('sends launch, since and limit, and no until, when a launch is asked for', async () => {
+    writeLockfile(projectPath);
+    const eventLoopLag = registeredTools().get('kangentic_devtools_event_loop_lag');
+
+    const result = await eventLoopLag?.({ launch: 'previous', since: '2026-11-24T00:00:00.000Z', limit: 50 });
+
+    expect(result?.isError).toBeFalsy();
+    const lagRequest = bridgeRequests.find((url) => url.startsWith('/event-loop-lag'));
+    expect(lagRequest).toBeDefined();
+    const query = new URL(lagRequest!, 'http://127.0.0.1').searchParams;
+    expect(query.get('launch')).toBe('previous');
+    expect(query.get('since')).toBe('2026-11-24T00:00:00.000Z');
+    expect(query.get('limit')).toBe('50');
+    expect(query.has('until')).toBe(false);
+  });
+
+  it('sends no query at all without a launch, even when since is given, so the live report answers', async () => {
+    writeLockfile(projectPath);
+    const eventLoopLag = registeredTools().get('kangentic_devtools_event_loop_lag');
+
+    await eventLoopLag?.({ since: '2026-11-24T00:00:00.000Z' });
+
+    expect(bridgeRequests).toContain('/event-loop-lag');
+    expect(bridgeRequests.filter((url) => url.startsWith('/event-loop-lag?'))).toEqual([]);
+  });
+});
+
 /**
  * Claude Code saves every image block under its config folder, and copying it
  * out of there stops on a permission prompt (task #1136). A devtools screenshot

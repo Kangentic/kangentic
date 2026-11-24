@@ -1,4 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import {
+  getEventLoopLagReport,
+  isTimingSyncWork,
+  startEventLoopLagMonitor,
+  stopEventLoopLagMonitor,
+} from '../../src/main/diagnostics/event-loop-lag';
 import { describeSpawnCaller, stackCallerLabel, storedSpawnCaller, withSpawnCaller } from '../../src/main/diagnostics/spawn-caller';
 
 /**
@@ -49,5 +55,47 @@ describe('spawn caller', () => {
 
   it('answers unknown when no frame of the bundle is on the stack', () => {
     expect(stackCallerLabel(/no-such-bundle-file/)).toBe('unknown');
+  });
+
+  describe('its own timing span', () => {
+    function spawnCallerSpanCount(): number {
+      return getEventLoopLagReport().syncWorkByLabel['diag:spawn-caller']?.count ?? 0;
+    }
+    function startOfSpawn(): string {
+      return stackCallerLabel(THIS_FILE);
+    }
+
+    afterEach(() => {
+      stopEventLoopLagMonitor();
+    });
+
+    it('counts one span per call while the lag monitor times work, and leaves the label the one an untimed call gets', () => {
+      const untimedLabel = startOfSpawn();
+      expect(isTimingSyncWork()).toBe(false);
+      expect(untimedLabel.split('<')[0]).toBe('startOfSpawn');
+
+      startEventLoopLagMonitor();
+      expect(isTimingSyncWork()).toBe(true);
+      const countBefore = spawnCallerSpanCount();
+      const timedLabel = startOfSpawn();
+      const countAfterOne = spawnCallerSpanCount();
+      startOfSpawn();
+      const countAfterTwo = spawnCallerSpanCount();
+
+      // A timeSyncWork wrapper would put its own frames on the stack and change the label.
+      expect(timedLabel).toBe(untimedLabel);
+      expect(countAfterOne).toBe(countBefore + 1);
+      expect(countAfterTwo).toBe(countBefore + 2);
+    });
+
+    it('records no span while nothing times work', () => {
+      stopEventLoopLagMonitor();
+      expect(isTimingSyncWork()).toBe(false);
+      const countBefore = spawnCallerSpanCount();
+
+      startOfSpawn();
+
+      expect(spawnCallerSpanCount()).toBe(countBefore);
+    });
   });
 });
