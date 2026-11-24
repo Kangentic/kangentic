@@ -80,13 +80,20 @@ every start on it.
   `kangentic_devtools_event_loop_lag` lists main's own under labels that start `spawn:`, and the
   host's under `pty-host:spawn-worker:` (only those of 16 ms or more). After a boot and a Settings
   open, main's own `syncWorkByLabel` holds no label that starts `spawn:`. Measured in a `/preview`
-  on 2026-11-24 across a boot, the font list, the Changes and Graph reads, the file search, an
-  image preview, `ssh -V`, a Post-Worktree Script, a run-script row and a shortcut command.
+  on 2026-11-24 across two boots, the font list, the Changes and Graph reads, the file search, an
+  image preview, `ssh -V`, a Post-Worktree Script, a run-script row, a shortcut command and a Stop
+  script before a task's reap (`...runStopScript<...stopBeforeReap` on the spawn worker).
+- **Rigs (by hand, Docker):** `node scripts/ssh-setup-rig.mjs --work <dir>` runs the Add host steps
+  through `runProgram` against a real `sshd` (15 of 15 on 2026-11-24), and
+  `node scripts/ssh-link-rig.mjs --work <dir>` installs the helper through `createSshRunner` with
+  the archive as `ssh`'s own stdin (45.3 MB, checksum verified by the host).
 - **Gap:** the scan is per module. A classified file can gain a second start of the same kind
   without failing, so a change to one is review's to read.
-- **Gap:** the Stop script was not driven in the running app. It starts through the same
-  `spawnWithAbort` branch as the Post-Worktree Script, and its own behavior is pinned by
-  `tests/unit/run-stop-script.test.ts` on a real stub.
+- **Gap:** both rigs load main's code with no pty host, so `ssh` starts in the rig's own process.
+  A real `ssh` reading a file as its stdin from inside the running app's pty host was not run:
+  Add host in an app pins the host's key in the user's own `known_hosts`. The parts are each
+  covered, the real spawn worker handing a run a file byte for byte among them
+  (`pty-host-spawn-worker.test.ts`).
 
 ## Scope
 
