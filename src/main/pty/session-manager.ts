@@ -115,6 +115,7 @@ import {
   reportSessionLaunchFailure,
   type LaunchEndedBy,
   type LaunchOutputClass,
+  type LaunchOutputReader,
   type LaunchStage,
   type LaunchTags,
   type SessionLaunchFailure,
@@ -866,7 +867,7 @@ export class SessionManager extends EventEmitter {
         );
       },
       onCaptureOutcome: (id, outcome) => {
-        reportSessionIdCaptureOutcome(id, outcome, this.registry.get(id)?.status ?? null);
+        reportSessionIdCaptureOutcome(id, outcome, this.registry.get(id)?.status ?? null, (session) => this.launchOutputReaderOf(session));
       },
     });
 
@@ -1963,20 +1964,29 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
+   * The read of what this launch printed, or null when there is none to read. A
+   * session whose row has gone has no ring, and one with no output yet holds
+   * only what a resume seeded it with. The ring outlives the PTY's exit, until
+   * the row is removed.
+   */
+  private launchOutputReaderOf(session: ManagedSession): LaunchOutputReader {
+    const ringIsThisLaunchs = this.registry.get(session.id) === session && typeof session.firstOutputAt === 'number';
+    return ringIsThisLaunchs ? () => this.getLaunchOutput(session.id) : null;
+  }
+
+  /**
    * Report this session's launch failure. The ring's read is posted now, so a
-   * kill that follows cannot lose it. A session whose row has gone has no ring,
-   * and one with no output yet holds only what a resume seeded it with.
+   * kill that follows cannot lose it.
    */
   private reportLaunchOf(
     session: ManagedSession,
     stage: LaunchStage,
     options: Pick<SessionLaunchFailure, 'extraTags' | 'onlyWhenIdentified' | 'agentProcess'> = {},
   ): void {
-    const ringIsThisLaunchs = this.registry.get(session.id) === session && typeof session.firstOutputAt === 'number';
     reportSessionLaunchFailure({
       session,
       stage,
-      readOutput: ringIsThisLaunchs ? () => this.getLaunchOutput(session.id) : null,
+      readOutput: this.launchOutputReaderOf(session),
       ...options,
     });
   }

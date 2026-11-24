@@ -150,7 +150,7 @@ The webview runs in its own renderer process. The host renderer cannot reach int
    The note comes before the evidence it points at. Identity (role, accessible name, tag, test id, id, rect) is attributes, because those are what the agent searches the code for; the selector is text, because selectors carry quotes. An annotation repeats `url` only when it was made on another page. A drawing is its stroke count, box and first point: nothing about which element it means is guessed. `scale` is read from the PNG header against the viewport width. Past `ANNOTATIONS_INLINE_LIMIT` (6,000 characters) each element's `styles`, `ancestors` and `outer_html` move to `annotations-<stamp>.xml` beside the screenshot, named on a plain-path line; notes, identity and selectors never move.
 6. Submits via `TerminalSubmit.submitContent` with `bracketed: true, source: 'browser-capture'`.
 
-Captures live under the session directory so they're cleaned up by existing lifecycle: `cleanupTaskSession` (a move to To Do, a Backlog demote, a task delete) removes the session dir recursively, and `pruneOrphanedDirectories` sweeps stragglers on next project open.
+Captures live under the session directory so they're cleaned up by existing lifecycle: `removeSessionFolders` (a move to To Do, a Backlog demote, a task delete, an agent's delete or move to another project, the cold-open To Do pass) removes the session dir recursively, except one whose session is still running or queued, and `pruneOrphanedDirectories` sweeps stragglers on next project open.
 
 ### Annotation drafts
 

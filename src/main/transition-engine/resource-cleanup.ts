@@ -18,6 +18,7 @@ import { readLocalBranchSha } from '../git/worktree-head';
 import { holdsPRIdentity } from '../pr/pr-identity';
 import { withTaskLock } from '../ipc/task-lifecycle-lock';
 import { NOTHING_LEFT_RUNNING, reapVerdictOf, type ReapVerdict } from '../ipc/helpers/reap-verdict';
+import { removeSessionFolders } from '../ipc/helpers/session-folders';
 import { workflowKeepsRuns, type AutomationRunRepository } from '../db/repositories/automation-run-repository';
 import { WorkflowRepository } from '../db/repositories/workflow-repository';
 import { getExistingProjectDb } from '../db/database';
@@ -341,6 +342,21 @@ async function cleanBacklogTaskResources(
   // Collect branches to delete after a single `git worktree prune`
   const branchesToDelete: string[] = [];
 
+  // Resolves once the process has exited: an agent still in its own exit holds
+  // its worktree and can write its session folder back. The wait is made between
+  // the kill and the remove, since one made for a row that is gone resolves at
+  // once. Waited for one task at a time, because each wait comes before that
+  // task's own worktree removal. No To Do task normally has a live session here.
+  const endSession = async (sessionId: string): Promise<void> => {
+    try {
+      sessionManager.kill(sessionId);
+      const sessionExited = sessionManager.awaitExit(sessionId);
+      sessionManager.remove(sessionId);
+      await sessionExited;
+      console.log(`[RESOURCE_CLEANUP] Removed PTY session ${sessionId}`);
+    } catch { /* may already be dead */ }
+  };
+
   for (const listedTask of backlogTasks) {
     // Each task is cleaned under its lifecycle lock, from the row as it is
     // now, as `retryFailedDoneCleanups` does. The list was read before this
@@ -350,7 +366,8 @@ async function cleanBacklogTaskResources(
     // session's records and null its `session_id`. Under the lock, a move of
     // the same task has either finished, and the task is no longer in To Do,
     // or waits until this task is done.
-    const outcome = await withTaskLock(listedTask.id, async (): Promise<'cleaned' | 'skipped'> => {
+    let endedSessionIds: string[] = [];
+    const cleanTask = async (): Promise<'cleaned' | 'skipped'> => {
       const task = taskRepo.getById(listedTask.id);
       if (!task || task.swimlane_id !== todoLane.id) return 'skipped';
       const shortId = task.id.slice(0, 8);
@@ -365,9 +382,8 @@ async function cleanBacklogTaskResources(
       // Only the session half of a restore cut short is finished here.
       if (taskMoveRepo.currentVisit(task.id, todoLane.id)?.origin === 'unarchive') {
         if (!task.session_id) return 'skipped';
-        try {
-          sessionManager.remove(task.session_id);
-        } catch { /* may already be dead */ }
+        await endSession(task.session_id);
+        endedSessionIds = sessionRepo.listIdsForTask(task.id);
         sessionRepo.deleteByTaskId(task.id);
         taskRepo.update({ id: task.id, session_id: null });
         console.log(`[RESOURCE_CLEANUP] Cleared the session of task "${task.title}" (${shortId}), restored to To Do with its worktree and branch kept`);
@@ -392,23 +408,25 @@ async function cleanBacklogTaskResources(
       // outside the git queue, and the worktree, branch and row it is about to
       // record are its own, so leave the whole task alone, as the move-failure
       // stale cleanup does. A later project open cleans what is still stale.
-      const heldPath = candidateWorktreePaths.find(isWorktreeCreationInFlight);
-      if (heldPath) {
+      const isHeldByCreation = (): boolean => {
+        const heldPath = candidateWorktreePaths.find(isWorktreeCreationInFlight);
+        if (!heldPath) return false;
         console.log(`[RESOURCE_CLEANUP] Skipped task "${task.title}" (${shortId}): a creation is still setting up ${heldPath}`);
-        return 'skipped';
-      }
+        return true;
+      };
+      if (isHeldByCreation()) return 'skipped';
 
       console.log(`[RESOURCE_CLEANUP] Cleaning stale resources for task "${task.title}" (${shortId})`);
 
-      // Kill PTY session if alive
+      // Kill PTY session if alive. A creation that takes no task lock (a branch
+      // switch) can start during the wait for its exit, so it is asked again.
       if (task.session_id) {
-        try {
-          sessionManager.remove(task.session_id);
-          console.log(`[RESOURCE_CLEANUP] Removed PTY session ${task.session_id}`);
-        } catch { /* may already be dead */ }
+        await endSession(task.session_id);
+        if (isHeldByCreation()) return 'skipped';
       }
 
-      // Delete session DB records
+      // Delete session DB records. Their folders go once the lock is released.
+      endedSessionIds = sessionRepo.listIdsForTask(task.id);
       sessionRepo.deleteByTaskId(task.id);
 
       // Remove worktree directories. Never one a creation holds: this pass takes
@@ -462,8 +480,16 @@ async function cleanBacklogTaskResources(
         });
       }
       return 'cleaned';
-    });
-    if (outcome === 'cleaned') cleaned++;
+    };
+    try {
+      if (await withTaskLock(listedTask.id, cleanTask) === 'cleaned') cleaned++;
+    } finally {
+      // Whatever the outcome, a throw included. A task left partway after its
+      // rows went leaves folders no row names, and the sweep after this pass
+      // refuses to clear many of them (Sentry DESKTOP-50). Outside the lock, so
+      // a move of the task does not wait on the disk.
+      await removeSessionFolders({ projectPath, sessionIds: endedSessionIds, sessionManager });
+    }
   }
 
   // Single `git worktree prune` after all directories are removed,
@@ -640,6 +666,7 @@ export async function pruneOrphanedDirectories(
   const { projectPath } = ownership;
   const kangenticDir = path.join(projectPath, '.kangentic');
   const allTasks = [...taskRepo.list(), ...taskRepo.listArchived()];
+  const taskCount = allTasks.length;
 
   // Worktree directories: match by the folder name in `worktree_path`, so a row
   // that spells the project's path another way still names its folder. Not
@@ -656,7 +683,7 @@ export async function pruneOrphanedDirectories(
     path.join(kangenticDir, 'worktrees'),
     (dirPath, name) => referencedWorktrees.has(name) || isWorktreeCreationInFlight(dirPath) || isSpareWorktreeFolder(name),
     'worktree',
-    { projectPath, setAsideKind: 'worktrees', hasJunctions: true },
+    { projectPath, taskCount, setAsideKind: 'worktrees', hasJunctions: true },
   );
 
   // Session directories: match by directory name (UUID). A live session's own id
@@ -676,7 +703,7 @@ export async function pruneOrphanedDirectories(
     path.join(kangenticDir, 'sessions'),
     (_dirPath, name) => referencedSessionIds.has(name),
     'session',
-    { projectPath },
+    { projectPath, taskCount },
   );
 
   // Task directories: match by directory name (UUID)
@@ -685,7 +712,7 @@ export async function pruneOrphanedDirectories(
     path.join(kangenticDir, 'tasks'),
     (_dirPath, name) => referencedTaskIds.has(name),
     'task',
-    { projectPath, setAsideKind: 'tasks' },
+    { projectPath, taskCount, setAsideKind: 'tasks' },
   );
 }
 
@@ -727,8 +754,34 @@ function wouldClearMostOf(orphanCount: number, directoryCount: number): boolean 
   return orphanCount >= ORPHAN_REFUSAL_MINIMUM && orphanCount * 2 > directoryCount;
 }
 
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+
+/**
+ * How old a refused folder's newest orphan is, as a bucket. With the task count
+ * it separates the two things a refusal can mean, which Sentry DESKTOP-50 could
+ * not: a wrong database that passed the ownership check names few tasks beside
+ * folders still in use, and leftovers of the right one are older than its work.
+ */
+function orphanAgeBucket(ageMs: number): string {
+  if (ageMs < HOUR_MS) return '<1h';
+  if (ageMs < DAY_MS) return '1-24h';
+  if (ageMs < 7 * DAY_MS) return '1-7d';
+  return ageMs < 30 * DAY_MS ? '7-30d' : '>30d';
+}
+
+/** How many tasks the database holds, archived ones included, as a bucket. */
+function taskCountBucket(taskCount: number): string {
+  if (taskCount === 0) return '0';
+  if (taskCount < 5) return '1-4';
+  if (taskCount < 20) return '5-19';
+  return taskCount < 100 ? '20-99' : '>=100';
+}
+
 interface PruneDirectoryOptions {
   projectPath: string;
+  /** How many tasks the database holds, for a refusal's report. */
+  taskCount: number;
   /** Move entries aside rather than delete them, for what a person cannot rebuild. */
   setAsideKind?: SetAsideKind;
   hasJunctions?: boolean;
@@ -755,6 +808,7 @@ async function pruneDirectory(
 
   const directories = entries.filter((entry) => entry.isDirectory());
   const orphans: fs.Dirent[] = [];
+  let newestOrphanAgeMs = Infinity;
   for (const entry of directories) {
     const dirPath = path.join(parentDir, entry.name);
     if (isReferenced(dirPath, entry.name)) continue;
@@ -770,10 +824,12 @@ async function pruneDirectory(
       );
       continue;
     }
-    if (Date.now() - modifiedAtMs < ORPHAN_DIRECTORY_GRACE_PERIOD_MS) {
+    const ageMs = Date.now() - modifiedAtMs;
+    if (ageMs < ORPHAN_DIRECTORY_GRACE_PERIOD_MS) {
       console.log(`[RESOURCE_CLEANUP] Skipping recently modified ${label} directory (grace period): ${entry.name}`);
       continue;
     }
+    newestOrphanAgeMs = Math.min(newestOrphanAgeMs, ageMs);
     orphans.push(entry);
   }
 
@@ -789,7 +845,14 @@ async function pruneDirectory(
       reportHandledError(
         new Error(`Refused an orphan sweep of most of a ${label} folder`),
         { source: 'orphan_sweep_refused', folder: label },
-        { orphan_sweep: { orphans: orphans.length, directories: directories.length } },
+        {
+          orphan_sweep: {
+            orphans: orphans.length,
+            directories: directories.length,
+            newest_orphan_age: orphanAgeBucket(newestOrphanAgeMs),
+            tasks: taskCountBucket(options.taskCount),
+          },
+        },
         ['orphan-sweep-refused', label],
       );
     }

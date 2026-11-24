@@ -10,6 +10,7 @@ import { getProjectDb } from '../db/database';
 import { autoSpawnForTask, reapTaskLeftovers } from '../ipc/helpers';
 import { handleTaskMove } from '../ipc/handlers/task-move';
 import { getProjectRepos } from '../ipc/helpers/project-repos';
+import { removeSessionFolders } from '../ipc/helpers/session-folders';
 import { closeTaskWindows } from '../ipc/helpers/task-windows';
 import { readTaskRunningWork } from '../ipc/helpers/task-running-work';
 import { resolveEffectiveBaseBranch } from '../ipc/helpers/task-git';
@@ -215,7 +216,7 @@ export function buildCommandContextForProject(
       });
     },
 
-    onTaskDeleted: (task) => {
+    onTaskDeleted: (task, sessionIds) => {
       // Kill any live PTY for the task. The exit promise is captured BETWEEN the
       // kill and the remove: awaitExit resolves at once for a row that is gone,
       // and a young session's kill waits out its exit-sequence grace
@@ -251,6 +252,10 @@ export function buildCommandContextForProject(
         // live process holding the worktree as its cwd is what makes the
         // delete fail on Windows.
         const reapVerdict = await reapTaskLeftovers(ipcContext, projectPath, [{ id: task.id, worktree_path: worktreePath, title: task.title }]);
+        // The removal above took only the live session's folder: a paused
+        // session's path was already detached, and an earlier session of the
+        // task is not in the registry at all.
+        await removeSessionFolders({ projectPath, sessionIds, sessionManager: ipcContext.sessionManager });
         // Best-effort worktree + branch cleanup
         if (!worktreePath) return;
         // Outside the queue, as the UI delete does (`deleteTaskWorktree`): it

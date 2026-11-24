@@ -208,6 +208,7 @@ Operates on a per-project DB.
 | `markRunningAsOrphanedExcluding(excludeTaskIds, keepSessionIds)` | Same as above (`running` and `queued`) but skips sessions whose task_id is in the exclusion set (prevents HMR re-entrant recovery from orphaning active sessions) and sessions whose id is in `keepSessionIds` (a record whose agent runs on an SSH host and is waiting to be taken back) |
 | `getRunningRemote()` | Agent sessions recorded `running` whose `cli_target` names an SSH host (any `session_type` except `run_script`). Startup asks the host about each before it orphans or resumes one |
 | `getOrphaned()` | Get orphaned agent sessions (any `session_type` except `run_script`) |
+| `listIdsForTask(taskId)` | The ids of a task's records, which name its `.kangentic/sessions/<id>` folders. Read before `deleteByTaskId`, for `removeSessionFolders`. |
 | `deleteByTaskId(taskId)` | Delete all session records for a given task |
 | `getLatestForTask(taskId)` | Find the most recent session record for a task (by `started_at` DESC) |
 | `getLatestForTaskByTypeAndIsolation(taskId, sessionType, isolatedSwimlaneId)` | The newest record of one agent's `session_type` on one track (`null` is the main session), by `started_at` DESC. The resume lookup: the board spawn's intent, startup recovery's record choice, and `resumeForAgent`, which swaps in the running agent's own record when the one recovered belongs to another agent. |

@@ -40,7 +40,9 @@ import {
   reportSessionLaunchFailure,
   resetLaunchReports,
 } from '../../src/main/pty/agent-launch-report';
+import { trackEvent } from '../../src/main/analytics/analytics';
 import { isReported } from '../../src/main/analytics/handled-report';
+import { AgentUserSetupError } from '../../src/shared/user-configuration-error';
 import { cliVersionTag } from '../../src/main/agent/shared/cli-version-tag';
 import { AgentCliNotFoundError } from '../../src/main/agent/shared/agent-cli-not-found';
 import { WorktreeSetupScriptError } from '../../src/main/git/worktree-errors';
@@ -1295,6 +1297,8 @@ describe('the session id capture reports', () => {
       outcome?: Parameters<typeof reportSessionIdCaptureOutcome>[1];
       store?: SessionIdStoreEvidence | 'unknown';
       sessionStatus?: string;
+      /** The read of what the launch printed. Null, the default, is a row that is gone. */
+      readOutput?: (() => Promise<string>) | null;
     };
 
     /** The DESKTOP-36 shape, with one thing changed per case. Resolves once the report chain has run. */
@@ -1314,7 +1318,12 @@ describe('the session id capture reports', () => {
       });
       const store = options.store ?? 'absent';
       noteSessionIdCaptureWindowPassed(diedAtStart, store === 'unknown' ? null : async () => store, async () => 'signed_in');
-      reportSessionIdCaptureOutcome(diedAtStart.id, options.outcome ?? atCeiling, options.sessionStatus ?? 'exited');
+      reportSessionIdCaptureOutcome(
+        diedAtStart.id,
+        options.outcome ?? atCeiling,
+        options.sessionStatus ?? 'exited',
+        () => options.readOutput ?? null,
+      );
       await flushReportChain();
       return diedAtStart;
     }
@@ -1324,7 +1333,7 @@ describe('the session id capture reports', () => {
     }
 
     it('sends one launch report under agent_exited, with the session-id tags, and no capture report', async () => {
-      await settleAtCeiling();
+      await settleAtCeiling({ exitCode: 1 }, { readOutput: async () => '$ codex\r\nsomething Codex printed before it left\r\n$ ' });
 
       expect(sentNames()).toEqual(['AgentLaunchAgentExitedError']);
       const [error, eventTags, contexts, fingerprint] = reportHandledError.mock.calls[0];
@@ -1352,9 +1361,118 @@ describe('the session id capture reports', () => {
         id_store: 'absent',
         login: 'signed_in',
         node_on_path: 'yes',
+        exit_code: '1',
+        exit_by: 'pty',
+        output_class: 'other',
+        other_from: 'unknown',
       });
       expect(contexts).toEqual({});
       expect(fingerprint).toEqual(['agent-launch', 'agent_exited', 'no_conversation']);
+    });
+
+    // Sentry DESKTOP-4Z: this was the one launch report that said nothing about
+    // what the agent printed or how it ended, so it could not say why.
+    describe('says what the launch printed and how it ended', () => {
+      function sentTags(): Record<string, string> {
+        expect(reportHandledError).toHaveBeenCalledTimes(1);
+        return reportHandledError.mock.calls[0][1];
+      }
+
+      it('sends the class of output that names a cause, under the same issue, and none of its text', async () => {
+        await settleAtCeiling({ exitCode: 139 }, { readOutput: async () => 'running the Acme migration\r\nSegmentation fault\r\n' });
+        const tags = sentTags();
+        expect(tags).toMatchObject({ cause: 'no_conversation', output_class: 'crashed', exit_code: '139', exit_by: 'pty' });
+        expect(tags).not.toHaveProperty('other_from');
+        expect(reportHandledError.mock.calls[0][3]).toEqual(['agent-launch', 'agent_exited', 'no_conversation']);
+        expect(JSON.stringify([(reportHandledError.mock.calls[0][0] as Error).message, tags])).not.toContain('Acme');
+      });
+
+      it('says the shell wrote output that matched no class', async () => {
+        await settleAtCeiling({}, { readOutput: async () => '    + CategoryInfo          : ParserError: (:) []\r\nPS C:\\project> ' });
+        expect(sentTags()).toMatchObject({ output_class: 'other', other_from: 'shell' });
+      });
+
+      // The sweep's retirement masks the code to 0, so the code alone would read as a clean end.
+      it('says the sweep ended it, beside the code that retirement masked', async () => {
+        await settleAtCeiling({ intentionalExit: true, overrideExitCode: 0, exitCode: 0 });
+        expect(sentTags()).toMatchObject({ exit_code: '0', exit_by: 'sweep' });
+      });
+
+      it('still sends the report when the read fails', async () => {
+        await settleAtCeiling({}, { readOutput: async () => { throw new Error('host gone'); } });
+        const tags = sentTags();
+        expect(tags.output_class).toBe('unreadable');
+        expect(tags).not.toHaveProperty('other_from');
+      });
+
+      it.each<[string, (() => Promise<string>) | null]>([
+        ['a row that is gone', null],
+        // What the host answers for a session it no longer holds, after a restart.
+        ['a ring the host no longer holds', async () => ''],
+      ])('reads not_read for %s', async (_label, readOutput) => {
+        await settleAtCeiling({}, { readOutput });
+        const tags = sentTags();
+        expect(tags.output_class).toBe('not_read');
+        expect(tags).not.toHaveProperty('other_from');
+      });
+
+      it('treats a cause that is the user\'s own setup as every launch report does', async () => {
+        vi.mocked(trackEvent).mockClear();
+        const signedOut = {
+          identifyUserSetupFailure: () => ({ failure: 'login_required', line: 'Not logged in as dev@example.test' }),
+        } as unknown as AgentParser;
+        await settleAtCeiling({ agentParser: signedOut }, { readOutput: async () => 'Not logged in as dev@example.test' });
+
+        // The error's type is what keeps it out of Sentry (launch-user-setup-exclusion.test.ts).
+        const [error, tags] = reportHandledError.mock.calls[0];
+        expect(error).toBeInstanceOf(AgentUserSetupError);
+        expect(tags).toMatchObject({ cause: 'no_conversation', output_class: 'login_required' });
+        expect(JSON.stringify(tags)).not.toContain('dev@example.test');
+        expect(trackEvent).toHaveBeenCalledWith('spawn_failed', { agent: 'codex', reason: 'login_required' });
+      });
+
+      it('posts the read as the outcome lands, ahead of the waits a removal could win', async () => {
+        const readOutput = vi.fn(async () => 'output');
+        const diedAtStart = session({
+          agentName: 'codex',
+          resuming: false,
+          status: 'exited',
+          agentRanAt: STARTED_AT_MS + 5_000,
+          exitedAt: STARTED_AT_MS + 10_000,
+        });
+        noteSessionIdCaptureWindowPassed(diedAtStart, async () => 'absent', async () => 'signed_in');
+        reportSessionIdCaptureOutcome(diedAtStart.id, atCeiling, 'exited', () => readOutput);
+        expect(readOutput).toHaveBeenCalledTimes(1);
+        // So this report lands in its own test.
+        await flushReportChain();
+      });
+
+      it('reads no output for a session that is no death at start', async () => {
+        const readOutput = vi.fn(async () => 'output');
+        await settleAtCeiling({ promptObservedAt: STARTED_AT_MS + 6_000 }, { readOutput });
+        expect(sentNames()).toEqual(['AgentSessionIdNotCapturedError']);
+        expect(readOutput).not.toHaveBeenCalled();
+      });
+
+      it('sends one event when another launch report comes while the read is out', async () => {
+        let answer: (output: string) => void = () => undefined;
+        const diedAtStart = await settleAtCeiling({}, { readOutput: () => new Promise<string>((resolve) => { answer = resolve; }) });
+        expect(reportHandledError).not.toHaveBeenCalled();
+        reportSessionLaunchFailure({ session: diedAtStart, stage: 'shell_exit', readOutput: null });
+        answer('Segmentation fault');
+        await flushReportChain();
+        expect(sentNames()).toEqual(['AgentLaunchAgentExitedError']);
+        expect(sentTags().output_class).toBe('crashed');
+      });
+
+      it('sends nothing once the quit has started, since nothing would land', async () => {
+        let answer: (output: string) => void = () => undefined;
+        await settleAtCeiling({}, { readOutput: () => new Promise<string>((resolve) => { answer = resolve; }) });
+        shuttingDown.value = true;
+        answer('Segmentation fault');
+        await flushReportChain();
+        expect(reportHandledError).not.toHaveBeenCalled();
+      });
     });
 
     it('sends it with a store check that could not answer', async () => {
@@ -1454,8 +1572,10 @@ describe('the session id capture reports', () => {
 
     it('still sends the launch report after the agent spent its capture report', async () => {
       await settleAtCeiling({ id: 'session-2-long-id' }, { store: 'present' });
-      await settleAtCeiling();
+      // The agent's capture latch is spent, and the launch report still reads the output.
+      await settleAtCeiling({ exitCode: 139 }, { readOutput: async () => 'Segmentation fault\r\n' });
       expect(sentNames()).toEqual(['AgentSessionIdNotCapturedError', 'AgentLaunchAgentExitedError']);
+      expect(reportHandledError.mock.calls[1][1]).toMatchObject({ output_class: 'crashed', exit_code: '139' });
     });
 
     // The shape lets the session past the early latch check, so only the check

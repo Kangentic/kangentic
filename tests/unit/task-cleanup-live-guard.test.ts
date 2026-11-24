@@ -26,13 +26,14 @@ const h = vi.hoisted(() => ({
 vi.mock('../../src/main/git/worktree-manager', () => ({ WorktreeManager: class {} }));
 vi.mock('better-sqlite3', () => ({ default: vi.fn() }));
 
-// getProjectDb returns the session records for the task; SessionRepository's
-// deleteByTaskId is spied so we can assert DB cleanup still runs.
+// SessionRepository lists the task's session records, and none once its spied
+// deleteByTaskId has run, so ids read after the delete remove nothing here.
 vi.mock('../../src/main/db/database', () => ({
-  getProjectDb: vi.fn(() => ({ prepare: () => ({ all: () => h.rows }) })),
+  getProjectDb: vi.fn(() => ({})),
 }));
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
   SessionRepository: class {
+    listIdsForTask = () => (h.deleteByTaskId.mock.calls.length > 0 ? [] : h.rows.map((row) => row.id));
     deleteByTaskId = h.deleteByTaskId;
   },
 }));

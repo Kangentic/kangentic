@@ -15,6 +15,7 @@ sources:
   - resource: src/main/ipc/helpers/task-git.ts
   - resource: src/main/transition-engine/session-startup/missing-worktree.ts
   - resource: src/main/transition-engine/resource-cleanup.ts
+  - resource: src/main/ipc/helpers/session-folders.ts
   - resource: src/main/git/removed-worktrees.ts
   - resource: src/main/project-ownership/project-ownership.ts
   - resource: src/main/project-ownership/set-aside.ts
@@ -476,7 +477,7 @@ Task moved back from Done (into any non-todo, non-done column)
 Task moved to To Do
   → For a task that did its own work, the PR link (pr_url, pr_number, pr_state, pr_merge_readiness), pushed_branch and head_sha are cleared in the tick that commits the lane, and its merge-verdict re-polls are cancelled (forgetPRLinkOnTodoReset)
   → Pop-out windows closed and offscreen browser lane destroyed (closeTaskWindows) before the reap and the removal
-  → Full cleanup: session killed, worktree removed, branch deleted (if config.git.autoCleanup)
+  → Full cleanup: session killed, session records and their folders removed (`removeSessionFolders`), worktree removed, branch deleted (if config.git.autoCleanup)
   → Agent adapters notified so they can drop per-directory state (see below)
   → DB references cleared once the directory is removed (worktree_path, branch_name, resolved_base_branch set to null; head_sha captured first when readable)
   → The head_sha that capture wrote is cleared again for a task that did its own work
@@ -484,7 +485,7 @@ Task moved to To Do
 
 Task deleted
   → Pop-out windows closed and offscreen browser lane destroyed (closeTaskWindows) before the reap and the removal
-  → Full cleanup: session killed, worktree removed, branch deleted (if config.git.autoCleanup)
+  → Full cleanup: session killed, session records and their folders removed (`removeSessionFolders`), worktree removed, branch deleted (if config.git.autoCleanup)
   → Agent adapters notified so they can drop per-directory state (see below)
 
 App closed
@@ -583,10 +584,11 @@ The proof is a token in the per-project database (`schema_meta.folder_owner_toke
 With no valid marker (every project before this shipped, a copied folder, a moved data directory) a database claims the folder only if it holds a task and a row names an entry on disk, or the swept folders are empty. An empty database never claims.
 
 - **A task whose worktree folder is gone** keeps its card. Nothing deletes it: the branch is intact, and Resume recreates the folder at the same path (`createWorktree` prunes first, because git refuses a path still registered). See [Crash recovery](../sessions/crash-recovery.md) for what the startup passes do with it.
+- **The To Do pass** (`cleanBacklogTaskResources()`) - Clears a stale checkout, branch and session from every To Do task, each under its task lock, from the row as it is then. A task restored from Done keeps its worktree and branch, and only its session is cleared. It ends a live session the way a move does: kill, then wait for the exit, then remove, and a creation that started during the wait is asked about again. The task's session ids are read before its records are deleted, and `removeSessionFolders()` clears their folders after the lock is released, in a `finally`, so a task cut short partway still leaves none behind. A reset task's worktree is removed only after the session has exited.
 - **`retryFailedDoneCleanups()`** - Every Done task whose `worktree_path` is still set: a removal that failed, or a quit before the Done move reached it. It moves the worktree aside as a Done move does, and removes it in place only when that fails. It takes the startup sweep's verdict (`sweepTerminalTaskLeftovers` runs first in `cleanupStaleResourcesAsync`), so a removal that fails on a folder the sweep left a process in is counted, not reported. The sweep runs once per launch, and a later open in the same launch gets its verdict again.
 - **The spare worktree's startup pass** (`sweepSpareWorktreesAtOpen`, beside `cleanupStaleResourcesAsync`) - Discards a `spare_` folder no task names whose build was cut off (no ready record) or whose settings are stale, and keeps a ready one. The orphan sweep never takes a `spare_` folder. See [The spare worktree](worktree-creation.md#the-spare-worktree).
 - **`scheduleRemovedWorktreeDeletion()`** - Starts the deleter on `.kangentic/removed-worktrees/`, so a copy a quit left behind is deleted on the next open. Starting it again while it runs only makes it list the folder once more.
-- **`pruneOrphanedDirectories()`** - Clears folders under `worktrees/`, `sessions/` and `tasks/` that no row or live session names and that are past a 10 minute grace. It counts first and clears nothing in a folder where 5 or more orphans are over half of it, reporting that refusal to Sentry. `worktrees/` and `tasks/` entries move to `.kangentic/set-aside/<kind>/`, because a worktree can hold uncommitted work and a task folder holds attachments with no other copy. `sessions/` entries are deleted. A failed move keeps the folder.
+- **`pruneOrphanedDirectories()`** - Clears folders under `worktrees/`, `sessions/` and `tasks/` that no row or live session names and that are past a 10 minute grace. It counts first and clears nothing in a folder where 5 or more orphans are over half of it, reporting that refusal to Sentry with how old the newest orphan is and how many tasks the database holds, both as buckets. `worktrees/` and `tasks/` entries move to `.kangentic/set-aside/<kind>/`, because a worktree can hold uncommitted work and a task folder holds attachments with no other copy. `sessions/` entries are deleted. A failed move keeps the folder.
 - **`purgeExpiredSetAside()`** - Deletes what has been set aside for 14 days, read from the time in the entry's name, because a rename keeps the old mtime. To restore one, move it back by hand before then.
 
 ### On Project Close/Delete
@@ -597,7 +599,8 @@ With no valid marker (every project before this shipped, a copied folder, a move
 
 ### On Task Delete
 
-- **`cleanupTaskResources()`** - Ends the sessions and closes the task's pop-out windows and offscreen browser lane and ends the agent's control of its Browser (`closeTaskWindows`, inside `cleanupTaskSession`, which also drops the passkey guard's mark) before the reap. Kills PTY, deletes session DB records, removes session directory, removes worktree (after `prepareWorktreeForRemoval` waits out any creation holding the path, then serialized via `withLock`), prunes stale worktree metadata, optionally deletes branch.
+- **`cleanupTaskResources()`** - Ends the sessions and closes the task's pop-out windows and offscreen browser lane and ends the agent's control of its Browser (`closeTaskWindows`, inside `cleanupTaskSession`, which also drops the passkey guard's mark) before the reap. Kills PTY, removes the session directories of every session the task ever had (`removeSessionFolders`), deletes session DB records, removes worktree (after `prepareWorktreeForRemoval` waits out any creation holding the path, then serialized via `withLock`), prunes stale worktree metadata, optionally deletes branch.
+- **`removeSessionFolders()`** (`src/main/ipc/helpers/session-folders.ts`) - Runs on every path that deletes a task's session records, with the ids read before the records go: `cleanupTaskSession`, the MCP delete and a move to another project (`onTaskDeleted`, after the exit and the reap), and the cold-open To Do pass (once that task's lock is released; inside it the pass waits for the session's exit before it removes the worktree). A live session's directory is spared. Nothing names the directories once the records are gone, and `pruneOrphanedDirectories()` refuses to clear many of them (Sentry DESKTOP-50).
 
 ## Safety
 

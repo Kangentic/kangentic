@@ -1692,6 +1692,20 @@ describe('PtyHostCore', () => {
     expect(core.getRawScrollback('old-session')).toBe('');
   });
 
+  // The death-at-start report reads it minutes after the exit (Sentry DESKTOP-4Z).
+  it('keeps an exited session\'s output until main removes it', async () => {
+    const { core, fake } = makeCore();
+    core.spawn(spawnParams());
+    fake.feed('Error: the agent left\r\n');
+    await flush();
+    fake.exit(1);
+
+    const own = (): Promise<unknown> => Promise.resolve(core.handleRequest('getRawScrollback', { sessionId: 'session-1', ownOutputOnly: true }));
+    await expect(own()).resolves.toBe('Error: the agent left\r\n');
+    core.handleCommand({ type: 'removeSession', sessionId: 'session-1' });
+    await expect(own()).resolves.toBe('');
+  });
+
   it('answers a launch\'s own output apart from the ring it carried over, when asked', async () => {
     // What the launch report and the agent-absence start bound read: the old
     // session's failure line must not classify the retry that replaced it.
