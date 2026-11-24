@@ -67,6 +67,37 @@ agent --trust -p "prompt text" --output-format stream-json
 
 Selected when `nonInteractive` is set, and for every permission mode but `default`, `acceptEdits` and `plan`. That is `bypassPermissions`, the one such mode Cursor's list offers, and `dontAsk` and `auto`, which it does not. Cursor has no flag for either: its `approvalMode: auto-review` lives only in the global `cli-config.json` ([Configuration](https://cursor.com/docs/cli/reference/configuration)), which Kangentic does not rewrite. They stay on this path because the init event is the only documented place the model and session id arrive together. Has full write access. A directory Cursor has not seen prints "Workspace Trust Required" and exits. `--trust` skips that prompt. The NDJSON `init` event carries `session_id`, which `runtime.sessionId.fromOutput` captures for resume. A resume keeps `--trust` too. Every resume opens the session screen whatever its mode, because `buildCommand` returns before `-p` is added. A headless answer run that streams adds `--stream-partial-output`.
 
+**A start with no prompt.** There is no turn to print, so it opens the session screen in every one of
+these modes:
+
+```
+agent --trust --resume="<chat-id>"
+```
+
+Startup recovery of a task with no conversation to resume starts this way, and so does every fresh
+Command Terminal. The id is one `create-chat` made first, and the hooks report the session, as on any
+session screen. A prompt typed in after launch is not on the command and counts as none. Until
+Sentry DESKTOP-45 this start was `agent --trust --output-format stream-json`, with no `-p`. The
+parameters page says `--output-format` "only works with `--print`", so no init event came, no chat was
+asked for, the hooks were left out, and the next restart had no conversation to resume.
+`cursorKeepsSessionScreen` is now the one answer for the command, the id, the hooks and their
+variable.
+
+The screen gets `--trust` and no `--force`, as a Non-Interactive resume does. From Cursor's
+[headless page](https://cursor.com/docs/cli/headless), fetched on 2026-11-24:
+
+- Without `--force` a print turn rejects "anything that would need approval". The mode is not Run
+  Everything today, so `--force` would grant more than it has.
+- Where a team admin turned Run Everything off, `--force` "exits with an error instead".
+
+It would also be dropped at the first resume, which passes none. So the screen asks before a command
+([Using the CLI](https://cursor.com/docs/cli/using)), and it may ask to review an edit that print mode
+would write. Skip Approvals is the mode that does not ask. A message Kangentic types into this screen
+can wait at that question, as on a Non-Interactive resume.
+
+Known gap: an explicit `nonInteractive` start with no prompt still passes stream-json with no `-p`.
+Only a customized legacy Start agent row whose prompt comes out empty reaches it.
+
 ### Resumed Session
 
 ```
@@ -113,7 +144,7 @@ A Cursor on a remote host over SSH (#913) runs as `cursor-agent`, found by the h
 | `default` | (no special flag) | Interactive (Confirm Changes) |
 | `acceptEdits` | `--trust --force`, session screen stays open | Interactive (Skip Approvals) |
 | `plan` | `--trust --mode plan`, session screen stays open | Plan (Read-Only) |
-| `bypassPermissions` | `--trust -p ... --output-format stream-json` | Non-Interactive (Full Access) |
+| `bypassPermissions` | `--trust -p ... --output-format stream-json`, or `--trust` and the session screen with no prompt | Non-Interactive (Full Access) |
 
 ## Model seed
 
@@ -151,8 +182,8 @@ Every command is `node "<event-bridge.js>" "env:KANGENTIC_EVENTS_PATH_INTERACTIV
 <directives>`. The reference says the desktop app runs hook commands through PowerShell on Windows
 and names no rule for the CLI, so each command works in PowerShell, Git Bash and a POSIX shell.
 `KANGENTIC_EVENTS_PATH_INTERACTIVE` is set by `buildEnv` only for a session-screen start:
-confirm-changes, skip-approvals, plan, and every resume, which returns before `-p` is added and so
-opens the session screen whatever its mode. A print run reports on stream-json instead,
+confirm-changes, skip-approvals, plan, any start with no prompt, and every resume, which returns
+before `-p` is added and so opens the session screen whatever its mode. A print run reports on stream-json instead,
 and a user's own Cursor in the folder carries no variable, so for both the bridge writes nothing and
 no tool call is counted twice. The spawn sets `KANGENTIC_EVENTS_PATH` for every session after the
 adapter's variables, which is why that one cannot be the gate. The name keeps
@@ -236,8 +267,10 @@ missed `stop` leaves the card thinking until the stale-thinking reclaim.
 - Interactive mode prints no session id. A fresh interactive start (a task, startup recovery, a
   Command Terminal, or a workflow's agent) asks Cursor for one first: `createSessionId` runs
   `cursor-agent create-chat` in the working directory (measured: it prints the bare UUID and writes
-  nothing under `~/.cursor`), and the start opens that chat with `--resume=<id>`. A print start
-  (`-p` and `stream-json`) still takes the id from the init event and does not create a chat first.
+  nothing under `~/.cursor`), and the start opens that chat with `--resume=<id>`. A start with no
+  prompt is one of these in every permission mode, `bypassPermissions`, `dontAsk` and `auto` included,
+  unless `nonInteractive` is set (Sentry DESKTOP-45). A print start (`-p` and `stream-json`) still
+  takes the id from the init event and does not create a chat first.
   A print run can print nothing for about a minute before that event: observed once on
   2026.11.19 (Sentry DESKTOP-4W), not measured. Why is Cursor's own startup, which Kangentic cannot
   see. The id comes with that first line, so the session-id report counts it from the agent's
@@ -304,6 +337,11 @@ v2026.10.22:
 - Plan mode (`--mode plan`): [CLI parameters](https://cursor.com/docs/cli/reference/parameters),
   [Modes](https://cursor.com/docs/cli/overview), changelog January 2026 and v2026.07.20.
 - The model seed from `--model`: CLI parameters.
+- A start with no prompt on the session screen in a Non-Interactive mode (fetched 2026-11-24):
+  [CLI parameters](https://cursor.com/docs/cli/reference/parameters) and
+  [headless](https://cursor.com/docs/cli/headless). What Cursor did with stream-json and no `-p` is not
+  known either. DESKTOP-45's session ended 122 s after it started, which the agent-absence sweep's two
+  looks would explain, and its tags do not show how long Cursor itself ran.
 
 `tests/fixtures/cursor-docs/` holds Cursor's published examples, copied verbatim on 2026-11-03: the
 hooks reference's input blocks and the output format's example sequence. They are not captures.

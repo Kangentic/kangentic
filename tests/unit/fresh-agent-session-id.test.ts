@@ -15,7 +15,7 @@ describe('resolveFreshAgentSessionId', () => {
     const result = await resolveFreshAgentSessionId(adapter({
       supportsCallerSessionId: true,
       createSessionId,
-    }), { cliPath: '/bin/agent', workingDirectory: '/work', permissionMode: 'acceptEdits' });
+    }), { cliPath: '/bin/agent', workingDirectory: '/work', permissionMode: 'acceptEdits', prompt: 'go' });
     expect(result.agentSessionId).toMatch(/^[0-9a-f-]{36}$/);
     expect(result.sessionIdCreation).toBe('not_asked');
     expect(createSessionId).not.toHaveBeenCalled();
@@ -27,7 +27,7 @@ describe('resolveFreshAgentSessionId', () => {
       supportsCallerSessionId: false,
       createSessionId,
       reportsLaunchSessionId: () => false,
-    }), { cliPath: '/bin/cursor-agent', workingDirectory: '/work', permissionMode: 'acceptEdits' });
+    }), { cliPath: '/bin/cursor-agent', workingDirectory: '/work', permissionMode: 'acceptEdits', prompt: 'go' });
     expect(result).toEqual({ agentSessionId: 'chat-created', sessionIdCreation: 'ok' });
     expect(createSessionId).toHaveBeenCalledWith('/bin/cursor-agent', '/work');
   });
@@ -38,7 +38,7 @@ describe('resolveFreshAgentSessionId', () => {
       supportsCallerSessionId: false,
       createSessionId,
       reportsLaunchSessionId: () => true,
-    }), { cliPath: '/bin/cursor-agent', workingDirectory: '/work', permissionMode: 'bypassPermissions' });
+    }), { cliPath: '/bin/cursor-agent', workingDirectory: '/work', permissionMode: 'bypassPermissions', prompt: 'go' });
     expect(result).toEqual({ agentSessionId: null, sessionIdCreation: 'not_asked' });
     expect(createSessionId).not.toHaveBeenCalled();
   });
@@ -47,7 +47,7 @@ describe('resolveFreshAgentSessionId', () => {
     const result = await resolveFreshAgentSessionId(adapter({
       supportsCallerSessionId: false,
       createSessionId: async () => ({ agentSessionId: null, outcome }),
-    }), { cliPath: '/bin/cursor-agent', workingDirectory: '/work', permissionMode: 'default' });
+    }), { cliPath: '/bin/cursor-agent', workingDirectory: '/work', permissionMode: 'default', prompt: 'go' });
     expect(result).toEqual({ agentSessionId: null, sessionIdCreation: outcome });
   });
 
@@ -55,8 +55,18 @@ describe('resolveFreshAgentSessionId', () => {
     const result = await resolveFreshAgentSessionId(adapter({
       supportsCallerSessionId: false,
       createSessionId: async () => { throw new Error('EACCES /Users/dev/cursor-agent'); },
-    }), { cliPath: '/bin/cursor-agent', workingDirectory: '/work', permissionMode: 'default' });
+    }), { cliPath: '/bin/cursor-agent', workingDirectory: '/work', permissionMode: 'default', prompt: 'go' });
     expect(result).toEqual({ agentSessionId: null, sessionIdCreation: 'failed' });
+  });
+
+  it('asks the adapter about the launch with its mode, its flag and the prompt its command carries', async () => {
+    const reportsLaunchSessionId = vi.fn(() => true);
+    await resolveFreshAgentSessionId(adapter({
+      supportsCallerSessionId: false,
+      createSessionId: async () => created,
+      reportsLaunchSessionId,
+    }), { cliPath: '/bin/cursor-agent', workingDirectory: '/work', permissionMode: 'auto', nonInteractive: false, prompt: 'Fix it' });
+    expect(reportsLaunchSessionId).toHaveBeenCalledWith({ permissionMode: 'auto', nonInteractive: false, prompt: 'Fix it' });
   });
 
   it('stops waiting on the chat when the spawn is aborted', async () => {
@@ -67,7 +77,7 @@ describe('resolveFreshAgentSessionId', () => {
       supportsCallerSessionId: false,
       createSessionId,
       reportsLaunchSessionId: () => false,
-    }), { cliPath: '/bin/cursor-agent', workingDirectory: '/work', permissionMode: 'default', signal: controller.signal });
+    }), { cliPath: '/bin/cursor-agent', workingDirectory: '/work', permissionMode: 'default', prompt: 'go', signal: controller.signal });
     controller.abort();
     await expect(pending).resolves.toEqual({ agentSessionId: null, sessionIdCreation: 'aborted' });
     expect(createSessionId).toHaveBeenCalledOnce();
@@ -81,7 +91,7 @@ describe('resolveFreshAgentSessionId', () => {
       supportsCallerSessionId: false,
       createSessionId,
       reportsLaunchSessionId: () => false,
-    }), { cliPath: '/bin/cursor-agent', workingDirectory: '/work', permissionMode: 'default', signal: controller.signal });
+    }), { cliPath: '/bin/cursor-agent', workingDirectory: '/work', permissionMode: 'default', prompt: 'go', signal: controller.signal });
     expect(result).toEqual({ agentSessionId: null, sessionIdCreation: 'aborted' });
     expect(createSessionId).not.toHaveBeenCalled();
   });
@@ -92,14 +102,14 @@ describe('resolveFreshAgentSessionId', () => {
       supportsCallerSessionId: false,
       createSessionId: async () => created,
       reportsLaunchSessionId: () => false,
-    }), { cliPath: '/bin/cursor-agent', workingDirectory: '/work', permissionMode: 'default', signal: controller.signal });
+    }), { cliPath: '/bin/cursor-agent', workingDirectory: '/work', permissionMode: 'default', prompt: 'go', signal: controller.signal });
     expect(result).toEqual({ agentSessionId: 'chat-created', sessionIdCreation: 'ok' });
   });
 
   it('returns null, not asked, for a CLI that neither accepts nor creates an id', async () => {
     const result = await resolveFreshAgentSessionId(adapter({
       supportsCallerSessionId: false,
-    }), { cliPath: '/bin/codex', workingDirectory: '/work', permissionMode: 'default' });
+    }), { cliPath: '/bin/codex', workingDirectory: '/work', permissionMode: 'default', prompt: 'go' });
     expect(result).toEqual({ agentSessionId: null, sessionIdCreation: 'not_asked' });
   });
 });

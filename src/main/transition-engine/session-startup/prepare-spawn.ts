@@ -348,18 +348,6 @@ async function prepareSpawnWithPull(hostFilePull: HostFilePull, input: {
       }
     }
   }
-  // Same id rule as the board spawn. This path's command carries no
-  // nonInteractive flag, so the decision follows the permission mode alone.
-  const freshId = canResume
-    ? null
-    : await resolveFreshAgentSessionId(adapter, {
-        cliPath: detectedCliPath,
-        workingDirectory: cwd,
-        permissionMode,
-        place: cliTarget,
-      });
-  const agentSessionId = canResume ? resumedAgentSessionId : freshId?.agentSessionId ?? null;
-  const sessionIdCreation: SessionIdCreationOutcome = freshId?.sessionIdCreation ?? 'not_asked';
 
   // Same shim resolution as the board path (shim-launch.ts): a `.cmd` head
   // under a PowerShell or Git Bash host is swapped for the sibling shim that
@@ -370,6 +358,21 @@ async function prepareSpawnWithPull(hostFilePull: HostFilePull, input: {
     shell,
     prompt: prompt ?? undefined,
   });
+
+  // Same id rule as the board spawn. This path's command carries no
+  // nonInteractive flag, so the decision follows the permission mode and the
+  // prompt, which here is an owed prompt or a recap, and usually none.
+  const freshId = canResume
+    ? null
+    : await resolveFreshAgentSessionId(adapter, {
+        cliPath: detectedCliPath,
+        workingDirectory: cwd,
+        permissionMode,
+        prompt: launch.prompt,
+        place: cliTarget,
+      });
+  const agentSessionId = canResume ? resumedAgentSessionId : freshId?.agentSessionId ?? null;
+  const sessionIdCreation: SessionIdCreationOutcome = freshId?.sessionIdCreation ?? 'not_asked';
 
   const sessionRecordId = randomUUID();
   const sessionDir = path.join(projectPath, '.kangentic', 'sessions', sessionRecordId);

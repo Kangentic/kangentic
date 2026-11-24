@@ -142,14 +142,30 @@ interface CursorSessionLaunch {
 /** A whole line that is a chat id, as `create-chat` prints it (measured: the bare UUID). */
 const CHAT_ID_LINE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/im;
 
+/** What decides whether a fresh start opens Cursor's session screen. `prompt` is the one its command carries. */
+type CursorFreshStart = Pick<SpawnCommandOptions, 'permissionMode' | 'nonInteractive' | 'prompt'>;
+
+/** Whether a command carries a prompt. A blank one counts as none. */
+function cursorCarriesPrompt(options: Pick<SpawnCommandOptions, 'prompt'>): options is { prompt: string } {
+  return Boolean(options.prompt?.trim());
+}
+
 /**
- * Confirm-changes, skip-approvals and plan keep the session screen. Anything
- * else, and an explicit non-interactive flag, is one print turn. The screen
- * prints no conversation id. The print path does, on the stream-json init line.
+ * Whether a fresh start opens the session screen rather than one print turn.
+ * Confirm-changes, skip-approvals and plan keep the screen. Any other mode
+ * prints its prompt, and with no prompt there is nothing to print, so it opens
+ * the screen too. An explicit non-interactive flag always prints.
+ *
+ * The one answer for the command's shape, the id created before launch, the
+ * hooks and their variable. The screen prints no conversation id, the print
+ * path does on its stream-json init line, and a start the four disagreed on
+ * had no way to report itself (Sentry DESKTOP-45: `--output-format` with no
+ * `-p`, no chat created and no hooks).
  */
-function cursorKeepsSessionScreen(permissionMode: PermissionMode, nonInteractive: boolean | undefined): boolean {
-  const interactive = permissionMode === 'default' || permissionMode === 'acceptEdits' || permissionMode === 'plan';
-  return interactive && !nonInteractive;
+function cursorKeepsSessionScreen(start: CursorFreshStart): boolean {
+  if (start.nonInteractive) return false;
+  if (!cursorCarriesPrompt(start)) return true;
+  return start.permissionMode === 'default' || start.permissionMode === 'acceptEdits' || start.permissionMode === 'plan';
 }
 
 /**
@@ -158,8 +174,7 @@ function cursorKeepsSessionScreen(permissionMode: PermissionMode, nonInteractive
  * `--output-format stream-json` are added, so it prints no NDJSON.
  */
 function cursorOpensSessionScreen(options: SpawnCommandOptions): boolean {
-  return cursorKeepsSessionScreen(options.permissionMode, options.nonInteractive)
-    || Boolean(options.sessionId && options.resume);
+  return cursorKeepsSessionScreen(options) || Boolean(options.sessionId && options.resume);
 }
 
 /**
@@ -222,6 +237,8 @@ function isAboutPayload(value: unknown): value is { model: string } {
  *   - Non-interactive: `agent --trust -p "prompt" --output-format stream-json`
  *     - Full write access, emits NDJSON events with session_id on each line
  *     - Enables session ID capture via the init event
+ *     - With no prompt there is no turn to print, so it opens the session
+ *       screen instead: `agent --trust`
  *
  * CLI reference: https://cursor.com/docs/cli/reference
  * Auth: browser-based (`agent login`) or env var (`CURSOR_API_KEY`)
@@ -304,7 +321,9 @@ export class CursorAdapter implements AgentAdapter {
   // event on the first NDJSON line is the only place Cursor exposes the
   // model + session ID together over a documented public schema, so this
   // mode is what lets ContextBar resolve the model pill and what lets
-  // `--resume=<id>` work reliably. Interactive mode is still selectable.
+  // `--resume=<id>` work reliably. A start with no prompt opens the session
+  // screen instead, whose id is created first. Interactive mode is still
+  // selectable.
   // Its TUI status bar (`Composer 2.5 · 7.8%`) is parsed for occupancy
   // and the live model. `agent about` still seeds the pill until that
   // bar paints.
@@ -424,11 +443,19 @@ export class CursorAdapter implements AgentAdapter {
     //   anything else      one turn, then exit, as stream-json
     //
     // A mode Cursor's own list does not offer (dontAsk, auto) stays on the
-    // print path. Dropping stream-json there would leave the context bar on
-    // "Starting agent...", because the init event is the only documented
-    // place the model and session id arrive together.
+    // print path, whose init event is the only documented place the model and
+    // session id arrive together. With no prompt, "anything else" opens the
+    // session screen: stream-json "only works with --print" (CLI parameters),
+    // so it would print nothing. `agent about` seeds that screen's model.
+    //
+    // That screen gets --trust and no --force, as a Non-Interactive resume
+    // does. Without --force a print turn rejects "anything that would need
+    // approval" (https://cursor.com/docs/cli/headless), so --force would grant
+    // what the mode does not have, "exits with an error" where a team admin
+    // turned Run Everything off, and would be dropped at the first resume. So
+    // the screen asks, and Skip Approvals is the mode that does not.
     // An explicit nonInteractive flag wins over every session screen.
-    const sessionUi = cursorKeepsSessionScreen(options.permissionMode, options.nonInteractive);
+    const sessionUi = cursorKeepsSessionScreen(options);
     const confirmSession = sessionUi && options.permissionMode === 'default';
     const forceSession = sessionUi && options.permissionMode === 'acceptEdits';
     const planSession = sessionUi && options.permissionMode === 'plan';
@@ -471,7 +498,7 @@ export class CursorAdapter implements AgentAdapter {
 
     // Shell-safe prompt: on PowerShell/cmd, replace double quotes with single
     // quotes. quoteArg does the same for those shells.
-    const quotedPrompt = options.prompt
+    const quotedPrompt = cursorCarriesPrompt(options)
       ? quoteArg(
           (shell ? !isUnixLikeShell(shell) : process.platform === 'win32')
             ? options.prompt.replace(/"/g, "'")
@@ -507,10 +534,11 @@ export class CursorAdapter implements AgentAdapter {
 
   /**
    * The print path reports its own id on the stream-json init line. The
-   * session screen does not, so those starts create one first.
+   * session screen does not, so those starts create one first, and so does a
+   * start with no prompt, which opens that screen in every mode.
    */
-  reportsLaunchSessionId(options: { permissionMode: PermissionMode; nonInteractive?: boolean }): boolean {
-    return !cursorKeepsSessionScreen(options.permissionMode, options.nonInteractive);
+  reportsLaunchSessionId(options: { permissionMode: PermissionMode; nonInteractive?: boolean; prompt: string | undefined }): boolean {
+    return !cursorKeepsSessionScreen(options);
   }
 
   /**
@@ -590,7 +618,8 @@ export class CursorAdapter implements AgentAdapter {
    * methods below), not live telemetry. Two sources report a session, one per
    * way it runs, so no tool call is counted twice:
    *
-   * - A session screen (confirm-changes, skip-approvals, plan): the project's
+   * - A session screen (confirm-changes, skip-approvals, plan, any resume, and
+   *   any start with no prompt): the project's
    *   `.cursor/hooks.json` (hook-config.ts), whose commands append to the
    *   session's events file: tool start and end, prompt submit, subagents,
    *   compaction, session start and end, and the `stop` hook's turn end.
@@ -636,8 +665,9 @@ export class CursorAdapter implements AgentAdapter {
   /**
    * Kick off an out-of-band model bootstrap when a session starts.
    * Cursor's `--output-format stream-json` requires `--print`, so
-   * session-screen spawns (`default`, `acceptEdits`, `plan`, and any resume)
-   * emit no NDJSON init event and the ContextBar spinner would otherwise hang
+   * session-screen spawns (`default`, `acceptEdits`, `plan`, any resume, and
+   * any start with no prompt) emit no NDJSON init event and the ContextBar
+   * spinner would otherwise hang
    * forever. `agent about --format json` is a documented, stable CLI
    * command that returns `{ "model": "<name>", ... }` in under a
    * second and works in every permission mode. It is a seed (no

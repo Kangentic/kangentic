@@ -197,10 +197,48 @@ describe('CursorAdapter', () => {
     const CHAT_ID = '997bca3d-4c50-43e2-a038-9a99860f4e7c';
 
     it('reports its own session id only on the print path', () => {
-      expect(adapter.reportsLaunchSessionId({ permissionMode: 'default' })).toBe(false);
-      expect(adapter.reportsLaunchSessionId({ permissionMode: 'acceptEdits' })).toBe(false);
-      expect(adapter.reportsLaunchSessionId({ permissionMode: 'acceptEdits', nonInteractive: true })).toBe(true);
-      expect(adapter.reportsLaunchSessionId({ permissionMode: 'bypassPermissions' })).toBe(true);
+      expect(adapter.reportsLaunchSessionId({ permissionMode: 'default', prompt: 'go' })).toBe(false);
+      expect(adapter.reportsLaunchSessionId({ permissionMode: 'acceptEdits', prompt: 'go' })).toBe(false);
+      expect(adapter.reportsLaunchSessionId({ permissionMode: 'acceptEdits', nonInteractive: true, prompt: 'go' })).toBe(true);
+      expect(adapter.reportsLaunchSessionId({ permissionMode: 'bypassPermissions', prompt: 'go' })).toBe(true);
+    });
+
+    // Sentry DESKTOP-45: a start with no prompt built stream-json with no `-p`,
+    // which prints nothing, while the adapter said the print path would report
+    // its id and left the hooks out. One answer decides all four: the command,
+    // the id, the hooks and their variable.
+    describe.each<PermissionMode>(['bypassPermissions', 'dontAsk', 'auto'])('a start with no prompt in %s', (permissionMode) => {
+      const eventsOutputPath = '/projects/my-app/.kangentic/sessions/session-1/events.jsonl';
+
+      it.each([['no prompt', undefined], ['a blank prompt', '  \n ']])('opens the created chat on the session screen with --trust alone (%s)', (_label, prompt) => {
+        const command = adapter.buildCommand(makeOptions({ permissionMode, prompt, sessionId: CHAT_ID, shell: 'bash' }));
+        expect(command).toBe(`/usr/local/bin/agent --trust --resume=${quoteArg(CHAT_ID, 'bash')}`);
+      });
+
+      it.each([['no prompt', undefined], ['a blank prompt', '  \n ']])('asks for a chat first (%s)', (_label, prompt) => {
+        expect(adapter.reportsLaunchSessionId({ permissionMode, prompt })).toBe(false);
+      });
+
+      it('carries the hook variable, and its chosen model', () => {
+        expect(adapter.buildEnv?.(makeOptions({ permissionMode, eventsOutputPath }))).toEqual({ KANGENTIC_EVENTS_PATH_INTERACTIVE: eventsOutputPath });
+        const command = adapter.buildCommand(makeOptions({ permissionMode, model: 'gpt-5', shell: 'bash' }));
+        expect(adapter.configuredModelFromCommand(command)).toEqual({ id: 'gpt-5', displayName: 'gpt-5' });
+        expect(command).not.toContain('--output-format');
+      });
+
+      it('stays a print run that reports its own id when it carries a prompt', () => {
+        const options = makeOptions({ permissionMode, prompt: 'go', eventsOutputPath, shell: 'bash' });
+        expect(adapter.buildCommand(options)).toMatch(/ --trust -p \S+ --output-format stream-json$/);
+        expect(adapter.reportsLaunchSessionId({ permissionMode, prompt: 'go' })).toBe(true);
+        expect(adapter.buildEnv?.(options)).toBeNull();
+      });
+
+      it('stays a print run when asked to run non-interactive, as before', () => {
+        const options = makeOptions({ permissionMode, nonInteractive: true, eventsOutputPath, shell: 'bash' });
+        expect(adapter.buildCommand(options)).toMatch(/ --trust --output-format stream-json$/);
+        expect(adapter.reportsLaunchSessionId({ permissionMode, nonInteractive: true, prompt: undefined })).toBe(true);
+        expect(adapter.buildEnv?.(options)).toBeNull();
+      });
     });
 
     it('creates a chat and reads its id', async () => {
@@ -515,8 +553,19 @@ describe('CursorAdapter', () => {
       });
     });
 
+    // With nothing to print, a start opens the session screen in every mode.
+    it.each<PermissionMode>(['bypassPermissions', 'dontAsk', 'auto'])('wires the hooks for a %s start with no prompt', (permissionMode) => {
+      withFolder((folder) => {
+        const options = hookOptions(folder, { permissionMode });
+        expect(adapter.buildCommand(options)).not.toContain('stream-json');
+        // Not `existsSync`: this file mocks it to always answer true.
+        expect(fs.readFileSync(hooksPathIn(folder), 'utf-8')).toContain('KANGENTIC_EVENTS_PATH_INTERACTIVE');
+        expect(adapter.buildEnv?.(options)).toEqual({ KANGENTIC_EVENTS_PATH_INTERACTIVE: options.eventsOutputPath });
+      });
+    });
+
     it.each<[string, Partial<SpawnCommandOptions>]>([
-      ['a print run', { permissionMode: 'bypassPermissions' }],
+      ['a print run', { permissionMode: 'bypassPermissions', prompt: 'go' }],
       ['a session screen asked to run non-interactive', { permissionMode: 'default', nonInteractive: true }],
       ['a start with no events file', { eventsOutputPath: undefined }],
     ])('wires no hooks for %s', (_start, overrides) => {
@@ -545,7 +594,7 @@ describe('CursorAdapter', () => {
     it('a print run leaving does not strip the hooks a session screen in the folder still uses', () => {
       withFolder((folder) => {
         adapter.buildCommand(hookOptions(folder, { ptySessionId: 'screen' }));
-        adapter.buildCommand(hookOptions(folder, { ptySessionId: 'print', permissionMode: 'bypassPermissions' }));
+        adapter.buildCommand(hookOptions(folder, { ptySessionId: 'print', permissionMode: 'bypassPermissions', prompt: 'go' }));
 
         adapter.removeHooks(folder, 'print');
         expect(fs.readFileSync(hooksPathIn(folder), 'utf-8')).toContain('KANGENTIC_EVENTS_PATH_INTERACTIVE');
@@ -919,7 +968,7 @@ describe('CursorAdapter', () => {
       });
 
       it('creates a chat before a plan start, which prints no session id', () => {
-        expect(adapter.reportsLaunchSessionId({ permissionMode: 'plan' })).toBe(false);
+        expect(adapter.reportsLaunchSessionId({ permissionMode: 'plan', prompt: 'go' })).toBe(false);
       });
 
       it('keeps --force on a resumed skip-approvals session', () => {
