@@ -76,6 +76,13 @@ export interface CommandTerminalLeftoverDeps {
    * what its agent left running stays for the conversation that returns to it.
    */
   willRestore?(session: Session): boolean;
+  /**
+   * For a terminal a move to another account ended (`commandTerminalRespawn`):
+   * `starting` while its slot's next start is still in flight, `back` once a
+   * live terminal runs under its tag again, `gone` when the move gave up. Left
+   * out, a respawn reaps nothing.
+   */
+  respawnOutcome?(session: Session): 'starting' | 'back' | 'gone';
   isShuttingDown(): boolean;
   /** Injectable for tests. */
   delayMs?: number;
@@ -107,7 +114,38 @@ export class CommandTerminalLeftoverReaper {
     // A workflow's own agent is transient too, but runs no shell tool, and its
     // end already waits for its process to exit (`endWorkflowAgent`).
     if (!session || !isCommandTerminalSession(session) || !session.cwd || this.disposed) return;
+    // Read now, while the registry row that names its agent and place is still
+    // there: it is deleted once the removal's listeners return.
+    const ended = this.endedTerminal(sessionId, session);
+    if (session.commandTerminalRespawn) {
+      // Ended to start again in its slot (a move to another account), under the
+      // same tag: what its agent left running is the next terminal's, unless the
+      // move gives up, which makes this an end like any other.
+      this.awaitRespawn(session, ended);
+      return;
+    }
     if (this.deps.willRestore?.(session)) return;
+    this.scheduleReap(session, this.startBackgroundStop(ended));
+  };
+
+  /**
+   * Waits for a moved terminal's next start to settle, then reaps only when no
+   * terminal came back under its tag.
+   */
+  private awaitRespawn(session: Session, ended: EndedCommandTerminal | null): void {
+    const { respawnOutcome } = this.deps;
+    if (!respawnOutcome) return;
+    const check = (): void => {
+      if (this.disposed || this.deps.isShuttingDown()) return;
+      const outcome = respawnOutcome(session);
+      if (outcome === 'starting') this.later(check);
+      else if (outcome === 'gone') this.scheduleReap(session, this.startBackgroundStop(ended));
+    };
+    this.later(check);
+  }
+
+  /** The reap for an ended terminal, after the delay and any background-session stop. */
+  private scheduleReap(session: Session, backgroundStop: Promise<void> | null): void {
     // The terminal's own folder is the reap's directory. It is never passed as
     // a worktree: the macOS orphan rule treats a worktree as wholly the task's,
     // and a project root is shared with every task that has no worktree.
@@ -119,31 +157,32 @@ export class CommandTerminalLeftoverReaper {
     };
     const wslDistro = parseWslShellSpec(session.shell)?.distro;
     const wslDistros = wslDistro ? [wslDistro] : [];
-    const backgroundStop = this.startBackgroundStop(sessionId, session);
     const runReap = (): void => {
       if (this.disposed || this.deps.isShuttingDown()) return;
       void this.deps.reap(projectPath, task, wslDistros).catch((error: unknown) => {
         console.warn('[COMMAND_TERMINAL] leftover reap failed (non-fatal):', error instanceof Error ? error.message : String(error));
       });
     };
-    const timer = setTimeout(() => {
-      this.timers.delete(timer);
+    this.later(() => {
       if (backgroundStop) void backgroundStop.then(runReap);
       else runReap();
+    });
+  }
+
+  /** Runs `work` after the reap delay, on a timer `dispose` clears. */
+  private later(work: () => void): void {
+    const timer = setTimeout(() => {
+      this.timers.delete(timer);
+      work();
     }, this.deps.delayMs ?? COMMAND_TERMINAL_REAP_DELAY_MS);
     timer.unref?.();
     this.timers.add(timer);
-  };
+  }
 
-  /**
-   * The background-session stop for an ended terminal, started now: the
-   * registry row that names its agent and place is deleted once the removal's
-   * listeners return. Null when there is nothing to ask about. Never rejects.
-   */
-  private startBackgroundStop(sessionId: string, session: Session): Promise<void> | null {
-    const { stopBackgroundSession } = this.deps;
-    if (!stopBackgroundSession || !session.agentSessionId || this.deps.isShuttingDown()) return null;
-    const ended: EndedCommandTerminal = {
+  /** What the background-session stop needs about an ended terminal. Null when there is nothing to ask about. */
+  private endedTerminal(sessionId: string, session: Session): EndedCommandTerminal | null {
+    if (!this.deps.stopBackgroundSession || !session.agentSessionId) return null;
+    return {
       agentName: this.deps.sessionManager.getSessionAgentName?.(sessionId),
       agentSessionId: session.agentSessionId,
       cwd: session.cwd,
@@ -152,6 +191,15 @@ export class CommandTerminalLeftoverReaper {
       // does not move, though the account it runs as may follow the new login.
       accountId: this.deps.sessionManager.getSessionHomeAccountId?.(sessionId) ?? session.accountId,
     };
+  }
+
+  /**
+   * The background-session stop for an ended terminal, started now. Null when
+   * there is nothing to ask about. Never rejects.
+   */
+  private startBackgroundStop(ended: EndedCommandTerminal | null): Promise<void> | null {
+    const { stopBackgroundSession } = this.deps;
+    if (!stopBackgroundSession || !ended || this.deps.isShuttingDown()) return null;
     // Called on a later tick, so a dep that throws never throws into the emit.
     return Promise.resolve().then(() => stopBackgroundSession(ended)).catch((error: unknown) => {
       console.warn('[COMMAND_TERMINAL] background session stop failed (non-fatal):', error instanceof Error ? error.message : String(error));

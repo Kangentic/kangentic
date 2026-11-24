@@ -19,7 +19,7 @@ function account(id: string, position: number, lastUsage: RateLimitWindow[] | nu
   return {
     id, agent: 'test-agent', kind: position === 1 ? 'default' : 'folder', folderPath: null, keyFilePath: null, keyNames: [],
     email: `${id}@example.com`, plan: 'Pro', status: 'ok', position, historyPrivate: false,
-    lastUsage, lastUsageAt: null, createdAt: '2026-01-01T00:00:00.000Z',
+    lastUsage, lastUsageAt: null, absentWindowIds: [], createdAt: '2026-01-01T00:00:00.000Z',
   };
 }
 

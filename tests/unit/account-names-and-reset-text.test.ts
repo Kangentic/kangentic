@@ -16,7 +16,7 @@ import {
 } from '../../src/shared/agent-accounts';
 import { __setLocaleForTests } from '../../src/renderer/lib/datetime';
 import { accountNameFor } from '../../src/renderer/stores/accounts-store';
-import { describeAccountSwitched, describeAccountsAllFull } from '../../src/renderer/lib/account-toasts';
+import { describeAccountSwitched, describeAccountSwitchResult, describeAccountsFollowing, describeAccountsAllFull } from '../../src/renderer/lib/account-toasts';
 import { formatResetMoment, formatResetTime } from '../../src/renderer/components/terminal/rate-limit-meter';
 
 const NOW = new Date(2026, 10, 9, 12, 0, 0).getTime();
@@ -43,7 +43,7 @@ function makeAccount(id: string, overrides: Partial<AgentAccount> = {}): AgentAc
     position: 1,
     historyPrivate: false,
     lastUsage: null,
-    lastUsageAt: null,
+    lastUsageAt: null, absentWindowIds: [],
     createdAt: '2026-01-01T00:00:00.000Z',
     ...overrides,
   };
@@ -204,6 +204,50 @@ describe('describeAccountSwitched', () => {
     const toast = describeAccountSwitched({ ...base, accountName: null }, null);
     expect(toast.message).toContain('Claude');
     expect(toast.message).not.toContain('null');
+  });
+});
+
+describe('describeAccountSwitchResult', () => {
+  const base = { ok: true, agent: 'claude', accountName: 'two@example.com', moved: 0, pending: 0, failed: 0 };
+
+  it('says working sessions move at the next pause when only pending ones remain', () => {
+    const toast = describeAccountSwitchResult({ ...base, moved: 0, pending: 2 });
+    expect(toast.title).toBe('Switched account');
+    expect(toast.variant).toBe('success');
+    expect(toast.message).toBe('2 working sessions move to two@example.com at the next pause.');
+  });
+
+  it('says one working session moves in the singular', () => {
+    expect(describeAccountSwitchResult({ ...base, pending: 1 }).message)
+      .toBe('1 working session moves to two@example.com at the next pause.');
+  });
+
+  it('counts both the moved and the pending sessions when some of each', () => {
+    const toast = describeAccountSwitchResult({ ...base, moved: 1, pending: 2 });
+    expect(toast.title).toBe('Switched account');
+    expect(toast.message).toBe('1 session moved to two@example.com, 2 more at the next pause.');
+  });
+
+  it('lets a failure take precedence over pending sessions', () => {
+    const toast = describeAccountSwitchResult({ ...base, moved: 1, pending: 2, failed: 1 });
+    expect(toast.variant).toBe('error');
+    expect(toast.title).toBe("Couldn't move every session");
+    expect(toast.message).toBe('1 running session could not move.');
+    expect(toast.message).not.toContain('next pause');
+  });
+});
+
+describe('describeAccountsFollowing', () => {
+  it('names the account the running sessions move to', () => {
+    const toast = describeAccountsFollowing({ agent: 'claude', accountName: 'two@example.com' });
+    expect(toast.title).toBe('Switching account');
+    expect(toast.message).toBe('Running Claude Code sessions move to two@example.com.');
+  });
+
+  it('falls back to the agent name when the account has no name', () => {
+    const toast = describeAccountsFollowing({ agent: 'claude', accountName: null });
+    expect(toast.title).toBe('Switching account');
+    expect(toast.message).toBe('Running Claude Code sessions move to Claude Code.');
   });
 });
 

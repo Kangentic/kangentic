@@ -29,7 +29,7 @@ function makeAccount(id: string): AgentAccount {
     position: 1,
     historyPrivate: false,
     lastUsage: null,
-    lastUsageAt: null,
+    lastUsageAt: null, absentWindowIds: [],
     createdAt: '2026-01-01T00:00:00.000Z',
   };
 }

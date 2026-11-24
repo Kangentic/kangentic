@@ -172,6 +172,47 @@ describe('SessionManager.endCommandTerminal', () => {
     expect(manager.endCommandTerminal('ghost')).toBe('not-found');
   });
 
+  // Task #1200: a move to another account ends the terminal to start it again in its slot, and the
+  // removal's snapshot says so for the window and the leftover reaper.
+  it('marks the removal snapshot a respawn when the end asks for one', () => {
+    seed();
+    const snapshots: Array<{ commandTerminalRespawn?: boolean }> = [];
+    manager.on('session-removed', (_id: string, snapshot: { commandTerminalRespawn?: boolean }) => { snapshots.push(snapshot); });
+
+    manager.endCommandTerminal('term-1', { respawn: true });
+
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0].commandTerminalRespawn).toBe(true);
+  });
+
+  it('leaves a plain end unmarked, even when an earlier respawn end left its mark on the row', () => {
+    seed({ commandTerminalRespawn: true });
+    const snapshots: Array<{ commandTerminalRespawn?: boolean }> = [];
+    manager.on('session-removed', (_id: string, snapshot: { commandTerminalRespawn?: boolean }) => { snapshots.push(snapshot); });
+
+    manager.endCommandTerminal('term-1');
+
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0].commandTerminalRespawn).toBeUndefined();
+  });
+
+  it('clears the mark a respawn end left when its kill threw, so the later plain end is final', () => {
+    seed();
+    const snapshots: Array<{ commandTerminalRespawn?: boolean }> = [];
+    manager.on('session-removed', (_id: string, snapshot: { commandTerminalRespawn?: boolean }) => { snapshots.push(snapshot); });
+    const originalKill = manager.kill.bind(manager);
+    vi.spyOn(manager, 'kill').mockImplementationOnce(() => { throw new Error('kill failed'); });
+
+    expect(() => manager.endCommandTerminal('term-1', { respawn: true })).toThrow('kill failed');
+    expect(manager.getSession('term-1')?.commandTerminalRespawn).toBe(true);
+    vi.mocked(manager.kill).mockImplementation(originalKill);
+
+    manager.endCommandTerminal('term-1');
+
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0].commandTerminalRespawn).toBeUndefined();
+  });
+
   it('passes `immediate` through to kill, for a caller that knows the agent is gone', () => {
     seed();
     const killSpy = vi.spyOn(manager, 'kill');

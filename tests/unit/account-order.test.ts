@@ -39,7 +39,7 @@ function account(id: string, position: number, usage: RateLimitWindow[] | null, 
     position,
     historyPrivate: false,
     lastUsage: usage,
-    lastUsageAt: null,
+    lastUsageAt: null, absentWindowIds: [],
     createdAt: '2026-11-09T00:00:00.000Z',
   };
 }

@@ -12,7 +12,7 @@ function account(id: string, position: number, usedPercentage: number): AgentAcc
     lastUsage: [
       { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage, resetsAt: NOW + 86_400 * position, windowDurationSeconds: 604_800 },
     ],
-    lastUsageAt: null, createdAt: '2026-01-01T00:00:00.000Z',
+    lastUsageAt: null, absentWindowIds: [], createdAt: '2026-01-01T00:00:00.000Z',
   };
 }
 
