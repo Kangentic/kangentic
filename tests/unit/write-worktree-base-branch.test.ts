@@ -25,7 +25,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { simpleGit } from 'simple-git';
+import { gitAt } from '../../src/main/git/git-client';
 import { writeWorktreeBaseBranch } from '../../src/main/git/worktree-manager';
 
 const CONFIG_KEY = 'kangentic.baseBranch';
@@ -86,8 +86,8 @@ describe('writeWorktreeBaseBranch (real git)', () => {
   it('writes the linked worktree\'s own config and leaves the shared repo config and sibling worktrees alone', async () => {
     const { repo, firstWorktree, secondWorktree } = createRepoWithLinkedWorktrees({ worktreeConfigExtension: true });
 
-    await writeWorktreeBaseBranch(simpleGit(firstWorktree), 'develop');
-    await writeWorktreeBaseBranch(simpleGit(secondWorktree), 'release/2.0');
+    await writeWorktreeBaseBranch(gitAt(firstWorktree), 'develop');
+    await writeWorktreeBaseBranch(gitAt(secondWorktree), 'release/2.0');
 
     // Each worktree holds its own value in config.worktree.
     expect(readConfig(firstWorktree, ['--worktree'])).toBe('develop');
@@ -104,9 +104,9 @@ describe('writeWorktreeBaseBranch (real git)', () => {
   it('overwrites the same worktree\'s earlier value on a base-branch switch', async () => {
     const { repo, firstWorktree, secondWorktree } = createRepoWithLinkedWorktrees({ worktreeConfigExtension: true });
 
-    await writeWorktreeBaseBranch(simpleGit(firstWorktree), 'develop');
-    await writeWorktreeBaseBranch(simpleGit(secondWorktree), 'release/2.0');
-    await writeWorktreeBaseBranch(simpleGit(firstWorktree), 'main');
+    await writeWorktreeBaseBranch(gitAt(firstWorktree), 'develop');
+    await writeWorktreeBaseBranch(gitAt(secondWorktree), 'release/2.0');
+    await writeWorktreeBaseBranch(gitAt(firstWorktree), 'main');
 
     expect(readConfig(firstWorktree, ['--worktree'])).toBe('main');
     // The sibling keeps its base: a switch in one task cannot change another task's base.
@@ -122,7 +122,7 @@ describe('writeWorktreeBaseBranch (real git)', () => {
     // here instead of passing for the wrong reason below.
     expect(() => git(firstWorktree, ['config', '--worktree', CONFIG_KEY, 'probe'])).toThrow();
 
-    await writeWorktreeBaseBranch(simpleGit(firstWorktree), 'develop');
+    await writeWorktreeBaseBranch(gitAt(firstWorktree), 'develop');
 
     // The value still lands, in the shared config, and a plain read finds it from anywhere.
     expect(readConfig(repo, ['--local'])).toBe('develop');

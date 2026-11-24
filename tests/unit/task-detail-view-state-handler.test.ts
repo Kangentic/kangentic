@@ -30,7 +30,6 @@ vi.mock('electron', () => ({
   },
 }));
 
-vi.mock('simple-git', () => ({ simpleGit: vi.fn(() => ({})) }));
 
 vi.mock('../../src/main/db/database', () => ({
   getExistingProjectDb: (projectId: string) => shared.getExistingProjectDb(projectId),

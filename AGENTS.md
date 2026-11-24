@@ -10,7 +10,7 @@ which adds the few notes that apply only to Claude Code.
 
 - **Runtime:** Electron 45 + Node 24
 - **Frontend:** React 19, Zustand, Tailwind CSS 4, Lucide React icons
-- **Backend:** better-sqlite3, node-pty, simple-git
+- **Backend:** better-sqlite3, node-pty, git through the pty host
 - **Build:** Vite (renderer), esbuild (main/preload), electron-builder (packaging)
 - **Testing:** Playwright with Electron support
 - **Package:** NSIS (Windows), DMG (macOS), deb/rpm (Linux)

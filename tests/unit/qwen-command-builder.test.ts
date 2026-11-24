@@ -675,7 +675,7 @@ describe('QwenCommandBuilder', () => {
       expect(second.mcpServers).toBeUndefined();
     });
 
-    it('a worktree spawn picks up a change to the project root\'s settings', () => {
+    it('a worktree spawn picks up a change to the project root\'s settings', async () => {
       const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'qwen-cmd-fresh-root-'));
       try {
         writeSettings(projectRoot, { ui: { theme: 'Default' } });
@@ -684,6 +684,9 @@ describe('QwenCommandBuilder', () => {
 
         writeSettings(projectRoot, { ui: { theme: 'GitHub' } });
 
+        // What `ensureTrust` does ahead of every build: git says the folder's copy
+        // is one a spawn wrote, not the branch's, so the root starts the merge.
+        await builder.refreshSettingsTracking(tmpDir);
         builder.buildQwenCommand(spawnOptions({ projectRoot }));
         expect(readSettings(tmpDir).ui).toEqual({ theme: 'GitHub' });
       } finally {

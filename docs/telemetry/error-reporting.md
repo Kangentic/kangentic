@@ -1074,9 +1074,9 @@ in one Sentry org, one triage surface.
   `other`. A git
   that prints another language reads `other`. Sentry DESKTOP-4A was `git:diffFiles` failing with
   only `Error` to go on. Its cause turned out to be a repository with no commits, where the
-  Changes panel now diffs against the empty tree. Two git runners are not named this way yet:
-  `spawnWithAbort` (fetch, prune, `branch -D`) and simple-git's own errors (blame, branch
-  summary, commit graph, file history). No preflight report sends an error's message: the event is the stage's
+  Changes panel now diffs against the empty tree. One git runner is not named this way yet:
+  `spawnWithAbort` (fetch, prune, `branch -D`). Blame, the branch summary, the commit graph and
+  file history read through `gitAt` now, so their failures are `GitCommandError`s too. No preflight report sends an error's message: the event is the stage's
   built error (`Agent launch failed: preflight (<cause>)`) carrying the original's frames, with
   its class in `error_type` and its code in `errno`. Messages here held branch names, task titles
   and URLs, and redacting paths left those. A failure `spawnAgent` reported and rethrew is marked

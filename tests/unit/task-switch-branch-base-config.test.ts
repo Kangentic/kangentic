@@ -17,7 +17,7 @@
  *
  * Pattern mirrors task-update-from-base.test.ts: capture the function registered
  * with ipcMain.handle and invoke it directly. The real writeWorktreeBaseBranch
- * runs (worktree-manager is NOT mocked); only simple-git is replaced.
+ * runs (worktree-manager is NOT mocked); only gitAt is replaced.
  */
 import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from 'vitest';
 import fs from 'node:fs';
@@ -54,13 +54,8 @@ vi.mock('electron', () => ({
   app: { getPath: vi.fn(), getVersion: vi.fn(() => '0.0.0'), isPackaged: false, getLocale: vi.fn(() => 'en') },
 }));
 
-vi.mock('simple-git', () => {
-  const gitFactory = vi.fn((cwd: string) => (cwd === worktreeLocation.path ? mockWorktreeGit : mockProjectGit));
-  return { simpleGit: gitFactory };
-});
-
-// Path B carries uncommitted changes through gitAt (task-branch.ts), so the same
-// two mocks answer there.
+// Every git call (the worktree's config write, Path B's carried changes) runs
+// through gitAt, so the two mocks answer there.
 vi.mock('../../src/main/git/git-client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/main/git/git-client')>()),
   gitAt: vi.fn((cwd: string) => (cwd === worktreeLocation.path ? mockWorktreeGit : mockProjectGit)),

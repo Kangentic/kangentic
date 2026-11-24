@@ -169,10 +169,11 @@ src/main/workflows/
   did three calls that run repository hooks, filters or merge drivers, for a different reason:
   `gitAt`'s env drops Crashpad's pipe name (see "PTY children and Crashpad's handler" in
   `docs/platforms/windows.md`). They are Pull from base's merge, the carry of uncommitted changes
-  into a new worktree, and the Command Terminal's cold-start checkout and merge. Still on main
-  through simple-git, and outside a workflow's lifecycle: the Changes panel's ahead and behind count
-  and its watcher, blame, file history, the commit graph, a task's branch switch config write, and
-  the pending-changes probe of a Done drop.
+  into a new worktree, and the Command Terminal's cold-start checkout and merge. The reads outside a
+  workflow's lifecycle followed later, so nothing reads git through simple-git any more: the
+  Changes panel's ahead and behind count and its watcher, blame, file history, the commit graph, a
+  task's branch switch config write, and the pending-changes probe of a Done drop
+  (`.claude/rules/main-starts-no-process.md`).
 - **A start** is `handleTaskMove` with origin `workflow`, into the first column of the task's route,
   after `forgetRecentFetches` so the worktree is cut from the blockers' merged code. Starts go in To
   Do order, up to `SessionManager.getFreeAgentSlots()`.

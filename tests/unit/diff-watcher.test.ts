@@ -35,14 +35,15 @@ vi.mock('node:fs', () => ({
   },
 }));
 
-// Mock simple-git so the git-metadata tests can control rev-parse output.
+// Mock gitAt so the git-metadata tests can control rev-parse output.
 // Tests that don't call subscribe() with a mocked git dir are unaffected because
 // the real tests never awaited the async watchGitMetadata promise.
 const mockGitRaw = vi.fn<(args: string[]) => Promise<string>>();
 const mockGitInstance = { raw: mockGitRaw };
 
-vi.mock('simple-git', () => ({
-  simpleGit: vi.fn(() => mockGitInstance),
+vi.mock('../../src/main/git/git-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/git/git-client')>()),
+  gitAt: vi.fn(() => mockGitInstance),
 }));
 
 // Extend the real path module: pin sep to '/' for cross-platform consistency
@@ -339,7 +340,7 @@ describe('DiffWatcher', () => {
   // ── watchGitMetadata ─────────────────────────────────────────────────────
   //
   // These tests cover the new async git-metadata watch path added on this branch.
-  // The production code calls simpleGit(worktreePath).raw(['rev-parse',
+  // The production code calls gitAt(worktreePath).raw(['rev-parse',
   // '--absolute-git-dir']) to find the git directory, then watches:
   //   - <gitDir>  (non-recursive) for GIT_META_FILES entries (index, HEAD, ...)
   //   - <gitDir>/logs  (non-recursive) for HEAD changes
@@ -487,11 +488,11 @@ describe('DiffWatcher', () => {
 
     it('rev-parse is called with the correct worktreePath', async () => {
       mockGitRaw.mockResolvedValueOnce(`${fakeGitDir}\n`);
-      const { simpleGit } = await import('simple-git');
+      const { gitAt } = await import('../../src/main/git/git-client');
 
       await subscribeAndFlush(vi.fn());
 
-      expect(simpleGit).toHaveBeenCalledWith(worktreePath, { allowEnvironment: ['GIT_CEILING_DIRECTORIES'] });
+      expect(gitAt).toHaveBeenCalledWith(worktreePath);
       expect(mockGitRaw).toHaveBeenCalledWith(['rev-parse', '--absolute-git-dir']);
     });
   });

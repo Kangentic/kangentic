@@ -6,7 +6,7 @@
  * showing nothing (or another repository's files) as if there were no changes, a big diff or file coming back
  * cut short, or this computer's git running inside the empty stand-in folder.
  *
- * The unit blocks run the real resolver, `gitAt` and `openSimpleGit` over a fake host. The block on a real
+ * The unit blocks run the real resolver, `gitAt` over a fake host. The block on a real
  * repository runs the real scripts through the real helper command runner with a POSIX shell and git.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -20,7 +20,6 @@ import { gitIn, runHostCommandAt } from './helpers/host-git-rig';
 import { MAX_FRAME_JSON_BYTES } from '../../src/main/remote/protocol/frame-codec';
 import { RemoteGitUnavailableError, remoteGitRunnerFor, setRemoteGitResolver } from '../../src/main/git/remote-git';
 import { gitAt } from '../../src/main/git/git-client';
-import { openSimpleGit } from '../../src/main/git/simple-git-client';
 import { runGitWithTimeout } from '../../src/main/git/git-spawn';
 import type { HostCommandRequest, HostCommandResult } from '../../src/main/remote/protocol/messages';
 
@@ -212,26 +211,18 @@ describe('an output too large to read, and a count that does not match what was 
   });
 });
 
-describe('gitAt and openSimpleGit for a remote project', () => {
+describe('gitAt for a remote project', () => {
   const standIn = (): string => path.join(shellFolder, '.kangentic', 'worktrees', '7');
 
-  it('sends simple-git\'s show and diff to the host as git show and git diff', async () => {
+  it('sends the client\'s show and diff to the host as git show and git diff', async () => {
     const seen: string[][] = [];
     setRemoteGitResolver(resolverOver(async (_hostId, request) => { seen.push(request.args.slice(4)); return smallAnswer('out'); }));
-    const simple = openSimpleGit(standIn());
+    const client = gitAt(standIn());
 
-    expect(await simple.show(['HEAD:a.txt'])).toBe('out');
-    expect(await simple.diff(['--cached', '--name-status'])).toBe('out');
+    expect(await client.show(['HEAD:a.txt'])).toBe('out');
+    expect(await client.diff(['--cached', '--name-status'])).toBe('out');
 
     expect(seen).toEqual([['show', 'HEAD:a.txt'], ['diff', '--cached', '--name-status']]);
-    expect(localGit).not.toHaveBeenCalled();
-  });
-
-  it('does not serve a name that only Object.prototype has from the facade', () => {
-    setRemoteGitResolver(resolverOver(async () => smallAnswer('')));
-    const simple = openSimpleGit(standIn());
-    // A lookup that reached the facade's prototype would hand back Object.prototype.toString.
-    expect(() => simple.toString()).toThrow(RemoteGitUnavailableError);
     expect(localGit).not.toHaveBeenCalled();
   });
 
@@ -261,20 +252,20 @@ describe('gitAt and openSimpleGit for a remote project', () => {
     // With stderr it fails, with stdout then stderr as its message.
     await expect(client.raw(['checkout', 'nope'])).rejects.toThrow('pathspec did not match');
 
-    const simple = openSimpleGit(standIn());
-    expect(await simple.raw(['log', '-1'])).toBe('raw out');
-    expect(await simple.revparse(['--abbrev-ref', 'HEAD'])).toBe('abc123');
+    // A second client for the same folder reaches the host the same way.
+    const second = gitAt(standIn());
+    expect(await second.raw(['log', '-1'])).toBe('raw out');
+    expect(await second.revparse(['--abbrev-ref', 'HEAD'])).toBe('abc123');
     expect(seen.map((args) => args[0])).toEqual(['rev-parse', 'status', 'rev-parse', 'checkout', 'log', 'rev-parse']);
     expect(localGit).not.toHaveBeenCalled();
   });
 
-  it('refuses, with a sentence, a simple-git method the host has no route for, and can still be awaited', async () => {
-    setRemoteGitResolver(resolverOver(async () => smallAnswer('')));
-    const simple = openSimpleGit(standIn());
-    expect(() => simple.status()).toThrow(RemoteGitUnavailableError);
-    expect(() => simple.status()).toThrow('not available for a project on a host yet');
-    // A thenable client would call `then` when awaited; a throw there would reject the await.
-    await expect(Promise.resolve(simple)).resolves.toBeDefined();
+  it('answers status on the host too, never from this computer\'s git', async () => {
+    const seen: string[][] = [];
+    setRemoteGitResolver(resolverOver(async (_hostId, request) => { seen.push(request.args.slice(4)); return smallAnswer(' M a.txt\0'); }));
+    const summary = await gitAt(standIn()).status();
+    expect(summary.files.map((file) => file.path)).toEqual(['a.txt']);
+    expect(seen[0][0]).toBe('status');
     expect(localGit).not.toHaveBeenCalled();
   });
 

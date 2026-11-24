@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron';
-import { openSimpleGit } from '../../git/simple-git-client';
+import { gitAt } from '../../git/git-client';
+import { remoteGitRunnerFor } from '../../git/remote-git';
 import { IPC } from '../../../shared/ipc-channels';
 import { DiffService } from '../../git/diff-service';
 import { remoteWorktreeBackendForWorktree } from '../../git/remote-worktree';
@@ -82,8 +83,16 @@ export async function probePendingChanges(checkPath: string, opts?: ProbeOptions
     if (!__KANGENTIC_DEV__) return;
     stepTimings.push(`${label} ${Math.round(performance.now() - stepStartedAt)}ms`);
   };
+  // A folder of a project on an SSH host that is not a host worktree. Its status is not asked of the host
+  // yet, so the answer is the safe default, as it has been: this probe never runs this computer's git in
+  // the stand-in, and never reads a host it did not ask as clean.
+  if (remoteGitRunnerFor(checkPath)) {
+    return { hasPendingChanges: true, uncommittedFileCount: 0, unpushedCommitCount: 0, currentBranch: null };
+  }
   try {
-    const git = openSimpleGit(checkPath);
+    // The git client, so each start runs in the pty host and never on this
+    // thread: a Done drop waits on this probe with the card already landed.
+    const git = gitAt(checkPath);
     const status = await git.status();
     noteStep('status');
 
@@ -92,7 +101,8 @@ export async function probePendingChanges(checkPath: string, opts?: ProbeOptions
     noteStep('head');
 
     let unpushedCommitCount = 0;
-    const remotes = await git.getRemotes();
+    // `git remote` prints one name a line, and nothing for a repo with none.
+    const remoteNames = (await git.raw(['remote'])).split(/\r?\n/).filter((line) => line.trim().length > 0);
     noteStep('remotes');
     // The count matters only when the move force-deletes the branch (autoCleanup):
     // only then are only-local commits genuinely at risk. With the branch kept
@@ -101,7 +111,7 @@ export async function probePendingChanges(checkPath: string, opts?: ProbeOptions
     // PR lookup) work below is skipped entirely rather than computed and discarded.
     // The count is also gated on having a remote: with none, `rev-list --not
     // --remotes` matches nothing and would count all of history.
-    if (remotes.length > 0 && autoCleanup) {
+    if (remoteNames.length > 0 && autoCleanup) {
       // Refresh remote-tracking refs first: stale local refs make rev-list
       // report already-pushed commits as local-only. Never rejects; on failure
       // the count falls back to existing (possibly stale) refs, the pre-fix

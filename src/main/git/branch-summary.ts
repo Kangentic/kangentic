@@ -1,4 +1,4 @@
-import { openSimpleGit } from './simple-git-client';
+import { gitAt } from './git-client';
 import { readWorktreeHeadUnqueued } from './worktree-head';
 import { RemoteGitUnavailableError } from './remote-git';
 import type { GitBranchSummaryInput, GitBranchSummaryResult } from '../../shared/types';
@@ -30,7 +30,7 @@ export async function getBranchSummary(input: GitBranchSummaryInput): Promise<Gi
   const emptySummary: GitBranchSummaryResult = { currentBranch: null, ahead: 0, behind: 0, lastCommit: null };
 
   try {
-    const git = openSimpleGit(workingDirectory);
+    const git = gitAt(workingDirectory);
     // Unqueued: this interactive panel refresh stays off the global read cap
     // (a queued read would wait behind a BACKGROUND churn capture's slot).
     const { branch: currentBranch } = await readWorktreeHeadUnqueued(workingDirectory, { rethrowUnavailable: true });

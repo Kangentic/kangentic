@@ -10,7 +10,7 @@ paths:
 # Rule: main starts no child process on its own thread
 
 On Windows `child_process.spawn` runs CreateProcess on the calling thread. A start made from
-Electron's main thread held the window for 3,850 ms on 2026-11-23 (#1194): the Terminal font list
+Electron's main thread held the window for 3,850 ms on 2026-11-23: the Terminal font list
 ran `font-list`, which calls `exec` of cmd and then PowerShell, during the burst of processes every
 boot starts. Nothing painted and no input was taken until it returned. An ordinary start on main
 costs 17 to 71 ms, and one made while other starts are in flight costs far more. The pty host
@@ -32,8 +32,9 @@ every start on it.
   child's whole run, not only its start. The quit failsafe in `shutdown.ts` is the one place where
   that is the point.
 - **A package that starts a process from its caller's thread stays out of main.** `font-list` and
-  `node-machine-id` are banned by name, each replaced by code of ours. Read a new dependency for
-  `child_process` before main imports it.
+  `node-machine-id` are banned by name, each replaced by code of ours. `simple-git` is banned from
+  main's graph and stays installed only as the oracle `tests/unit/git-client.test.ts` checks
+  `gitAt` against. Read a new dependency for `child_process` before main imports it.
 - **An exception is classified with its reason, in the test below.** The reasons that hold: the
   start is a drop-in's own no-host fallback, it runs before the host exists, it is the quit, it
   stops a run whose host died, the file is a host module main bundles only for the in-process host

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { toForwardSlash, quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { resolveBridgeScript } from '../../shared/bridge-utils';
-import { ensureLocalGitExcludes, settingsBaseDirectory } from '../../shared/git-exclude';
+import { ensureLocalGitExcludes, SettingsTrackingLedger } from '../../shared/git-exclude';
 import { EVENTS_PATH_FROM_ENVIRONMENT } from '../../shared/hook-utils';
 import { backgroundShellHintCommandFor, shippedHintBridgePath, wslBackgroundShellHintCommandFor } from '../../shared/background-command-hooks';
 import { cliPathForTarget, pulledProjectRoot, type CliTarget } from '../../shared/cli-target';
@@ -104,6 +104,16 @@ export interface GeminiCommandOptions {
 }
 
 export class GeminiCommandBuilder {
+  // Git's answer on whether a folder's `.gemini/settings.json` is the branch's
+  // own, asked ahead of the build: the build is synchronous and the answer
+  // takes a git process (`SettingsTrackingLedger`).
+  private readonly settingsTracking = new SettingsTrackingLedger('.gemini');
+
+  /** Ask git about `cwd`'s settings file ahead of the build that merges it. Never rejects. */
+  refreshSettingsTracking(cwd: string): Promise<void> {
+    return this.settingsTracking.refresh(cwd);
+  }
+
   buildGeminiCommand(options: GeminiCommandOptions): string {
     const { shell } = options;
     // A Gemini in a WSL distro is started by the path the distro sees; the
@@ -307,7 +317,7 @@ export class GeminiCommandBuilder {
     // On a host only the working folder's files are pulled, so it is the root (`pulledProjectRoot`); the base
     // directory then reads the same folder.
     const projectRoot = pulledProjectRoot(options);
-    const baseSettings = this.readBaseSettings(settingsBaseDirectory(options.cwd, projectRoot, '.gemini'));
+    const baseSettings = this.readBaseSettings(this.settingsTracking.baseDirectory(options.cwd, projectRoot));
 
     const merged: GeminiSettings = { ...baseSettings };
     const place = options.cliTarget ?? null;

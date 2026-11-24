@@ -47,8 +47,9 @@ vi.mock('electron', () => ({
 // The pass checks the cwd it prepared still exists; every path does here.
 vi.mock('node:fs', () => ({ default: { existsSync: vi.fn(() => true) } }));
 
-vi.mock('simple-git', () => ({
-  simpleGit: vi.fn(() => ({ diffSummary: vi.fn(async () => ({ insertions: 0, deletions: 0, changed: 0 })) })),
+vi.mock('../../src/main/git/git-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/git/git-client')>()),
+  gitAt: vi.fn(() => ({ diffSummary: vi.fn(async () => ({ insertions: 0, deletions: 0, changed: 0 })) })),
 }));
 
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));

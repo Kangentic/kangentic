@@ -49,9 +49,6 @@ vi.mock('electron', () => ({
 
 vi.mock('node:fs', () => ({ default: { existsSync: vi.fn(() => false) } }));
 
-vi.mock('simple-git', () => ({
-  simpleGit: vi.fn(() => ({})),
-}));
 
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));
 vi.mock('../../src/main/db/repositories/session-repository', () => ({ SessionRepository: class {} }));

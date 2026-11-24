@@ -137,6 +137,16 @@ function lastBridgeEntry(entries: HookEntryShape[] | undefined): HookEntryShape 
   return entry;
 }
 
+/** Builds the command for a session in a folder, writing that folder's settings file. */
+interface FolderSpawner {
+  (directory: string): void;
+  /**
+   * What the adapter's `ensureTrust` does ahead of every build: ask git whether `directory`'s
+   * settings file is tracked. A build reads that answer and starts no git itself.
+   */
+  readTracking: (directory: string) => Promise<void>;
+}
+
 /** The two folder-shared settings adapters, driven through the same cases. */
 interface FolderSettingsAdapter {
   name: string;
@@ -149,7 +159,7 @@ interface FolderSettingsAdapter {
    * One builder, kept for as long as the returned function is, building with events and MCP on: as the
    * main repo, or with `projectRoot` as a session in a worktree of it.
    */
-  createSpawner: (projectRoot?: string) => (directory: string) => void;
+  createSpawner: (projectRoot?: string) => FolderSpawner;
   /** A hook entry the adapter's own `buildHooks` writes, as a built settings file carries it. */
   kangenticEntry: () => HookEntryShape;
   strip: (settings: StrippableSettings) => boolean;
@@ -164,9 +174,10 @@ const FOLDER_ADAPTERS: FolderSettingsAdapter[] = [
     otherEventKey: 'AfterTool',
     createSpawner: (projectRoot) => {
       const builder = new GeminiCommandBuilder();
-      return (directory) => {
+      const build = (directory: string): void => {
         builder.buildGeminiCommand({ ...geminiSpawnOptions(directory), projectRoot: projectRoot ?? directory });
       };
+      return Object.assign(build, { readTracking: (directory: string) => builder.refreshSettingsTracking(directory) });
     },
     kangenticEntry: () => lastBridgeEntry(buildGeminiHooks(MOCK_BRIDGE_PATH, EVENTS_PATH_FROM_ENVIRONMENT, {}).BeforeTool),
     strip: stripGeminiEntries,
@@ -179,9 +190,10 @@ const FOLDER_ADAPTERS: FolderSettingsAdapter[] = [
     otherEventKey: 'Stop',
     createSpawner: (projectRoot) => {
       const builder = new QwenCommandBuilder();
-      return (directory) => {
+      const build = (directory: string): void => {
         builder.buildQwenCommand({ ...qwenSpawnOptions(directory), projectRoot: projectRoot ?? directory });
       };
+      return Object.assign(build, { readTracking: (directory: string) => builder.refreshSettingsTracking(directory) });
     },
     kangenticEntry: () => lastBridgeEntry(buildQwenHooks(MOCK_BRIDGE_PATH, EVENTS_PATH_FROM_ENVIRONMENT, {}).PreToolUse),
     strip: stripQwenEntries,
@@ -459,7 +471,13 @@ describe('stripKangenticEntries return value and key cleanup (H4)', () => {
 // worktree's own copy of the file. A real repository and worktree, because what
 // separates a branch's file from one Kangentic wrote is whether git tracks it.
 // Each case starts several git processes, which can pass vitest's 5 s default under load.
+// A spawn here is what the app does: the tracking read `ensureTrust` makes, then the build.
 describe('a worktree\'s folder settings file', { timeout: 30_000 }, () => {
+  async function spawnIn(spawner: FolderSpawner, directory: string): Promise<void> {
+    await spawner.readTracking(directory);
+    spawner(directory);
+  }
+
   function git(directory: string, ...commandArguments: string[]): void {
     execFileSync('git', [
       '-c', 'user.name=Test',
@@ -487,12 +505,12 @@ describe('a worktree\'s folder settings file', { timeout: 30_000 }, () => {
     git(directory, 'commit', '-m', 'settings');
   }
 
-  it.each(FOLDER_ADAPTERS)('$name: a spawn and its removeHooks keep the settings the branch committed', (adapter) => {
+  it.each(FOLDER_ADAPTERS)('$name: a spawn and its removeHooks keep the settings the branch committed', async (adapter) => {
     const worktree = createWorktree();
     writeSettingsText(projectDirectory, adapter.settingsFolder, JSON.stringify({ ui: { theme: 'Root' } }));
     commitSettings(worktree, adapter.settingsFolder, { ui: { theme: 'Branch' } });
 
-    adapter.createSpawner(projectDirectory)(worktree);
+    await spawnIn(adapter.createSpawner(projectDirectory), worktree);
 
     const written = readSettings(worktree, adapter.settingsFolder);
     expect(written.ui).toEqual({ theme: 'Branch' });
@@ -503,7 +521,7 @@ describe('a worktree\'s folder settings file', { timeout: 30_000 }, () => {
     expect(readSettings(worktree, adapter.settingsFolder).ui).toEqual({ theme: 'Branch' });
   });
 
-  it.each(FOLDER_ADAPTERS)('$name: a check that gets no answer from git keeps the branch\'s settings', (adapter) => {
+  it.each(FOLDER_ADAPTERS)('$name: a check that gets no answer from git keeps the branch\'s settings', async (adapter) => {
     // A timeout surfaces the same way as a git that cannot start: no exit status. Falling to the
     // root there would be the overwrite this check exists to stop.
     const worktree = createWorktree();
@@ -512,7 +530,7 @@ describe('a worktree\'s folder settings file', { timeout: 30_000 }, () => {
     vi.stubEnv('PATH', '');
 
     try {
-      adapter.createSpawner(projectDirectory)(worktree);
+      await spawnIn(adapter.createSpawner(projectDirectory), worktree);
     } finally {
       vi.unstubAllEnvs();
     }
@@ -520,7 +538,18 @@ describe('a worktree\'s folder settings file', { timeout: 30_000 }, () => {
     expect(readSettings(worktree, adapter.settingsFolder).ui).toEqual({ theme: 'Branch' });
   });
 
-  it.each(FOLDER_ADAPTERS)('$name: a git that refuses the checkout keeps the branch\'s settings', (adapter) => {
+  it.each(FOLDER_ADAPTERS)('$name: a build nobody asked git for keeps the branch\'s settings', (adapter) => {
+    // No tracking read ran, so there is no answer. The root there would be the overwrite.
+    const worktree = createWorktree();
+    writeSettingsText(projectDirectory, adapter.settingsFolder, JSON.stringify({ ui: { theme: 'Root' } }));
+    commitSettings(worktree, adapter.settingsFolder, { ui: { theme: 'Branch' } });
+
+    adapter.createSpawner(projectDirectory)(worktree);
+
+    expect(readSettings(worktree, adapter.settingsFolder).ui).toEqual({ theme: 'Branch' });
+  });
+
+  it.each(FOLDER_ADAPTERS)('$name: a git that refuses the checkout keeps the branch\'s settings', async (adapter) => {
     // A missing git dir makes ls-files exit 128. That is git refusing, not an answer that the
     // file is untracked, so the root's content must not overwrite the branch's.
     const worktree = createWorktree();
@@ -530,7 +559,7 @@ describe('a worktree\'s folder settings file', { timeout: 30_000 }, () => {
     vi.stubEnv('GIT_DIR', path.join(projectDirectory, 'no-such-git-dir'));
 
     try {
-      adapter.createSpawner(projectDirectory)(worktree);
+      await spawnIn(adapter.createSpawner(projectDirectory), worktree);
     } finally {
       vi.unstubAllEnvs();
     }
@@ -538,15 +567,15 @@ describe('a worktree\'s folder settings file', { timeout: 30_000 }, () => {
     expect(readSettings(worktree, adapter.settingsFolder).ui).toEqual({ theme: 'Branch' });
   });
 
-  it.each(FOLDER_ADAPTERS)('$name: a second spawn on a tracked file keeps the branch\'s settings and adds no second set of hooks', (adapter) => {
+  it.each(FOLDER_ADAPTERS)('$name: a second spawn on a tracked file keeps the branch\'s settings and adds no second set of hooks', async (adapter) => {
     const worktree = createWorktree();
     writeSettingsText(projectDirectory, adapter.settingsFolder, JSON.stringify({ ui: { theme: 'Root' } }));
     commitSettings(worktree, adapter.settingsFolder, { ui: { theme: 'Branch' } });
-    const spawn = adapter.createSpawner(projectDirectory);
+    const spawner = adapter.createSpawner(projectDirectory);
 
-    spawn(worktree);
+    await spawnIn(spawner, worktree);
     const firstHookCount = kangenticHookCommandsIn(readSettings(worktree, adapter.settingsFolder)).length;
-    spawn(worktree);
+    await spawnIn(spawner, worktree);
 
     const written = readSettings(worktree, adapter.settingsFolder);
     expect(firstHookCount).toBeGreaterThan(0);
@@ -554,14 +583,14 @@ describe('a worktree\'s folder settings file', { timeout: 30_000 }, () => {
     expect(kangenticHookCommandsIn(written)).toHaveLength(firstHookCount);
   });
 
-  it.each(FOLDER_ADAPTERS)('$name: a file git does not track keeps following the project root', (adapter) => {
+  it.each(FOLDER_ADAPTERS)('$name: a file git does not track keeps following the project root', async (adapter) => {
     const worktree = createWorktree();
     writeSettingsText(projectDirectory, adapter.settingsFolder, JSON.stringify({ ui: { theme: 'Before' } }));
-    const spawn = adapter.createSpawner(projectDirectory);
-    spawn(worktree);
+    const spawner = adapter.createSpawner(projectDirectory);
+    await spawnIn(spawner, worktree);
 
     writeSettingsText(projectDirectory, adapter.settingsFolder, JSON.stringify({ ui: { theme: 'After' } }));
-    spawn(worktree);
+    await spawnIn(spawner, worktree);
 
     expect(readSettings(worktree, adapter.settingsFolder).ui).toEqual({ theme: 'After' });
   });

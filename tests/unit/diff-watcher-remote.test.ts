@@ -12,6 +12,13 @@ import path from 'node:path';
 import { DiffWatcher, REMOTE_POLL_MS } from '../../src/main/git/diff-watcher';
 import { setRemoteGitResolver, type RemoteGitRunner } from '../../src/main/git/remote-git';
 
+// A local subscribe also reads the git directory. Answer it here so no git child
+// starts in the temp folder, which on Windows holds the folder open past its removal.
+vi.mock('../../src/main/git/git-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/git/git-client')>()),
+  gitAt: vi.fn(() => ({ raw: vi.fn(async () => { throw new Error('not a git repository'); }) })),
+}));
+
 const REMOTE_PATH = '/shell/.kangentic/worktrees/7';
 const DEBOUNCE_MS = 500;
 

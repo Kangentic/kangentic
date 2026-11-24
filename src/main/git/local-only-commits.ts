@@ -1,4 +1,4 @@
-import { openSimpleGit } from './simple-git-client';
+import { gitAt, type GitClient } from './git-client';
 import { resolvePRByNumber } from '../pr/pr-registry';
 import type { PRState } from '../../shared/types';
 
@@ -28,7 +28,7 @@ const PR_LOOKUP_TIMEOUT_MS = 5_000;
  * genuinely at-risk work.
  */
 export async function countLocalOnlyCommits(checkPath: string, pr?: PrMergeContext): Promise<number> {
-  const git = openSimpleGit(checkPath);
+  const git = gitAt(checkPath);
 
   // Commits on HEAD reachable from no remote ref (by SHA). Anything pushed is
   // recoverable from the remote and excluded here.
@@ -54,7 +54,7 @@ export async function countLocalOnlyCommits(checkPath: string, pr?: PrMergeConte
 }
 
 /** SHAs reachable from HEAD whose patch-id already exists in the base branch. */
-async function contentMergedShas(git: ReturnType<typeof openSimpleGit>): Promise<Set<string>> {
+async function contentMergedShas(git: GitClient): Promise<Set<string>> {
   const base = await resolveBaseBranch(git);
   // `origin/<base>` first (current after the probe's fetch), then local `<base>`.
   for (const upstream of [`origin/${base}`, base]) {
@@ -78,7 +78,7 @@ async function contentMergedShas(git: ReturnType<typeof openSimpleGit>): Promise
 }
 
 /** The base branch the worktree forked from, recorded at creation; falls back to 'main'. */
-async function resolveBaseBranch(git: ReturnType<typeof openSimpleGit>): Promise<string> {
+async function resolveBaseBranch(git: GitClient): Promise<string> {
   try {
     const configured = (await git.raw(['config', 'kangentic.baseBranch'])).trim();
     if (configured) return configured;

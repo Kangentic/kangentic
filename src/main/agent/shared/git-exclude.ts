@@ -1,7 +1,6 @@
-import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { childProcessEnv } from '../../shared/child-env';
+import { execFileAsync, execRunFailureOf } from '../../utility-process/off-main-exec';
 
 /**
  * Hide Kangentic-written agent runtime files from git.
@@ -24,8 +23,9 @@ import { childProcessEnv } from '../../shared/child-env';
  * policy: an adapter excludes such a file only when Kangentic is about to
  * create it, checked with `fs.existsSync` BEFORE its write.
  *
- * `settingsBaseDirectory` is the worktree side of that carve-out: it asks git
- * whether a settings file is the branch's own or one Kangentic wrote.
+ * `settingsBaseDirectory` is the worktree side of that carve-out: it reads
+ * git's answer on whether a settings file is the branch's own or one Kangentic
+ * wrote.
  */
 
 const EXCLUDE_MARKER = '# kangentic: agent runtime files (local ignore, safe to remove)';
@@ -74,14 +74,57 @@ export function resolveGitCommonDir(directory: string): string | null {
   return gitDir;
 }
 
-/** How long a spawn waits on git, on main, before it gives up on the tracked check. */
-const TRACKED_CHECK_TIMEOUT_MS = 1000;
+/**
+ * How long the tracked check waits on git before it gives up. The git process
+ * starts in the pty host, behind whatever else is starting there, so the bound
+ * covers a busy launch and still ends a git that hangs.
+ */
+const TRACKED_CHECK_TIMEOUT_MS = 5000;
 
 /** The exit status of `git ls-files --error-unmatch` for a path the index does not hold. */
 const UNTRACKED_EXIT_STATUS = 1;
 
 /** Git's exit status for a fatal error: no repository, or a repository it refused. */
 const GIT_FATAL_EXIT_STATUS = 128;
+
+/**
+ * What git said about a folder's `<settingsFolder>/settings.json`. `unknown` is
+ * every answer that is not about the file: git refused the checkout, timed out
+ * or would not start.
+ */
+export type SettingsFileTracking = 'tracked' | 'untracked' | 'unknown';
+
+/**
+ * Ask git whether it tracks `cwd`'s `<settingsFolder>/settings.json`.
+ *
+ * `untracked` only when nothing tracks the file: exit 1, git's own answer, or
+ * exit 128 from a folder that is no git checkout. Exit 128 from a checkout is
+ * git refusing it (dubious ownership, a corrupt index), not an answer about the
+ * file, and a timeout or a git that will not start has no exit status at all,
+ * so those read `unknown`. Never rejects.
+ *
+ * Asynchronous, through `execFileAsync`, so the git process starts in the pty
+ * host. This used to be an `execFileSync` inside the command build, which held
+ * main for the whole git run on every worktree spawn of an agent with no
+ * settings flag.
+ */
+export async function readSettingsFileTracking(cwd: string, settingsFolder: string): Promise<SettingsFileTracking> {
+  try {
+    // A git pathspec is forward-slashed on every platform.
+    await execFileAsync('git', ['ls-files', '--error-unmatch', '--', `${settingsFolder}/settings.json`], {
+      cwd,
+      timeout: TRACKED_CHECK_TIMEOUT_MS,
+      windowsHide: true,
+    });
+    return 'tracked';
+  } catch (error) {
+    // report-ok: git's exit status is the answer being read, and every other failure keeps the worktree's copy.
+    const failure = execRunFailureOf(error);
+    if (failure.kind !== 'exit_code') return 'unknown';
+    if (failure.exitCode === UNTRACKED_EXIT_STATUS) return 'untracked';
+    return failure.exitCode === GIT_FATAL_EXIT_STATUS && resolveGitCommonDir(cwd) === null ? 'untracked' : 'unknown';
+  }
+}
 
 /**
  * The folder whose `<settingsFolder>/settings.json` a session's merged settings
@@ -97,35 +140,52 @@ const GIT_FATAL_EXIT_STATUS = 128;
  * reaching the worktree. Existence cannot separate the two: after a first spawn
  * the file is always there.
  *
- * Synchronous because a command build is, so it blocks main for the length of
- * one `git ls-files`, bounded by the timeout. A worktree with the file present
- * pays, whether its checkout brought the file or an earlier spawn wrote it. A
- * main-repo spawn never does.
- *
- * The root is chosen only when nothing tracks the file: exit 1, git's own
- * answer, or exit 128 from a folder that is no git checkout. Everything else
- * keeps the worktree's copy, because the root there is the overwrite this exists
- * to stop. Exit 128 from a checkout is git refusing it (dubious ownership, a
- * corrupt index), not an answer about the file, and a timeout or a git that will
- * not start has no exit status at all. Keeping the copy costs only a root edit
- * that reaches the worktree later.
+ * `tracking` is git's answer for `cwd`, read ahead of the command build
+ * (`SettingsTrackingLedger`), because a command build is synchronous and the
+ * answer takes a git process. The root is chosen only on `untracked`. Anything
+ * else, a missing answer included, keeps the worktree's copy, because the root
+ * there is the overwrite this exists to stop. Keeping the copy costs only a
+ * root edit that reaches the worktree later.
  */
-export function settingsBaseDirectory(cwd: string, projectRoot: string, settingsFolder: string): string {
+export function settingsBaseDirectory(
+  cwd: string,
+  projectRoot: string,
+  settingsFolder: string,
+  tracking: SettingsFileTracking | undefined,
+): string {
   if (cwd === projectRoot || !fs.existsSync(path.join(cwd, settingsFolder, 'settings.json'))) return projectRoot;
-  try {
-    // A git pathspec is forward-slashed on every platform.
-    execFileSync('git', ['ls-files', '--error-unmatch', '--', `${settingsFolder}/settings.json`], {
-      cwd,
-      env: childProcessEnv(),
-      stdio: 'ignore',
-      timeout: TRACKED_CHECK_TIMEOUT_MS,
-      windowsHide: true,
-    });
-    return cwd;
-  } catch (error) {
-    const exitStatus = typeof error === 'object' && error !== null && 'status' in error ? error.status : null;
-    const notACheckout = exitStatus === GIT_FATAL_EXIT_STATUS && resolveGitCommonDir(cwd) === null;
-    return exitStatus === UNTRACKED_EXIT_STATUS || notACheckout ? projectRoot : cwd;
+  return tracking === 'untracked' ? projectRoot : cwd;
+}
+
+/**
+ * Git's answer about a settings file, per working folder, between the step
+ * that can wait for it and the command build that reads it.
+ *
+ * Every path that builds an agent command awaits the adapter's `ensureTrust`
+ * for the same folder first (.claude/rules/spawn-entry-point-parity.md), so
+ * the adapter refreshes there and its builder reads here.
+ */
+export class SettingsTrackingLedger {
+  private readonly answers = new Map<string, SettingsFileTracking>();
+
+  constructor(private readonly settingsFolder: string) {}
+
+  /**
+   * Ask git about `cwd`'s settings file and keep the answer for the command
+   * build that follows. A folder with no settings file needs no answer, since
+   * the project root starts its merge either way. Never rejects.
+   */
+  async refresh(cwd: string): Promise<void> {
+    if (!fs.existsSync(path.join(cwd, this.settingsFolder, 'settings.json'))) {
+      this.answers.delete(cwd);
+      return;
+    }
+    this.answers.set(cwd, await readSettingsFileTracking(cwd, this.settingsFolder));
+  }
+
+  /** The folder a session's merged settings start from (`settingsBaseDirectory`). */
+  baseDirectory(cwd: string, projectRoot: string): string {
+    return settingsBaseDirectory(cwd, projectRoot, this.settingsFolder, this.answers.get(cwd));
   }
 }
 

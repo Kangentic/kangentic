@@ -5,13 +5,12 @@ import {
   startEventLoopLagMonitor,
   stopEventLoopLagMonitor,
 } from '../../src/main/diagnostics/event-loop-lag';
-import { describeSpawnCaller, stackCallerLabel, storedSpawnCaller, withSpawnCaller } from '../../src/main/diagnostics/spawn-caller';
+import { stackCallerLabel } from '../../src/main/diagnostics/spawn-caller';
 
 /**
  * `spawn-caller.ts` names the code that asked for a child process, for the lag
- * report's spawn spans. A simple-git spawn's own stack names only simple-git's
- * scheduler, so the caller is stored where Kangentic code made the call and
- * read back across awaits.
+ * report's spawn spans. The label is what tells a developer which caller to
+ * move when a start shows up on main's thread.
  */
 
 /** This test file's frames stand in for the app bundle's. */
@@ -41,16 +40,6 @@ describe('spawn caller', () => {
     }
     const label = await loadGraphPanel();
     expect(label.split('<')).toEqual(expect.arrayContaining(['readCommitGraph', 'loadGraphPanel']));
-  });
-
-  it('carries a stored caller across awaits and prefers it over the stack', async () => {
-    expect(storedSpawnCaller()).toBeUndefined();
-    const seen = await withSpawnCaller('getBranchSummary', async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1));
-      return describeSpawnCaller();
-    });
-    expect(seen).toBe('getBranchSummary');
-    expect(storedSpawnCaller()).toBeUndefined();
   });
 
   it('answers unknown when no frame of the bundle is on the stack', () => {

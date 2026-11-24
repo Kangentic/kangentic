@@ -1,22 +1,16 @@
 /**
  * Who asked for a child process, for the lag report's spawn spans (dev builds).
  *
- * A spawn's own stack names only the code right above it. For a simple-git
- * call that is simple-git's scheduler (`Pn.gitResponse<Pn.attemptRemoteTask<
- * Pn.attemptTask`), because the Kangentic caller is behind an `await` the
- * scheduler starts afresh; for a pty host spawn the stack is the host's, and
- * the caller is in main. So the caller is captured where Kangentic code makes
- * the call and carried with it: an AsyncLocalStorage run around each
- * simple-git method (`openSimpleGit`), and a `caller` field on the host's
- * exec and CLI requests. `describeSpawnCaller` prefers the stored caller and
- * falls back to the current stack, async frames included.
+ * A spawn's own stack names only the code right above it, and for a pty host
+ * spawn that stack is the host's while the caller is in main. So the caller is
+ * read where Kangentic code makes the call and carried with it, as a `caller`
+ * field on the host's exec and CLI requests. `describeSpawnCaller` reads the
+ * current stack, async frames included.
  *
  * Every call site gates on `__KANGENTIC_DEV__`, so a production build captures
- * no stacks and never enters the storage. The storage is created on first use,
- * so a production bundle that keeps this module still allocates nothing.
+ * no stacks.
  */
 
-import { AsyncLocalStorage } from 'node:async_hooks';
 import { isTimingSyncWork, recordSyncSpan } from './event-loop-lag';
 
 /** How many named frames identify a caller. */
@@ -28,21 +22,7 @@ const CALLER_LABEL = 'diag:spawn-caller';
  * Frames that only pass a spawn along. Skipped so the label names the code
  * that wanted the process, not the plumbing between it and the spawn.
  */
-const WRAPPER_FRAME = /\b(stackCallerLabel|describeSpawnCaller|withSpawnCaller|tracedGitMethod|spawnTraced|callerLabel|execAsync|execFileAsync|runRemote|spawnOffMainCli|spawnWithAbort|runGitCommand|gitAt|spawnCli|localExec|localExecFile)\b/;
-
-let spawnCallerStorage: AsyncLocalStorage<string> | null = null;
-
-/** The caller a surrounding `withSpawnCaller` recorded, or undefined. */
-export function storedSpawnCaller(): string | undefined {
-  return spawnCallerStorage?.getStore();
-}
-
-/** Run `work` with `caller` as the spawn caller for everything it starts,
- *  across its awaits. */
-export function withSpawnCaller<Result>(caller: string, work: () => Result): Result {
-  spawnCallerStorage ??= new AsyncLocalStorage<string>();
-  return spawnCallerStorage.run(caller, work);
-}
+const WRAPPER_FRAME = /\b(stackCallerLabel|describeSpawnCaller|spawnTraced|callerLabel|execAsync|execFileAsync|runRemote|spawnOffMainCli|spawnWithAbort|runGitCommand|gitAt|spawnCli|localExec|localExecFile)\b/;
 
 /**
  * The first few named frames of the app's own bundle on the current stack,
@@ -76,7 +56,7 @@ export function stackCallerLabel(bundleFrame: RegExp = /[\\/]\.vite[\\/]build[\\
   return names.length > 0 ? names.join('<') : 'unknown';
 }
 
-/** The stored caller when one is set, else the current stack's. */
+/** The caller of the spawn being made, read off the current stack. */
 export function describeSpawnCaller(): string {
-  return storedSpawnCaller() ?? stackCallerLabel();
+  return stackCallerLabel();
 }

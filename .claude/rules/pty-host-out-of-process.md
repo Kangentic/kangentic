@@ -128,7 +128,9 @@ at the Windows timer floor.
   main at startup, 17 at 16 ms or more. Use `execAsync` / `execFileAsync` from
   `src/main/utility-process/off-main-exec.ts`, never `promisify(exec)` or `promisify(execFile)`:
   they resolve and reject exactly as `promisify` does, run the child in the host (`host-exec.ts`,
-  on its spawn worker), and fall back to a local spawn where no host is registered or reachable. The host never forks and
+  on its spawn worker), and fall back to a local spawn only where no host is registered (unit
+  tests, startup before the host). A registered host that does not answer rejects the call and
+  never reruns it here, since the child may already have run. The host never forks and
   refuses to launch its own executable or main's (the init message carries `mainExecutable`, since
   on macOS the host runs from the Helper bundle), either of which, with the RunAsNode fuse off,
   would boot a second app. A session's or a probe's PTY whose program is one of them is refused
@@ -250,11 +252,11 @@ keep simple-git's method names and results; simple-git has no spawn hook) and
 against 49 with 45 on main before. Three calls off the lifecycle use the git client too, because
 they run repository hooks, filters or merge drivers and `gitAt`'s env drops Crashpad's pipe name
 (`src/main/shared/child-env.ts`): Pull from base's merge, the carry of uncommitted changes into a
-new worktree, and the Command Terminal's cold-start checkout and merge. Still on main, because none
-runs in a lifecycle: the branch summary's ahead and behind count, the diff watcher, blame, file
-history, the commit graph, a task's branch switch config write, and the Done drop's pending-changes
-probe. A new git call on the lifecycle path uses the git client; the lifecycle test fails when one
-lands on main.
+new worktree, and the Command Terminal's cold-start checkout and merge. The reads off a lifecycle
+use it as well: the branch summary's ahead and behind count, the diff watcher, blame, file history,
+the commit graph, a task's branch switch config write, and the Done drop's pending-changes probe.
+So no git call starts on main, and [[main-starts-no-process]] keeps it that way for every other
+program too. The lifecycle test fails when a lifecycle call lands on main.
 
 The worktree enumeration behind `kangentic_list_worktrees` and `kangentic_devtools_list_instances`
 uses the git client too (`src/main/git/worktree-list.ts`). It is not on a lifecycle, but it walks

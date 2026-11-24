@@ -82,9 +82,6 @@ vi.mock('electron', () => ({
 // stub's implementation. task-archive.ts does not use PQueue directly, so
 // there is no interference from leaving p-queue real.
 
-vi.mock('simple-git', () => ({
-  simpleGit: vi.fn(() => ({})),
-}));
 
 // DB layer - not exercised directly (getProjectRepos is mocked)
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));

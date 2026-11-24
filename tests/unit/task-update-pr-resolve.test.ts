@@ -41,9 +41,6 @@ vi.mock('node:fs', () => ({
   },
 }));
 
-vi.mock('simple-git', () => ({
-  simpleGit: vi.fn(() => ({})),
-}));
 
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));
 vi.mock('../../src/main/db/repositories/task-repository', () => ({

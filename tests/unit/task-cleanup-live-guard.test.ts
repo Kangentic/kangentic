@@ -23,7 +23,6 @@ const h = vi.hoisted(() => ({
 }));
 
 // Import-time safety for unrelated deps pulled in by task-cleanup.ts.
-vi.mock('simple-git', () => ({ simpleGit: vi.fn(() => ({ revparse: vi.fn() })) }));
 vi.mock('../../src/main/git/worktree-manager', () => ({ WorktreeManager: class {} }));
 vi.mock('better-sqlite3', () => ({ default: vi.fn() }));
 

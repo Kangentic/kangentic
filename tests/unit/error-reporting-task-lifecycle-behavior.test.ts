@@ -157,7 +157,10 @@ describe('handleTaskMove failures', () => {
     vi.resetModules();
     installMocks({
       electron: () => ({ ipcMain: { handle: vi.fn() } }),
-      'simple-git': () => ({ simpleGit: vi.fn(() => ({ diffSummary: vi.fn(async () => ({ insertions: 0, deletions: 0, changed: 0 })) })) }),
+      '../../src/main/git/git-client': async () => ({
+        ...(await vi.importActual<typeof import('../../src/main/git/git-client')>('../../src/main/git/git-client')),
+        gitAt: vi.fn(() => ({ diffSummary: vi.fn(async () => ({ insertions: 0, deletions: 0, changed: 0 })) })),
+      }),
       '../../src/main/db/database': () => ({ getProjectDb: vi.fn(() => ({})) }),
       '../../src/main/db/repositories/task-repository': () => ({ TaskRepository: class {} }),
       '../../src/main/db/repositories/session-repository': () => ({

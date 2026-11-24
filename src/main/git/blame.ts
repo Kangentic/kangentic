@@ -1,4 +1,4 @@
-import { openSimpleGit } from './simple-git-client';
+import { gitAt } from './git-client';
 import type { GitBlameInput, GitBlameLine, GitBlameResult } from '../../shared/types';
 
 /**
@@ -75,7 +75,7 @@ export async function getBlame(input: GitBlameInput): Promise<GitBlameResult> {
   const workingDirectory = input.worktreePath ?? input.projectPath;
 
   try {
-    const git = openSimpleGit(workingDirectory);
+    const git = gitAt(workingDirectory);
     const rawBlame = await git.raw(['blame', '--line-porcelain', '--', input.filePath]);
     return { lines: parseBlamePorcelain(rawBlame) };
   } catch {

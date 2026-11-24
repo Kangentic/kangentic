@@ -182,6 +182,11 @@ export class GeminiAdapter implements AgentAdapter {
     // worktree is what makes the Kangentic MCP entry take effect. See
     // trust-manager.ts. A Gemini in a WSL distro is trusted in the distro.
     await ensureWorktreeTrust(workingDirectory, place ?? null);
+    // The command build that follows merges `.gemini/settings.json` and has to
+    // know whether the folder's copy is the branch's own. That is a git
+    // process, so it is asked here, where the spawn can wait for it. A host's
+    // working folder is its own root, so nothing is chosen there.
+    if (place?.kind !== 'ssh') await this.commandBuilder.refreshSettingsTracking(workingDirectory);
   }
 
   /**

@@ -13,9 +13,11 @@ import path from 'node:path';
 import os from 'node:os';
 import {
   ensureLocalGitExcludes,
+  readSettingsFileTracking,
   resolveGitCommonDir,
   resolveGitDir,
   settingsBaseDirectory,
+  SettingsTrackingLedger,
 } from '../../src/main/agent/shared/git-exclude';
 
 let tmpRoot: string;
@@ -95,8 +97,10 @@ describe('resolveGitCommonDir', () => {
 
 // The exit-status classification behind a worktree session's settings base. Real git, because the
 // classification is git's own exit statuses. Each case starts git processes, which can pass
-// vitest's 5 s default under load.
-describe('settingsBaseDirectory', { timeout: 30_000 }, () => {
+// vitest's 5 s default under load. The answer is read ahead of the command build
+// (`readSettingsFileTracking`, asynchronous, so the git process never holds the main thread) and
+// applied by `settingsBaseDirectory`, which starts no process.
+describe('settings base directory', { timeout: 30_000 }, () => {
   const SETTINGS_FOLDER = '.gemini';
 
   function git(directory: string, ...commandArguments: string[]): void {
@@ -126,29 +130,36 @@ describe('settingsBaseDirectory', { timeout: 30_000 }, () => {
     return { projectRoot, worktree };
   }
 
-  it('starts from the worktree when git tracks its settings file', () => {
+  it('starts from the worktree when git tracks its settings file', async () => {
     const { projectRoot, worktree } = createRepositoryAndWorktree();
     writeSettings(worktree);
     git(worktree, 'add', `${SETTINGS_FOLDER}/settings.json`);
     git(worktree, 'commit', '-m', 'settings');
 
-    expect(settingsBaseDirectory(worktree, projectRoot, SETTINGS_FOLDER)).toBe(worktree);
+    const tracking = await readSettingsFileTracking(worktree, SETTINGS_FOLDER);
+
+    expect(tracking).toBe('tracked');
+    expect(settingsBaseDirectory(worktree, projectRoot, SETTINGS_FOLDER, tracking)).toBe(worktree);
   });
 
-  it('starts from the project root when git does not track the worktree file (exit 1)', () => {
+  it('starts from the project root when git does not track the worktree file (exit 1)', async () => {
     const { projectRoot, worktree } = createRepositoryAndWorktree();
     writeSettings(worktree);
 
-    expect(settingsBaseDirectory(worktree, projectRoot, SETTINGS_FOLDER)).toBe(projectRoot);
+    const tracking = await readSettingsFileTracking(worktree, SETTINGS_FOLDER);
+
+    expect(tracking).toBe('untracked');
+    expect(settingsBaseDirectory(worktree, projectRoot, SETTINGS_FOLDER, tracking)).toBe(projectRoot);
   });
 
-  it('starts from the project root when the worktree has no settings file', () => {
+  it('starts from the project root when the worktree has no settings file, whatever git said', () => {
     const { projectRoot, worktree } = createRepositoryAndWorktree();
 
-    expect(settingsBaseDirectory(worktree, projectRoot, SETTINGS_FOLDER)).toBe(projectRoot);
+    expect(settingsBaseDirectory(worktree, projectRoot, SETTINGS_FOLDER, 'tracked')).toBe(projectRoot);
+    expect(settingsBaseDirectory(worktree, projectRoot, SETTINGS_FOLDER, undefined)).toBe(projectRoot);
   });
 
-  it('starts from the project root when the folder is no git checkout (exit 128 with no .git)', () => {
+  it('starts from the project root when the folder is no git checkout (exit 128 with no .git)', async () => {
     const { projectRoot } = createRepositoryAndWorktree();
     const plainFolder = path.join(tmpRoot, 'plain');
     writeSettings(plainFolder);
@@ -156,13 +167,16 @@ describe('settingsBaseDirectory', { timeout: 30_000 }, () => {
     vi.stubEnv('GIT_CEILING_DIRECTORIES', tmpRoot);
 
     try {
-      expect(settingsBaseDirectory(plainFolder, projectRoot, SETTINGS_FOLDER)).toBe(projectRoot);
+      const tracking = await readSettingsFileTracking(plainFolder, SETTINGS_FOLDER);
+
+      expect(tracking).toBe('untracked');
+      expect(settingsBaseDirectory(plainFolder, projectRoot, SETTINGS_FOLDER, tracking)).toBe(projectRoot);
     } finally {
       vi.unstubAllEnvs();
     }
   });
 
-  it('keeps the worktree when its .git points at a git dir that is gone (exit 128 from a checkout)', () => {
+  it('keeps the worktree when its .git points at a git dir that is gone (exit 128 from a checkout)', async () => {
     // A pruned or moved worktree: git refuses it. That is no answer about the file, so the
     // root's content must not replace the branch's.
     const { projectRoot } = createRepositoryAndWorktree();
@@ -170,7 +184,35 @@ describe('settingsBaseDirectory', { timeout: 30_000 }, () => {
     writeSettings(brokenWorktree);
     fs.writeFileSync(path.join(brokenWorktree, '.git'), `gitdir: ${path.join(tmpRoot, 'no-such-gitdir')}\n`);
 
-    expect(settingsBaseDirectory(brokenWorktree, projectRoot, SETTINGS_FOLDER)).toBe(brokenWorktree);
+    const tracking = await readSettingsFileTracking(brokenWorktree, SETTINGS_FOLDER);
+
+    expect(tracking).toBe('unknown');
+    expect(settingsBaseDirectory(brokenWorktree, projectRoot, SETTINGS_FOLDER, tracking)).toBe(brokenWorktree);
+  });
+
+  it('keeps the worktree when nobody asked git, since the root there is the overwrite to avoid', () => {
+    const { projectRoot, worktree } = createRepositoryAndWorktree();
+    writeSettings(worktree);
+
+    expect(settingsBaseDirectory(worktree, projectRoot, SETTINGS_FOLDER, undefined)).toBe(worktree);
+  });
+
+  it('carries the answer from the step that waits for git to the build that reads it', async () => {
+    const { projectRoot, worktree } = createRepositoryAndWorktree();
+    writeSettings(worktree);
+    const ledger = new SettingsTrackingLedger(SETTINGS_FOLDER);
+
+    // Before the refresh there is no answer, so the worktree's copy is kept.
+    expect(ledger.baseDirectory(worktree, projectRoot)).toBe(worktree);
+
+    await ledger.refresh(worktree);
+    expect(ledger.baseDirectory(worktree, projectRoot)).toBe(projectRoot);
+
+    // The file is committed on the branch: the next refresh reads the new answer.
+    git(worktree, 'add', `${SETTINGS_FOLDER}/settings.json`);
+    git(worktree, 'commit', '-m', 'settings');
+    await ledger.refresh(worktree);
+    expect(ledger.baseDirectory(worktree, projectRoot)).toBe(worktree);
   });
 });
 

@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { openSimpleGit } from './simple-git-client';
+import { gitAt } from './git-client';
 import { replacePathPrefix } from '../../shared/paths';
 import { remoteGitRunnerFor, type RemoteGitRunner } from './remote-git';
 
@@ -242,14 +242,15 @@ export class DiffWatcher {
     // it is paid again every time the last subscriber for a path leaves and a
     // new one arrives - which is exactly what clicking between tasks does. The
     // answer is stable for the life of a worktree, so cache it and let the
-    // removing-listener drop it when the worktree is actually deleted.
+    // removing-listener drop it when the worktree is actually deleted. The
+    // subprocess starts in the pty host (`gitAt`), never on this thread.
     const cachedGitDir = this.gitDirCache.get(worktreePath);
     if (cachedGitDir !== undefined) {
       this.armGitMetadataWatches(worktreePath, cachedGitDir, entry, fire);
       return;
     }
 
-    openSimpleGit(worktreePath)
+    gitAt(worktreePath)
       .raw(['rev-parse', '--absolute-git-dir'])
       .then((output) => {
         const gitDir = output.trim();

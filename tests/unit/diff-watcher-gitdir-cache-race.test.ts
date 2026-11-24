@@ -17,7 +17,7 @@
  * drives the promise on a manually-controlled schedule so releaseUnder can
  * land WHILE it is still pending.
  *
- * Mirrors tests/unit/diff-watcher.test.ts's node:fs / simple-git / node:path
+ * Mirrors tests/unit/diff-watcher.test.ts's node:fs / git-client / node:path
  * mocking style rather than importing from it, since each spec file owns its
  * own `vi.mock(...)` factories.
  */
@@ -39,12 +39,13 @@ vi.mock('node:fs', () => ({
   },
 }));
 
-// Mock simple-git so the test can control rev-parse resolution timing.
+// Mock gitAt so the test can control rev-parse resolution timing.
 const mockGitRaw = vi.fn<(args: string[]) => Promise<string>>();
 const mockGitInstance = { raw: mockGitRaw };
 
-vi.mock('simple-git', () => ({
-  simpleGit: vi.fn(() => mockGitInstance),
+vi.mock('../../src/main/git/git-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/git/git-client')>()),
+  gitAt: vi.fn(() => mockGitInstance),
 }));
 
 // Extend the real path module: pin sep to '/' for cross-platform consistency

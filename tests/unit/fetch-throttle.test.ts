@@ -30,11 +30,11 @@ vi.mock('../../src/main/git/git-spawn', () => ({
 
 import { fetchIfStale, fetchAllRemotesIfStale, clearFetchCache, classifyFetchFailure, nonInteractiveGitEnv, forgetRecentFetches } from '../../src/main/git/fetch-throttle';
 import type { FetchFailureReason, FetchIfStaleOutcome } from '../../src/main/git/fetch-throttle';
-import type { SimpleGit } from 'simple-git';
+import type { GitClient } from '../../src/main/git/git-client';
 
 const PROJECT_PATH = '/mock/project';
 const BRANCH = 'main';
-const stubGit = {} as SimpleGit;
+const stubGit = {} as GitClient;
 
 describe('fetchIfStale', () => {
   let warnSpy: ReturnType<typeof vi.spyOn>;

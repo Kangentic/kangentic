@@ -202,7 +202,7 @@ export const UNREPORTED_CATCH_SITES: Readonly<Record<string, number>> = {
   'src/main/agent/shared/confirmed-missing.ts': 1,
   'src/main/agent/shared/expired-conversation-recap.ts': 1,
   'src/main/agent/shared/fallback-paths.ts': 1,
-  'src/main/agent/shared/git-exclude.ts': 5,
+  'src/main/agent/shared/git-exclude.ts': 4,
   'src/main/agent/shared/history-scan.ts': 17,
   'src/main/agent/shared/hook-utils.ts': 6,
   'src/main/agent/shared/jsonl-history-page.ts': 4,
