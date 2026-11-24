@@ -470,6 +470,58 @@ describe('captureSessionIdFromFilesystem - an OpenCode 2 database', () => {
       .resolves.toBe('ses_newestInSession');
   });
 
+  // The poll runs to the end of the window and no further: a row made after it is not this spawn's.
+  it('takes no row made after the 30 s window, and takes one made just inside it', async () => {
+    const spawnedAt = new Date();
+    plantDatabase({ session: [['ses_madeAfterTheWindow', spawnedAt.getTime() + 31_000]] });
+    await expect(OpenCodeSessionHistoryParser.captureSessionIdFromFilesystem({ spawnedAt, cwd: projectDirectory, maxAttempts: 1 }))
+      .resolves.toBeNull();
+
+    insertRow('session', 'ses_madeJustInside', spawnedAt.getTime() + 29_000);
+    await expect(OpenCodeSessionHistoryParser.captureSessionIdFromFilesystem({ spawnedAt, cwd: projectDirectory, maxAttempts: 1 }))
+      .resolves.toBe('ses_madeJustInside');
+  });
+
+  // The folder's real path is looked up beside the given one, and a folder with none is compared as given.
+  it('finds a row for a project folder that exists and one that does not', async () => {
+    const spawnedAt = new Date();
+    plantDatabase({ session: [['ses_inAFolderThatIsGone', spawnedAt.getTime() + 400]] });
+    expect(fs.existsSync(projectDirectory)).toBe(false);
+    await expect(OpenCodeSessionHistoryParser.captureSessionIdFromFilesystem({ spawnedAt, cwd: projectDirectory, maxAttempts: 1 }))
+      .resolves.toBe('ses_inAFolderThatIsGone');
+
+    fs.mkdirSync(projectDirectory);
+    await expect(OpenCodeSessionHistoryParser.captureSessionIdFromFilesystem({ spawnedAt, cwd: projectDirectory, maxAttempts: 1 }))
+      .resolves.toBe('ses_inAFolderThatIsGone');
+  });
+
+  // The read reports nothing and the poll goes on, so a file that is no database ends in null, not a throw.
+  it('answers null for a file that is no database, and for no database at all', async () => {
+    const spawnedAt = new Date();
+    const databaseFile = path.join(fakeHome, '.local', 'share', 'opencode', 'opencode.db');
+    await expect(OpenCodeSessionHistoryParser.captureSessionIdFromFilesystem({ spawnedAt, cwd: projectDirectory, maxAttempts: 1 }))
+      .resolves.toBeNull();
+
+    fs.mkdirSync(path.dirname(databaseFile), { recursive: true });
+    fs.writeFileSync(databaseFile, 'not a database, and long enough that SQLite reads a header from it. '.repeat(20));
+    await expect(OpenCodeSessionHistoryParser.captureSessionIdFromFilesystem({ spawnedAt, cwd: projectDirectory, maxAttempts: 1 }))
+      .resolves.toBeNull();
+  });
+
+  // A table another release changed must not hide the row the other table holds.
+  it('finds a row in session_v2 when the session table cannot be queried', async () => {
+    const spawnedAt = new Date();
+    plantDatabase({ sessionV2: [['ses_onlyV2CouldBeRead', spawnedAt.getTime() + 400]] });
+    const database = new Database(path.join(fakeHome, '.local', 'share', 'opencode', 'opencode.db'));
+    database.exec('DROP TABLE session');
+    database.exec('CREATE TABLE session (id TEXT PRIMARY KEY, folder TEXT)');
+    database.close();
+
+    const result = await OpenCodeSessionHistoryParser.captureSessionIdFromFilesystem({ spawnedAt, cwd: projectDirectory, maxAttempts: 1 });
+
+    expect(result).toBe('ses_onlyV2CouldBeRead');
+  });
+
   it('stops polling once shouldContinue answers no, and keeps looking while it answers yes', async () => {
     const spawnedAt = new Date();
     plantDatabase({});
