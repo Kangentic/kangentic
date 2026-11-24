@@ -2450,7 +2450,7 @@ msgid "Path to the private key"
 msgstr "Pfad zum privaten Schlüssel"
 
 #: src/renderer/components/settings/settings-registry.ts
-msgid "Pause an agent waiting on you this long until you open or move its task."
+msgid "Pause an agent waiting on you this long, unless its task is open."
 msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts

@@ -630,9 +630,9 @@ export function TaskDetailBody({
         : t`Resuming agent...`;
     // Who paused it, at rest. A held pause says it waits for Resume, since
     // opening never lifts one. An idle pause says only what happened: this
-    // screen shows one that opening did not resume (its window was already
-    // open, a restart restored it, or the resume was skipped), so it must not
-    // promise a resume. A failed resume and a blocked start keep their own words.
+    // screen shows one that opening did not resume (a restart restored its
+    // window, or the resume was skipped), so it must not promise a resume. A
+    // failed resume and a blocked start keep their own words.
     let pauseNote: string | null = null;
     if (!toggling && !resumeFailed && !startBlockedReason) {
       // A low-memory pause only an earlier version wrote is held like the user's.

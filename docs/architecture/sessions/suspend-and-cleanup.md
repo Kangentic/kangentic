@@ -56,7 +56,7 @@ A paused task keeps everything its agent started, and a stack can hold far more 
 
 | Event | Runs the Stop script |
 |---|---|
-| Idle-timeout pause (`suspended_by = 'auto'`) | Yes, unless a client is connected. No pause lands while a background job is open, so none runs then either |
+| Idle-timeout pause (`suspended_by = 'auto'`) | Yes, unless a client is connected. No pause lands while a background job is open, or while the task is open, so none runs then either |
 | A user's Pause or Stop, an `auto_spawn=false` entry | No. This is the testing case the parked rule protects |
 | Settings or model respawn, handoff (`'system'`) | No. The agent comes straight back |
 | Quit | No |

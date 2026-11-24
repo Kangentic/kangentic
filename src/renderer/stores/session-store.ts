@@ -707,11 +707,13 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
   // The edit flag resets when its option is absent, so a later open can never
   // inherit a stale edit intent from the open before it.
   //
-  // Every open a person makes passes through here, and nothing else does: a
+  // Every click that opens a task passes through here, and nothing else does: a
   // project switch writes `detailTaskId` with `setState`, a restored window is
   // rebuilt without it, and an agent's `open_pane` never reaches it (see
   // `.claude/rules/agent-driven-focus.md`). So this is where an open resumes a
-  // task the idle timeout paused. An edit open is the form, not the agent.
+  // task the idle timeout paused. A switch back to a project asks for the windows
+  // it restores on its own (`resumeRestoredTasks`). An edit open is the form,
+  // not the agent.
   //
   // An edit open also raises `taskEditRequest`, in the same write. The flag
   // above reaches only a window this open creates. A task whose window is

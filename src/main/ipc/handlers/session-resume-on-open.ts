@@ -1,9 +1,10 @@
 /**
  * Resume a task the idle timeout paused, because the user opened it. Opening is
  * the whole gesture: no click on Resume and no wait, so a pause Kangentic made
- * costs the user nothing. Only the opening does it. A pause landing on a window
- * already open does not, or a focused window would resume, idle and pause in a
- * loop all night, and neither does a restart restoring a window.
+ * costs the user nothing. Switching back to a project opens the windows left open
+ * in it, so that counts too. A restart restoring a window does not. The idle
+ * timeout never pauses a task while it is open (`SessionManager.isTaskOpen`), so
+ * nothing here resumes a window only for it to idle and pause again.
  *
  * It only ever does what costs no tokens. A resume that would send the agent a
  * message is a paid turn nobody asked for, so a card that needs one keeps its

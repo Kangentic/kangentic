@@ -17,6 +17,12 @@ sources:
   - resource: src/main/ipc/handlers/session-resume-on-open.ts
   - resource: src/main/ipc/helpers/idle-pause-lift.ts
     title: whether the owner's open or move lifts an idle pause
+  - resource: src/renderer/window-manager/persistence/restore-workspace.ts
+    title: a switch back to a project resumes the tasks whose windows it restores
+  - resource: src/main/activity-engine/session-telemetry.ts
+    title: the idle sweep skips an open task and starts its wait over
+  - resource: src/main/pty/session-manager.ts
+    title: isTaskOpen and setTaskWindowLookup
   - resource: src/shared/session-resume-eligibility.ts
   - resource: src/main/ipc/handlers/session-reconcile.ts
   - resource: src/main/transition-engine/spawn-progress.ts
@@ -63,16 +69,22 @@ because of this: a pause costs the user nothing. Flicking across cards starts ea
 That was accepted: a plain resume spends no tokens, a full column queues it, and the agent idles out
 again on the normal clock, which a spawn seeds from its start.
 
-**What counts as opening.** Every open a person makes passes `setDetailTaskId`, and it calls
+**What counts as opening.** Every click that opens a task passes `setDetailTaskId`, and it calls
 `sessions.resumeOnOpen` unless the open is an agent's or the edit form's. The Agent Monitor's own
 open, `requestMonitorDetail`, calls it too. A project switch writes `detailTaskId` with `setState`
-and a workspace restore rebuilds windows directly, so neither reaches it, and that is why the call
-is in the action and not in the bridge's effect, which a restore fires. The one open a switch does
-make is a person's: a task a notification click or a Monitor row parked across the switch opens
-through `setDetailTaskId` (`useProjectSwitchEffect`). The pause landing does not
-reach it either: a level check ("focused and paused") would resume, idle and pause in a loop all
-night. So a window already open when the pause lands keeps its Resume button until the user clicks
-it or the task's card.
+and a workspace restore rebuilds windows directly, so neither reaches the action. That is why the
+call is there and not in the bridge's effect, which a launch restore fires too. A task a
+notification click or a Monitor row parked across the switch opens through `setDetailTaskId`
+(`useProjectSwitchEffect`).
+
+A switch back to a project asks on its own, once the saved layout is restored: `resumeRestoredTasks`
+(`restore-workspace.ts`) calls `resumeOnOpen` for each task window it brought back. A window in a
+project nobody is looking at does not count as open (below), so its agent can be paused meanwhile,
+and coming back is opening it again. The launch restore never asks, since a restart lifts no pause.
+
+A pause that lands on a window already open asks nothing, and the sweep makes no such pause. Until
+#1191 it did, and a level check ("focused and paused") was ruled out because it would resume, idle
+and pause in a loop all night (#1041). With the open window exempt there is nothing to loop.
 
 **What main requires.** The renderer reads `Session.suspendedBy`, which mirrors the record's `suspended_by`, only to word
 the pause: "Paused while idle" on the card, and a line under the window's Resume button (a held
@@ -136,7 +148,26 @@ function through `start-session` with `trigger: 'open'` (`openTaskSession`, prot
 answers inside its budget. The desktop's own open ignores the outcome. See
 [Capability verbs](../../integrations/mobile-bridge/capability-verbs.md).
 
-**What the sweep leaves running.** With the timeout on by default, the idle pause also waits while
+**What the sweep leaves running.** An agent whose task is open is never paused for being idle
+(`SessionManager.isTaskOpen`). Open is a task window in any renderer (the board's, the Agent
+Monitor's, the detached Monitor's), read from main's `DetailOwnerRegistry` through
+`setTaskWindowLookup`, or the task's screen on a paired phone (`MobileTerminalProbe`). A window the
+user closed and one kept only for its Browser pane are not in that registry. A Monitor window counts
+while the Monitor is closed, because it is still there when the Monitor reopens. The bottom panel
+does not count: it picks a tab by itself. The focused-session set was not used, because it drops a
+window hidden by the Backlog view and includes that tab.
+
+The sweep asks (`checkIdleTimeouts`), and so does the pause's `stillEligible` under the task lock,
+for a window opened while the pause waited. The wait starts over when the task closes. The sweep
+stamps each idle session it sees open and counts from one sweep after the last stamp, so the pause
+comes between the whole timeout and about two minutes past it, never early. It is a sample and not
+a close event, so a window and a phone need no events of their own and a reload or a handover
+opens no gap. The engine's `idleTimestamp` and `needsUserSince` stay as they are, so the card still
+shows how long the agent has waited. A window opened and closed between two sweeps is not seen. A
+window left open overnight keeps its agent running, and the project's Stop script, which follows an
+idle pause, does not run for it.
+
+With the timeout on by default, the idle pause also waits while
 `getOpenWork` lists a background shell. The activity engine reclaims a shell the watcher cannot
 confirm at the five-minute cap, so a long build can read idle, and a pause ends it. A service the
 agent marked never opens there, so a task that only left a dev server running still pauses. An agent
