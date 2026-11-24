@@ -238,7 +238,7 @@ Aptabase's own identity model rotates daily (see "How It Works" below), so it ca
 
 - **Derivation:** `clientId` is an HMAC-SHA256 digest of the OS machine id (SHA-256-hashed first, in `src/main/analytics/machine-id.ts`) and a hash of the OS home directory, keyed with a fixed Kangentic salt. It is a one-way, non-reversible digest containing no raw machine identifiers, paths, or usernames.
 - **Stability:** stable across app updates and a clean uninstall/reinstall, because it is derived from the OS install itself rather than data Kangentic's own uninstaller would remove. It is unique per OS user, so two accounts on a shared machine get distinct ids.
-- **Fallback:** if the OS machine-id source is unavailable (e.g. a hardened or containerized environment), Kangentic falls back to a random id persisted locally; that id does not survive a reinstall.
+- **Fallback:** if the OS machine-id source is unavailable (e.g. a hardened or containerized environment), or the read does not answer within 3 seconds, Kangentic falls back to a random id persisted locally; that id does not survive a reinstall.
 - **Control:** `clientId` is on by default and shares the same `KANGENTIC_TELEMETRY` control as every other event below - there is no separate opt-out.
 
 ## What We Don't Collect

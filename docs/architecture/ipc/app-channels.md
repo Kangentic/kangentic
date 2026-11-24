@@ -116,7 +116,7 @@ Machine-global like the mobile bridge, so none takes a trailing `projectId`: a h
 | `shell:openPath` | invoke | Open directory in file explorer |
 | `shell:openExternal` | invoke | Open URL in default browser (http/https/mailto only; other schemes are rejected) |
 | `shell:showItemInFolder` | invoke | Reveal a file or directory in the native file manager (Explorer on Windows, Finder on macOS); the path is normalized to platform separators before dispatch |
-| `shell:exec` | invoke | Execute shell command |
+| `shell:exec` | invoke | Run a shortcut command in a folder. It starts in the pty host, detached and shown, and the app never stops it. Answers `{ pid }` once the start is confirmed, and `{ pid: undefined }`, never a rejection, for a command that could not start. An empty command or a folder that does not exist is refused |
 
 ## Fonts (no channel)
 The Terminal tab's Font Family picker has no channel. `font.getAvailable` on the bridge reads Chromium's own font list in the window (`window.queryLocalFonts()`, in `src/preload/local-fonts.ts`) and keeps the families that measure fixed width, so listing fonts never reaches main and starts no process. The default session grants the app window the `local-fonts` permission for it (`src/main/permission-policy.ts`), and the Browser pane's session does not.
