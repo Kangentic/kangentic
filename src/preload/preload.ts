@@ -6,7 +6,7 @@ import type { AnnouncementsChangedPayload } from '../shared/announcements';
 import { POPOUT_ARG_PREFIX } from '../shared/pop-out-arg';
 import { readLocaleArgument, type AppLocale } from '../shared/i18n/locales';
 import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from '../shared/pop-out';
-import { installConsoleCapture, reportPushCallbackFailure } from './diagnostics/console-capture';
+import { installRendererCrashCapture, reportPushCallbackFailure } from './diagnostics/renderer-crash-capture';
 import { guardPushCallbacks } from './push-callback-guard';
 import { createBufferedPush } from './buffered-push';
 import { PtyPortClient } from './pty-port-client';
@@ -71,11 +71,12 @@ if (popOutDescriptor?.kind === 'browser') {
   });
 }
 
-// Forward renderer console.* + window error events to the main-process
-// diagnostics subsystem. The main side decides whether to persist based on
-// the `developer.persistConsoleLogs` toggle. Crashes are always captured.
-// Runs at preload time so it survives even if `index.tsx` throws on boot.
-installConsoleCapture();
+// Forward window error events to the main-process diagnostics subsystem as
+// crash records, which are always captured. Runs at preload time so it
+// survives even if `index.tsx` throws on boot. Console output is not
+// forwarded from here: main reads it off the window's `console-message`
+// event (mirrorRendererConsole).
+installRendererCrashCapture();
 
 // Dev-only: install window.__kangenticPreviewMutations and
 // __kangenticPreviewReact globals so the localhost inspection bridge

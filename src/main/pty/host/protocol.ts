@@ -24,7 +24,7 @@
 
 import type { Profiler } from 'node:inspector';
 import type { ActivityState, ExitSequenceStep, HistoryViewOpenResult, SessionEvent, SessionUsagePatch } from '../../../shared/types';
-import type { EventLoopLagReport } from '../../diagnostics/event-loop-lag';
+import type { EventLoopLagReport, LagRecord } from '../../diagnostics/event-loop-lag';
 import type { HostRoundTripReading } from '../../diagnostics/pty-round-trip-probe';
 import type { StopProcessRequest, StopProcessResult, TaggedReapRequest, TaggedReapResult, TaskProbeRequest, TaskProbeResult } from '../process-tag/tagged-reap';
 import type { WriteOrigin } from '../prompt-draft-ledger';
@@ -504,6 +504,9 @@ export type FromPtyHostMessage =
   | { type: 'log'; level: 'log' | 'info' | 'warn' | 'error'; text: string }
   /** A span of 16 ms or more on the host's thread (dev builds only). */
   | { type: 'slow-span'; label: string; ms: number }
+  /** A stall of the host's own thread, or a delay window that held a block
+   *  (dev builds only). Main's lag journal keeps it past a restart. */
+  | { type: 'lag-record'; record: LagRecord }
   /** A reap batch or a Stop started running. Main restarts the budget of every
    *  request of `method` still waiting, so time spent queued behind a batch
    *  never counts against it. The transport consumes it; no listener sees it. */

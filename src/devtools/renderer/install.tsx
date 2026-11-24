@@ -5,6 +5,7 @@ import {
   startRendererLagRecorder,
   stopRendererLagRecorder,
   getRendererLagReport,
+  takeRendererLagRecords,
 } from './lag-recorder';
 import { getTerminalRendererReport } from '../../renderer/utils/terminal-webgl';
 import {
@@ -36,6 +37,7 @@ export function DevtoolsBootstrap(): null {
       __kangenticPreviewSnapshot?: () => unknown;
       __kangenticPreviewStoreState?: (storeName: string, path?: string | null) => unknown;
       __kangenticLagReport?: () => unknown;
+      __kangenticTakeLagRecords?: () => unknown;
       __kangenticTerminalRenderers?: () => unknown;
       __kangenticTerminalGrids?: () => unknown;
       __kangenticTerminalGridRows?: (sessionId: string) => unknown;
@@ -72,6 +74,9 @@ export function DevtoolsBootstrap(): null {
     // inspection server's /event-loop-lag route can surface UI-freeze history.
     startRendererLagRecorder();
     (window as DevtoolsWindow).__kangenticLagReport = getRendererLagReport;
+    // Main's lag journal collects new spikes and long frames through this, so
+    // they are on disk after a restart (see lag-journal-host.ts).
+    (window as DevtoolsWindow).__kangenticTakeLagRecords = takeRendererLagRecords;
 
     // Terminal renderer report: exposes each terminal's live renderer type
     // (webgl vs the slow DOM fallback) + context-loss count, so a silently
@@ -101,6 +106,7 @@ export function DevtoolsBootstrap(): null {
       delete (window as DevtoolsWindow).__kangenticPreviewSnapshot;
       delete (window as DevtoolsWindow).__kangenticPreviewStoreState;
       delete (window as DevtoolsWindow).__kangenticLagReport;
+      delete (window as DevtoolsWindow).__kangenticTakeLagRecords;
       delete (window as DevtoolsWindow).__kangenticTerminalRenderers;
       delete (window as DevtoolsWindow).__kangenticTerminalGrids;
       delete (window as DevtoolsWindow).__kangenticTerminalGridRows;

@@ -79,6 +79,9 @@ import {
   stopInspectionServer,
 } from '../../src/devtools/main/inspection-server';
 import { attachDebugger } from '../../src/devtools/main/cdp';
+import { startLagJournal, stopLagJournal } from '../../src/devtools/main/lag-journal-host';
+import { flushAllForTest } from '../../src/main/diagnostics/async-file-queue';
+import { relayLagRecord } from '../../src/main/diagnostics/event-loop-lag';
 import { app, type BrowserWindow } from 'electron';
 
 // ---------------------------------------------------------------------------
@@ -1097,5 +1100,175 @@ describe('POST /quit: respondJson runs before setImmediate(app.quit)', () => {
       'POST /quit must be dispatched before the CDP-attached gate, or a --stop request would 503 '
         + 'whenever no debugger is attached (e.g. DevTools closed, or before the main window exists)',
     ).toBeLessThan(cdpGateCommentIndex);
+  });
+});
+
+/**
+ * The lag report's two additions: what the diagnostics cost against their
+ * budget, and the launches whose records are on disk. Neither needs a
+ * debugger, since the report is read when the app is frozen or DevTools is
+ * open, so the server here has no main window at all.
+ */
+describe('GET /event-loop-lag: the budget verdict and the journal', () => {
+  let serverPort = 0;
+  let configDir = '';
+  let evalEnabled = true;
+
+  function ensureJournalStarted(): void {
+    // Idempotent, so a test that needs the journal does not depend on test order.
+    startLagJournal({
+      configDir,
+      getMainWindow: () => null,
+      facts: {
+        versions: { kangentic: '0.0.0', electron: 'test', node: process.versions.node, chrome: 'test' },
+        platform: process.platform,
+        arch: process.arch,
+        ephemeralPreview: false,
+        diagnostics: { stallProfiler: true },
+      },
+    });
+  }
+
+  beforeAll(async () => {
+    configDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-lag-route-'));
+    const port = await startInspectionServer({
+      getMainWindow: () => null,
+      getEvalEnabled: () => evalEnabled,
+      getSessionManager: () => null,
+      getProjectRoot: () => null,
+      getIpcContext: () => null,
+      getProjectId: () => null,
+    });
+    expect(port).not.toBeNull();
+    serverPort = port!;
+  });
+
+  afterAll(async () => {
+    stopLagJournal('test-end');
+    await flushAllForTest();
+    stopInspectionServer();
+    fs.rmSync(configDir, { recursive: true, force: true });
+  });
+
+  it('carries the diagnostics verdict, and says the journal has not started', async () => {
+    const response = await httpRequest(serverPort, { path: '/event-loop-lag' });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      diagnostics: { pass: true, violations: [], budget: { maxHoldMs: 16, maxSharePercent: 0.1, shareAfterMs: 600_000, spikeMs: 75 } },
+      launches: { unavailable: 'journal-not-started' },
+    });
+  });
+
+  it('refuses a launch read before the journal starts, instead of answering with an empty one', async () => {
+    const response = await httpRequest(serverPort, { path: '/event-loop-lag?launch=previous' });
+
+    expect(response.status).toBe(503);
+    expect(response.body).toMatchObject({ error: { kind: 'journal-not-started' } });
+  });
+
+  it('lists the running launch, reads it back, and names the launches it has when asked for one it lacks', async () => {
+    startLagJournal({
+      configDir,
+      getMainWindow: () => null,
+      facts: {
+        versions: { kangentic: '0.0.0', electron: 'test', node: process.versions.node, chrome: 'test' },
+        platform: process.platform,
+        arch: process.arch,
+        ephemeralPreview: false,
+        diagnostics: { stallProfiler: true },
+      },
+    });
+    await flushAllForTest();
+
+    const live = await httpRequest(serverPort, { path: '/event-loop-lag' });
+    const launches = (live.body as { launches: Array<{ id: string; current: boolean }> }).launches;
+    expect(launches).toHaveLength(1);
+    expect(launches[0].current).toBe(true);
+
+    const current = await httpRequest(serverPort, { path: '/event-loop-lag?launch=current' });
+    expect(current.status).toBe(200);
+    expect(current.body).toMatchObject({
+      launchId: launches[0].id,
+      launch: { type: 'launch', diagnostics: { stallProfiler: true } },
+      exit: null,
+    });
+
+    const previous = await httpRequest(serverPort, { path: '/event-loop-lag?launch=previous' });
+    expect(previous.status).toBe(404);
+    expect(JSON.stringify(previous.body)).toContain(launches[0].id);
+  });
+
+  it('holds main for the time POST /block-main is given, so a stall can be made on demand', async () => {
+    const response = await httpRequest(serverPort, { method: 'POST', path: '/block-main', body: { ms: 40 } });
+
+    expect(response.status).toBe(200);
+    const body = response.body as { requestedMs: number; blockedMs: number };
+    expect(body.requestedMs).toBe(40);
+    expect(body.blockedMs).toBeGreaterThanOrEqual(40);
+  });
+
+  it('refuses POST /block-main with 403 eval-disabled while unsafe operations are off, and never blocks', async () => {
+    evalEnabled = false;
+    try {
+      const response = await httpRequest(serverPort, { method: 'POST', path: '/block-main', body: { ms: 1 } });
+
+      expect(response.status).toBe(403);
+      expect(response.body).toMatchObject({ error: { kind: 'eval-disabled' } });
+      expect(response.body).not.toHaveProperty('blockedMs');
+    } finally {
+      evalEnabled = true;
+    }
+  });
+
+  it('raises a POST /block-main of 0 ms to 1 ms', async () => {
+    const response = await httpRequest(serverPort, { method: 'POST', path: '/block-main', body: { ms: 0 } });
+
+    expect(response.status).toBe(200);
+    expect((response.body as { requestedMs: number }).requestedMs).toBe(1);
+  });
+
+  it('holds POST /block-main for 150 ms when the body has no numeric ms', async () => {
+    const response = await httpRequest(serverPort, { method: 'POST', path: '/block-main', body: { ms: 'soon' } });
+
+    expect(response.status).toBe(200);
+    const body = response.body as { requestedMs: number; blockedMs: number };
+    expect(body.requestedMs).toBe(150);
+    expect(body.blockedMs).toBeGreaterThanOrEqual(150);
+  });
+
+  it('maps since, until and limit onto the journal read: a range of spikes, the newest when capped, the default cap for a bad limit', async () => {
+    ensureJournalStarted();
+    const spikeTimes = ['2026-11-24T10:00:01.000Z', '2026-11-24T10:00:02.000Z', '2026-11-24T10:00:03.000Z'];
+    for (const [index, at] of spikeTimes.entries()) {
+      relayLagRecord('pty-host', { kind: 'spike', at, lagMs: 100 + index });
+    }
+    await flushAllForTest();
+
+    async function readSpikes(query: string): Promise<{ spikes: Array<{ at: string }>; truncated: boolean }> {
+      const response = await httpRequest(serverPort, { path: `/event-loop-lag?launch=current${query}` });
+      expect(response.status).toBe(200);
+      return response.body as { spikes: Array<{ at: string }>; truncated: boolean };
+    }
+
+    const everything = await readSpikes('');
+    expect(everything.spikes.map((spike) => spike.at)).toEqual(spikeTimes);
+    expect(everything.truncated).toBe(false);
+
+    const since = await readSpikes(`&since=${spikeTimes[1]}`);
+    expect(since.spikes.map((spike) => spike.at)).toEqual([spikeTimes[1], spikeTimes[2]]);
+
+    const until = await readSpikes(`&until=${spikeTimes[1]}`);
+    expect(until.spikes.map((spike) => spike.at)).toEqual([spikeTimes[0], spikeTimes[1]]);
+
+    const limited = await readSpikes('&limit=1');
+    expect(limited.spikes.map((spike) => spike.at)).toEqual([spikeTimes[2]]);
+    expect(limited.truncated).toBe(true);
+
+    for (const badLimit of ['abc', '0']) {
+      const unlimited = await readSpikes(`&limit=${badLimit}`);
+      expect(unlimited.spikes.map((spike) => spike.at)).toEqual(spikeTimes);
+      expect(unlimited.truncated).toBe(false);
+    }
   });
 });

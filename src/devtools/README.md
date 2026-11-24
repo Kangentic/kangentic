@@ -40,6 +40,13 @@ src/devtools/
     screenshot.ts            ← Page.captureScreenshot plumbing
     scroll-latency-route.ts  ← POST /scroll-latency: arm both rings, drive the wheel, read and join
     scroll-latency-report.ts ← the pure join and stats behind it
+    stall-profiler.ts        ← rolling CPU profile of main, saved on a stall of 75 ms or more
+    lag-journal.ts           ← writes the lag report's records to disk, per launch
+    lag-journal-host.ts      ← starts the journal and feeds it (monitor, profiler, startup, renderer)
+    lag-journal-reader.ts    ← reads a launch's journal back, lists and prunes launches
+    diagnostics-budget.ts    ← what the diagnostics cost main, checked against their budget
+    spawn-tracer.ts          ← labels each child process start with the code that asked for it
+    terminal-trace-persist.ts ← keeps the terminal lifecycle trace past a restart
     ephemeral-projects.ts    ← --ephemeral preview project setup
     preview-task-title.ts    ← preview window title
     seed-*.ts                ← board/data seeders (usage, git changes, conversation, backlog)
@@ -132,6 +139,19 @@ event-loop lag sampler (WHEN the thread blocked) and the
 `long-animation-frame` ring with per-script attribution (WHAT ran). Both
 are served by `/event-loop-lag`, beside main's report and the pty host's
 own (`ptyHost`, from its `devLagReport` request).
+
+### Stall profiler, lag journal and budget (`main/stall-profiler.ts`, `main/lag-journal*.ts`, `main/diagnostics-budget.ts`)
+
+The stall profiler keeps two overlapping V8 CPU profiles running over main
+and saves one whenever main stalls for 75 ms or more. The lag journal
+writes every record the lag report holds to `<configDir>/logs/lag/` as it
+happens, so a launch can be read back after a restart
+(`/event-loop-lag?launch=previous`). The budget turns each diagnostic's own
+`diag:*` spans into a pass or fail that the same report carries. Why each
+works the way it does, and the measured costs, are in
+`docs/contributing/dev-diagnostics.md`. `POST /block-main` (behind Allow
+Unsafe Operations) holds main for a given time, up to 5 s, to make a stall
+on demand.
 
 ### Scroll latency (`main/scroll-latency-route.ts`, `main/scroll-latency-report.ts`)
 

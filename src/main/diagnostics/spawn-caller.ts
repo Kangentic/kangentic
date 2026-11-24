@@ -17,9 +17,12 @@
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { isTimingSyncWork, recordSyncSpan } from './event-loop-lag';
 
 /** How many named frames identify a caller. */
 const CALLER_FRAMES = 3;
+/** A stack capture is timed under this label, for the diagnostics budget. */
+const CALLER_LABEL = 'diag:spawn-caller';
 
 /**
  * Frames that only pass a spawn along. Skipped so the label names the code
@@ -50,6 +53,11 @@ export function withSpawnCaller<Result>(caller: string, work: () => Result): Res
  * under `.vite/build`.
  */
 export function stackCallerLabel(bundleFrame: RegExp = /[\\/]\.vite[\\/]build[\\/]/): string {
+  // Timed in place, so the diagnostics budget sees what a stack capture costs.
+  // Not `timeSyncWork`: its frames would sit above the caller on the stack
+  // being read here and become the label.
+  const timed = isTimingSyncWork();
+  const startedAt = timed ? performance.now() : 0;
   // child_process and the wrappers use up V8's default 10 frames before the caller appears.
   const previousLimit = Error.stackTraceLimit;
   Error.stackTraceLimit = 40;
@@ -64,6 +72,7 @@ export function stackCallerLabel(bundleFrame: RegExp = /[\\/]\.vite[\\/]build[\\
     names.push(match[1]);
     if (names.length >= CALLER_FRAMES) break;
   }
+  if (timed) recordSyncSpan(CALLER_LABEL, performance.now() - startedAt);
   return names.length > 0 ? names.join('<') : 'unknown';
 }
 

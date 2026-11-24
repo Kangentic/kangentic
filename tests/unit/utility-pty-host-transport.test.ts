@@ -93,11 +93,12 @@ vi.mock('../../src/main/utility-process/stderr-tail', async (importOriginal) => 
 vi.mock('../../src/main/utility-process/paths', () => ({ unpacked: (target: string) => target.replace('app.asar', 'app.asar.unpacked') }));
 vi.mock('../../src/main/analytics/analytics', () => ({ trackEvent: vi.fn() }));
 vi.mock('../../src/main/analytics/error-reporting', () => ({ reportHandledError: vi.fn() }));
-vi.mock('../../src/main/diagnostics/event-loop-lag', () => ({ recordRelayedSyncSpan: vi.fn() }));
+vi.mock('../../src/main/diagnostics/event-loop-lag', () => ({ recordRelayedSyncSpan: vi.fn(), relayLagRecord: vi.fn() }));
 
 import { WATCHDOG_CHECK_INTERVAL_MS, WATCHDOG_HELD_CHECKS } from '../../src/main/utility-process/event-loop-watchdog';
 import { HEARTBEAT_LATE_TIMER_MS, LATE_BEAT_SETTLE_MS, UtilityPtyHostTransport, ptyHostEntryPath, ptyHostSpawnWorkerPath } from '../../src/main/pty/host/utility-pty-host-transport';
 import { reportHandledError } from '../../src/main/analytics/error-reporting';
+import { recordRelayedSyncSpan, relayLagRecord } from '../../src/main/diagnostics/event-loop-lag';
 import type { PtyHostTransport } from '../../src/main/pty/host/pty-host-client';
 import type { MessagePortMain } from 'electron';
 import { UtilityRestartPolicy, resetUtilityCrashTelemetryForTests } from '../../src/main/utility-process/restart-policy';
@@ -195,6 +196,21 @@ describe('UtilityPtyHostTransport', () => {
 
     child.emit('message', { type: 'outputSeen', sessionId: 's', chunks: 3 });
     expect(events).toEqual([{ type: 'outputSeen', sessionId: 's', chunks: 3 }]);
+  });
+
+  it('hands the host\'s own stalls to the lag monitor as the pty host\'s, and no listener sees them', () => {
+    // The host's rings die with it. Main's lag journal is how its stalls are
+    // still readable after a restart, and it learns of them only through this.
+    const { transport, events } = makeTransport();
+    transport.start();
+    const spike = { kind: 'spike' as const, at: '2026-11-23T19:22:34.471Z', lagMs: 95 };
+
+    latestChild().emit('message', { type: 'lag-record', record: spike });
+    latestChild().emit('message', { type: 'slow-span', label: 'pty:spawn', ms: 23 });
+
+    expect(relayLagRecord).toHaveBeenCalledWith('pty-host', spike);
+    expect(recordRelayedSyncSpan).toHaveBeenCalledWith('pty-host:pty:spawn', 23);
+    expect(events).toEqual([]);
   });
 
   it('rejects a request the host never answers', async () => {

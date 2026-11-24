@@ -301,10 +301,12 @@ Machine-global (like Config), never project-scoped. Backs Settings > Accounts an
 | `mcpServer:checkConnection` | invoke | Whether agents can reach the MCP server (Settings > MCP Server's MCP connection row), via `ElectronAPI.mcpServer.checkConnection({ explicit })`. An authenticated loopback `initialize`, then one check from each WSL distro the open project's CLI paths point into: through the stdio bridge on NAT networking, a connect to the loopback port on mirrored. `explicit` (Test connection) checks a stopped distro too, which starts it; the check on arrival skips one. Returns `McpConnectionCheck` (`{ connected: true }` or `{ connected: false, error }`, the error as the check hit it). Never throws. See `src/main/agent/mcp-connection-check.ts` |
 | `mcpServer:connectionFailed` | on | Event: an agent session started and the same check failed. Sent at most once per run, by `McpConnectionWatch` at the session's first output. Carries `McpConnectionFailure` (`{ error }`); the renderer raises the persistent "Couldn't reach the MCP server" toast, whose Open settings lands on the MCP Server tab |
 
-## Diagnostics (2 channels)
+## Diagnostics (1 channel)
+
+Renderer console output has no channel. The main-side log mirror reads it off each app window's `console-message` event (`mirrorRendererConsole` in `src/main/diagnostics/log-mirror.ts`), which the main window and every pop-out window register for. It persists `error` and `warn` lines unconditionally and `info` and `debug` lines when `developer.persistConsoleLogs` is on, as NDJSON in `<projectRoot>/.kangentic/logs/<YYYY-MM-DD>.log`, falling back to `<configDir>/logs/` while no project is open. Chromium reports `console.log` and `console.info` alike as `info`, and hands over the formatted text. A preload patch of `console.*` did this job until it was measured keeping nothing the renderer app printed: under context isolation the patch sat in the preload's own world.
+
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `diagnostics:logAppend` | invoke | Renderer / preload forwards a `LogEntry` to the main process. The main-side log mirror persists `error` and `warn` levels unconditionally and `info` / `debug` / `log` when `developer.persistConsoleLogs` is on. NDJSON written to `<projectRoot>/.kangentic/logs/<YYYY-MM-DD>.log`, falling back to `<configDir>/logs/` while no project is open (the same fallback crash capture uses). |
 | `diagnostics:crashReport` | invoke | Renderer forwards a `CrashRecord` (window.onerror, unhandledrejection) to the main process. Crash capture writes one JSON file per record to `<projectRoot>/.kangentic/logs/crashes/<ts>.json`, falling back to the app's own config directory when no project is open (a crash must never be silently dropped for that reason). Always-on - no toggle. |
 
 ## Dictation (16 channels)

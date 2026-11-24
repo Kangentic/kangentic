@@ -5049,7 +5049,8 @@ export interface AppConfig {
     /**
      * Persist info/debug-level renderer + main console logs to
      * `<projectRoot>/.kangentic/logs/<date>.log`. errors/warnings are
-     * always captured regardless of this toggle. Default false.
+     * always captured regardless of this toggle. Default on in a dev
+     * build and off in a packaged one (`developer-flag-defaults.ts`).
      * Always rendered in product builds.
      */
     persistConsoleLogs?: boolean;
@@ -5079,10 +5080,10 @@ export interface AppConfig {
      */
     previewEvalEnabled?: boolean;
     /**
-     * Run a rolling CPU profile of the main process and keep the windows that
-     * held a stall (`src/devtools/main/stall-profiler.ts`), so a stall no label
-     * covers still names its functions in the event-loop lag report. Dev-only;
-     * defaults on in `/preview` and off for `npm start`.
+     * Run a rolling CPU profile of the main process and keep the profile of
+     * each stall of 75 ms or more (`src/devtools/main/stall-profiler.ts`), so a
+     * stall no label covers still names its functions in the event-loop lag
+     * report. Dev-only; defaults on in every dev build.
      */
     stallProfiler?: boolean;
   };
@@ -12277,8 +12278,14 @@ export interface ProcessMetrics {
  */
 export interface IpcPayloadTruncated {
   truncated: true;
-  /** UTF-16 length of the full serialized payload (-1 when unserializable). */
+  /** UTF-16 length of the full serialized payload (-1 when unserializable), or a lower bound when `atLeast` is set. */
   serializedChars: number;
+  /**
+   * Set when the payload was far over the cap: the recorder counted it without
+   * serializing it and stopped at the cap, so `serializedChars` is how far the
+   * count got, not the payload's full size.
+   */
+  atLeast?: true;
   /** First ~2KB of the serialized JSON, enough to identify the payload shape. */
   preview: string;
 }

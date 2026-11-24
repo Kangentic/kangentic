@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import { relaunchApp, devRestartFileFrom, isRestartRequested } from './app-relaunch';
 import { registerAllIpc, getSessionManager, getTerminalSubmitScheduler, getBoardConfigManager, getCurrentProjectId, getOptionalIpcContext, openProjectByPath, deleteProjectFromIndex, pruneStaleWorktreeProjects, activateAllProjects, getLastOpenedProject } from './ipc/register-all';
 import { installDiagnostics } from './diagnostics/install';
+import { mirrorRendererConsole } from './diagnostics/log-mirror';
 import { installIpcHandlerReporting } from './analytics/ipc-handler-report';
 import { drainQueuedAppendsSync } from './diagnostics/async-file-queue';
 import { startEventLoopLagMonitor } from './diagnostics/event-loop-lag';
@@ -272,6 +273,15 @@ if (__KANGENTIC_DEV__) {
     getInspectionServerEnabled: () => safeReadDeveloperFlag('previewInspectionServer'),
     getEvalEnabled: () => safeReadDeveloperFlag('previewEvalEnabled'),
     getStallProfilerEnabled: () => safeReadDeveloperFlag('stallProfiler'),
+    isEphemeralPreview: () => isEphemeral,
+    getDeveloperFlags: () => ({
+      activityDebugOverlay: safeReadDeveloperFlag('activityDebugOverlay'),
+      persistConsoleLogs: safeReadDeveloperFlag('persistConsoleLogs'),
+      recordIpcTraffic: safeReadDeveloperFlag('recordIpcTraffic'),
+      previewInspectionServer: safeReadDeveloperFlag('previewInspectionServer'),
+      previewEvalEnabled: safeReadDeveloperFlag('previewEvalEnabled'),
+      stallProfiler: safeReadDeveloperFlag('stallProfiler'),
+    }),
   });
 }
 
@@ -1292,6 +1302,10 @@ const createWindow = () => {
       ],
     },
   });
+
+  // The renderer's console output reaches the log file only through this
+  // (see mirrorRendererConsole).
+  mirrorRendererConsole(mainWindow.webContents);
 
   /**
    * THIS window, for the deferred callbacks below.

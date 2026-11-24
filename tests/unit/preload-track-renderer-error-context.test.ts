@@ -40,9 +40,9 @@ vi.mock('electron', () => ({
   },
   webUtils: { getPathForFile: vi.fn() },
 }));
-// Patches window.console and registers window listeners at module scope.
-vi.mock('../../src/preload/diagnostics/console-capture', () => ({
-  installConsoleCapture: vi.fn(),
+// Registers window listeners at module scope.
+vi.mock('../../src/preload/diagnostics/renderer-crash-capture', () => ({
+  installRendererCrashCapture: vi.fn(),
   reportPushCallbackFailure: vi.fn(),
 }));
 

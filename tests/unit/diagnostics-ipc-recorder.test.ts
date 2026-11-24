@@ -207,6 +207,132 @@ describe('ipc-recorder', () => {
     expect(entry.result.preview).toHaveLength(2 * 1024);
   });
 
+  it('never serializes a payload far over the cap: it counts as far as the cap and stops', async () => {
+    // Recording a 2.2 MB task list cost main up to 5 ms a call, as much as the
+    // handler, because the whole result was stringified to learn it was too big.
+    const { installIpcRecorder } = await import('../../src/main/diagnostics/ipc-recorder');
+    const { ipcMain } = await import('electron');
+    installIpcRecorder({ getProjectRoot: () => tempDirectory, enabled: () => true });
+
+    // JSON.stringify calls toJSON on every element it reaches. The last one is
+    // megabytes past the cap, so reaching it means the result was read whole.
+    const reachedLastTask = vi.fn(() => 'last');
+    const tasks: unknown[] = Array.from({ length: 2_000 }, (_unused, index) => ({
+      id: `task-${index}`,
+      description: 'd'.repeat(1_000),
+    }));
+    tasks.push({ toJSON: reachedLastTask });
+    ipcMain.handle('task:list', async () => tasks);
+    const returned = await registeredHandler!({});
+
+    expect(returned).toBe(tasks);
+    const entries = await readJsonlEntries('task:list');
+    const entry = entries[0] as {
+      result: { truncated: boolean; atLeast: boolean; serializedChars: number; preview: string };
+    };
+    expect(reachedLastTask).not.toHaveBeenCalled();
+    expect(entry.result.truncated).toBe(true);
+    // A lower bound, and said to be one: the count stopped just past the cap.
+    expect(entry.result.atLeast).toBe(true);
+    expect(entry.result.serializedChars).toBeGreaterThan(32 * 1024);
+    expect(entry.result.serializedChars).toBeLessThan(40 * 1024);
+    expect(entry.result.preview).toHaveLength(2 * 1024);
+    expect(entry.result.preview.startsWith('[{"id":"task-0","description":"ddd')).toBe(true);
+  });
+
+  it('does not fail the call it records when the result is something JSON cannot hold', async () => {
+    // The entry is written in the handler wrapper's `finally`. A throw there
+    // replaced the handler's answer, so turning recording on broke the call.
+    const { installIpcRecorder } = await import('../../src/main/diagnostics/ipc-recorder');
+    const { ipcMain } = await import('electron');
+    installIpcRecorder({ getProjectRoot: () => tempDirectory, enabled: () => true });
+
+    ipcMain.handle('project:list', async () => [10n]);
+    const returned = await registeredHandler!({}, 'small-arg');
+
+    expect(returned).toEqual([10n]);
+    const entries = await readJsonlEntries('project:list');
+    const entry = entries[0] as { args: unknown; result: { truncated: boolean; serializedChars: number; preview: string } };
+    expect(entry.args).toEqual(['small-arg']);
+    expect(entry.result).toEqual({ truncated: true, serializedChars: -1, preview: 'unserializable payload' });
+  });
+
+  describe('the payload count is a floor of the real JSON length', () => {
+    async function recordResult(result: unknown): Promise<{ returned: unknown; recorded: { result: unknown } }> {
+      const { installIpcRecorder } = await import('../../src/main/diagnostics/ipc-recorder');
+      const { ipcMain } = await import('electron');
+      installIpcRecorder({ getProjectRoot: () => tempDirectory, enabled: () => true });
+      ipcMain.handle('project:list', async () => result);
+      const returned = await registeredHandler!({});
+      const entries = await readJsonlEntries('project:list');
+      expect(entries).toHaveLength(1);
+      return { returned, recorded: entries[0] as { result: unknown } };
+    }
+
+    it('records 5,000 small integers whole: their JSON is under the cap, so they are not swapped for a marker', async () => {
+      const { __INTERNAL } = await import('../../src/main/diagnostics/ipc-recorder');
+      const integers = Array.from({ length: 5_000 }, (_unused, index) => index % 10);
+      // The premise, checked: a count of 8 characters per number would put this over the cap.
+      expect(JSON.stringify(integers).length).toBeLessThan(__INTERNAL.MAX_SERIALIZED_PAYLOAD_CHARS);
+
+      const { recorded } = await recordResult(integers);
+
+      expect(recorded.result).toEqual(integers);
+    });
+
+    it('records a list of small boolean, null and number objects whole when their JSON is under the cap', async () => {
+      const { __INTERNAL } = await import('../../src/main/diagnostics/ipc-recorder');
+      const flags = Array.from({ length: 700 }, () => ({ done: true, order: 3, parent: null }));
+      expect(JSON.stringify(flags).length).toBeLessThan(__INTERNAL.MAX_SERIALIZED_PAYLOAD_CHARS);
+
+      const { recorded } = await recordResult(flags);
+
+      expect(recorded.result).toEqual(flags);
+    });
+
+    it('reports a lower bound for an over-cap payload of numbers: above the cap, never above the real JSON length', async () => {
+      const { __INTERNAL } = await import('../../src/main/diagnostics/ipc-recorder');
+      const digits = Array.from({ length: 20_000 }, (_unused, index) => index % 10);
+      const realLength = JSON.stringify(digits).length;
+      expect(realLength).toBeGreaterThan(__INTERNAL.MAX_SERIALIZED_PAYLOAD_CHARS);
+
+      const { recorded } = await recordResult(digits);
+
+      const marker = recorded.result as { truncated: boolean; atLeast: boolean; serializedChars: number };
+      expect(marker.truncated).toBe(true);
+      expect(marker.atLeast).toBe(true);
+      expect(marker.serializedChars).toBeGreaterThan(__INTERNAL.MAX_SERIALIZED_PAYLOAD_CHARS);
+      expect(marker.serializedChars).toBeLessThanOrEqual(realLength);
+    });
+
+    it('does not fail the call it records when a result property getter throws', async () => {
+      // The count ran outside any guard in the wrapper's `finally`, so the throw replaced the handler's answer.
+      const result = {
+        get explosive(): string {
+          throw new Error('getter failed');
+        },
+      };
+
+      const { returned, recorded } = await recordResult(result);
+
+      expect(returned).toBe(result);
+      expect(recorded.result).toEqual({ truncated: true, serializedChars: -1, preview: 'unserializable payload' });
+    });
+
+    it('does not count members JSON leaves out: thousands of undefined and function members around a small real JSON are recorded whole', async () => {
+      const sparse: Record<string, unknown> = { kept: 1 };
+      for (let index = 0; index < 4_000; index += 1) {
+        sparse[`undefinedMember${index}`] = undefined;
+        sparse[`functionMember${index}`] = () => index;
+      }
+      expect(JSON.stringify(sparse)).toBe('{"kept":1}');
+
+      const { recorded } = await recordResult(sparse);
+
+      expect(recorded.result).toEqual({ kept: 1 });
+    });
+  });
+
   it('truncates oversized args independently of a small result', async () => {
     const { installIpcRecorder } = await import('../../src/main/diagnostics/ipc-recorder');
     const { ipcMain } = await import('electron');

@@ -49,6 +49,11 @@
  * mean go into `recentDelayWindows`, and `delayWindowMaxAtLeastMs` counts
  * windows by their max. Garbage-collection pauses arrive through a `gc`
  * `PerformanceObserver` and are counted like spans, as `gc:<kind>`.
+ *
+ * The rings die with the process, so `setLagRecordSink` hands every record a
+ * ring takes to one listener as it is recorded. The dev journal
+ * (`src/devtools/main/lag-journal.ts`) writes them to disk, and the pty host
+ * posts its own to main, which passes them on through `relayLagRecord`.
  */
 
 import {
@@ -81,8 +86,8 @@ export interface DelayWindow {
   maxMs: number;
   p99Ms: number;
   meanMs: number;
-  /** Set on a window a diagnostic tool closed around its own work (the stall
-   *  profiler's restart), so a reader can leave it out of the app's numbers. */
+  /** Set on a window a diagnostic tool noted: `stall-profiler` began with a
+   *  saved stall profile. */
   note?: string;
 }
 
@@ -148,8 +153,24 @@ export interface EventLoopLagReport {
   delayWindowMaxAtLeastMs: Record<string, number>;
 }
 
+/**
+ * A record a ring takes, as the sink receives it. A span carries `relayed`
+ * when another process measured it (its label names the process).
+ */
+export type LagRecord =
+  | ({ kind: 'spike' } & EventLoopLagSpike)
+  | ({ kind: 'span'; relayed: boolean } & SlowSyncWork)
+  | ({ kind: 'window' } & DelayWindow);
+
+/** `relayedFrom` is null for this process's own record, else the process that sent it. */
+export type LagRecordSink = (record: LagRecord, relayedFrom: string | null) => void;
+
 const SAMPLE_INTERVAL_MS = 100;
-const SPIKE_THRESHOLD_MS = 75;
+/**
+ * A block this long is one a person can notice, and the line every tool here
+ * shares: the sampler's spike, and the stall the profiler saves a profile for.
+ */
+export const SPIKE_THRESHOLD_MS = 75;
 const RING_SIZE = 120;
 /** One frame at 60 Hz: a span this long already drops a frame's worth of input. */
 const SLOW_SYNC_THRESHOLD_MS = 16;
@@ -167,7 +188,7 @@ const SPAWN_WORKER_LABEL_SEGMENT = 'spawn-worker:';
 const DURATION_EDGES_MS = [4, 8, 16, 32, 64, 128, 256] as const;
 export const DELAY_RESOLUTION_MS = 1;
 const DELAY_WINDOW_MS = 10_000;
-/** At least half an hour of windows; a stall-profiler restart closes one early. */
+/** At least half an hour of windows; a stall profiler save closes one early. */
 const DELAY_WINDOW_RING_SIZE = 1080;
 export const NANOSECONDS_PER_MS = 1_000_000;
 
@@ -212,6 +233,44 @@ let delayWindowTimer: ReturnType<typeof setInterval> | null = null;
 let gcObserver: PerformanceObserver | null = null;
 const recentDelayWindows: DelayWindow[] = [];
 const delayWindowMaxAtLeastMs = emptyEdgeCounts();
+/** Told each record a ring takes (see `setLagRecordSink`). */
+let lagRecordSink: LagRecordSink | null = null;
+
+/**
+ * Hand every spike, slow span and closed delay window to `sink` as it is
+ * recorded, so it can outlive the rings. One sink per process; null removes
+ * it. A sink that throws is dropped: a diagnostic must never fail the work it
+ * was timing.
+ */
+export function setLagRecordSink(sink: LagRecordSink | null): void {
+  lagRecordSink = sink;
+}
+
+/** Pass on a record another process recorded on its own thread and sent here. */
+export function relayLagRecord(relayedFrom: string, record: LagRecord): void {
+  emitLagRecord(record, relayedFrom);
+}
+
+/**
+ * Whether a record is a block another process should hear about as it
+ * happens: a spike, or a delay window that held one. The pty host sends these
+ * to main for the lag journal. A span already travels as `slow-span`, so
+ * sending it here too would write it twice, and a quiet window says nothing.
+ */
+export function isBlockRecord(record: LagRecord): boolean {
+  return record.kind === 'spike' || (record.kind === 'window' && record.maxMs >= DELAY_BACKSTOP_MS);
+}
+
+function emitLagRecord(record: LagRecord, relayedFrom: string | null): void {
+  if (lagRecordSink === null) return;
+  try {
+    lagRecordSink(record, relayedFrom);
+  } catch (error) {
+    // report-ok: only a dev build sets a sink (the journal, the pty host's relay), and this runs in the pty host too, which cannot report. Losing it costs later journal lines, never the timed work.
+    lagRecordSink = null;
+    console.warn('[event-loop-lag] the record sink threw and was removed:', error);
+  }
+}
 
 function pushBounded(ring: SlowSyncWork[], span: SlowSyncWork, size: number): void {
   ring.push(span);
@@ -235,6 +294,7 @@ function recordSpan(label: string, elapsed: number, ring: SlowSyncWork[] = recen
   if (elapsed >= LONG_SYNC_THRESHOLD_MS && !label.includes(SPAWN_WORKER_LABEL_SEGMENT)) {
     pushBounded(recentLongSyncWork, span, LONG_SYNC_RING_SIZE);
   }
+  emitLagRecord({ kind: 'span', relayed: ring === recentRelayedSlowSyncWork, ...span }, null);
 }
 
 /**
@@ -261,11 +321,11 @@ export function recordSyncSpan(label: string, elapsedMs: number): void {
 let currentWindowNote: string | null = null;
 
 /**
- * Mark the delay window now open, so it closes with `note` and the app's counts
- * leave it out. The stall profiler marks the window holding its own restart:
- * the histogram records a block's delay whenever its timer next fires, which
- * is not reliably before any given callback, so the restart cannot be fenced
- * into a window of its own; the whole window is set aside instead.
+ * Give the delay window now open a note, which says something happened in it.
+ * The stall profiler notes the window that follows a saved profile. A noted
+ * window is counted like any other. It used to be left out of the counts,
+ * when the profiler's restart was a 200 ms block of its own, and that hid a
+ * real 4.4 s stall that followed a save.
  */
 export function markCurrentDelayWindow(note: string): void {
   currentWindowNote = note;
@@ -273,8 +333,16 @@ export function markCurrentDelayWindow(note: string): void {
 
 /**
  * Close the current delay window now, so the window's numbers stop at this
- * moment. The stall profiler closes one before its restart, so the stall it
- * reacted to stays in an ordinary window.
+ * moment. The stall profiler closes one before it saves, so the stall it
+ * reacted to sits in a window of its own.
+ *
+ * Closing resets the histogram, and a reset histogram has no baseline: it
+ * records nothing until its timer has fired once more. A block that follows
+ * the close with no loop turn between is therefore never recorded (a 200 ms
+ * block read as 16 ms on Node 24.22). The profiler uses that to keep its own
+ * cold start out of the windows. The same gap means a stall that begins within
+ * a timer tick of any close is missing from the windows, though the sampler
+ * above still sees it.
  */
 export function closeDelayWindow(): void {
   if (!delayHistogram) return;
@@ -282,15 +350,17 @@ export function closeDelayWindow(): void {
   currentWindowNote = null;
   if (delayHistogram.count > 0) {
     const maxMs = delayHistogram.max / NANOSECONDS_PER_MS;
-    recentDelayWindows.push({
+    const closedWindow: DelayWindow = {
       at: new Date().toISOString(),
       maxMs: Math.round(maxMs * 10) / 10,
       p99Ms: Math.round((delayHistogram.percentile(99) / NANOSECONDS_PER_MS) * 10) / 10,
       meanMs: Math.round((delayHistogram.mean / NANOSECONDS_PER_MS) * 10) / 10,
       ...(note ? { note } : {}),
-    });
+    };
+    recentDelayWindows.push(closedWindow);
     while (recentDelayWindows.length > DELAY_WINDOW_RING_SIZE) recentDelayWindows.shift();
-    if (!note) countEdges(delayWindowMaxAtLeastMs, maxMs);
+    countEdges(delayWindowMaxAtLeastMs, maxMs);
+    emitLagRecord({ kind: 'window', ...closedWindow }, null);
   }
   delayHistogram.reset();
 }
@@ -384,8 +454,10 @@ export function startEventLoopLagMonitor(): void {
     countEdges(lagAtLeastMs, lag);
     if (lag >= SPIKE_THRESHOLD_MS) {
       spikeCount += 1;
-      recentSpikes.push({ at: new Date().toISOString(), lagMs: Math.round(lag) });
+      const spike = { at: new Date().toISOString(), lagMs: Math.round(lag) };
+      recentSpikes.push(spike);
       while (recentSpikes.length > RING_SIZE) recentSpikes.shift();
+      emitLagRecord({ kind: 'spike', ...spike }, null);
     }
   }, SAMPLE_INTERVAL_MS);
   // Never keep the process alive on its own - mirrors the file-watcher poll.

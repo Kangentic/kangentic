@@ -298,7 +298,7 @@ export async function openLane(input: OpenLaneInput): Promise<OpenLaneResult> {
   // not fighting over a viewport, not credentials.
   const partition = browserPartitionForOwner(input.projectId, input.taskId);
 
-  // Log the jar a lane binds (main-side, since renderer console never persists).
+  // Log the jar a lane binds. Main-side: a lane has no Kangentic renderer to log from.
   console.log(`[browser-lane] open lane=${laneId} task=${input.taskId.slice(0, 8)} partition=${partition}`);
 
   // Seed the shared (non-localhost) login into this jar before the offscreen

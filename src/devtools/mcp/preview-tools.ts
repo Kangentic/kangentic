@@ -534,14 +534,33 @@ export function registerDevtoolsPreviewTools(
     'kangentic_devtools_event_loop_lag',
     {
       description:
-        'Freeze flight recorder: event-loop lag for the MAIN process AND the RENDERER of the inspected instance. Each report carries the recorded recent stalls (UTC timestamp + duration ms), the worst stall, and the spike count, so a freeze is diagnosed RETROACTIVELY - call this AFTER a user reports lag/freezing to see exactly when and for how long each thread blocked, without having been probing at that instant. The renderer report also carries `recentLongFrames`, which answers WHAT ran rather than only when: each long animation frame lists its heaviest scripts with the source URL and function name that registered them, plus `forcedLayoutMs` (read/write thrash) and a `styleLayoutMs` vs script-time split that says whether the cost was JS, style/layout, or forced reflow. Long frames and lag spikes share a wall-clock stamp, so they line up by timestamp. The main report carries `recentSlowSyncWork`, the same idea for the main process: every synchronous span the known suspects wrap in `timeSyncWork` (the metrics snapshot transaction, the status and events file reads, the embedding writeback, the task list read) that ran 16ms or longer, with its label, so a main spike whose window holds a span is attributed and one with no span points at work that is not wrapped yet. `workflowEngine` reports the workflow engine\'s last 200 evaluations (samples, p95Ms, maxMs) against its 2 ms budget. The main report is always present; the renderer report needs an attached debugger (it reports `unavailable` otherwise), and `recentLongFrames` is `unavailable` where the runtime lacks the long-animation-frame entry type. Dev-only.',
+        'Freeze flight recorder: event-loop lag for the MAIN process AND the RENDERER of the inspected instance. Each report carries the recorded recent stalls (UTC timestamp + duration ms), the worst stall, and the spike count, so a freeze is diagnosed RETROACTIVELY - call this AFTER a user reports lag/freezing to see exactly when and for how long each thread blocked, without having been probing at that instant. The renderer report also carries `recentLongFrames`, which answers WHAT ran rather than only when: each long animation frame lists its heaviest scripts with the source URL and function name that registered them, plus `forcedLayoutMs` (read/write thrash) and a `styleLayoutMs` vs script-time split that says whether the cost was JS, style/layout, or forced reflow. Long frames and lag spikes share a wall-clock stamp, so they line up by timestamp. The main report carries `recentSlowSyncWork`, the same idea for the main process: every synchronous span the known suspects wrap in `timeSyncWork` (the metrics snapshot transaction, the status and events file reads, the embedding writeback, the task list read) that ran 16ms or longer, with its label, so a main spike whose window holds a span is attributed and one with no span points at work that is not wrapped yet. `workflowEngine` reports the workflow engine\'s last 200 evaluations (samples, p95Ms, maxMs) against its 2 ms budget. The main report is always present; the renderer report needs an attached debugger (it reports `unavailable` otherwise), and `recentLongFrames` is `unavailable` where the runtime lacks the long-animation-frame entry type. `stallProfiler.profiles` names the heaviest functions of each main stall of 75 ms or more. `diagnostics` is what the Developer diagnostics themselves cost main, per diagnostic, with `pass` and `violations` against their budget (no hold of 16 ms, under 0.1% of main\'s time). These records are also written to disk as they happen, per launch: `launches` lists the launches on disk, and passing `launch` reads one back after a restart (its startup timeline, stalls, spikes, slow spans, delay windows and renderer long frames) instead of the live report. Dev-only.',
       inputSchema: z.object({
         instanceId: z.string().optional().describe(INSTANCE_ARG_DESCRIPTION),
+        launch: z
+          .string()
+          .optional()
+          .describe('Read one launch from the on-disk journal instead of the live report: `previous` (the run before this one), `current`, or an id from `launches`.'),
+        since: z.string().optional().describe('With `launch`: keep only records at or after this UTC ISO time.'),
+        until: z.string().optional().describe('With `launch`: keep only records at or before this UTC ISO time.'),
+        limit: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe('With `launch`: the most of each kind of record to return, newest kept. Default 500.'),
       }),
       annotations: READ_ONLY_ANNOTATIONS,
     },
-    async ({ instanceId }) =>
-      toolResult(await callBridge({ method: 'GET', path: '/event-loop-lag', instanceId })),
+    async ({ instanceId, launch, since, until, limit }) =>
+      toolResult(
+        await callBridge({
+          method: 'GET',
+          path: '/event-loop-lag',
+          query: launch ? { launch, since, until, limit } : undefined,
+          instanceId,
+        }),
+      ),
   );
 
   server.registerTool(

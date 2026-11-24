@@ -49,6 +49,8 @@ vi.mock('../../src/devtools/main/inspection-server', () => ({
 vi.mock('../../src/devtools/main/cdp', () => ({
   attachDebugger: vi.fn(),
   detachDebugger: vi.fn(),
+  isDebuggerAttached: vi.fn(() => false),
+  runtimeEvaluate: vi.fn(),
 }));
 
 vi.mock('../../src/devtools/main/spawn-tracer', () => ({
@@ -58,8 +60,9 @@ vi.mock('../../src/devtools/main/spawn-tracer', () => ({
 vi.mock('../../src/devtools/main/stall-profiler', () => ({
   isStallProfilerRunning: vi.fn(() => false),
   stallProfileDirectory: vi.fn(() => hoisted.configDir),
-  startStallProfiler: vi.fn(async () => undefined),
+  startStallProfiler: vi.fn(),
   stopStallProfiler: hoisted.stopStallProfiler,
+  setStallSummaryListener: vi.fn(),
 }));
 
 vi.mock('../../src/main/config/paths', () => ({
@@ -100,7 +103,7 @@ function createFakeSessionManager() {
 
 function createContext(sessionManager: ReturnType<typeof createFakeSessionManager>): DevtoolsContext {
   return {
-    app: { getPath: () => hoisted.configDir } as unknown as App,
+    app: { getPath: () => hoisted.configDir, getVersion: () => '0.0.0-test' } as unknown as App,
     getMainWindow: () => null,
     getProjectRoot: () => null,
     getProjectId: () => null,
@@ -110,6 +113,8 @@ function createContext(sessionManager: ReturnType<typeof createFakeSessionManage
     getInspectionServerEnabled: () => false,
     getEvalEnabled: () => false,
     getStallProfilerEnabled: () => false,
+    isEphemeralPreview: () => false,
+    getDeveloperFlags: () => ({ stallProfiler: false }),
   };
 }
 

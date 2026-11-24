@@ -150,6 +150,10 @@ it through `PtyHostClient`: ordered commands, id-matched requests, ordered event
   and every span per label, which the inspection server's event-loop-lag route serves as
   `ptyHost`), `devArmRoundTripProbe` and `devReadRoundTripProbe` (the scroll-latency probe, see
   [Output streaming](output-streaming.md)), and `devCpuProfile` (a CPU profile of its thread).
+  It also posts a `lag-record` message to main for each of its stalls and each delay window that
+  reached 25 ms, so the lag journal keeps them past a restart
+  ([Dev diagnostics](../../contributing/dev-diagnostics.md)). Its slow spans still travel as
+  `slow-span`.
 - **Task leftover reap.** The host also scans for and stops what a task's agents left running
   (`reapTaggedProcesses`), stops one reported process when the user asks (`stopReportedProcess`), stops a worktree holder the removal-failure reap found by the pid and creation time its scan read (`SessionManager.stopProcessByCreationTime`, 5 s budget), and answers which reported processes have ended (`checkReportedProcesses`, by pid and start key, never a scan). For a project's Stop script it answers what a task has running and whether anything outside its tree is connected, signalling nothing (`probeTaskProcesses`).
   It also answers `awaitAgentExit`, bounded, once the agent a task's killed or exited shell left running has exited (`src/main/pty/host/exited-root-wait.ts`); a task reap waits on it before it scans.

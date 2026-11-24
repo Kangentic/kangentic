@@ -2160,6 +2160,10 @@ msgctxt "sort files by"
 msgid "Name"
 msgstr "Név"
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Names the heaviest functions of each main-process stall in the event-loop report."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/BoardTab.tsx
 #, fuzzy
 msgctxt "column width"
@@ -2565,11 +2569,6 @@ msgstr "Adatvédelem"
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Private key"
 msgstr ""
-
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Profiles the main process and names a stall's heaviest functions in the event-loop report; costs CPU while on."
-msgstr "Profilozza a fő folyamatot, és az eseményhurok-jelentésben megnevezi az akadás legnehezebb függvényeit; bekapcsolva CPU-t használ."
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Program {version}"
