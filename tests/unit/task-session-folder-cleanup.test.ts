@@ -274,6 +274,31 @@ describe('removeSessionFolders', () => {
     expect(fs.existsSync(folderOf(paused))).toBe(true);
     expect(fs.existsSync(folderOf(older))).toBe(false);
   });
+
+  // A queued session has no PTY yet but a spawn is about to write its folder.
+  it('spares a queued session as well as a running one', async () => {
+    const { paused } = taskWithTwoSessions();
+    fs.mkdirSync(folderOf('queued-session'));
+    liveSessions = [{ id: 'queued-session', taskId: 'task-1', status: 'queued' }];
+
+    await removeSessionFolders({ projectPath: board.projectPath, sessionIds: [paused, 'queued-session'], sessionManager });
+
+    expect(fs.existsSync(folderOf('queued-session'))).toBe(true);
+    expect(fs.existsSync(folderOf(paused))).toBe(false);
+  });
+
+  it('does not warn for a folder that is already gone, and still removes the rest', async () => {
+    const { paused } = taskWithTwoSessions();
+
+    await expect(removeSessionFolders({
+      projectPath: board.projectPath,
+      sessionIds: ['never-had-a-folder', paused],
+      sessionManager,
+    })).resolves.toBeUndefined();
+
+    expect(console.warn).not.toHaveBeenCalled();
+    expect(fs.existsSync(folderOf(paused))).toBe(false);
+  });
 });
 
 describe('the cold-open To Do pass', () => {
