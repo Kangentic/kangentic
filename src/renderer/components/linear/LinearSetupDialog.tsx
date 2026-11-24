@@ -4,6 +4,7 @@ import { ArrowLeft, ChevronRight, ExternalLink, Eye, EyeOff, KeyRound, LoaderCir
 import { BaseDialog } from '../dialogs/BaseDialog';
 import { ArtifactPlatformLogo } from '../VendorMark';
 import { reportRendererFailure } from '../../utils/renderer-failure';
+import { rejectionMessage } from '../../lib/ipc-error';
 import type { ProviderSetupDialogProps } from '../backlog/import-providers';
 import { ConnectWaiting } from '../backlog/connect/ConnectParts';
 import { useBrowserSignIn } from '../backlog/connect/useBrowserSignIn';
@@ -99,7 +100,7 @@ export function LinearSetupDialog({ onClose, onSaved, initialError }: ProviderSe
       onSaved();
     } catch (saveError: unknown) {
       reportRendererFailure('linear', 'set-api-key', saveError);
-      setError(saveError instanceof Error ? saveError.message : t`Couldn't save the key.`);
+      setError(saveError instanceof Error ? rejectionMessage(saveError) : t`Couldn't save the key.`);
     } finally {
       setSubmitting(false);
     }

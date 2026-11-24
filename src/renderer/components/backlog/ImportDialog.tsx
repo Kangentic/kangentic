@@ -15,7 +15,7 @@ import { useToastStore } from '../../stores/toast-store';
 import { getProviderForSource, getProviderLabel, getSourceIcon, getSourceTypeOption } from './import-providers';
 import { translateText } from '../../i18n/translate';
 import { reportRendererFailure } from '../../utils/renderer-failure';
-import { describeIpcError } from '../../lib/ipc-error';
+import { describeIpcError, rejectionMessage } from '../../lib/ipc-error';
 import type { BoardConnectPrefill, ExternalIssue, ImportSource } from '../../../shared/types';
 
 interface ImportDialogProps {
@@ -233,7 +233,7 @@ export function ImportDialog({ source, onClose, onSourceReplaced }: ImportDialog
       void reconcile('incremental');
     }).catch((cliError: unknown) => {
       if (fetchSequenceRef.current !== token) return;
-      setCliError(cliError instanceof Error ? cliError.message : t`CLI check failed`);
+      setCliError(cliError instanceof Error ? rejectionMessage(cliError) : t`CLI check failed`);
       setLoading(false);
       setSyncing(false);
     });
@@ -523,7 +523,7 @@ export function ImportDialog({ source, onClose, onSourceReplaced }: ImportDialog
       loadBacklog();
       onClose();
     } catch (importError: unknown) {
-      setError(importError instanceof Error ? importError.message : t`Import failed`);
+      setError(importError instanceof Error ? rejectionMessage(importError) : t`Import failed`);
       setImporting(false);
     }
   };

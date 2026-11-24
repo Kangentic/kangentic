@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { SquareKanban, ExternalLink, LoaderCircle, Eye, EyeOff } from 'lucide-react';
 import { BaseDialog } from '../dialogs/BaseDialog';
+import { rejectionMessage } from '../../lib/ipc-error';
 
 interface AsanaSetupDialogProps {
   onClose: () => void;
@@ -49,7 +50,7 @@ export function AsanaSetupDialog({ onClose, onSaved, initialError }: AsanaSetupD
       }
       onSaved();
     } catch (saveError: unknown) {
-      setError(saveError instanceof Error ? saveError.message : t`Could not save the token.`);
+      setError(saveError instanceof Error ? rejectionMessage(saveError) : t`Could not save the token.`);
     } finally {
       setSubmitting(false);
     }

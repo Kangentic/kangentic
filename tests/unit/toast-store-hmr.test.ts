@@ -153,6 +153,19 @@ describe('toast-store HMR preservation', () => {
     expect(toasts[1]).toBe(before);
   });
 
+  it('addToast stores reported: true only when asked, and updateToast can set it', () => {
+    const reportedId = useToastStore.getState().addToast({ title: 'Failed', message: 'Body', variant: 'error', reported: true });
+    const falseId = useToastStore.getState().addToast({ title: 'Failed', message: 'Body', variant: 'error', reported: false });
+    const absentId = useToastStore.getState().addToast({ title: 'Failed', message: 'Body', variant: 'error' });
+    const find = (id: string) => useToastStore.getState().toasts.find((toast) => toast.id === id);
+    expect(find(reportedId)?.reported).toBe(true);
+    expect(find(falseId)?.reported).toBeUndefined();
+    expect(find(absentId)?.reported).toBeUndefined();
+
+    useToastStore.getState().updateToast(absentId, { reported: true });
+    expect(find(absentId)?.reported).toBe(true);
+  });
+
   it('updateToast is a no-op for an unknown id and keeps the same stack', () => {
     useToastStore.getState().addToast({ title: 'A', message: 'Body' });
     const stack = useToastStore.getState().toasts;

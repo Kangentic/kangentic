@@ -9,6 +9,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { readPopOutDescriptor } from './pop-out/read-descriptor';
 import { PopOutSurfaceRoot } from './pop-out/PopOutSurfaceRoot';
 import { initRendererErrorReporting, reportCaughtRenderError } from './error-reporting';
+import { rejectionMessage } from './lib/ipc-error';
 import faviconHref from '@kangentic/branding/assets/brandmark-small.svg?url';
 import './index.css';
 
@@ -17,7 +18,7 @@ import './index.css';
 initRendererErrorReporting();
 
 window.addEventListener('unhandledrejection', (event) => {
-  const message = event.reason instanceof Error ? event.reason.message : String(event.reason);
+  const message = rejectionMessage(event.reason);
   // No component stack exists here: a rejected promise is not a render error.
   // Reporting the boundary anyway is the point - it distinguishes this path from
   // the two error boundaries, which previously all reported identically.

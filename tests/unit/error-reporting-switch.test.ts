@@ -54,6 +54,8 @@ const mocks = vi.hoisted(() => {
       setContext: vi.fn(),
       captureException: vi.fn(),
       captureMessage: vi.fn(),
+      // The crash notice hook reads the client; each test says what it returns.
+      getClient: vi.fn(),
       withScope: vi.fn(
         (
           callback: (scope: {
@@ -159,6 +161,8 @@ describe('error reporting runtime behavior (module-state gated)', () => {
     mocks.setLevelSpy.mockClear();
     mocks.setFingerprintSpy.mockClear();
     mocks.sentryMock.captureMessage.mockReset();
+    mocks.sentryMock.captureException.mockReset();
+    mocks.sentryMock.getClient.mockReset();
     mocks.electronMock.app.isPackaged = true;
     delete process.env.KANGENTIC_TELEMETRY;
     // Force the switch ON regardless of packaged state, so initErrorReporting
@@ -276,6 +280,84 @@ describe('error reporting runtime behavior (module-state gated)', () => {
 
       expect(mocks.sentryMock.captureException).toHaveBeenCalledTimes(1);
       expect(mocks.sentryMock.captureException).toHaveBeenCalledWith(error);
+    });
+  });
+
+  // #1188: a failure toast says the issue was reported only when this returns true.
+  describe('reportHandledError return value', () => {
+    it('is true once the report went to Sentry', async () => {
+      const errorReporting = await importFreshErrorReporting();
+      errorReporting.initErrorReporting();
+      expect(errorReporting.reportHandledError(new Error('spawn failed'), { source: 'pty' })).toBe(true);
+    });
+
+    it('is false while error reporting is inactive', async () => {
+      const errorReporting = await importFreshErrorReporting();
+      expect(errorReporting.reportHandledError(new Error('spawn failed'), { source: 'pty' })).toBe(false);
+    });
+
+    it('is false for a user configuration error', async () => {
+      const errorReporting = await importFreshErrorReporting();
+      const { UserConfigurationError } = await import('../../src/shared/user-configuration-error');
+      errorReporting.initErrorReporting();
+      expect(errorReporting.reportHandledError(new UserConfigurationError('Codex CLI not found on PATH.'), { source: 'spawn' })).toBe(false);
+    });
+
+    it('is false, and does not throw, when the SDK call throws', async () => {
+      const errorReporting = await importFreshErrorReporting();
+      errorReporting.initErrorReporting();
+      mocks.sentryMock.captureException.mockImplementationOnce(() => {
+        throw new Error('sentry transport exploded');
+      });
+      let returned: boolean | undefined;
+      expect(() => {
+        returned = errorReporting.reportHandledError(new Error('spawn failed'), { source: 'pty' });
+      }).not.toThrow();
+      expect(returned).toBe(false);
+    });
+  });
+
+  describe('the crash notice hook', () => {
+    type AfterSend = (event: unknown, response: unknown) => void;
+
+    it('subscribes to afterSendEvent when init runs with reporting on, and forwards to the holder', async () => {
+      const on = vi.fn();
+      mocks.sentryMock.getClient.mockReturnValue({ on });
+      const errorReporting = await importFreshErrorReporting();
+      const { crashNoticeHolder } = await import('../../src/main/analytics/crash-notice');
+      errorReporting.initErrorReporting();
+
+      expect(on).toHaveBeenCalledTimes(1);
+      expect(on.mock.calls[0][0]).toBe('afterSendEvent');
+      const forward = on.mock.calls[0][1] as AfterSend;
+      forward(
+        { level: 'fatal', contexts: { native_crash: { found_at_startup: true, previous_run_exit: 'abrupt' } } },
+        { statusCode: 200 },
+      );
+      expect(crashNoticeHolder.take()).toEqual({ kind: 'app', crashedAt: null });
+    });
+
+    it('does not subscribe when error reporting is off', async () => {
+      process.env.KANGENTIC_ERROR_REPORTING = '0';
+      const on = vi.fn();
+      mocks.sentryMock.getClient.mockReturnValue({ on });
+      const errorReporting = await importFreshErrorReporting();
+      errorReporting.initErrorReporting();
+
+      expect(on).not.toHaveBeenCalled();
+      expect(errorReporting.isErrorReportingActive()).toBe(false);
+    });
+
+    it('leaves init active when the client has no on, or there is no client', async () => {
+      mocks.sentryMock.getClient.mockReturnValue({});
+      const withoutOn = await importFreshErrorReporting();
+      expect(() => withoutOn.initErrorReporting()).not.toThrow();
+      expect(withoutOn.isErrorReportingActive()).toBe(true);
+
+      mocks.sentryMock.getClient.mockReturnValue(undefined);
+      const withoutClient = await importFreshErrorReporting();
+      expect(() => withoutClient.initErrorReporting()).not.toThrow();
+      expect(withoutClient.isErrorReportingActive()).toBe(true);
     });
   });
 

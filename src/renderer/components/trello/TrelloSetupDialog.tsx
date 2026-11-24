@@ -5,6 +5,7 @@ import { BaseDialog } from '../dialogs/BaseDialog';
 import { FIELD_CONTROL_CLASS } from '../Field';
 import { ArtifactPlatformLogo } from '../VendorMark';
 import { reportRendererFailure } from '../../utils/renderer-failure';
+import { rejectionMessage } from '../../lib/ipc-error';
 import type { ProviderSetupDialogProps } from '../backlog/import-providers';
 import { ConnectWaiting } from '../backlog/connect/ConnectParts';
 import { useBrowserSignIn } from '../backlog/connect/useBrowserSignIn';
@@ -134,7 +135,7 @@ export function TrelloSetupDialog({ onClose, onSaved, initialError }: ProviderSe
     } catch (connectError: unknown) {
       reportRendererFailure('trello', 'connect', connectError);
       setErrorField('token');
-      setError(connectError instanceof Error ? connectError.message : t`Couldn't save the token.`);
+      setError(connectError instanceof Error ? rejectionMessage(connectError) : t`Couldn't save the token.`);
     } finally {
       setSubmitting(false);
     }
@@ -147,7 +148,7 @@ export function TrelloSetupDialog({ onClose, onSaved, initialError }: ProviderSe
     }).catch((openError: unknown) => {
       reportRendererFailure('trello', 'open-approval', openError);
       setErrorField('apiKey');
-      setError(openError instanceof Error ? openError.message : String(openError));
+      setError(rejectionMessage(openError));
     });
   };
 
