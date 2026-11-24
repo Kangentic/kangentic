@@ -833,7 +833,8 @@ in one Sentry org, one triage surface.
   another dispatcher's file covers the rest. It is not set today.
 - **Handled errors are forwarded too** (`reportHandledError`; the renderer counterpart,
   `reportHandledRendererError`, serves the monaco funnel above): the deliberate catch sites that
-  otherwise emit only a sanitized count - updater structural failures (`source: updater`), PTY
+  otherwise emit only a sanitized count - updater structural failures (`source: updater`,
+  fingerprinted `['updater', name, code]` when the error has a code, else grouped by stack), PTY
   spawn failures (`source: pty_spawn`), an agent history view Kangentic did not recognize
   (`source: history_view`, tag `agent`, fingerprinted `['history-view', agent]`), a failed read of
   the global database (`source: global_db_read`, tag `operation`), a Kangentic utility worker that has crashed past its restart cap
@@ -973,7 +974,9 @@ in one Sentry org, one triage surface.
   program this machine runs), `bad_cpu_type` (macOS refused the binary for its CPU type, zsh's
   `bad CPU type in executable:`), `killed` (the shell reported the command killed, such as bash's
   and dash's `Killed` or zsh's `killed`), `crashed` (a segmentation fault, bus error, abort or illegal instruction), `unknown_option`, `line_too_long`,
-  `conversation_missing`, `login_required`, `bad_configuration`, `other`, `not_read`, `unreadable`). Output
+  `conversation_missing`, `login_required`, `bad_configuration`, `other`, `not_read`, `unreadable`).
+  `login_required` and `bad_configuration` are the user's own setup, so a launch classed as either
+  is counted in Aptabase's `spawn_failed` and never sent (`AgentUserSetupError`, below). Output
   that is `other` adds `other_from`: `shell` when the last lines hold a PowerShell error record (a
   line that starts with `CategoryInfo` or `FullyQualifiedErrorId`, so the shell refused the typed
   line), and `unknown` otherwise. A shell refusing the line and an agent that started and left need

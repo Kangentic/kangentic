@@ -56,6 +56,21 @@ project. Rebuild asks first only when it
 will spend agent calls ("Rebuild everything?", naming how many summaries are rewritten and
 about how many calls); otherwise it runs at once. A Search quality change re-embeds on its own.
 
+A task-summary pass is asked for (`summaryScheduler.request` in `retrieval-service.ts`) at these
+points, and a pass that finds nothing changed since the last one caught up costs one query:
+
+- A minute into each launch, for every registered project whose folder exists, the open one first
+  (`requestEveryProject`).
+- When a refresh resolves a writer where the last one resolved none (summaries switched on, or an
+  agent and model chosen), for every project again.
+- After a project's open-time index sweep, for that project.
+- After a board change settles (`scheduleTaskRecordSweep`), for that project, so a task that just
+  reached Done gets its summary.
+- On a Knowledge Graph setting change, for the open project (`reconcileEmbedWorker`). When the
+  agent, model or effort the summaries are written with changed, it also ends that project's
+  failure back-off, since the new writer may be what fixes the failed call.
+- On Rebuild, for the open project. Every other project's rewrite waits for one of the asks above.
+
 When the embedding worker crashes three times inside five minutes, the restart
 policy stops respawning it and search falls back to keyword matches until the
 window decays (a worker that could not load its native runtime never decays, see below). The Knowledge Graph card's note then names the reason (`KnowledgeGraphStatus.workerError`:

@@ -305,7 +305,7 @@ It writes `Kangentic (dev).lnk` to the checkout root. Double-click it there to s
 3. esbuild bundles main + preload + the six utility-process workers (embed, line-count, worktree-copy, dictation, retrieval, pty-host), minified.
    A build that uploads fails on any bundle whose sourcemap did not reach the upload
    (`scripts/sentry-upload-gate.js`, see [Error reporting](../telemetry/error-reporting.md#sourcemaps-and-debug-files)), in step 2 as well as here.
-4. Copies bridge scripts (`status-bridge.js`, `event-bridge.js`, `plan-approval-bridge.js`, `background-shell-hint-bridge.js`) to `.vite/build/`
+4. Copies bridge scripts (`status-bridge.js`, `event-bridge.js`, `plan-approval-bridge.js`, `background-shell-hint-bridge.js`, `browser-policy-bridge.js`) to `.vite/build/`
 5. Uploads node-pty's shipped Windows PDBs to Sentry as debug files (`uploadNativeDebugFiles`):
    Windows leg only, gated on a `KANGENTIC_SENTRY_TOKEN` / `SENTRY_AUTH_TOKEN` upload token and on
    the build being authorized to upload (CI, or a local `KANGENTIC_SENTRY_UPLOAD=1`). A missing
@@ -393,6 +393,23 @@ frame stops changing, and in the faces the demo ships, so a set shot on any OS i
 release, and its `poster-gate` job then runs `npm run demo:poster-gate` on Windows, macOS and
 Linux, which fails when a live frame lays out differently from its poster; `demo/README.md`
 ("The poster set", "Fonts", "The poster gate") carries the manifest shape and the reasons.
+
+### Other build and check scripts
+
+- `npm run build:host` (`scripts/build-host.mjs`) builds the program Kangentic installs on an SSH
+  host: one tarball per CPU, into `dist/host`, holding a pinned Node, the helper bundle and
+  node-pty's Linux prebuild. See [SSH remote](../platforms/ssh-remote.md).
+- `npm run cursor:rules` (`scripts/cursor-rules.js`) writes the Cursor copies of `.claude/rules/`
+  and `.claude/agents/`. Every `npm install` and `npm start` runs it too. See
+  [Agent instructions](agent-instructions.md).
+- `npm run check:integrations` (`scripts/check-integrations.mjs`) asks Trello, Jira, Linear and
+  GitLab whether the browser sign-ins this checkout ships still work, the same check
+  `.github/workflows/integrations.yml` runs every day. See
+  [Boards](../integrations/boards.md).
+- `npm run check:distribution` (`scripts/check-distribution.mjs`) checks what an install and an
+  update depend on outside this repository: the latest release and its assets, the npm launcher,
+  and the domain's and certificates' end dates. The same workflow runs it daily. See
+  [Scheduled checks](../releases/scheduled-checks.md).
 
 ### Worktree Dev
 
