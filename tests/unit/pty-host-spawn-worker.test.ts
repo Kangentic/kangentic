@@ -405,6 +405,22 @@ describe('WorkerSpawnService against a fake worker', () => {
     expect(events.filter((event) => event.type === 'cliClose').map((event) => event.processId)).toEqual([1, 2]);
   });
 
+  it('waits at shutdown for a run that outlives the app once main asked for it to stop, until it exits', () => {
+    const { service, latest } = fakeService();
+    service.startCli(cliParams(1, { outlivesApp: true }));
+    expect(service.liveCliCount).toBe(0);
+
+    // Asked before the pid is known: the stop is held, and the wait starts now.
+    service.stopCli(1, 'treeNow');
+    expect(service.liveCliCount).toBe(1);
+    latest().reply({ type: 'cliStarted', processId: 1, pid: 7301 });
+    expect(service.liveCliCount).toBe(1);
+
+    latest().reply({ type: 'cliEvent', event: { type: 'cliExit', processId: 1, code: 1, signal: null } });
+    expect(service.liveCliCount).toBe(0);
+    service.dispose();
+  });
+
   it('counts a run from its start until its cliExit, or its cliClose when the start failed', () => {
     const { service, latest } = fakeService();
     for (const processId of [1, 2, 3]) service.startCli(cliParams(processId));

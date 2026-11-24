@@ -33,6 +33,8 @@ interface CliRun {
   treeKillStarted: boolean;
   /** The app never stops this run by itself (`PtyHostCliSpawnParams.outlivesApp`). */
   outlivesApp: boolean;
+  /** Main asked for this run to stop, so a shutdown waits for it like any other. */
+  stopRequested: boolean;
 }
 
 export class HostCliProcesses {
@@ -83,7 +85,7 @@ export class HostCliProcesses {
       if (stdinDescriptor !== null) fs.closeSync(stdinDescriptor);
     }
     const outlivesApp = params.outlivesApp === true;
-    this.runs.set(processId, { child, leadsGroup: params.detached, treeKillStarted: false, outlivesApp });
+    this.runs.set(processId, { child, leadsGroup: params.detached, treeKillStarted: false, outlivesApp, stopRequested: false });
     // Nothing here waits for a run the app leaves behind, so it does not hold this thread's loop open.
     if (outlivesApp) child.unref();
     child.once('spawn', () => this.emit({ type: 'cliSpawned', processId, pid: child.pid ?? null }));
@@ -123,7 +125,9 @@ export class HostCliProcesses {
 
   stop(processId: number, mode: CliStopMode = 'tree'): void {
     const run = this.runs.get(processId);
-    if (run) this.stopRun(run, mode);
+    if (!run) return;
+    run.stopRequested = true;
+    this.stopRun(run, mode);
   }
 
   /** The app is quitting: stop every run still going, but for one that outlives it. */
@@ -140,11 +144,13 @@ export class HostCliProcesses {
   }
 
   /** Runs whose process started and has not exited yet, which a shutdown
-   *  waits for. One that outlives the app is not waited for. */
+   *  waits for. One that outlives the app is not waited for, unless main asked
+   *  for it to stop: a host that exits first takes the `taskkill` it started
+   *  down with it, and the tree an aborted script left would go on running. */
   get liveCount(): number {
     let count = 0;
     for (const run of this.runs.values()) {
-      if (!run.outlivesApp && run.child.pid !== undefined && !childHasExited(run.child)) count += 1;
+      if ((!run.outlivesApp || run.stopRequested) && run.child.pid !== undefined && !childHasExited(run.child)) count += 1;
     }
     return count;
   }

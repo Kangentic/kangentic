@@ -53,7 +53,7 @@ const CLASSIFIED_STARTS: Record<string, ClassifiedStart> = {
   },
   'src/main/git/spawn-with-abort.ts': {
     bindings: ['spawn'],
-    reason: 'git goes through spawnOffMainCli; the spawn here is the no-host fallback, and the Stop and Post-Worktree scripts',
+    reason: 'git and a project script go through spawnOffMainCli; the spawn here is the no-host fallback',
   },
   'src/main/shared/child-tree-stop.ts': {
     bindings: ['spawn'],

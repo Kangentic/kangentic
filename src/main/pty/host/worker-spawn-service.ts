@@ -64,6 +64,8 @@ interface WorkerRun {
   stopPending: CliStopMode | null;
   /** The app never stops this run by itself (`PtyHostCliSpawnParams.outlivesApp`). */
   outlivesApp: boolean;
+  /** Main asked for this run to stop, so a shutdown waits for it like any other. */
+  stopRequested: boolean;
 }
 
 interface RunPin {
@@ -123,7 +125,7 @@ export class WorkerSpawnService implements HostSpawnService {
       this.ensureFallback().startCli(params);
       return;
     }
-    this.runs.set(params.processId, { pid: null, exited: false, stopPending: null, outlivesApp: params.outlivesApp === true });
+    this.runs.set(params.processId, { pid: null, exited: false, stopPending: null, outlivesApp: params.outlivesApp === true, stopRequested: false });
     this.send(worker, { type: 'cliSpawn', params });
   }
 
@@ -150,6 +152,7 @@ export class WorkerSpawnService implements HostSpawnService {
     }
     const run = this.runs.get(processId);
     if (!run || !this.worker) return;
+    run.stopRequested = true;
     // The pid comes back one round trip after the start; the stop follows it,
     // so a Windows tree kill never runs on a pid this thread has not pinned.
     if (run.pid === null && !run.exited) {
@@ -171,10 +174,12 @@ export class WorkerSpawnService implements HostSpawnService {
 
   /** Every run posted and not yet exited, pid known or not: the worker may
    *  already have started it, and the host's shutdown must wait for it. A run
-   *  that outlives the app is not waited for. */
+   *  that outlives the app is not waited for, unless main asked for it to stop:
+   *  a host that exits first takes the `taskkill` it started down with it, and
+   *  the tree an aborted script left would go on running. */
   get liveCliCount(): number {
     let count = this.fallback?.liveCliCount ?? 0;
-    for (const run of this.runs.values()) if (!run.exited && !run.outlivesApp) count += 1;
+    for (const run of this.runs.values()) if (!run.exited && (!run.outlivesApp || run.stopRequested)) count += 1;
     return count;
   }
 
