@@ -26,7 +26,8 @@ import {
  *
  * The Automation agent follows. It answers every automation's Condition (and,
  * with workflows, judges when a column's work is done), and it names tasks and
- * Command Terminals; with none chosen, naming is off. Also its own choice, not
+ * Command Terminals and drafts commit messages; with none chosen, those are off.
+ * Also its own choice, not
  * the Knowledge Graph's and not the project's default agent, so a user can run
  * automations without the Knowledge Graph, and nothing spends on an agent nobody
  * chose. It is not the Workflow agent. A judge that answers yes or no runs well

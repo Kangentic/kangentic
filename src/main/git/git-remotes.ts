@@ -31,13 +31,18 @@ const MISS_TTL_MS = 10_000;
 /** Worktree paths churn, so the map is bounded rather than unbounded-by-repo. */
 const MAX_CACHE_ENTRIES = 64;
 
+export interface GitRemote {
+  name: string;
+  url: string;
+}
+
 interface CacheEntry {
-  urls: readonly string[] | null;
+  remotes: readonly GitRemote[] | null;
   expiresAt: number;
 }
 
 const cache = new Map<string, CacheEntry>();
-const inFlight = new Map<string, Promise<readonly string[] | null>>();
+const inFlight = new Map<string, Promise<readonly GitRemote[] | null>>();
 
 /**
  * `origin<TAB>url (fetch)` - the push twin of each pair is dropped.
@@ -54,7 +59,7 @@ const inFlight = new Map<string, Promise<readonly string[] | null>>();
  */
 const REMOTE_LINE = /^(\S+)\s+(.+?)\s+\((fetch|push)\)$/;
 
-function parseRemoteOutput(raw: string): readonly string[] {
+function parseRemoteOutput(raw: string): readonly GitRemote[] {
   const byName = new Map<string, string>();
   // Split on \r?\n rather than the platform separator: git's own output uses
   // \n even on Windows, but a shell wrapper can introduce \r.
@@ -71,7 +76,7 @@ function parseRemoteOutput(raw: string): readonly string[] {
     if (right === 'origin') return 1;
     return 0;
   });
-  return names.map((name) => byName.get(name) as string);
+  return names.map((name) => ({ name, url: byName.get(name) as string }));
 }
 
 function pruneExpired(now: number): void {
@@ -101,17 +106,23 @@ function pruneExpired(now: number): void {
  * as `git-read-queue.ts` requires and `isShaContainedInRef` documents.
  */
 export async function readRemoteUrls(repoCwd: string): Promise<readonly string[] | null> {
+  const remotes = await readRemotes(repoCwd);
+  return remotes ? remotes.map((remote) => remote.url) : null;
+}
+
+/** {@link readRemoteUrls} with each remote's name, `origin` first. Same cache, same null, never rejects. */
+export async function readRemotes(repoCwd: string): Promise<readonly GitRemote[] | null> {
   if (!repoCwd) return null;
   const key = path.resolve(repoCwd);
 
   const now = Date.now();
   const cached = cache.get(key);
-  if (cached && cached.expiresAt > now) return cached.urls;
+  if (cached && cached.expiresAt > now) return cached.remotes;
 
   const pending = inFlight.get(key);
   if (pending) return pending;
 
-  const read = viaGitRead(async (): Promise<readonly string[] | null> => {
+  const read = viaGitRead(async (): Promise<readonly GitRemote[] | null> => {
     try {
       // gitAt() itself throws synchronously when the directory is missing,
       // so the constructor has to be inside the try, not above it.
@@ -121,10 +132,10 @@ export async function readRemoteUrls(repoCwd: string): Promise<readonly string[]
       return null;
     }
   })
-    .then((urls) => {
+    .then((remotes) => {
       pruneExpired(Date.now());
-      cache.set(key, { urls, expiresAt: Date.now() + (urls == null ? MISS_TTL_MS : HIT_TTL_MS) });
-      return urls;
+      cache.set(key, { remotes, expiresAt: Date.now() + (remotes == null ? MISS_TTL_MS : HIT_TTL_MS) });
+      return remotes;
     })
     .finally(() => {
       inFlight.delete(key);

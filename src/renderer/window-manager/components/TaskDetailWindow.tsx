@@ -872,6 +872,8 @@ export function TaskDetailWindow({
     if (!isFocused || shortcutsSuppressed) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
+      // A dialog over this window takes the key alone.
+      if (isAnyOverlayOpen()) return;
       closeWithGuard();
     };
     document.addEventListener('keydown', handleKeyDown);
@@ -930,6 +932,7 @@ export function TaskDetailWindow({
       task={task}
       onClose={closeWithGuard}
       setIsEditing={setIsEditing}
+      windowShowing={!dormant}
       canToggle={sessionState.canToggle}
       isSessionActive={sessionState.isSessionActive}
       isQueued={sessionState.isQueued}

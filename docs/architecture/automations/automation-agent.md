@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Automation agent
-description: "The headless agent that answers a column's Agent evaluation Conditions, judges a workflow step done, and names tasks and Command Terminals: how resolveAutomationAgent picks it with no fallback, what is skipped while it is unset, its cached CLI detection, and the two-at-once check limit."
+description: "The headless agent that answers a column's Agent evaluation Conditions, judges a workflow step done, names tasks and Command Terminals, and drafts commit messages and pull request descriptions: how resolveAutomationAgent picks it with no fallback, what is skipped while it is unset, its cached CLI detection, and the two-at-once check limit."
 tags: [automations, automation-agent, conditions, naming]
 sources:
   - resource: src/main/automations/automation-agent.ts
@@ -12,7 +12,7 @@ sources:
 ---
 # Automation agent
 
-One setting, `AppConfig.automation` (Settings > Workflows), picks the agent for two kinds of
+One setting, `AppConfig.automation` (Settings > Workflows), picks the agent for three kinds of
 headless job (`AutomationAgentJob` in `src/main/automations/automation-agent.ts`):
 
 - `check`: answering a column automation's Agent evaluation Condition (see
@@ -20,6 +20,8 @@ headless job (`AutomationAgentJob` in `src/main/automations/automation-agent.ts`
   task's step is done (`src/main/workflows/workflow-step.ts`).
 - `naming`: suggesting a task title and naming a Command Terminal from its first prompt (see
   [Auto-name](../../integrations/agents/auto-name.md)).
+- `drafting`: a commit message or a pull request description (see
+  [Git actions](../worktrees/git-actions.md#drafts)).
 
 A judge that answers yes or no, or writes a four-word title, runs well on a small model. That is
 why this is its own choice, separate from the [Workflow agent](../workflows/workflow-agent.md), the
@@ -36,6 +38,7 @@ agent nobody chose. While the setting is unset or its agent cannot run the job:
   to check this condition." A Text match Condition is checked in code and needs no agent.
 - Naming is off: no automatic rename, no Name-from-prompt button, and a Command Terminal keeps its
   default title.
+- Nothing is drafted: the Commit dialog opens on the task's title with no sparkle.
 
 `automationAgentReady` and `namingAgentReady` are the checks the Edit automation dialog, the engine
 and the naming controls read, so the UI and main agree on when a job can run. Each way a job cannot

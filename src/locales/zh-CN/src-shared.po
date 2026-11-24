@@ -396,6 +396,10 @@ msgstr "德语"
 msgid "Git branch name (empty if the task has none)."
 msgstr "Git 分支名称（任务没有分支时为空）。"
 
+#: src/shared/background-call-jobs.ts
+msgid "Git drafts"
+msgstr ""
+
 #: src/shared/automation-manifest.ts
 msgid "Give up after"
 msgstr "放弃前等待"

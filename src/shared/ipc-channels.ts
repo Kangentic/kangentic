@@ -271,11 +271,16 @@ export const IPC = {
   GIT_CHECK_PENDING_CHANGES: 'git:checkPendingChanges',
   GIT_PREFETCH_REMOTES: 'git:prefetchRemotes',
   GIT_BRANCH_SUMMARY: 'git:branchSummary',
+  GIT_WORK_STATE: 'git:workState',
   GIT_WORKTREE_HEAD: 'git:worktreeHead',
   GIT_COMMIT_GRAPH: 'git:commitGraph',
   GIT_TASK_CHANGES: 'git:taskChanges',
   GIT_FILE_HISTORY: 'git:fileHistory',
   GIT_BLAME: 'git:blame',
+  GIT_COMMIT: 'git:commit',
+  GIT_PUSH: 'git:push',
+  GIT_CREATE_PULL_REQUEST: 'git:createPullRequest',
+  GIT_DRAFT_TEXT: 'git:draftText',
 
   // Dialog
   DIALOG_SELECT_FOLDER: 'dialog:selectFolder',

@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useMemo, useState } from 'react';
 import type { ReactElement } from 'react';
-import { ArrowRight, FileText, Sparkles, SquareTerminal, Workflow, CircleX } from 'lucide-react';
+import { ArrowRight, FileText, GitCommitHorizontal, Sparkles, SquareTerminal, Workflow, CircleX } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { msg } from '@lingui/core/runtime-macro';
 import { translateText } from '../../../../i18n/translate';
@@ -465,6 +465,7 @@ const JOB_CALLS: Record<BackgroundCallJob, { label: LocalizedText; icon: ReactEl
   task_title: { label: msg`Generate title`, icon: <Sparkles size={14} className="flex-shrink-0 text-fg-muted" /> },
   task_summary: { label: msg`Write summary`, icon: <FileText size={14} className="flex-shrink-0 text-fg-muted" /> },
   terminal_name: { label: msg`Name terminal`, icon: <SquareTerminal size={14} className="flex-shrink-0 text-fg-muted" /> },
+  git_draft: { label: msg`Draft commit or PR text`, icon: <GitCommitHorizontal size={14} className="flex-shrink-0 text-fg-muted" /> },
   workflow_step: { label: msg`Workflow step`, icon: <Workflow size={14} className="flex-shrink-0 text-fg-muted" /> },
   condition_check: { label: msg`Condition check`, icon: <Sparkles size={14} className="flex-shrink-0 text-fg-muted" /> },
 };

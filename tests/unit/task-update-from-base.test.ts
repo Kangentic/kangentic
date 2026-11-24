@@ -1,7 +1,7 @@
 /**
  * Unit tests for the TASK_UPDATE_FROM_BASE IPC handler (task-branch.ts).
  *
- * The one-click "Update from base" action: fetch the task's effective base,
+ * The one-click "Pull from <base>" action: fetch the task's effective base,
  * verify origin/<base> actually resolves, then fast-forward the task's
  * WORKTREE from it. Every non-throw outcome is a discriminated
  * TaskUpdateFromBaseResult; the guards (running session, no worktree) throw.

@@ -92,6 +92,9 @@ interface BaseDialogProps {
   // Board Manager from the profile picker). Nested ConfirmDialogs do not need it:
   // they render inside this dialog's own guarded close flow.
   suppressEscape?: boolean;
+  // Take Escape only while no other overlay is above this dialog (overlay-gate).
+  // For a dialog whose content opens dialogs of its own without telling it.
+  escapeOnlyWhenOnTop?: boolean;
 
   // Content mouse tracking (for callers that need hover state)
   onContentMouseEnter?: () => void;
@@ -141,6 +144,7 @@ export function BaseDialog({
   onCloseRequest,
   trapFocus,
   suppressEscape,
+  escapeOnlyWhenOnTop = false,
   rawBody,
   bodyClassName,
   closeHotkeyActionId,
@@ -274,6 +278,7 @@ export function BaseDialog({
     if (suppressEscape) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
+      if (escapeOnlyWhenOnTop && !isTopmostOverlay()) return;
       // Route through the consumer's close-intent guard when present (e.g. a
       // dirty-changes confirm); otherwise close unless the backdrop is locked.
       // An embedded terminal that wants Escape (pointer over the PTY) consumes
@@ -285,7 +290,7 @@ export function BaseDialog({
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [requestClose, preventBackdropClose, onCloseRequest, requestCloseViaGuard, suppressEscape]);
+  }, [requestClose, preventBackdropClose, onCloseRequest, requestCloseViaGuard, suppressEscape, escapeOnlyWhenOnTop, isTopmostOverlay]);
 
   const backdropMouseDown = useRef(false);
 

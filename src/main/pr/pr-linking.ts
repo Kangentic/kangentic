@@ -1123,7 +1123,7 @@ export async function linkPR(context: IpcContext, options: LinkPROptions): Promi
       // Quiet channel, not TASK_UPDATED_BY_AGENT. Every caller that reaches
       // here is the app reconciling a PR link on its own: the refresh sweep,
       // `autoLinkPRForTask`, a `pr-candidate` scrollback hit, or the task-detail
-      // "Link / refresh PR" control (which already toasts off this call's own
+      // "Refresh pull request" control (which already toasts off this call's own
       // return value, so the push would only duplicate it). Announcing those as
       // "Task updated by agent" was both untrue and, for a sweep that changed
       // several tasks, a burst of toasts. An agent's own tool call still goes

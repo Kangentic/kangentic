@@ -25,6 +25,9 @@ import { msg } from '@lingui/core/macro';
 import { useLingui } from '@lingui/react/macro';
 import { BranchPicker } from '../dialogs/BranchPicker';
 import { LaunchOverlay } from '../LaunchOverlay';
+import { IconBadge } from '../IconBadge';
+import { changesBadgeKind, useChangesFacts } from '../dialogs/git/git-badge';
+import { useGitActions, type GitCheckout } from '../dialogs/git/useGitActions';
 import { HeaderActionButton } from '../HeaderActionButton';
 import { Tooltip } from '../Tooltip';
 import { tipLabel } from '../../utils/tooltip';
@@ -482,6 +485,18 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
 
   const defaultBranch = config.git.defaultBaseBranch || 'main';
 
+  // The project checkout's git state, shared by every terminal of the project, and
+  // the actions on it. A failure goes to this terminal's own agent.
+  const gitTarget = useMemo(() => ({
+    target: { kind: 'terminal' as const, slot }, projectId, sessionId,
+  }), [slot, projectId, sessionId]);
+  const gitCheckout = useMemo<GitCheckout | null>(() => (projectPath
+    ? { ...gitTarget, projectPath, baseBranch: defaultBranch, task: null }
+    : null), [gitTarget, projectPath, defaultBranch]);
+  const git = useGitActions(gitCheckout, true);
+  const changesBadge = changesBadgeKind(0, git.state);
+  const changesFacts = useChangesFacts(0, git.state);
+
   // A branch switch and a resume in place both end this slot's terminal and
   // start another in it, so the window, its slot and its grid stay. Each caller
   // reads the grid BEFORE the kill (the pane unmounts, and clears its getter,
@@ -798,20 +813,22 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
           )}
 
           {projectPath && showPill('changes') && (
-            <div data-pill-id="changes" className="flex-shrink-0">
+            <div data-pill-id="changes" className="relative flex-shrink-0">
               <HeaderActionButton
                 icon={GitCompare}
                 onClick={handleToggleChanges}
                 active={changesOpen}
                 tip={changesOpen ? t`Hide changes` : t`Show changes`}
+                facts={changesFacts}
                 ariaLabel={t`Toggle changes`}
                 testId="command-bar-changes-toggle"
               />
+              {changesBadge && <IconBadge kind={changesBadge} testId="command-bar-changes-badge" />}
             </div>
           )}
 
           {/* The task window's Browser pill: the same control, tip, shortcut and
-              running dot, for this terminal's own pane. */}
+              running badge, for this terminal's own pane. */}
           {showPill('browser') && (
             <div data-pill-id="browser" className="relative flex-shrink-0">
               <HeaderActionButton
@@ -826,12 +843,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
                 testId="command-bar-browser-toggle"
               />
               {browserAlive && (
-                <span
-                  aria-hidden="true"
-                  data-testid="command-bar-browser-toggle-alive"
-                  data-driving={browserDriving ? 'true' : undefined}
-                  className="pointer-events-none absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-surface-raised bg-active animate-pulse"
-                />
+                <IconBadge kind="running" pulse driving={browserDriving} testId="command-bar-browser-toggle-alive" />
               )}
             </div>
           )}
@@ -889,6 +901,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
                   browserAlive={browserAlive}
                   onCloseBrowser={handleCloseBrowser}
                   terminalFind={terminalFind.available ? { open: terminalFind.open, onToggle: terminalFind.toggle } : undefined}
+                  git={git}
                   shortcuts={overflowMenuShortcuts}
                   onShortcut={handleShortcutExecute}
                   stopping={stopping}
@@ -1043,6 +1056,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
                   entityId={commandTerminalEntityId}
                   projectPath={projectPath}
                   baseBranch={defaultBranch}
+                  gitTarget={gitTarget}
                 />
               </Suspense>
             </PanelErrorBoundary>
@@ -1054,6 +1068,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
       </div>
 
       {sessionId && <ContextBar sessionId={sessionId} agentFallback={projectAgent} />}
+      {git.dialogs}
     </div>
   );
 }

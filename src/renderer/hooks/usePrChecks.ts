@@ -49,7 +49,7 @@ export interface PrChecksState {
 
 /**
  * The CI checks of `task`'s linked PR, for the Changes panel's Pull request
- * section and the Changes button's count. Reads when the task window shows a task with
+ * section and the Changes button's badge. Reads when the task window shows a task with
  * an open or draft PR, again when the PR's link or verdict changes (the PR
  * refresh rewrites the row, and the deps below see it), and every 30 s while a
  * check is pending. A task with no such PR reads nothing. A failed read keeps
@@ -101,7 +101,7 @@ export function usePrChecks(task: Task | null | undefined, projectId: string | n
   return { checks: current?.checks ?? null, refresh };
 }
 
-/** How many things on the PR an agent could fix: each failed check, plus a conflict. */
+/** How many problems on the PR an agent could fix: each failed check, plus a conflict. */
 export function prFixCount(task: Task | null | undefined, checks: PRChecks | null): number {
   if (!taskHasCheckablePr(task)) return 0;
   const failed = checks ? checks.checks.filter((check) => check.status === 'failed').length : 0;

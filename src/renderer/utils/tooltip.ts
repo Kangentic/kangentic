@@ -27,6 +27,9 @@ export const STACK_TIP_TITLE_CLASS = 'truncate px-2 pt-1';
 export const STACK_TIP_DESTINATION_CLASS = 'truncate px-2 pb-1 text-tooltip-muted';
 export const STACK_TIP_RULE_CLASS = 'h-px shrink-0 bg-tooltip-chip-edge/40';
 export const STACK_TIP_ROWS_CLASS = 'grid grid-cols-[auto_auto] items-center gap-x-4 gap-y-1 px-2 py-1';
+/** A stacked tip of facts, not actions: each row led by its mark, in one column. The head keeps the tip's own tone. */
+export const STACK_TIP_FACTS_HEAD_CLASS = 'flex items-center gap-1.5 px-2 py-1';
+export const STACK_TIP_FACTS_CLASS = 'grid grid-cols-[auto_1fr] items-center gap-x-1.5 gap-y-1 px-2 py-1';
 export const STACK_TIP_ROW_KEYS_CLASS = 'flex items-center gap-0.5 justify-self-end';
 
 /** Hover dwell before a cold tip opens. Long enough that sweeping across a row of icons shows nothing. */

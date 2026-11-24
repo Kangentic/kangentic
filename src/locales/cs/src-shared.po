@@ -476,6 +476,10 @@ msgstr "Němčina"
 msgid "Git branch name (empty if the task has none)."
 msgstr "Název větve Git (prázdné, pokud ji úloha nemá)."
 
+#: src/shared/background-call-jobs.ts
+msgid "Git drafts"
+msgstr ""
+
 #: src/shared/automation-manifest.ts
 #, fuzzy
 msgid "Give up after"

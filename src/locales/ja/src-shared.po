@@ -476,6 +476,10 @@ msgstr "ドイツ語"
 msgid "Git branch name (empty if the task has none)."
 msgstr "Git ブランチ名 (タスクにない場合は空)。"
 
+#: src/shared/background-call-jobs.ts
+msgid "Git drafts"
+msgstr ""
+
 #: src/shared/automation-manifest.ts
 #, fuzzy
 msgid "Give up after"

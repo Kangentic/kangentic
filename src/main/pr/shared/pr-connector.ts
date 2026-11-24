@@ -190,4 +190,27 @@ export interface PRConnector {
    * resolver errors when the CLI is unavailable.
    */
   fetchCheckLog?(repoCwd: string, prNumber: number, check: PRCheck, maxChars: number): Promise<string | null>;
+
+  /**
+   * Create a pull request from a branch that is already on the remote. Never
+   * pushes. Throws `PRResolverUnavailableError` / `PRResolverTransientError` like
+   * the resolvers, and `PRCreateError` with the CLI's own output when the
+   * platform refused. Optional: a host without it offers no Create pull request.
+   */
+  createPullRequest?(repoCwd: string, input: PRCreateInput): Promise<PRCreated>;
+}
+
+export interface PRCreateInput {
+  /** The branch on the remote that holds the commits. */
+  head: string;
+  /** The branch it goes into. */
+  base: string;
+  title: string;
+  body: string;
+  draft: boolean;
+}
+
+export interface PRCreated {
+  number: number;
+  url: string;
 }

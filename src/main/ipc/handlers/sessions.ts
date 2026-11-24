@@ -1233,7 +1233,7 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
     });
   });
 
-  // Manual "Link / refresh PR" - on-demand authoritative resolve for a task.
+  // Manual "Refresh pull request" - on-demand authoritative resolve for a task.
   // Works with no live session (maps by task id, resolves via the confidence ladder).
   ipcMain.handle(IPC.TASK_RESOLVE_PR, async (event, taskId: string, projectId?: string | null): Promise<TaskResolvePrResult> => {
     const resolvedProjectId = projectId ?? context.currentProjectId;

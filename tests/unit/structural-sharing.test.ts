@@ -130,7 +130,7 @@ describe('applyStructuralSharing', () => {
     expect(result[0]).toBe(next);
   });
 
-  // A background PR sweep or an explicit "Refresh PR" can resolve a new merge
+  // A background PR sweep or an explicit "Refresh pull request" can resolve a new merge
   // verdict while the link itself (url/number/state) stays exactly the same -
   // see pr-link-ladder.test.ts's "fires when only the merge-readiness verdict
   // changes (url/number/state unchanged)". Without this comparison the card

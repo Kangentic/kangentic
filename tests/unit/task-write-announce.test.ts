@@ -278,6 +278,10 @@ const EXPECTED_ANNOUNCE: Record<(typeof ANNOUNCED_TASK_WRITE_CHANNELS)[number], 
   TASK_SET_RUNTIME_OVERRIDE: { projectId: 'projectId', change: 'task-updated', ids: '[input.taskId]' },
   TASK_RESOLVE_PR: { projectId: 'resolvedProjectId', change: 'task-updated', ids: '[taskId]' },
   BACKLOG_DEMOTE: { projectId: 'projectId', change: 'task-deleted', ids: '[input.taskId]' },
+  // A Command Terminal's action names no task, so its ids are empty.
+  GIT_COMMIT: { projectId: 'resolved.projectId', change: 'task-updated', ids: 'writtenTaskIds(target)' },
+  GIT_PUSH: { projectId: 'resolved.projectId', change: 'task-updated', ids: 'writtenTaskIds(target)' },
+  GIT_CREATE_PULL_REQUEST: { projectId: 'resolved.projectId', change: 'task-updated', ids: 'writtenTaskIds(target)' },
 };
 
 describe('every announced handler announces', () => {

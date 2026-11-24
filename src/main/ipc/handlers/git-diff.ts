@@ -6,6 +6,7 @@ import { remoteWorktreeBackendForWorktree } from '../../git/remote-worktree';
 import { DiffSubscriptionRegistry } from '../../git/diff-subscription-registry';
 import { readWorktreeHead, readWorktreeHeadUnqueued } from '../../git/worktree-head';
 import { getBranchSummary } from '../../git/branch-summary';
+import { readGitWorkState } from '../../git/work-state';
 import { getCommitGraph } from '../../git/commit-graph';
 import { getFileHistory } from '../../git/file-history';
 import { getBlame } from '../../git/blame';
@@ -20,6 +21,7 @@ import type { GitBlameInput, GitBranchSummaryInput, GitCommitGraphCommit, GitCom
 import type { IpcContext } from '../ipc-context';
 import { broadcast } from '../../pop-out/window-broadcast';
 import { RefusalError } from '../../../shared/refusal';
+import type { GitWorkState, GitWorkStateInput } from '../../../shared/git-work-state';
 
 /**
  * Policy inputs that shape what the Done move would actually destroy. `autoCleanup`
@@ -282,7 +284,8 @@ export function registerGitDiffHandlers(context: IpcContext): void {
       watcher.subscribe(worktreePath, () => {
         // broadcast() already guards a destroyed main window internally, matching the
         // CONFIG_SET site's guard-free call.
-        broadcast(context.mainWindow, IPC.GIT_DIFF_CHANGED);
+        // Named, so a listener can skip another folder's change (useGitWorkState does).
+        broadcast(context.mainWindow, IPC.GIT_DIFF_CHANGED, worktreePath);
       }),
     (worktreePath) => serviceCache.delete(worktreePath),
   );
@@ -349,6 +352,11 @@ export function registerGitDiffHandlers(context: IpcContext): void {
       await fetchAllRemotesIfStale(input.worktreePath ?? input.projectPath);
     }
     return getBranchSummary(input);
+  });
+
+  // Unqueued, like the branch summary: an interactive refresh. Never fetches.
+  ipcMain.handle(IPC.GIT_WORK_STATE, (_, input: GitWorkStateInput): Promise<GitWorkState | null> => {
+    return readGitWorkState(input);
   });
 
   // The Command Terminal's branch pill re-derives from this on reattach and on

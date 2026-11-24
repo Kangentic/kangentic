@@ -584,13 +584,18 @@ const api: ElectronAPI = {
     checkPendingChanges: (input) => ipcRenderer.invoke(IPC.GIT_CHECK_PENDING_CHANGES, input),
     prefetchRemotes: (checkPath) => ipcRenderer.invoke(IPC.GIT_PREFETCH_REMOTES, checkPath),
     branchSummary: (input) => ipcRenderer.invoke(IPC.GIT_BRANCH_SUMMARY, input),
+    workState: (input) => ipcRenderer.invoke(IPC.GIT_WORK_STATE, input),
     worktreeHead: (input) => ipcRenderer.invoke(IPC.GIT_WORKTREE_HEAD, input),
     commitGraph: (input) => ipcRenderer.invoke(IPC.GIT_COMMIT_GRAPH, input),
     taskChanges: (input) => ipcRenderer.invoke(IPC.GIT_TASK_CHANGES, input),
     fileHistory: (input) => ipcRenderer.invoke(IPC.GIT_FILE_HISTORY, input),
     blame: (input) => ipcRenderer.invoke(IPC.GIT_BLAME, input),
+    commit: (target, input, projectId) => ipcRenderer.invoke(IPC.GIT_COMMIT, target, input, projectId ?? null),
+    push: (target, projectId) => ipcRenderer.invoke(IPC.GIT_PUSH, target, projectId ?? null),
+    createPullRequest: (target, input, projectId) => ipcRenderer.invoke(IPC.GIT_CREATE_PULL_REQUEST, target, input, projectId ?? null),
+    draftText: (target, input, projectId) => ipcRenderer.invoke(IPC.GIT_DRAFT_TEXT, target, input, projectId ?? null),
     onDiffChanged: (callback) => {
-      const handler = () => callback();
+      const handler = (_event: Electron.IpcRendererEvent, worktreePath: string) => callback(worktreePath);
       ipcRenderer.on(IPC.GIT_DIFF_CHANGED, handler);
       return () => ipcRenderer.removeListener(IPC.GIT_DIFF_CHANGED, handler);
     },

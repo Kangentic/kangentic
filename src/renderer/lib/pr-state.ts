@@ -99,7 +99,7 @@ export function prPillPresentation(
 /**
  * Supplementary tooltip sentence while a merge verdict shows. Names the
  * promise and its caveat (the verdict is as fresh as the last PR refresh: the
- * background sweep or the task menu's Refresh PR). `undefined` whenever no
+ * background sweep or the task menu's Refresh pull request). `undefined` whenever no
  * verdict shows.
  */
 export function prMergeReadinessTooltip(

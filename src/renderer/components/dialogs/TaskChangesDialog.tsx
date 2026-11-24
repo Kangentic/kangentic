@@ -36,6 +36,8 @@ export function TaskChangesDialog({ task, onClose }: TaskChangesDialogProps) {
   return (
     <BaseDialog
       onClose={onClose}
+      // The panel's Commit and Create pull request dialogs open over this one and take Escape alone.
+      escapeOnlyWhenOnTop
       title={title}
       icon={<GitCompare size={16} />}
       rawBody

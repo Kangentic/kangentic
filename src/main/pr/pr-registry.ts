@@ -20,7 +20,8 @@
  * changing them.
  */
 
-import type { PRConnector, DetectedPR, ResolvedPR, PRResolveOptions, PRCheck, PRChecks } from './shared/pr-connector';
+import type { PRConnector, DetectedPR, ResolvedPR, PRResolveOptions, PRCheck, PRChecks, PRCreateInput, PRCreated } from './shared/pr-connector';
+import { PRResolverUnavailableError } from './shared/pr-errors';
 import { dispatchResolve, selectOwningConnectors, type ResolveKind } from './shared/pr-dispatch';
 import { readRemoteUrls } from '../git/git-remotes';
 import { gitHubPRConnector } from './adapters/github/github-connector';
@@ -28,7 +29,7 @@ import { azureDevOpsPRConnector } from './adapters/azure-devops/azure-devops-con
 
 // Re-export the contract + errors so consumers have a single import surface.
 export type { PRConnector, DetectedPR, ResolvedPR, PRState, PRMergeReadiness, PRResolveOptions } from './shared/pr-connector';
-export { PRResolverUnavailableError, PRResolverTransientError } from './shared/pr-errors';
+export { PRCreateError, PRResolverUnavailableError, PRResolverTransientError } from './shared/pr-errors';
 
 // --- Registry: add new providers here ---
 const connectors: PRConnector[] = [
@@ -214,6 +215,33 @@ export async function fetchPRCheckLog(
   const connector = await checksConnector(repoCwd);
   if (!connector?.fetchCheckLog) return null;
   return connector.fetchCheckLog(repoCwd, prNumber, check, maxChars);
+}
+
+/**
+ * The connector that creates pull requests for the repository at `repoCwd`: the
+ * owner of its PRIMARY remote that implements `createPullRequest`, or null. A
+ * pull request is created where the branch was pushed, so a secondary remote is
+ * never consulted. NEVER THROWS.
+ */
+async function createConnector(repoCwd: string): Promise<PRConnector | null> {
+  const remoteUrls = await readRemoteUrls(repoCwd);
+  if (!remoteUrls || remoteUrls.length === 0) return null;
+  return selectOwningConnectors(connectors, remoteUrls.slice(0, 1), { allowSecondaryFallback: false })
+    .find((connector) => connector.createPullRequest) ?? null;
+}
+
+/** Whether Create pull request can be offered for this repository. Reads remotes only, never a CLI. */
+export async function canCreatePullRequest(repoCwd: string): Promise<boolean> {
+  return (await createConnector(repoCwd)) !== null;
+}
+
+/** Create a pull request (see `PRConnector.createPullRequest`). Throws the connector's errors. */
+export async function createPullRequest(repoCwd: string, input: PRCreateInput): Promise<PRCreated> {
+  const connector = await createConnector(repoCwd);
+  if (!connector?.createPullRequest) {
+    throw new PRResolverUnavailableError('No connector creates pull requests for this repository.');
+  }
+  return connector.createPullRequest(repoCwd, input);
 }
 
 /** Resolve the PR associated with a commit SHA via the connectors that own this repo's remote. */

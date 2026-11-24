@@ -294,6 +294,20 @@
   // suffixes and do not collide, which is why the scan is kept as the fallback rather than
   // replaced outright. Shared by diffFiles, branchSummary, commitGraph, fileHistory, and blame,
   // which the sample install seeds per task (window.__mock*ByWorktree).
+  // One git action (window.electronAPI.git.commit / push / createPullRequest).
+  async function runMockGitAction(action, target, input, projectId) {
+    window.__mockGitActionCalls = window.__mockGitActionCalls || [];
+    window.__mockGitActionCalls.push({ action: action, target: target, input: input, projectId: projectId || null });
+    if (window.__mockGitActionDeferred) {
+      window.__mockGitActionDeferred = false;
+      await new Promise(function (resolve) { window.__mockGitActionResolve = resolve; });
+    }
+    var seeded = window.__mockGitActionResult;
+    if (seeded && seeded[action]) return seeded[action];
+    if (seeded && seeded.outcome) return seeded;
+    return { outcome: 'done' };
+  }
+
   function resolveByWorktree(byWorktree, worktreePath) {
     if (!byWorktree || !worktreePath) return null;
     var segments = worktreePath.split(/[\\/]/);
@@ -353,6 +367,8 @@
     diffFlatList: false,
     changesChecksOpen: false,
     changesHistoryOpen: false,
+    gitPushAfterCommit: false,
+    gitCreatePrAsDraft: false,
     terminal: {
       shell: null,
       fontFamily: 'Consolas, "Courier New", monospace',
@@ -3638,7 +3654,7 @@
           backgroundDay(todayStartMs, 'terminal_name', 'codex', null, 2, 0, null, 9200),
           backgroundDay(yesterdayStartMs, 'condition_check', 'claude', 'claude-haiku-5-5', 9, 0, [19000, 900, 9000, 400, 0.03], 17100),
         ];
-        var backgroundJobs = ['condition_check', 'workflow_step', 'task_summary', 'task_title', 'terminal_name'];
+        var backgroundJobs = ['condition_check', 'workflow_step', 'task_summary', 'task_title', 'terminal_name', 'git_draft'];
         function emptyBackgroundTotals() {
           return { calls: 0, failedCalls: 0, reportedCalls: 0, inputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, outputTokens: 0, costUsd: null, durationMs: 0 };
         }
@@ -5277,16 +5293,16 @@
       subscribeDiff: function () {},
       unsubscribeDiff: function () {},
       // Test hook: fire a live diff-changed push to every registered listener
-      // via window.__mockFireDiffChanged() (no payload - mirrors the real
-      // preload's GIT_DIFF_CHANGED push, which is also argument-less). Same
-      // listener-registry shape as onData / onSpawnProgress above.
+      // via window.__mockFireDiffChanged(worktreePath), the watched folder the
+      // real push names. Same listener-registry shape as onData /
+      // onSpawnProgress above.
       onDiffChanged: function (callback) {
         if (!window.__mockDiffChangedListeners) window.__mockDiffChangedListeners = [];
         window.__mockDiffChangedListeners.push(callback);
         if (!window.__mockFireDiffChanged) {
-          window.__mockFireDiffChanged = function () {
+          window.__mockFireDiffChanged = function (worktreePath) {
             var listeners = (window.__mockDiffChangedListeners || []).slice();
-            for (var i = 0; i < listeners.length; i++) { listeners[i](); }
+            for (var i = 0; i < listeners.length; i++) { listeners[i](worktreePath); }
           };
         }
         return function () {
@@ -5351,6 +5367,40 @@
           : null;
         if (summaryForWorktree) return summaryForWorktree;
         return { currentBranch: null, ahead: 0, behind: 0, lastCommit: null };
+      },
+      // Test hook: window.__mockGitWorkState = a GitWorkState (any field left out
+      // takes the default below), or { '<worktree folder name>': GitWorkState } under
+      // window.__mockGitWorkStateByWorktree. Unseeded, a checkout is clean and pushed.
+      // Every call is recorded in window.__mockGitWorkStateCalls.
+      workState: async function (request) {
+        window.__mockGitWorkStateCalls = window.__mockGitWorkStateCalls || [];
+        window.__mockGitWorkStateCalls.push(request);
+        var seeded = window.__mockGitWorkState
+          || resolveByWorktree(window.__mockGitWorkStateByWorktree, (request && request.worktreePath) || '');
+        return Object.assign({
+          branch: 'task-branch', onBaseBranch: false, uncommittedFileCount: 0, stagedFileCount: 0,
+          conflictedFileCount: 0, unpushedCommitCount: 0, aheadOfBaseCount: 0, hasRemote: true,
+          pushTarget: 'task-branch', canCreatePullRequest: false,
+        }, seeded || {});
+      },
+      // Git actions. Test hooks: window.__mockGitActionResult = a GitActionResult for
+      // every action (or { commit, push, createPullRequest } for one each);
+      // window.__mockGitActionDeferred = true holds the next one until
+      // window.__mockGitActionResolve() is called; every call is recorded in
+      // window.__mockGitActionCalls as { action, target, input, projectId }.
+      commit: function (target, input, projectId) { return runMockGitAction('commit', target, input, projectId); },
+      push: function (target, projectId) { return runMockGitAction('push', target, null, projectId); },
+      createPullRequest: function (target, input, projectId) { return runMockGitAction('createPullRequest', target, input, projectId); },
+      // Test hooks: window.__mockGitDraft = { text, drafted }; window.__mockGitDraftDeferred
+      // = true holds the next draft until window.__mockGitDraftResolve() is called.
+      draftText: async function (target, input, projectId) {
+        window.__mockGitDraftCalls = window.__mockGitDraftCalls || [];
+        window.__mockGitDraftCalls.push({ target: target, input: input, projectId: projectId });
+        if (window.__mockGitDraftDeferred) {
+          window.__mockGitDraftDeferred = false;
+          await new Promise(function (resolve) { window.__mockGitDraftResolve = resolve; });
+        }
+        return window.__mockGitDraft || { text: '', drafted: false };
       },
       worktreeHead: async function () {
         // Test hook: window.__mockWorktreeHead = { branch, sha } drives the

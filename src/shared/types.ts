@@ -10,6 +10,16 @@ import type {
 } from './announcements';
 import type { AppLocale } from './i18n/locales';
 import type { UserSetupMatch } from './user-configuration-error';
+import type {
+  GitActionResult,
+  GitActionTarget,
+  GitCommitInput,
+  GitCreatePullRequestInput,
+  GitDraftInput,
+  GitDraftResult,
+  GitWorkState,
+  GitWorkStateInput,
+} from './git-work-state';
 import type { GuestBrowserShortcut } from './browser-pane-guest-shortcuts';
 import { PREVIOUS_TERMINAL_DEFAULTS } from './terminal-native-defaults';
 import {
@@ -1637,7 +1647,7 @@ export interface AutomationRun {
  * for. None of these is a session, so none reaches the session usage ledger;
  * each is recorded in `background_calls` instead.
  */
-export type BackgroundCallJob = 'condition_check' | 'workflow_step' | 'task_summary' | 'task_title' | 'terminal_name';
+export type BackgroundCallJob = 'condition_check' | 'workflow_step' | 'task_summary' | 'task_title' | 'terminal_name' | 'git_draft';
 
 /** How a background call's CLI run ended. A timed-out run was still paid for. */
 export type BackgroundCallOutcome = 'succeeded' | 'failed' | 'timed_out';
@@ -4842,6 +4852,10 @@ export interface AppConfig {
    *  persisted key keeps that name). A PR with something to fix opens the section without it. */
   changesChecksOpen: boolean;
   changesHistoryOpen: boolean;
+  /** The Commit dialog's "Push after committing", as last left. */
+  gitPushAfterCommit: boolean;
+  /** The Create pull request dialog's "Draft PR", as last left. */
+  gitCreatePrAsDraft: boolean;
 
   /** Persisted Agent Monitor view. Global-only: the monitor spans every project, so a
    *  per-project override would be meaningless. Written debounced on every change (not
@@ -5679,6 +5693,8 @@ export const DEFAULT_CONFIG: AppConfig = {
   diffFlatList: false,
   changesChecksOpen: false,
   changesHistoryOpen: false,
+  gitPushAfterCommit: false,
+  gitCreatePrAsDraft: false,
   monitor: {
     layout: 'cards',
     // Grouped by PROJECT out of the box. This view exists because agents are
@@ -6820,7 +6836,7 @@ export interface TaskUpdateFromBaseInput {
 }
 
 /**
- * Outcome of the explicit "Update from base" task action: fetch the task's
+ * Outcome of the explicit "Pull from <base>" task action: fetch the task's
  * effective base, then fast-forward the task's worktree from `origin/<base>`.
  * This action is the only thing that MOVES a reused worktree - spawn-time
  * freshening deliberately never fast-forwards an existing tree, it only
@@ -9504,7 +9520,7 @@ export interface ElectronAPI {
     bulkUnarchive: (ids: string[], targetSwimlaneId: string, projectId?: string | null) => Promise<void>;
     switchBranch: (input: TaskSwitchBranchInput, projectId?: string | null) => Promise<Task>;
     /**
-     * One-click "Update from base": fetch the task's effective base and
+     * One-click "Pull from <base>": fetch the task's effective base and
      * fast-forward its worktree from origin/<base>. Refuses while a session is
      * running; every non-throw outcome is a TaskUpdateFromBaseResult status.
      */
@@ -9579,7 +9595,7 @@ export interface ElectronAPI {
      * A task's PR link or PR state was reconciled by the app rather than by an
      * agent: the periodic refresh sweep, the session-idle auto-link, the
      * link-time re-resolve that follows a link write, or the task-detail
-     * "Link / refresh PR" control.
+     * "Refresh pull request" control.
      *
      * Deliberately quiet, like `onSessionResync`. The board still has to reload
      * (the card's PR chip is stale), but announcing it as "Task updated by
@@ -10122,7 +10138,14 @@ export interface ElectronAPI {
     fileImage: (input: GitFileImageInput) => Promise<GitImageContentResult>;
     subscribeDiff: (worktreePath: string) => void;
     unsubscribeDiff: (worktreePath: string) => void;
-    onDiffChanged: (callback: () => void) => () => void;
+    /** `worktreePath` is the watched folder that changed. */
+    onDiffChanged: (callback: (worktreePath: string) => void) => () => void;
+    /** Commit a task's checkout, or a Command Terminal's: the staged files when any are staged, else every change. */
+    commit: (target: GitActionTarget, input: GitCommitInput, projectId?: string | null) => Promise<GitActionResult>;
+    push: (target: GitActionTarget, projectId?: string | null) => Promise<GitActionResult>;
+    createPullRequest: (target: GitActionTarget, input: GitCreatePullRequestInput, projectId?: string | null) => Promise<GitActionResult>;
+    /** Draft a commit message or a pull request description on the Automation agent. */
+    draftText: (target: GitActionTarget, input: GitDraftInput, projectId?: string | null) => Promise<GitDraftResult>;
     checkPendingChanges: (input: GitPendingChangesInput) => Promise<GitPendingChangesResult>;
     /**
      * Warm the throttled all-remotes fetch for a worktree, so a `checkPendingChanges`
@@ -10135,6 +10158,8 @@ export interface ElectronAPI {
      */
     prefetchRemotes: (checkPath: string) => Promise<void>;
     branchSummary: (input: GitBranchSummaryInput) => Promise<GitBranchSummaryResult>;
+    /** What is uncommitted and what is on no remote, for the Changes button's badge. Null when git could not say. Never fetches. */
+    workState: (input: GitWorkStateInput) => Promise<GitWorkState | null>;
     worktreeHead: (input: GitWorktreeHeadInput) => Promise<GitWorktreeHeadResult>;
     commitGraph: (input: GitCommitGraphInput) => Promise<GitCommitGraphResult>;
     /** What a completed task changed, from git alone: its commits, files and range. A read. */

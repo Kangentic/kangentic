@@ -271,7 +271,7 @@ Applies to every project. Two agent cards and the workflow agent's first message
 | Setting | Description |
 |---------|-------------|
 | Workflow agent | Agent, Model and Effort for the agent that plans each workflow in the Workflows view's left pane. No workflow agent starts until one is chosen, and Model is required when the agent takes one |
-| Automation agent | Agent, Model and Effort for the agent that answers column Conditions, judges workflow steps, and names tasks and Command Terminals. Nothing runs until one is chosen. A small, fast model is usually enough |
+| Automation agent | Agent, Model and Effort for the agent that answers column Conditions, judges workflow steps, names tasks and Command Terminals, and drafts commit messages and pull request descriptions. Nothing runs until one is chosen. A small, fast model is usually enough |
 | Workflow agent prompt | The first message a new workflow's agent gets |
 
 See [Workflows](workflows.md) and [Columns and automations](columns-and-automations.md) for what each agent does.

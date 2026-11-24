@@ -111,7 +111,8 @@ function extractTaskSessionInvokes(source: string): InvokeCall[] {
   //
   // BACKLOG_DEMOTE is claimed by name rather than by prefix: it deletes a board task, so it is
   // a task mutation, but the rest of the BACKLOG_* channels act on backlog items and are not.
-  const pattern = /ipcRenderer\.invoke\(\s*(IPC\.(?:(?:TASK|SESSION)_[A-Z0-9_]+|BACKLOG_DEMOTE))((?:,\s*[^)]*)?)\)/g;
+  // The three GIT_* actions are too: they write a task's row, where the other GIT_* channels read.
+  const pattern = /ipcRenderer\.invoke\(\s*(IPC\.(?:(?:TASK|SESSION)_[A-Z0-9_]+|BACKLOG_DEMOTE|GIT_COMMIT\b|GIT_PUSH\b|GIT_CREATE_PULL_REQUEST\b))((?:,\s*[^)]*)?)\)/g;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(source)) !== null) {
     const channel = match[1].replace('IPC.', '');

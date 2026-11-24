@@ -1,6 +1,6 @@
 /**
  * UI tests for the shared compact PR pill (PrLink) and its detail-header
- * counterpart (the "View PR #N" kebab entry).
+ * counterpart (the "View pull request #N" kebab entry).
  *
  * Seeds a Code Review task with a linked, open PR and a running session (so the
  * detail dialog opens on TaskDetailHeader, not the edit form), then asserts the
@@ -8,7 +8,7 @@
  * number, the state's tint, a trailing external-link icon, and a "PR #287" tooltip
  * with the state as its detail and one "Open in default browser" row, since no
  * Kangentic browser is open for the task, which a click and a Ctrl+click both use)
- * and the detail header's `...` kebab "View PR #287" entry (which opens the same URL). The header's compact icon
+ * and the detail header's `...` kebab "View pull request #287" entry (which opens the same URL). The header's compact icon
  * bar itself has no PR pill; the Changes panel opens the PR from its Pull
  * request section (changes-pull-request-section.spec.ts).
  *
@@ -107,7 +107,7 @@ const preConfig = `
     // Merge-readiness matrix, one card per verdict, in a lane the first test
     // never scopes into. The ready task is linked by PR NUMBER ONLY (no
     // branch, no worktree) and carries a running session, so its detail opens
-    // on the header and the kebab test below can prove "Refresh PR" is offered
+    // on the header and the kebab test below can prove "Refresh pull request" is offered
     // for a task whose only anchor is the stored number.
     state.sessions.push({
       id: 'sess-readiness-ready',
@@ -281,7 +281,7 @@ test.describe('PR link: state badge and clickable affordance', () => {
     }
   });
 
-  test('detail header has no PR pill; the kebab "View PR" entry opens the same URL', async () => {
+  test('detail header has no PR pill; the kebab "View pull request" entry opens the same URL', async () => {
     const card = page
       .locator('[data-swimlane-name="Code Review"]')
       .locator('text=PR Link Task')
@@ -303,7 +303,7 @@ test.describe('PR link: state badge and clickable affordance', () => {
     });
 
     await dialog.locator('[aria-label="Actions"]').click();
-    const viewPrItem = page.getByRole('button', { name: 'View PR #287' });
+    const viewPrItem = page.getByRole('button', { name: 'View pull request #287' });
     await expect(viewPrItem).toBeVisible();
     await viewPrItem.click();
 
@@ -385,7 +385,7 @@ test.describe('PR merge readiness tints the pill', () => {
     await expect(pill).not.toHaveAccessibleDescription(/last PR refresh/);
   });
 
-  test('the kebab offers Refresh PR for a task linked by PR number alone', async () => {
+  test('the kebab offers Refresh pull request for a task linked by PR number alone', async () => {
     // No branch and no worktree: before readiness this task had no manual
     // refresh at all, and the background sweep was its only freshness path.
     // The stored number is a Tier-1 anchor, so the control must be there.
@@ -396,8 +396,8 @@ test.describe('PR merge readiness tints the pill', () => {
     await dialog.waitFor({ state: 'visible', timeout: 5000 });
 
     await dialog.locator('[aria-label="Actions"]').click();
-    await expect(page.getByRole('button', { name: 'Refresh PR', exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'View PR #301', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Refresh pull request', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'View pull request #301', exact: true })).toBeVisible();
 
     // Same close as the header test above: Control+Shift+W, since a running
     // session's xterm can intercept a bubble-phase Escape.

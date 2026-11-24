@@ -64,10 +64,9 @@ const TINTED_STYLE: React.CSSProperties = {
  * takes its parent's text color, so a call site whose parent sets no tone gives
  * the badge one through `className` (`<body>` is `text-fg`, so an untoned badge
  * renders bright). The one other shape is a solid 'xs' circle: overlaid on an
- * icon for the title bar's unread announcements and the task window Changes
- * button's count of what to fix on the PR, and once after a label, the Changes
- * panel's Pull request section, which repeats the button's own red badge so the
- * two read as one count.
+ * icon for the title bar's unread announcements, and after a label for the
+ * Changes panel's Pull request section, in the red the Changes button marks a
+ * problem with. A state overlaid on an icon, with no number, is `IconBadge`.
  *
  * 'pill' centers the digits' INK rather than their line box. `line-height: 1`
  * centers the em box, and the system UI font's tall ascent leaves digits 0.5 to

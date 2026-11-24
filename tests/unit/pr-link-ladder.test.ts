@@ -2347,7 +2347,7 @@ describe('linkPR (IPC wrapper): board config default base branch wins over proje
  *   1. It must push the QUIET `task:prLinkChanged`, never `task:updatedByAgent`.
  *      Every caller reaching linkPR is the app reconciling a link on its own (the
  *      refresh sweep, autoLinkPRForTask, a pr-candidate hit, the task-detail
- *      "Link / refresh PR" control), so a toast there announced agent news for
+ *      "Refresh pull request" control), so a toast there announced agent news for
  *      work no agent did - and a sweep touching N tasks raised N toasts.
  *   2. It must go through `sendToRenderer`, so the push reaches `recordPush`.
  *      The old raw `webContents.send` bypassed the recorder entirely, which is

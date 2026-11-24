@@ -147,6 +147,8 @@ const PR_JSON_FIELDS =
 
 /** With the check rollup in the projection a busy branch can pass Node's 1 MB default; matches the Azure client's cap. */
 const PR_MAX_BUFFER = 10 * 1024 * 1024;
+/** A create waits on GitHub to open the pull request, so it gets longer than a read. */
+const CREATE_PR_TIMEOUT = 60_000;
 
 /** A failed job's log downloads in a few seconds; a long job's can take longer. */
 const JOB_LOG_TIMEOUT = 60_000;
@@ -579,6 +581,33 @@ async function execGhForImport(
   }
 }
 
+/** gh answered and refused to create a pull request. `output` is what it printed. */
+export class GhPrCreateError extends Error {
+  constructor(readonly output: string) {
+    super('gh refused to create the pull request');
+    this.name = 'GhPrCreateError';
+  }
+}
+
+/**
+ * The throw for a failed `gh pr create`. Classified on gh's own answer and never
+ * on `message`, which opens with the command line: a title or a branch that says
+ * "login" or "network" must not read as a sign-in or a connection failure.
+ */
+function createPrGhErrorToThrow(error: unknown): Error {
+  const failure = readGhExecFailure(error);
+  const stderrWithoutUrls = failure.stderr.replace(/https?:\/\/\S+/g, '');
+  if (failure.code === 'ENOENT') return new GhUnavailableError('gh CLI not found. Install it from https://cli.github.com');
+  if (failure.killed || failure.code === 'ETIMEDOUT') return new GhTransientError('GitHub did not answer.');
+  if (GH_SIGN_IN_REFUSED_PATTERN.test(stderrWithoutUrls)) {
+    return new GhUnavailableError('gh CLI is not signed in or lacks a scope. Run: gh auth login');
+  }
+  if (/HTTP 5\d\d|HTTP 429|rate limit|ECONNRESET|ENOTFOUND|EAI_AGAIN|could not resolve host|error connecting|connection (refused|reset|timed out)/i.test(stderrWithoutUrls)) {
+    return new GhTransientError(ghStderrReasonLine(failure.stderr) ?? 'GitHub did not answer.');
+  }
+  return new GhPrCreateError(failure.stderr.trim() || 'gh exited with no message');
+}
+
 /** Raw PR shape from the REST endpoint `repos/{owner}/{repo}/commits/{sha}/pulls`. */
 interface GhCommitPullRaw {
   number: number;
@@ -752,6 +781,43 @@ export class GitHubImporter {
       const toThrow = ghErrorToThrow(error);
       if (toThrow) throw toThrow;
       return null;
+    }
+  }
+
+  /**
+   * Create a pull request and return its URL. `--repo` and `--head` name both
+   * sides, so gh reads no checkout and neither pushes nor forks. Every value
+   * rides `--flag=value`, so one that starts with a dash is never an option.
+   */
+  async createPullRequest(input: {
+    repository: string;
+    head: string;
+    base: string;
+    title: string;
+    bodyFile: string;
+    draft: boolean;
+  }): Promise<string> {
+    const ghPath = await this.detect();
+    if (!ghPath) {
+      throw new GhUnavailableError('gh CLI not found. Install it from https://cli.github.com');
+    }
+    try {
+      const { stdout } = await execFileAsync(
+        ghPath,
+        [
+          'pr', 'create',
+          `--repo=${input.repository}`,
+          `--head=${input.head}`,
+          `--base=${input.base}`,
+          `--title=${input.title}`,
+          `--body-file=${input.bodyFile}`,
+          ...(input.draft ? ['--draft'] : []),
+        ],
+        { timeout: CREATE_PR_TIMEOUT, maxBuffer: PR_MAX_BUFFER },
+      );
+      return stdout.trim();
+    } catch (error: unknown) {
+      throw createPrGhErrorToThrow(error);
     }
   }
 

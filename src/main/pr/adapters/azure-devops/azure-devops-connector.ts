@@ -40,13 +40,17 @@ import type {
   PRResolveOptions,
   PRCheck,
   PRChecks,
+  PRCreateInput,
+  PRCreated,
 } from '../../shared/pr-connector';
-import { PRResolverUnavailableError, PRResolverTransientError } from '../../shared/pr-errors';
+import { PRCreateError, PRResolverUnavailableError, PRResolverTransientError } from '../../shared/pr-errors';
+import { withTempTextFile } from '../../../shared/temp-text-file';
 import { stripLogTimestamp, tailRawLog } from '../../shared/ci-log-tail';
 import {
   AzureDevOpsImporter,
   AzUnavailableError,
   AzTransientError,
+  AzPrCreateError,
   type AzurePrItem,
   type AzurePolicyEvaluation,
 } from '../../../boards/adapters/azure-devops/client';
@@ -88,6 +92,7 @@ async function viaAz<T>(operation: () => Promise<T>): Promise<T> {
     } catch (error) {
       if (error instanceof AzUnavailableError) throw new PRResolverUnavailableError(error.message);
       if (error instanceof AzTransientError) throw new PRResolverTransientError(error.message);
+      if (error instanceof AzPrCreateError) throw new PRCreateError(error.output);
       throw error;
     }
   }) as Promise<T>;
@@ -459,6 +464,25 @@ export const azureDevOpsPRConnector: PRConnector = {
       const raw = await azImporter.fetchBuildLog(remote.org, projectId, buildId, step.logId);
       if (raw === null) return null;
       return tailRawLog(raw, stripLogTimestamp, maxChars);
+    });
+  },
+
+  async createPullRequest(repoCwd: string, input: PRCreateInput): Promise<PRCreated> {
+    const remoteUrls = await readRemoteUrls(repoCwd);
+    const remote = remoteUrls ? firstAzureRemote(remoteUrls.slice(0, 1)) : null;
+    if (!remote) throw new PRResolverUnavailableError('This repository has no Azure DevOps remote.');
+    const request = JSON.stringify({
+      sourceRefName: `refs/heads/${input.head}`,
+      targetRefName: `refs/heads/${input.base}`,
+      title: input.title,
+      description: input.body,
+      isDraft: input.draft,
+    });
+    return viaAz(async () => {
+      const number = await withTempTextFile(request, (bodyFile) => (
+        azImporter.createPullRequest(remote.org, remote.project, remote.repo, bodyFile)
+      ));
+      return { number, url: buildAzurePrWebUrl(remote, number) };
     });
   },
 };

@@ -509,7 +509,8 @@ including a check whose caller stopped waiting, since that run is still paid for
 | started_at | TEXT | NOT NULL | |
 
 `job` is `condition_check`, `workflow_step`, `task_summary` (one Knowledge Graph summary batch, about
-ten tasks, so no `task_id`), `task_title` or `terminal_name`. `requested_model` is what Kangentic
+ten tasks, so no `task_id`), `task_title`, `terminal_name` or `git_draft` (a commit message or pull
+request description). `requested_model` is what Kangentic
 asked for (NULL for the agent's default); `model` is what the CLI reported answering with, kept apart
 because plan mode once rerouted a Haiku request to Sonnet. The token and cost columns are NULL,
 never 0, for an agent whose CLI reports no usage. Claude and Antigravity report it today.
