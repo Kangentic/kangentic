@@ -20,6 +20,8 @@
  *   - recordIpcTraffic: ON only for dev build AND ephemeral /preview - it has
  *     a real per-call disk-I/O cost, bounded only in /preview by its data dir
  *     being wiped on close.
+ *   - stallProfiler: ON in ANY dev build. Its own work is held to the
+ *     diagnostics budget, and a stall with it off leaves no profile to read.
  *   - activityDebugOverlay (and any other/future key): always OFF by default -
  *     it has a visible cost the user should opt into deliberately.
  */
@@ -81,9 +83,9 @@ describe('defaultDeveloperFlag - recordIpcTraffic', () => {
 });
 
 describe('defaultDeveloperFlag - stallProfiler', () => {
-  it('defaults ON only for a dev build AND ephemeral /preview: a 1 kHz profiler costs CPU while on', () => {
+  it('defaults ON in any dev build, npm start included: a boot or a stall with it off leaves no profile to read', () => {
     expect(defaultDeveloperFlag('stallProfiler', true, true)).toBe(true);
-    expect(defaultDeveloperFlag('stallProfiler', true, false)).toBe(false);
+    expect(defaultDeveloperFlag('stallProfiler', true, false)).toBe(true);
     expect(defaultDeveloperFlag('stallProfiler', false, true)).toBe(false);
     expect(defaultDeveloperFlag('stallProfiler', false, false)).toBe(false);
   });
@@ -112,8 +114,8 @@ describe('defaultDeveloperFlag - full table (pins every key x isDevBuild x isEph
 
     const expectedFor = (key: DeveloperFlagKey, isDevBuild: boolean, isEphemeralPreview: boolean): boolean => {
       if (key === 'previewInspectionServer' || key === 'previewEvalEnabled') return isDevBuild;
-      if (key === 'persistConsoleLogs') return isDevBuild;
-      if (key === 'recordIpcTraffic' || key === 'stallProfiler') return isDevBuild && isEphemeralPreview;
+      if (key === 'persistConsoleLogs' || key === 'stallProfiler') return isDevBuild;
+      if (key === 'recordIpcTraffic') return isDevBuild && isEphemeralPreview;
       return false; // activityDebugOverlay
     };
 

@@ -22,13 +22,13 @@
  * `__KANGENTIC_DEV__` guard in `App.tsx`.
  */
 
-interface RendererLagSpike {
+export interface RendererLagSpike {
   at: string;
   lagMs: number;
 }
 
 /** One script's contribution to a long frame, as attributed by the browser. */
-interface RendererLongFrameScript {
+export interface RendererLongFrameScript {
   /** Where the callback was REGISTERED (a module URL in dev), not where it was called from. */
   sourceURL: string;
   sourceFunctionName: string;
@@ -41,7 +41,8 @@ interface RendererLongFrameScript {
   forcedLayoutMs: number;
 }
 
-interface RendererLongFrame {
+/** Main's lag journal writes these to disk as they are (`JournalLongFrame`). */
+export interface RendererLongFrame {
   /** Wall-clock, so an entry joins to `recentSpikes[].at` by timestamp. */
   at: string;
   durationMs: number;
@@ -134,6 +135,22 @@ const recentLongFrames: RendererLongFrame[] = [];
 let longFrameObserver: PerformanceObserver | null = null;
 let longFrameSupported = false;
 
+// Records main has not collected yet. Main's lag journal takes them over the
+// debugger every 30 s (`lag-journal-host.ts`) and writes them to disk, so a
+// restart does not erase them with the rings above. Bounded, because nothing
+// takes them while the inspection bridge is off or DevTools holds the debugger.
+// hmr-safe: a hot update of this module drops what main has not taken yet, at
+// most one 30 s collection, the same way it resets the rings above. The
+// frames the new observer replays are dropped by the journal as repeats.
+const UNCOLLECTED_LIMIT = 200;
+let uncollectedSpikes: RendererLagSpike[] = [];
+let uncollectedLongFrames: RendererLongFrame[] = [];
+
+function keepForCollection<Entry>(list: Entry[], entry: Entry): void {
+  list.push(entry);
+  while (list.length > UNCOLLECTED_LIMIT) list.shift();
+}
+
 function isDocumentHidden(): boolean {
   return typeof document !== 'undefined' && document.hidden === true;
 }
@@ -171,8 +188,10 @@ function startLongFrameObserver(): void {
   if (!supportedTypes.includes('long-animation-frame')) return;
   const observer = new PerformanceObserver((list) => {
     for (const entry of list.getEntries()) {
-      recentLongFrames.push(toLongFrame(entry as LongAnimationFrameTiming));
+      const longFrame = toLongFrame(entry as LongAnimationFrameTiming);
+      recentLongFrames.push(longFrame);
       while (recentLongFrames.length > LONG_FRAME_RING_SIZE) recentLongFrames.shift();
+      keepForCollection(uncollectedLongFrames, longFrame);
     }
   });
   // `buffered` replays the frames the browser already recorded before this ran, so the
@@ -214,10 +233,24 @@ export function startRendererLagRecorder(): void {
     if (lag > maxLagMs) maxLagMs = lag;
     if (lag >= SPIKE_THRESHOLD_MS) {
       spikeCount += 1;
-      recentSpikes.push({ at: new Date().toISOString(), lagMs: Math.round(lag) });
+      const spike = { at: new Date().toISOString(), lagMs: Math.round(lag) };
+      recentSpikes.push(spike);
       while (recentSpikes.length > RING_SIZE) recentSpikes.shift();
+      keepForCollection(uncollectedSpikes, spike);
     }
   }, SAMPLE_INTERVAL_MS);
+}
+
+/**
+ * The spikes and long frames recorded since the last call, handed over once.
+ * For main's lag journal only: a second reader would split the records
+ * between them. The rings and `getRendererLagReport` are unaffected.
+ */
+export function takeRendererLagRecords(): { spikes: RendererLagSpike[]; longFrames: RendererLongFrame[] } {
+  const taken = { spikes: uncollectedSpikes, longFrames: uncollectedLongFrames };
+  uncollectedSpikes = [];
+  uncollectedLongFrames = [];
+  return taken;
 }
 
 export function stopRendererLagRecorder(): void {

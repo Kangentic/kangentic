@@ -8,6 +8,21 @@ interface PhaseEntry {
 const marks: Array<{ label: string; elapsed: number }> = [];
 const phases = new Map<string, PhaseEntry>();
 let processStartTime = 0;
+let timelineSink: ((timeline: StartupMark[]) => void) | null = null;
+
+/** One mark of the startup timeline: its label and the ms since process start. */
+export interface StartupMark {
+  label: string;
+  elapsedMs: number;
+}
+
+/**
+ * Hand each finished timeline to `sink` before it is cleared. A dev build's
+ * lag journal keeps it, so a launch's timeline outlives the console.
+ */
+export function setStartupTimelineSink(sink: ((timeline: StartupMark[]) => void) | null): void {
+  timelineSink = sink;
+}
 
 /** Initialize the timer with the process start timestamp. */
 export function initStartupTimer(startTime: number): void {
@@ -48,6 +63,7 @@ export function finishStartupTimer(): void {
     lines.push(`  ${label.padEnd(45)} ${(Math.round(elapsed) + 'ms').padStart(8)}`);
   }
   console.log(lines.join('\n') + '\n');
+  timelineSink?.(marks.map(({ label, elapsed }) => ({ label, elapsedMs: Math.round(elapsed) })));
 
   // Reset so a second createWindow() (macOS activate) doesn't accumulate stale marks
   marks.length = 0;

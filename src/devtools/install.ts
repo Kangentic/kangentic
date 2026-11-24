@@ -10,6 +10,7 @@ import {
   startStallProfiler,
   stopStallProfiler,
 } from './main/stall-profiler';
+import { startLagJournal, stopLagJournal } from './main/lag-journal-host';
 import { createTerminalTracePersistListener, terminalTraceFilePath } from './main/terminal-trace-persist';
 import { createComposedWidthSampler } from './main/composed-width-sampler';
 import { addTerminalTraceListener, recordTerminalTrace } from '../main/pty/terminal-trace';
@@ -60,6 +61,10 @@ export interface DevtoolsContext {
   getEvalEnabled: () => boolean;
   /** Returns `developer.stallProfiler`. Live read on each lookup. */
   getStallProfilerEnabled: () => boolean;
+  /** True for the ephemeral `/preview` instance. */
+  isEphemeralPreview: () => boolean;
+  /** Every Developer switch by its config key, for the lag journal's header. */
+  getDeveloperFlags: () => Record<string, boolean>;
 }
 
 let installedContext: DevtoolsContext | null = null;
@@ -82,12 +87,40 @@ export function installDevtools(context: DevtoolsContext): void {
   });
   addTerminalTraceListener(composedWidthSampler.listener);
 
+  // The lag journal and the stall profiler start on the next turn, not here.
+  // This runs while index.ts is still loading, and the flag reads below go
+  // through consts it declares further down. One turn later the launch is
+  // still in its first moments: the journal takes what the lag monitor's
+  // rings already hold, and the profiler pays its cold start while the heap
+  // is small.
+  setImmediate(() => {
+    startLagJournal({
+      configDir: PATHS.configDir,
+      getMainWindow: context.getMainWindow,
+      facts: {
+        versions: {
+          kangentic: context.app.getVersion(),
+          electron: process.versions.electron ?? 'unknown',
+          node: process.versions.node,
+          chrome: process.versions.chrome ?? 'unknown',
+        },
+        platform: process.platform,
+        arch: process.arch,
+        ephemeralPreview: context.isEphemeralPreview(),
+        diagnostics: context.getDeveloperFlags(),
+      },
+    });
+    reconcileStallProfiler(context);
+  });
+
   // Synchronous before-quit per .claude/rules/synchronous-shutdown.md. Removes
   // the lockfile, detaches CDP, closes the HTTP server. No async work in
-  // the quit path.
+  // the quit path. The journal's exit line is queued, and the dev build's
+  // exit drain in index.ts writes the queue.
   app.on('before-quit', () => {
     composedWidthSampler.dispose();
     stopStallProfiler();
+    stopLagJournal('quit');
     teardownBridge(context);
   });
 }
@@ -96,7 +129,7 @@ export function installDevtools(context: DevtoolsContext): void {
 function reconcileStallProfiler(context: DevtoolsContext): void {
   const wanted = context.getStallProfilerEnabled();
   if (wanted && !isStallProfilerRunning()) {
-    void startStallProfiler(stallProfileDirectory(context.app.getPath('userData')));
+    startStallProfiler(stallProfileDirectory(context.app.getPath('userData')));
   } else if (!wanted && isStallProfilerRunning()) {
     stopStallProfiler();
   }

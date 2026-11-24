@@ -28,8 +28,8 @@ vi.mock('electron', () => ({
   },
   webUtils: { getPathForFile: vi.fn() },
 }));
-vi.mock('../../src/preload/diagnostics/console-capture', () => ({
-  installConsoleCapture: vi.fn(),
+vi.mock('../../src/preload/diagnostics/renderer-crash-capture', () => ({
+  installRendererCrashCapture: vi.fn(),
   reportPushCallbackFailure: vi.fn(),
 }));
 

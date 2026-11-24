@@ -18,7 +18,12 @@ import type Database from 'better-sqlite3';
 import { closeProjectDb, configureProjectDbAccess, getProjectDb, setWalAutoCheckpoint } from '../../db/database';
 import { TranscriptRepository } from '../../db/repositories/transcript-repository';
 import { agentRegistry } from '../../agent/agent-registry';
-import { relaySlowSyncSpans, startEventLoopLagMonitor } from '../../diagnostics/event-loop-lag';
+import {
+  isBlockRecord,
+  relaySlowSyncSpans,
+  setLagRecordSink,
+  startEventLoopLagMonitor,
+} from '../../diagnostics/event-loop-lag';
 import { startEventLoopWatchdog } from '../../utility-process/event-loop-watchdog';
 import { setTerminalTraceRelay } from '../terminal-trace';
 import { skipConsoleListHelper } from '../spawn/conpty-console-list';
@@ -182,6 +187,12 @@ function initialize(message: PtyHostInitMessage): void {
     // through `devLagReport`. The spans above only name wrapped work; this
     // catches a stall in anything else, the headless parse included.
     startEventLoopLagMonitor();
+    // A stall here, and a delay window that held a block, also go to main as
+    // they happen, where the lag journal keeps them past a restart. Spans
+    // already travel as `slow-span`, and a quiet window says nothing.
+    setLagRecordSink((record) => {
+      if (isBlockRecord(record)) post({ type: 'lag-record', record });
+    });
   }
   post({ type: 'ready' });
 }

@@ -173,10 +173,9 @@ export function DevToolsSections({ globalConfig }: { globalConfig: AppConfig }) 
   // `/preview` without a manual toggle. Localhost-only and excluded from
   // production builds. An explicit stored value still wins.
   const evalEnabled = developerConfig.previewEvalEnabled ?? __KANGENTIC_DEV__;
-  // On by default only in /preview, mirroring `defaultDeveloperFlag`: a 1 kHz
-  // sampling profiler costs CPU all the time, and npm start runs for days.
-  const stallProfilerEnabled =
-    developerConfig.stallProfiler ?? (__KANGENTIC_DEV__ && window.electronAPI.dev?.isEphemeralPreview === true);
+  // On by default in every dev build, mirroring `defaultDeveloperFlag`: the
+  // profiler's own work is held to the diagnostics budget, so it stays on.
+  const stallProfilerEnabled = developerConfig.stallProfiler ?? __KANGENTIC_DEV__;
 
   return (
     <>

@@ -29,10 +29,11 @@
  *     session runs for days, so it stays opt-in there to avoid unbounded
  *     trace accumulation the user did not ask for.
  *
- *   'stallProfiler' -> ON only for the ephemeral `/preview` instance, in a dev
- *     build, for the same reason as 'recordIpcTraffic': a sampling profiler at
- *     1 kHz costs CPU all the time, and the npm start dogfooding session runs
- *     for days, so there it stays opt-in.
+ *   'stallProfiler' -> ON in any dev build (npm start dogfooding AND
+ *     /preview). It rolls two overlapping profiles, so it never pays V8's
+ *     cold start after the first, and its own work is held to the diagnostics
+ *     budget (`src/devtools/main/diagnostics-budget.ts`). The 2026-11-23 boot
+ *     freeze analysis had no profile to read because this was off.
  *
  *   'activityDebugOverlay' -> always OFF by default. It has a visible cost
  *     the user should opt into deliberately.
@@ -55,7 +56,7 @@ export function defaultDeveloperFlag(
   isEphemeralPreview: boolean,
 ): boolean {
   if (key === 'previewInspectionServer' || key === 'previewEvalEnabled') return isDevBuild;
-  if (key === 'persistConsoleLogs') return isDevBuild;
-  if (key === 'recordIpcTraffic' || key === 'stallProfiler') return isDevBuild && isEphemeralPreview;
+  if (key === 'persistConsoleLogs' || key === 'stallProfiler') return isDevBuild;
+  if (key === 'recordIpcTraffic') return isDevBuild && isEphemeralPreview;
   return false;
 }

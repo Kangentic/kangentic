@@ -94,6 +94,43 @@ describe('renderer lag recorder - background throttle classification', () => {
     expect(recorder.getRendererLagReport().documentHidden).toBe(true);
     recorder.stopRendererLagRecorder();
   });
+
+  it('hands each real spike to the journal once, and never a throttle artifact', async () => {
+    // Main's lag journal takes these every 30 s and writes them to disk. A spike
+    // handed over twice reads as two freezes; one never handed over is gone at
+    // the next restart.
+    const recorder = await loadRecorder();
+    recorder.startRendererLagRecorder();
+
+    tick(200);
+    docStub.hidden = true;
+    tick(900);
+    const firstTake = recorder.takeRendererLagRecords();
+    const secondTake = recorder.takeRendererLagRecords();
+
+    expect(firstTake.spikes.map((spike) => spike.lagMs)).toEqual([200]);
+    expect(secondTake.spikes).toEqual([]);
+    // Taking them leaves the report's own ring alone.
+    expect(recorder.getRendererLagReport().recentSpikes).toHaveLength(1);
+    recorder.stopRendererLagRecorder();
+  });
+
+  it('keeps only the newest 200 uncollected spikes when nothing collects them, dropping the oldest', async () => {
+    // With the inspection bridge off nothing takes these, so the list must not grow for the life of the window.
+    const recorder = await loadRecorder();
+    recorder.startRendererLagRecorder();
+
+    // Each spike's lag is its own number (100 to 349), so which ones survived is readable.
+    for (let index = 0; index < 250; index++) tick(100 + index);
+    const firstTake = recorder.takeRendererLagRecords();
+    const secondTake = recorder.takeRendererLagRecords();
+
+    expect(firstTake.spikes).toHaveLength(200);
+    expect(firstTake.spikes[0].lagMs).toBe(150);
+    expect(firstTake.spikes[199].lagMs).toBe(349);
+    expect(secondTake.spikes).toEqual([]);
+    recorder.stopRendererLagRecorder();
+  });
 });
 
 /**

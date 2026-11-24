@@ -8,6 +8,7 @@ import { cascadePopOutPosition } from './cascade';
 import { trackFeatureUsed } from '../analytics/usage';
 import { isErrorReportingActive } from '../analytics/error-reporting';
 import { createChokepointReporter } from '../analytics/handled-report';
+import { mirrorRendererConsole } from '../diagnostics/log-mirror';
 import { localeArgument } from '../i18n/main-i18n';
 import { IPC } from '../../shared/ipc-channels';
 
@@ -172,6 +173,10 @@ export class PopOutWindowManager {
         ],
       },
     });
+
+    // Mirrors createWindow() in index.ts: a window's console output reaches the
+    // log file only through this.
+    mirrorRendererConsole(win.webContents);
 
     // Windows/Linux taskbar icon: the constructor `icon:` option alone is not always
     // sufficient (createWindow() in index.ts sets it explicitly for the same reason).

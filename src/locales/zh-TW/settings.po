@@ -1838,6 +1838,10 @@ msgctxt "sort files by"
 msgid "Name"
 msgstr "名稱"
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Names the heaviest functions of each main-process stall in the event-loop report."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/BoardTab.tsx
 msgctxt "column width"
 msgid "Narrow"
@@ -2184,10 +2188,6 @@ msgstr "隱私權"
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Private key"
 msgstr "私密金鑰"
-
-#: src/renderer/components/settings/settings-registry.ts
-msgid "Profiles the main process and names a stall's heaviest functions in the event-loop report; costs CPU while on."
-msgstr "剖析主處理程序，在事件迴圈報告中列出停滯時最耗時的函式；啟用時會耗用 CPU。"
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Program {version}"

@@ -31,7 +31,7 @@
 
 import path from 'node:path';
 import { app, utilityProcess, type MessagePortMain, type UtilityProcess } from 'electron';
-import { recordRelayedSyncSpan } from '../../diagnostics/event-loop-lag';
+import { recordRelayedSyncSpan, relayLagRecord } from '../../diagnostics/event-loop-lag';
 import { unpacked } from '../../utility-process/paths';
 import { STDERR_DRAIN_BOUND_MS, UtilityRestartPolicy } from '../../utility-process/restart-policy';
 import { killChildTreeByPid } from '../../shared/child-tree-stop';
@@ -434,6 +434,9 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
         return;
       case 'slow-span':
         recordRelayedSyncSpan(`pty-host:${record.label}`, record.ms);
+        return;
+      case 'lag-record':
+        relayLagRecord('pty-host', record.record);
         return;
       case 'batch-started':
         this.restartBudgets(record.method);

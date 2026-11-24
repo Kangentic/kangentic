@@ -451,8 +451,8 @@ export function registerBrowserHandlers(context: IpcContext): void {
       visibility: isPaneVisibility(input.visibility) ? input.visibility : undefined,
     });
 
-    // Diagnostic (main-side, because the renderer console never persists to
-    // .kangentic/logs): record the jar this pane bound. Derived from the pane's
+    // Diagnostic (main-side, beside the lane's own line in
+    // browser-lane-manager.ts): record the jar this pane bound. Derived from the pane's
     // OWN projectId (the value its partition was computed from), NOT the
     // registry-resolved one above, so the trace names the jar the guest actually
     // attached to even if the two ever diverge. The jar is keyed by task

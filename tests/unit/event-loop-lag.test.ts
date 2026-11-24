@@ -417,3 +417,153 @@ describe('timeSyncWork attribution ring', () => {
     expect(getSyncWorkByLabel()).toEqual({});
   });
 });
+
+/**
+ * `isBlockRecord` chooses which of the pty host's records it posts to main for
+ * the lag journal. A span already travels as `slow-span`, so posting it here
+ * too would write it to the journal twice.
+ */
+describe('isBlockRecord', () => {
+  async function loadMonitor() {
+    return import('../../src/main/diagnostics/event-loop-lag');
+  }
+
+  it('is true for a spike', async () => {
+    const { isBlockRecord } = await loadMonitor();
+    expect(isBlockRecord({ kind: 'spike', at: '2026-11-24T04:00:00.000Z', lagMs: 95 })).toBe(true);
+  });
+
+  it('is true for a delay window whose max is at the backstop or over it, and false for a quiet one', async () => {
+    const { isBlockRecord, DELAY_BACKSTOP_MS } = await loadMonitor();
+    const delayWindow = { kind: 'window' as const, at: '2026-11-24T04:00:00.000Z', p99Ms: 16, meanMs: 8 };
+
+    expect(isBlockRecord({ ...delayWindow, maxMs: DELAY_BACKSTOP_MS })).toBe(true);
+    expect(isBlockRecord({ ...delayWindow, maxMs: DELAY_BACKSTOP_MS + 40 })).toBe(true);
+    expect(isBlockRecord({ ...delayWindow, maxMs: DELAY_BACKSTOP_MS - 0.1 })).toBe(false);
+    expect(isBlockRecord({ ...delayWindow, maxMs: 17 })).toBe(false);
+  });
+
+  it('is false for a span, however long, since a span travels as slow-span', async () => {
+    const { isBlockRecord } = await loadMonitor();
+    expect(isBlockRecord({ kind: 'span', relayed: false, at: '2026-11-24T04:00:00.000Z', label: 'db:transaction', ms: 5_000 })).toBe(false);
+    expect(isBlockRecord({ kind: 'span', relayed: true, at: '2026-11-24T04:00:00.000Z', label: 'pty-host:pty:spawn', ms: 40 })).toBe(false);
+  });
+});
+
+/**
+ * The record sink (`setLagRecordSink`).
+ *
+ * The rings die with the process: of the 19 boots before 2026-11-23, 18 had no
+ * stall record left to read. The sink is how the dev journal gets every record
+ * a ring takes, and how the pty host sends its own to main. A record that
+ * reaches a ring and not the sink is a record a restart erases.
+ */
+describe('lag record sink', () => {
+  /** What the monitor reads when it closes a delay window: a 30 ms max over five samples. */
+  const fakeHistogram = {
+    count: 5,
+    max: 30_000_000,
+    mean: 10_000_000,
+    percentile: () => 20_000_000,
+    enable: () => true,
+    disable: () => true,
+    reset: () => undefined,
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.resetModules();
+    // The real histogram samples a native timer the fake clock cannot drive.
+    vi.doMock('node:perf_hooks', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('node:perf_hooks')>()),
+      monitorEventLoopDelay: () => fakeHistogram,
+    }));
+  });
+
+  afterEach(() => {
+    vi.doUnmock('node:perf_hooks');
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  async function loadMonitor() {
+    return import('../../src/main/diagnostics/event-loop-lag');
+  }
+
+  it('hands over a spike, a slow span and a relayed span as each is recorded, and no fast span', async () => {
+    const monitor = await loadMonitor();
+    const received: Array<[unknown, string | null]> = [];
+    monitor.setLagRecordSink((record, relayedFrom) => received.push([record, relayedFrom]));
+    // start reads the clock once (0); the first tick reads 200, a 100 ms lag.
+    const nowSequence = [0, 200];
+    let nowIndex = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => nowSequence[nowIndex++] ?? 200);
+
+    monitor.startEventLoopLagMonitor();
+    vi.advanceTimersByTime(100);
+    monitor.recordSyncSpan('db:transaction', 40);
+    monitor.recordSyncSpan('config:project-read', 3);
+    monitor.recordRelayedSyncSpan('pty-host:pty:spawn', 25);
+    monitor.stopEventLoopLagMonitor();
+
+    expect(received).toEqual([
+      [{ kind: 'spike', at: expect.any(String), lagMs: 100 }, null],
+      [{ kind: 'span', relayed: false, at: expect.any(String), label: 'db:transaction', ms: 40 }, null],
+      [{ kind: 'span', relayed: true, at: expect.any(String), label: 'pty-host:pty:spawn', ms: 25 }, null],
+    ]);
+  });
+
+  it('hands over each closed delay window with its note, and the note does not carry to the next', async () => {
+    const monitor = await loadMonitor();
+    const windows: unknown[] = [];
+    monitor.setLagRecordSink((record) => {
+      if (record.kind === 'window') windows.push(record);
+    });
+    monitor.startEventLoopLagMonitor();
+
+    monitor.markCurrentDelayWindow('stall-profiler');
+    monitor.closeDelayWindow();
+    monitor.closeDelayWindow();
+    const report = monitor.getEventLoopLagReport();
+    monitor.stopEventLoopLagMonitor();
+
+    expect(windows).toEqual([
+      { kind: 'window', at: expect.any(String), maxMs: 30, p99Ms: 20, meanMs: 10, note: 'stall-profiler' },
+      { kind: 'window', at: expect.any(String), maxMs: 30, p99Ms: 20, meanMs: 10 },
+    ]);
+    // A noted window is counted like the plain one. The profiler notes the
+    // window after a save, which costs a millisecond: leaving it out of the
+    // counts hid a real 4.4 s stall that followed one.
+    expect(report.delayWindowMaxAtLeastMs['16']).toBe(2);
+    expect(report.recentDelayWindows).toHaveLength(2);
+  });
+
+  it('passes on a record another process sent, with where it came from', async () => {
+    const monitor = await loadMonitor();
+    const received: Array<[unknown, string | null]> = [];
+    monitor.setLagRecordSink((record, relayedFrom) => received.push([record, relayedFrom]));
+
+    monitor.relayLagRecord('pty-host', { kind: 'spike', at: '2026-11-24T04:00:00.000Z', lagMs: 95 });
+
+    expect(received).toEqual([[{ kind: 'spike', at: '2026-11-24T04:00:00.000Z', lagMs: 95 }, 'pty-host']]);
+  });
+
+  it('drops a sink that throws, and the span it was told about is still recorded', async () => {
+    const monitor = await loadMonitor();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const sink = vi.fn(() => {
+      throw new Error('disk gone');
+    });
+    monitor.setLagRecordSink(sink);
+    monitor.startEventLoopLagMonitor();
+
+    expect(() => monitor.recordSyncSpan('db:transaction', 40)).not.toThrow();
+    monitor.recordSyncSpan('db:transaction', 50);
+    const report = monitor.getEventLoopLagReport();
+    monitor.stopEventLoopLagMonitor();
+
+    expect(sink).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(report.recentSlowSyncWork.map((span) => span.ms)).toEqual([40, 50]);
+  });
+});

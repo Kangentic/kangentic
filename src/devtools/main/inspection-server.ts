@@ -45,6 +45,9 @@ import { getEventLoopLagReport } from '../../main/diagnostics/event-loop-lag';
 import { getWorkflowEngine } from '../../main/workflows/workflow-engine-host';
 import { retrievalClient } from '../../main/retrieval/retrieval-client';
 import { captureCpuProfile, getStallProfiles, isStallProfilerRunning, stallProfileDirectory } from './stall-profiler';
+import { evaluateDiagnosticsBudget } from './diagnostics-budget';
+import { getLagJournalLocation } from './lag-journal-host';
+import { listLaunches, readLaunch, resolveLaunchId } from './lag-journal-reader';
 import { ROTATED_FILE_SUFFIX } from '../../main/diagnostics/async-file-queue';
 import type { SessionManager } from '../../main/pty/session-manager';
 import { readTerminalTrace } from '../../main/pty/terminal-trace';
@@ -164,6 +167,8 @@ async function handleRequest(
   }
 
   if (route === 'GET /event-loop-lag') {
+    const launch = url.searchParams.get('launch');
+    if (launch) return respondLagJournal(launch, url, response);
     return respondEventLoopLag(options, response);
   }
 
@@ -278,6 +283,26 @@ async function handleRequest(
     const durationMs = typeof requested === 'number' ? requested : 10_000;
     const result = await captureCpuProfile(stallProfileDirectory(app.getPath('userData')), durationMs);
     return respondJson(response, 200, result);
+  }
+
+  // Hold main's thread on purpose, so the stall profiler's save can be
+  // exercised on demand instead of waiting for a real stall. Body:
+  // `{ "ms": 150 }`. Behind Allow Unsafe Operations: it freezes the app for
+  // as long as it is told to, up to `MAX_BLOCK_MAIN_MS`.
+  if (route === 'POST /block-main') {
+    if (!options.getEvalEnabled()) {
+      return respondError(
+        response,
+        403,
+        'eval-disabled',
+        'Settings → Developer → Allow Unsafe Operations is off (gates /block-main; it freezes the main process).',
+      );
+    }
+    const body = await readJsonBody(request);
+    const requested = typeof body === 'object' && body !== null ? (body as { ms?: unknown }).ms : undefined;
+    const blockMs = Math.max(1, Math.min(MAX_BLOCK_MAIN_MS, typeof requested === 'number' ? Math.round(requested) : 150));
+    const blockedMs = blockMainForDiagnostics(blockMs);
+    return respondJson(response, 200, { requestedMs: blockMs, blockedMs });
   }
 
   // CDP-backed endpoints from this point on need a main window AND an
@@ -655,6 +680,20 @@ async function respondEventLoopLag(
     running: isStallProfilerRunning(),
     profiles: getStallProfiles(),
   };
+  // What the diagnostics themselves cost main, against their budget. Every
+  // read of this report is the check (see diagnostics-budget.ts).
+  const diagnostics = evaluateDiagnosticsBudget(main, stallProfiler.profiles);
+  // The launches whose records are on disk, newest first. Pass one's id (or
+  // `previous`) as `?launch=` to read it back after a restart.
+  let launches: unknown = { unavailable: 'journal-not-started' };
+  const journalLocation = getLagJournalLocation();
+  if (journalLocation) {
+    try {
+      launches = await listLaunches(journalLocation.directory, journalLocation.launchId);
+    } catch (error) {
+      launches = { error: error instanceof Error ? error.message : String(error) };
+    }
+  }
   // The retrieval worker's own counters, every span per label (main's
   // `worker:` labels are only the spans relayed at 16 ms and over). Never
   // forks a worker to ask.
@@ -682,7 +721,65 @@ async function respondEventLoopLag(
       ptyHost = { error: error instanceof Error ? error.message : String(error) };
     }
   }
-  respondJson(response, 200, { ts: new Date().toISOString(), main, ptyHost, worker, workflowEngine, stallProfiler, renderer });
+  respondJson(response, 200, {
+    ts: new Date().toISOString(),
+    diagnostics,
+    launches,
+    main,
+    ptyHost,
+    worker,
+    workflowEngine,
+    stallProfiler,
+    renderer,
+  });
+}
+
+/**
+ * One launch's lag journal, read back from disk: the launch header and
+ * startup timeline, then the stalls, spikes, slow spans, delay windows and
+ * renderer long frames it recorded, for main, the pty host and the renderer.
+ * `launch` is `previous`, `current`, or an id from the live report's
+ * `launches`. `since` and `until` (UTC ISO) narrow the range, and `limit`
+ * caps each list at its newest entries.
+ */
+async function respondLagJournal(
+  launch: string,
+  url: URL,
+  response: http.ServerResponse,
+): Promise<void> {
+  const journalLocation = getLagJournalLocation();
+  if (!journalLocation) {
+    return respondError(response, 503, 'journal-not-started', 'The lag journal has not started yet.');
+  }
+  const launchId = await resolveLaunchId(journalLocation.directory, launch, journalLocation.launchId);
+  if (!launchId) {
+    const known = await listLaunches(journalLocation.directory, journalLocation.launchId);
+    return respondError(
+      response,
+      404,
+      'launch-not-found',
+      `No journal for launch "${launch}". Use "previous", "current", or one of: ${known.map((entry) => entry.id).join(', ') || '(none)'}.`,
+    );
+  }
+  const limit = Number(url.searchParams.get('limit'));
+  const report = await readLaunch(journalLocation.directory, launchId, {
+    since: url.searchParams.get('since') ?? undefined,
+    until: url.searchParams.get('until') ?? undefined,
+    maxRecords: Number.isInteger(limit) && limit > 0 ? limit : undefined,
+  });
+  respondJson(response, 200, report);
+}
+
+/** The longest `/block-main` will hold main, so a typo cannot freeze the app for minutes. */
+const MAX_BLOCK_MAIN_MS = 5_000;
+
+/** Busy-wait on main's thread for `blockMs`. Named so a stall profile shows it as the heaviest function. */
+function blockMainForDiagnostics(blockMs: number): number {
+  const startedAt = performance.now();
+  while (performance.now() - startedAt < blockMs) {
+    // Spin. Holding the thread is the whole job.
+  }
+  return Math.round(performance.now() - startedAt);
 }
 
 /** Per-session terminal output-pipeline stats (in-process). Diagnoses

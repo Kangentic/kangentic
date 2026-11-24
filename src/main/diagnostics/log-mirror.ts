@@ -1,16 +1,16 @@
 import * as path from 'node:path';
-import { ipcMain } from 'electron';
-import { IPC } from '../../shared/ipc-channels';
+import type { WebContents } from 'electron';
 import type { LogEntry } from '../../shared/types';
 import { resolveLogEntry } from './source-map-resolver';
 import { queueAppend } from './async-file-queue';
+import { timeSyncWork } from './event-loop-lag';
 import { getCurrentProjectLogName } from './project-log-context';
 import { PATHS } from '../config/paths';
 
 /**
  * Persistent console-output mirror. Patches `console.log/warn/error/info/debug`
- * in the main process and listens on IPC.LOG_APPEND for renderer-side output
- * forwarded by the preload script. Lines are appended as NDJSON to
+ * in the main process, and takes each app window's console output from its
+ * `console-message` event (`mirrorRendererConsole`). Lines are appended as NDJSON to
  * `<projectRoot>/.kangentic/logs/<YYYY-MM-DD>.log`, or to
  * `<configDir>/logs/<YYYY-MM-DD>.log` while no project is open (the Welcome
  * Screen, the gap between projects), the same fallback crash-capture.ts
@@ -39,10 +39,64 @@ interface LogMirrorOptions {
 }
 
 let installed = false;
+/** The running mirror's options, for `mirrorRendererConsole`. Null until it starts. */
+let mirrorOptions: LogMirrorOptions | null = null;
+
+/** Timed under this label, so the diagnostics budget sees what persisting a line costs main. */
+const PERSIST_LABEL = 'diag:log-persist';
+
+/**
+ * Chromium's console levels, as `console-message` names them, to a log line's.
+ * Keyed by Electron's own union, so an Electron upgrade that renames a level
+ * or adds one fails the typecheck here. Read as a plain string, an unknown
+ * level fell through to `info` and was dropped wherever persistence is off.
+ */
+const RENDERER_LEVELS: Record<Electron.WebContentsConsoleMessageEventParams['level'], LogEntry['level']> = {
+  info: 'info',
+  warning: 'warn',
+  error: 'error',
+  debug: 'debug',
+};
+
+/** The most of one renderer message that is kept. The log file has no size cap of its own. */
+const MAX_RENDERER_MESSAGE_CHARS = 8 * 1024;
+
+/**
+ * Persist the console output of one of Kangentic's own windows.
+ *
+ * The preload used to patch `console.*` and forward each call over IPC. With
+ * context isolation that patch lives in the preload's own world, and the
+ * app's code runs in another, so no line the renderer app printed ever
+ * reached the log: 960 `console.debug` calls in a measured run left none. The
+ * `console-message` event carries every world's output, and costs the
+ * renderer no IPC call per line.
+ *
+ * Chromium reports `console.log` and `console.info` alike as `info`, and
+ * hands over the formatted text, not the arguments.
+ *
+ * Call it for a window that shows Kangentic's UI and for nothing else. A
+ * `<webview>` guest, a guest's popup and an offscreen lane show the user's own
+ * pages, whose console is not Kangentic's to keep.
+ */
+export function mirrorRendererConsole(contents: Pick<WebContents, 'on'>): void {
+  contents.on('console-message', (details) => {
+    const options = mirrorOptions;
+    if (!options) return;
+    const level = RENDERER_LEVELS[details.level] ?? 'info';
+    if (!shouldPersist(level, options.getPersistInfoDebug())) return;
+    timeSyncWork(PERSIST_LABEL, () => appendLog(options.getProjectRoot(), {
+      ts: new Date().toISOString(),
+      level,
+      source: 'renderer',
+      args: [details.message.slice(0, MAX_RENDERER_MESSAGE_CHARS)],
+    }));
+  });
+}
 
 export function startLogMirror(options: LogMirrorOptions): void {
   if (installed) return;
   installed = true;
+  mirrorOptions = options;
 
   const originalLog = console.log;
   const originalWarn = console.warn;
@@ -100,12 +154,12 @@ export function startLogMirror(options: LogMirrorOptions): void {
         // here, the echo is what just failed.
       }
       if (!shouldPersist(level, options.getPersistInfoDebug())) return;
-      appendLog(options.getProjectRoot(), {
+      timeSyncWork(PERSIST_LABEL, () => appendLog(options.getProjectRoot(), {
         ts: now.toISOString(),
         level,
         source: 'main',
         args: args.map(stringifyArg),
-      });
+      }));
     };
 
   console.log = wrap('log', originalLog);
@@ -113,13 +167,6 @@ export function startLogMirror(options: LogMirrorOptions): void {
   console.error = wrap('error', originalError);
   console.info = wrap('info', originalInfo);
   console.debug = wrap('debug', originalDebug);
-
-  // Renderer + preload forward via IPC.LOG_APPEND. The preload patch
-  // (src/preload/diagnostics/console-capture.ts) is the producer.
-  ipcMain.handle(IPC.LOG_APPEND, (_event, entry: LogEntry) => {
-    if (!shouldPersist(entry.level, options.getPersistInfoDebug())) return;
-    appendLog(options.getProjectRoot(), entry);
-  });
 }
 
 function shouldPersist(level: LogEntry['level'], persistInfoDebug: boolean): boolean {
@@ -172,7 +219,7 @@ function appendLog(projectRoot: string | null, entry: LogEntry): void {
   // Async-buffered: queueAppend returns immediately; the disk write
   // happens on the next setImmediate turn. Eliminates the per-call
   // appendFileSync + mkdirSync that blocked the main event loop on
-  // every console.* and IPC.LOG_APPEND.
+  // every console line.
   queueAppend(file, JSON.stringify(resolved) + '\n');
 }
 

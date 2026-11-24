@@ -848,10 +848,10 @@ export const IPC = {
    *  window never sees a word. */
   KNOWLEDGE_GRAPH_ANSWER_STREAM: 'knowledgeGraph:graphAnswerStream',
 
-  // Diagnostics (product, all builds): renderer console + window error
-  // forwarding to main, where they are persisted to .kangentic/logs/.
-  // See src/main/diagnostics/ for the consumers.
-  LOG_APPEND: 'diagnostics:logAppend',
+  // Diagnostics (product, all builds): window error forwarding to main, where
+  // each is persisted to .kangentic/logs/crashes/. See src/main/diagnostics/
+  // for the consumer. Renderer console output needs no channel: main reads it
+  // off each window's `console-message` event (log-mirror.ts).
   CRASH_REPORT: 'diagnostics:crashReport',
 
   // Dictation (voice-to-text). By-session-id, not task-scoped (no projectId).

@@ -9,7 +9,8 @@
  *   - When `getProjectRoot()` returns null (the Welcome Screen, the gap
  *     between projects), the line lands in `<configDir>/logs/<date>.log`
  *     instead of being dropped, the same fallback crash capture uses.
- *   - The IPC.LOG_APPEND handler is registered for the renderer-side relay.
+ *   - A window's console output, read off its `console-message` event, is
+ *     persisted by the same rules, and only Kangentic's own windows register.
  *
  * The module patches global `console.*` at install time, so the test
  * captures the original handles before importing and restores them after
@@ -20,17 +21,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as util from 'node:util';
-
-const ipcHandlers = new Map<string, (...args: unknown[]) => unknown>();
-
-vi.mock('electron', () => ({
-  ipcMain: {
-    handle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
-      ipcHandlers.set(channel, handler);
-    }),
-    on: vi.fn(),
-  },
-}));
+import type { WebContents } from 'electron';
 
 // The app's own config dir, which the mirror falls back to with no project
 // open. Read through a getter so each test's fresh module (vi.resetModules)
@@ -52,7 +43,6 @@ let originalInfo: typeof console.info;
 let originalDebug: typeof console.debug;
 
 beforeEach(async () => {
-  ipcHandlers.clear();
   tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'log-mirror-test-'));
   fallbackConfigDir.current = path.join(tempDirectory, 'app-config');
   originalLog = console.log;
@@ -188,30 +178,107 @@ describe('log-mirror', () => {
     expect(lines.find((entry) => entry.level === 'error')?.args[0]).toBe('no-project');
   });
 
-  it('registers an IPC.LOG_APPEND handler for renderer-side relay', async () => {
-    const { startLogMirror } = await import('../../src/main/diagnostics/log-mirror');
-    const { IPC } = await import('../../src/shared/ipc-channels');
-    startLogMirror({
-      getProjectRoot: () => tempDirectory,
-      getPersistInfoDebug: () => true,
-    });
+});
 
-    const handler = ipcHandlers.get(IPC.LOG_APPEND);
-    expect(handler).toBeDefined();
+/**
+ * A window's console output (`mirrorRendererConsole`).
+ *
+ * The renderer app's console lines never reached the log file: the preload
+ * patched `console.*` in its own isolated world, where the app's calls do not
+ * pass. A measured run made 960 `console.debug` calls in the renderer and kept
+ * none. Main now reads each app window's `console-message` event instead.
+ */
+describe('renderer console mirror', () => {
+  type ConsoleMessageListener = (details: { level: string; message: string }) => void;
 
-    const rendererEntry = {
-      ts: new Date().toISOString(),
-      level: 'error',
-      source: 'renderer',
-      args: ['from renderer'],
+  /** A window's webContents, as far as the mirror uses it: the one event it listens for. */
+  function createWindowContents() {
+    const listeners: ConsoleMessageListener[] = [];
+    return {
+      contents: {
+        on: (eventName: string, listener: ConsoleMessageListener) => {
+          if (eventName === 'console-message') listeners.push(listener);
+        },
+      } as unknown as Pick<WebContents, 'on'>,
+      /** What Chromium reports when the page calls `console.<method>(text)`. */
+      print: (level: 'info' | 'warning' | 'error' | 'debug', message: string) => {
+        for (const listener of listeners) listener({ level, message });
+      },
     };
-    handler!({}, rendererEntry);
+  }
 
-    const lines = await readLogLines(todayUtc());
-    expect(lines.find((entry) => entry.source === 'renderer')).toMatchObject({
-      level: 'error',
-      args: ['from renderer'],
-    });
+  it('keeps a window\'s errors and warnings always, with Chromium\'s levels mapped to the log\'s', async () => {
+    const { startLogMirror, mirrorRendererConsole } = await import('../../src/main/diagnostics/log-mirror');
+    startLogMirror({ getProjectRoot: () => tempDirectory, getPersistInfoDebug: () => false });
+    const window = createWindowContents();
+    mirrorRendererConsole(window.contents);
+
+    window.print('error', 'Uncaught TypeError: boom');
+    window.print('warning', 'Each child in a list should have a unique "key" prop.');
+    window.print('info', 'board loaded');
+    window.print('debug', '[vite] hot updated');
+
+    const lines = (await readLogLines(todayUtc())).filter((entry) => entry.source === 'renderer');
+    expect(lines.map((entry) => [entry.level, entry.args])).toEqual([
+      ['error', ['Uncaught TypeError: boom']],
+      ['warn', ['Each child in a list should have a unique "key" prop.']],
+    ]);
+    expect(typeof lines[0].ts).toBe('string');
+  });
+
+  it('keeps a window\'s info and debug lines too while persistence is on', async () => {
+    const { startLogMirror, mirrorRendererConsole } = await import('../../src/main/diagnostics/log-mirror');
+    startLogMirror({ getProjectRoot: () => tempDirectory, getPersistInfoDebug: () => true });
+    const window = createWindowContents();
+    mirrorRendererConsole(window.contents);
+
+    window.print('info', 'board loaded');
+    window.print('debug', '[vite] hot updated');
+
+    const lines = (await readLogLines(todayUtc())).filter((entry) => entry.source === 'renderer');
+    expect(lines.map((entry) => [entry.level, entry.args[0]])).toEqual([
+      ['info', 'board loaded'],
+      ['debug', '[vite] hot updated'],
+    ]);
+  });
+
+  it('clips one very long line, since the log file has no size cap of its own', async () => {
+    const { startLogMirror, mirrorRendererConsole } = await import('../../src/main/diagnostics/log-mirror');
+    startLogMirror({ getProjectRoot: () => tempDirectory, getPersistInfoDebug: () => false });
+    const window = createWindowContents();
+    mirrorRendererConsole(window.contents);
+
+    window.print('error', 'x'.repeat(200_000));
+
+    const lines = (await readLogLines(todayUtc())).filter((entry) => entry.source === 'renderer');
+    expect(lines).toHaveLength(1);
+    expect(lines[0].args[0]).toHaveLength(8 * 1024);
+  });
+
+  it('keeps nothing from a window before the mirror has started', async () => {
+    const { mirrorRendererConsole } = await import('../../src/main/diagnostics/log-mirror');
+    const window = createWindowContents();
+    mirrorRendererConsole(window.contents);
+
+    expect(() => window.print('error', 'too early')).not.toThrow();
+
+    expect(await readLogLines(todayUtc())).toEqual([]);
+  });
+
+  it('is registered where each of Kangentic\'s own windows is built, and nowhere a user\'s page is shown', () => {
+    // index.ts cannot be imported (it is the Electron entry point), so this
+    // reads the source. A window that shows Kangentic's UI and does not
+    // register keeps none of its console output; a guest, a guest's popup or
+    // an offscreen lane that did register would put the user's own pages'
+    // console lines into Kangentic's log.
+    const repoRoot = path.resolve(__dirname, '../..');
+    const read = (relativePath: string): string => fs.readFileSync(path.join(repoRoot, relativePath), 'utf-8');
+
+    expect(read('src/main/index.ts')).toContain('mirrorRendererConsole(mainWindow.webContents)');
+    expect(read('src/main/pop-out/pop-out-window-manager.ts')).toContain('mirrorRendererConsole(win.webContents)');
+    expect(read('src/main/browser/browser-lane-manager.ts')).not.toContain('mirrorRendererConsole');
+    // The preload no longer patches console: that patch is what kept nothing.
+    expect(read('src/preload/diagnostics/renderer-crash-capture.ts')).not.toMatch(/console\.(log|info|debug|warn)\s*=/);
   });
 });
 
