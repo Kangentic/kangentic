@@ -80,3 +80,7 @@ State: `items`, `loading`, `selectedIds`
 State: `toasts` (max 5)
 
 Ephemeral notifications with auto-dismiss. Called by other stores for success/error feedback.
+A toast's optional `reported` field makes the card draw "This issue has been automatically
+reported to Kangentic" under its body; a failure toast sets it from the rejected IPC call through
+`ipcFailureToastFields` (see [Error reporting](../../telemetry/error-reporting.md), What the user
+sees).

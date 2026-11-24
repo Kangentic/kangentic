@@ -32,6 +32,7 @@ import type {
   KnowledgeGraphSnapshotWire,
   KnowledgeGraphRelatedTask,
 } from '../../shared/types';
+import { rejectionMessage } from '../lib/ipc-error';
 
 /** What a turn is doing. */
 export type KnowledgeGraphChatTurnStatus = 'finding' | 'answering' | 'done' | 'failed';
@@ -424,7 +425,7 @@ const knowledgeGraphStoreInitializer: StateCreator<KnowledgeGraphState> = (set, 
       if (!get().thread.some((entry) => entry.id === turn.id)) return;
       updateTurn(turn.id, () => ({
         status: 'failed',
-        reason: error instanceof Error ? error.message : String(error),
+        reason: rejectionMessage(error),
       }));
     } finally {
       if (knowledgeGraphModuleState.activeRequestId === turn.id) knowledgeGraphModuleState.activeRequestId = null;

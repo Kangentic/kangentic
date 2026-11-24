@@ -9,6 +9,7 @@ import { fetchGitBranches } from '../../utils/git-branches';
 import { resolveBaseRef, shortRefLabel, useBaseRefKind } from '../../hooks/useBaseRefKind';
 import type { GitBranchChoice, GitResolveRefFailure } from '../../../shared/types';
 import { BaseKindIcon } from './task-detail/changes/BaseKindIcon';
+import { rejectionMessage } from '../../lib/ipc-error';
 
 // Stable empty list so the filtered-branches memo keeps a referentially
 // constant input before the first fetch lands.
@@ -215,7 +216,7 @@ export function BranchPicker({
       failure = { query: typed, status: 'error', reason: result.reason, error: result.error };
     } catch (caught) {
       if (generation !== checkGenerationRef.current) return;
-      failure = { query: typed, status: 'error', reason: 'git', error: caught instanceof Error ? caught.message : String(caught) };
+      failure = { query: typed, status: 'error', reason: 'git', error: rejectionMessage(caught) };
     }
     setTypedRefCheck(failure);
   };

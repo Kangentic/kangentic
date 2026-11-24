@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { i18n } from '@lingui/core';
+import { rejectionMessage } from '../lib/ipc-error';
 import { msg } from '@lingui/core/runtime-macro';
 import { useConfigStore } from '../stores/config-store';
 import { useDictationStore } from '../stores/dictation-store';
@@ -481,7 +482,7 @@ export function useDictation(): void {
       cleanupSubscriptions();
       // The error's own text is shown as written; only the fallback translates.
       useDictationStore.getState().setError(
-        error instanceof Error ? error.message : i18n._(msg`Dictation failed to start`),
+        error instanceof Error ? rejectionMessage(error) : i18n._(msg`Dictation failed to start`),
       );
     }
   }, [cleanupSubscriptions, stopCapture]);
@@ -567,7 +568,7 @@ export function useDictation(): void {
         // cleanup, setError, return (no reset - the error stays visible).
         cleanupSubscriptions();
         // The reason is the engine's own text and stays as written.
-        const reason = error instanceof Error ? error.message : null;
+        const reason = error instanceof Error ? rejectionMessage(error) : null;
         useDictationStore.getState().setError(
           reason !== null ? i18n._(msg`Dictation failed: ${{ reason }}`) : i18n._(msg`Dictation failed.`),
         );
@@ -750,7 +751,7 @@ export function useDictation(): void {
     void startDictation().catch((error: unknown) => {
       activeRef.current = false;
       // The reason is the error's own text and stays as written.
-      const reason = error instanceof Error ? error.message : null;
+      const reason = error instanceof Error ? rejectionMessage(error) : null;
       useDictationStore.getState().setError(
         reason !== null
           ? i18n._(msg`Dictation could not start: ${{ reason }}`)

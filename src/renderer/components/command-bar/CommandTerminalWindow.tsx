@@ -61,7 +61,7 @@ import { StopButtonIcon } from './StopButtonIcon';
 import { killCommandTerminalInSlot } from './stop-command-terminal';
 import { startCommandTerminalSwapDrag } from './swap-drag';
 import { PanelErrorBoundary } from '../PanelErrorBoundary';
-import { describeIpcError, asSentence } from '../../lib/ipc-error';
+import { ipcFailureToastFields } from '../../lib/ipc-error';
 import { useTaskSplitResize } from '../../hooks/useTaskSplitResize';
 import { useAgentDriveVeil } from '../../hooks/useAgentDriveVeil';
 import { useIsAgentDrivingSession } from '../../stores/agent-drive-store';
@@ -418,7 +418,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
         // are sentences written for the user; drop Electron's IPC decoration.
         useToastStore.getState().addToast({
           title: resumeAgentSessionId ? i18n._(msg`Couldn't resume conversation`) : i18n._(msg`Couldn't start Command Terminal`),
-          message: asSentence(describeIpcError(error, String(error))),
+          ...ipcFailureToastFields(error, String(error)),
           variant: 'error',
         });
         // Drop just this window; the layer's count bridge hides the layer if it
@@ -539,7 +539,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
     } catch (error) {
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't switch branch`),
-        message: asSentence(describeIpcError(error, String(error))),
+        ...ipcFailureToastFields(error, String(error)),
         variant: 'error',
       });
     }
@@ -562,7 +562,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
     } catch (error) {
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't resume conversation`),
-        message: asSentence(describeIpcError(error, String(error))),
+        ...ipcFailureToastFields(error, String(error)),
         variant: 'error',
       });
       // Main refuses a conversation another terminal holds or one it can no

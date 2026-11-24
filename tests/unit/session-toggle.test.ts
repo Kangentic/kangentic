@@ -18,6 +18,7 @@ import type { Mock } from 'vitest';
 import { DEFAULT_CONFIG } from '../../src/shared/types';
 import type { Session, SessionDisplayState } from '../../src/shared/types';
 import { resumeBlockMessage } from '../../src/shared/session-resume-eligibility';
+import { REPORTED_FAILURE_MARKER } from '../../src/shared/reported-failure-marker';
 
 // ---------------------------------------------------------------------------
 // Stub window.electronAPI before importing the stores.
@@ -180,6 +181,7 @@ describe('sessionToggleFailureToast', () => {
     expect(sessionToggleFailureToast('pause', new Error('reason'))).toEqual({
       title: "Couldn't pause session",
       message: 'Reason.',
+      reported: false,
     });
   });
 
@@ -187,13 +189,26 @@ describe('sessionToggleFailureToast', () => {
     expect(sessionToggleFailureToast('resume', new Error('The worktree is missing.'))).toEqual({
       title: "Couldn't resume session",
       message: 'The worktree is missing.',
+      reported: false,
     });
   });
 
-  it('toasts main\'s two-sentence Resume refusal as its one-sentence form', () => {
+  // #1188: a defect main reported draws the toast's reported line; the reason reads as before.
+  it('says a failure main reported was reported, with the marker gone from the reason', () => {
+    const reportedFailure = new Error(
+      `Error invoking remote method 'session:resume': TypeError: Cannot read properties of undefined (reading 'cwd')${REPORTED_FAILURE_MARKER}`,
+    );
+    expect(sessionToggleFailureToast('resume', reportedFailure)).toEqual({
+      title: "Couldn't resume session",
+      message: "Cannot read properties of undefined (reading 'cwd').",
+      reported: true,
+    });
+  });
+
+  it('toasts main\'s two-sentence Resume refusal as its one-sentence form, never as reported', () => {
     // Main throws the guidance the phone and the tooltip read; the toast sits by the card.
     const refused = new Error(`Error invoking remote method 'session:resume': Error: ${resumeBlockMessage('done')}`);
-    expect(sessionToggleFailureToast('resume', refused)).toEqual({ title: "Couldn't resume session", message: 'The task is in Done.' });
+    expect(sessionToggleFailureToast('resume', refused)).toEqual({ title: "Couldn't resume session", message: 'The task is in Done.', reported: false });
     expect(sessionFailureBody(new Error(resumeBlockMessage('archived')))).toBe('The task is archived.');
   });
 
@@ -203,8 +218,8 @@ describe('sessionToggleFailureToast', () => {
   });
 
   it('says no reason was given when the error carries no message', () => {
-    expect(sessionToggleFailureToast('pause', new Error(''))).toEqual({ title: "Couldn't pause session", message: 'No reason was given.' });
-    expect(sessionToggleFailureToast('resume', new Error(''))).toEqual({ title: "Couldn't resume session", message: 'No reason was given.' });
+    expect(sessionToggleFailureToast('pause', new Error(''))).toEqual({ title: "Couldn't pause session", message: 'No reason was given.', reported: false });
+    expect(sessionToggleFailureToast('resume', new Error(''))).toEqual({ title: "Couldn't resume session", message: 'No reason was given.', reported: false });
   });
 
   it('says no reason was given for a rejection that is not an Error', () => {

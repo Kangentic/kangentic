@@ -92,7 +92,7 @@ import { ProfileNameDialog } from './board-manager/ProfileNameDialog';
 import { TemplateVariablePicker } from '../TemplateVariablePicker';
 import { pruneProfileReferencesForColumn } from '../../../shared/board-profile-references';
 import { snapSpawnStrategyToTarget } from '../../../shared/session-track';
-import { asSentence, describeIpcError } from '../../lib/ipc-error';
+import { asSentence, describeIpcError, ipcErrorWasReported, ipcFailureToastFields, rejectionMessage } from '../../lib/ipc-error';
 import { cachePerCatalog } from '../../i18n/catalog-cache';
 import type { LocalizedText } from '../../../shared/i18n/text';
 
@@ -1467,7 +1467,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
         savedDeletes += 1;
       } catch (error) {
         if (!firstError) {
-          const reasonText = error instanceof Error ? error.message : '';
+          const reasonText = error instanceof Error ? rejectionMessage(error) : '';
           firstError = error instanceof Error
             ? new Error(t`Couldn't delete "${deletedColumnName}": ${reasonText}`)
             : new Error(t`Couldn't delete "${deletedColumnName}"`);
@@ -1611,7 +1611,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
         } catch (error) {
           if (!firstError) {
             const columnName = drafts[entry.columnId]?.name ?? t({ message: 'column', context: 'column name fallback' });
-            const reasonText = error instanceof Error ? error.message : '';
+            const reasonText = error instanceof Error ? rejectionMessage(error) : '';
             firstError = error instanceof Error
               ? new Error(t`Couldn't save automations on "${columnName}": ${reasonText}`)
               : new Error(t`Couldn't save automations on "${columnName}"`);
@@ -1665,7 +1665,11 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       const partialParts: string[] = [];
       if (savedTotal > 0) partialParts.push(t`${plural(savedTotal, { one: '# column', other: '# columns' })}`);
       if (savedAutomationColumns > 0) partialParts.push(t`automations on ${plural(savedAutomationColumns, { one: '# column', other: '# columns' })}`);
-      const reason = asSentence(firstError.message);
+      // `firstError` is either a rejected IPC call as it arrived or a sentence
+      // built here around one; `describeIpcError` reads both, dropping Electron's
+      // channel prefix and main's reported marker from the first.
+      const reason = asSentence(describeIpcError(firstError, ''));
+      const reported = ipcErrorWasReported(firstError);
       const savedBeforeFailing = joinParts(partialParts);
       // "Stopped partway" only when something did land; a save that failed on
       // its first write is the plain "Couldn't save".
@@ -1673,9 +1677,10 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
         ? {
           title: t`Save stopped partway`,
           message: t`${reason} Saved ${savedBeforeFailing} before failing.`,
+          reported,
           variant: 'error',
         }
-        : { title: t`Couldn't save`, message: reason, variant: 'error' });
+        : { title: t`Couldn't save`, message: reason, reported, variant: 'error' });
       setSaving(false);
       return;
     }
@@ -1725,7 +1730,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       setSaving(false);
       useToastStore.getState().addToast({
         title: t`Couldn't save`,
-        message: asSentence(describeIpcError(error)),
+        ...ipcFailureToastFields(error),
         variant: 'error',
       });
     });

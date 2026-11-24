@@ -11,8 +11,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const reportHandledError = vi.fn();
 vi.mock('../../src/main/analytics/error-reporting', () => ({ reportHandledError }));
 
-const { installIpcHandlerReporting, resetIpcHandlerReportingForTests, IPC_HANDLER_KEY_CAP } = await import('../../src/main/analytics/ipc-handler-report');
-const { markReported } = await import('../../src/main/analytics/handled-report');
+const { installIpcHandlerReporting, resetIpcHandlerReportingForTests, rejectionToRethrow, IPC_HANDLER_KEY_CAP } = await import('../../src/main/analytics/ipc-handler-report');
+const { markReported, sendHandledFailure } = await import('../../src/main/analytics/handled-report');
+const { REPORTED_FAILURE_MARKER } = await import('../../src/shared/reported-failure-marker');
 const { RefusalError } = await import('../../src/shared/refusal');
 const { IPC_REJECTION_DUPLICATE_PATTERN } = await import('../../src/shared/ipc-rejection');
 const { GitCommandError } = await import('../../src/main/git/git-command-error');
@@ -107,6 +108,89 @@ describe('installIpcHandlerReporting', () => {
     installIpcHandlerReporting(target as never);
     target.handle('config:get', (_event, key) => ({ key }));
     await expect(target.registered.get('config:get')?.({}, 'theme')).resolves.toEqual({ key: 'theme' });
+  });
+
+  // #1188: the renderer's failure toast says the issue was reported only when
+  // the rejection carries the marker, and the marker means Sentry took it.
+  it('marks a rejection whose report Sentry took, its latched repeat too, and nothing else', async () => {
+    const target = fakeIpcMain();
+    installIpcHandlerReporting(target as never);
+    reportHandledError.mockReturnValue(true);
+    const throwSite = (): Error => new TypeError('handler defect');
+    target.handle('session:resume', () => { throw throwSite(); });
+
+    const first = await target.registered.get('session:resume')?.({}).catch((error: unknown) => error);
+    const repeat = await target.registered.get('session:resume')?.({}).catch((error: unknown) => error);
+    expect((first as Error).message).toBe(`handler defect${REPORTED_FAILURE_MARKER}`);
+    expect((repeat as Error).message).toBe(`handler defect${REPORTED_FAILURE_MARKER}`);
+    expect(reportHandledError).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves the rejection unmarked when reporting is off, for a refusal, and for a thrown string', async () => {
+    const target = fakeIpcMain();
+    installIpcHandlerReporting(target as never);
+    reportHandledError.mockReturnValue(false);
+    target.handle('task:move', () => { throw new TypeError('reporting off'); });
+    const unsent = await target.registered.get('task:move')?.({}).catch((error: unknown) => error);
+    expect((unsent as Error).message).toBe('reporting off');
+
+    reportHandledError.mockReturnValue(true);
+    target.handle('session:resumeDone', () => { throw new RefusalError('The task is in Done.'); });
+    const refused = await target.registered.get('session:resumeDone')?.({}).catch((error: unknown) => error);
+    expect((refused as Error).message).toBe('The task is in Done.');
+
+    target.handle('legacy:string', () => { throw 'plain text'; });
+    await expect(target.registered.get('legacy:string')?.({})).rejects.toBe('plain text');
+  });
+
+  it('marks an error an inner reporter sent, as a copy that leaves the original as it was', async () => {
+    const target = fakeIpcMain();
+    installIpcHandlerReporting(target as never);
+    reportHandledError.mockReturnValue(true);
+    const inner = new TypeError('sent by the workflow reporter');
+    sendHandledFailure('workflow', inner);
+    reportHandledError.mockClear();
+    target.handle('workflows:start', () => { throw inner; });
+    const rejection = await target.registered.get('workflows:start')?.({}).catch((error: unknown) => error);
+    expect(rejection).not.toBe(inner);
+    expect(String(rejection)).toBe(`TypeError: sent by the workflow reporter${REPORTED_FAILURE_MARKER}`);
+    expect(inner.message).toBe('sent by the workflow reporter');
+    expect(reportHandledError).not.toHaveBeenCalled();
+  });
+});
+
+describe('rejectionToRethrow', () => {
+  beforeEach(() => {
+    reportHandledError.mockReset();
+    resetIpcHandlerReportingForTests();
+  });
+
+  it('returns the same object for an error that was not sent, one already marked, and a non-Error', () => {
+    const unsent = new TypeError('never sent');
+    expect(rejectionToRethrow(unsent)).toBe(unsent);
+
+    reportHandledError.mockReturnValue(true);
+    const alreadyMarked = new TypeError(`sent and marked${REPORTED_FAILURE_MARKER}`);
+    sendHandledFailure('workflow', alreadyMarked);
+    expect(rejectionToRethrow(alreadyMarked)).toBe(alreadyMarked);
+
+    const plainObject = { message: 'not an error' };
+    expect(rejectionToRethrow(plainObject)).toBe(plainObject);
+    expect(rejectionToRethrow('text')).toBe('text');
+  });
+
+  it('returns a marked copy of a sent error that keeps its name and stack', () => {
+    reportHandledError.mockReturnValue(true);
+    const sent = new RangeError('sent once');
+    sendHandledFailure('workflow', sent);
+
+    const copy = rejectionToRethrow(sent) as Error;
+
+    expect(copy).not.toBe(sent);
+    expect(copy.message).toBe(`sent once${REPORTED_FAILURE_MARKER}`);
+    expect(copy.name).toBe(sent.name);
+    expect(copy.stack).toBe(sent.stack);
+    expect(sent.message).toBe('sent once');
   });
 });
 

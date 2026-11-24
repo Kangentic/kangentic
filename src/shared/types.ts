@@ -5926,6 +5926,17 @@ export interface HostMemorySample {
   memoryFreePercent?: number | null;
 }
 
+/**
+ * The one notice after a crash whose report Sentry accepted
+ * (`src/main/analytics/crash-notice.ts`). `app`: the last run crashed; `window`:
+ * the main window crashed and reloaded itself in this run. The renderer titles it.
+ */
+export interface CrashNotice {
+  kind: 'app' | 'window';
+  /** The dump's own crash time (UTC ISO 8601), or null when it carried none. */
+  crashedAt: string | null;
+}
+
 /** How this launch is rendering, and whether the user still needs telling. */
 export interface GpuGraphicsStatus {
   /** True when Chromium was started with --disable-gpu and --in-process-gpu.
@@ -10230,6 +10241,15 @@ export interface ElectronAPI {
   gpuHealth: {
     readStatus: () => Promise<GpuGraphicsStatus>;
     setAccelerationAndRestart: (enabled: boolean) => Promise<void>;
+  };
+
+  // The one notice after a crash whose report Sentry accepted
+  // (src/main/analytics/crash-notice.ts). `take` is the main window's read and
+  // clears it, so a reload cannot show it twice; the window takes on mount and
+  // on every `onReady` ping, which carries nothing. A pop-out gets null.
+  crashNotice: {
+    take: () => Promise<CrashNotice | null>;
+    onReady: (callback: () => void) => () => void;
   };
 
   // Display language (Settings > Language). The language is chosen at startup

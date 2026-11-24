@@ -1106,6 +1106,10 @@ msgstr "たった今"
 msgid "Kangentic can't write to that folder."
 msgstr "Kangentic はこのフォルダーに書き込めません。"
 
+#: src/renderer/utils/crash-notice.ts
+msgid "Kangentic crashed"
+msgstr ""
+
 #: src/renderer/hooks/useProjectRelocation.tsx
 #, fuzzy
 msgid "Kangentic will move the folder on disk. All tasks, history, and worktrees move with it."
@@ -1769,6 +1773,14 @@ msgstr "オートメーションは開始されませんでした。"
 msgid "The description is too long to start an agent with."
 msgstr ""
 
+#: src/renderer/utils/crash-notice.ts
+msgid "The last run ended in a crash at {crashedAt}."
+msgstr ""
+
+#: src/renderer/utils/crash-notice.ts
+msgid "The last run ended in a crash."
+msgstr ""
+
 #: src/renderer/stores/project-store.ts
 #, fuzzy
 msgid "The list has been refreshed."
@@ -1813,6 +1825,10 @@ msgstr "セッションはすでに実行中でした。"
 #, fuzzy
 msgid "The task's changes could not be read"
 msgstr "タスクの変更を読み取れませんでした"
+
+#: src/renderer/utils/crash-notice.ts
+msgid "The window crashed and reloaded"
+msgstr ""
 
 #: src/renderer/hooks/useProjectRelocation.tsx
 #, fuzzy
@@ -1945,6 +1961,10 @@ msgstr "ワークフローが停止しました"
 #, fuzzy
 msgid "Write"
 msgstr "編集"
+
+#: src/renderer/utils/crash-notice.ts
+msgid "Your agents kept running."
+msgstr ""
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 #, fuzzy

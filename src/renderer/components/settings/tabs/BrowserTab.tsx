@@ -7,7 +7,7 @@ import { SettingsCard, CardRow } from '../settings-card';
 import { settingProps } from '../settings-registry';
 import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
 import { useToastStore } from '../../../stores/toast-store';
-import { asSentence, describeIpcError } from '../../../lib/ipc-error';
+import { ipcFailureToastFields } from '../../../lib/ipc-error';
 
 type ClearState = 'idle' | 'confirming' | 'clearing';
 
@@ -31,7 +31,7 @@ export function BrowserTab({ config }: { config: AppConfig }) {
     } catch (error) {
       useToastStore.getState().addToast({
         title: t`Couldn't clear browser data`,
-        message: asSentence(describeIpcError(error)),
+        ...ipcFailureToastFields(error),
         variant: 'error',
       });
     } finally {

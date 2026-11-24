@@ -222,7 +222,7 @@ export const UNREPORTED_CATCH_SITES: Readonly<Record<string, number>> = {
   'src/main/agent/transcript-service.ts': 4,
   'src/main/analytics/analytics.ts': 3,
   'src/main/analytics/client-id.ts': 3,
-  'src/main/analytics/error-reporting.ts': 7,
+  'src/main/analytics/error-reporting.ts': 6,
   'src/main/analytics/native-crash-event.ts': 1,
   'src/main/analytics/redact-event-paths.ts': 2,
   'src/main/analytics/renderer-classification.ts': 2,

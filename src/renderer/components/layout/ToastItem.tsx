@@ -1,5 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
-import { X, Copy, Check, List, Settings, RotateCw, Download } from 'lucide-react';
+import { X, Copy, Check, List, Settings, RotateCw, Download, Bug } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useLingui } from '@lingui/react/macro';
 import { countdownRemaining, type Toast, type ToastActionIcon } from '../../stores/toast-store';
@@ -32,12 +32,12 @@ function ToastAge({ since }: { since: string }) {
   );
 }
 
-/** The border tint, and the countdown line's track and fill, per variant. */
-const variantStyles: Record<Toast['variant'], { border: string; track: string; fill: string }> = {
-  info: { border: 'border-accent/50', track: 'bg-accent/20', fill: 'bg-accent' },
-  success: { border: 'border-green-500/50', track: 'bg-green-500/20', fill: 'bg-green-500' },
-  warning: { border: 'border-yellow-500/50', track: 'bg-yellow-500/20', fill: 'bg-yellow-500' },
-  error: { border: 'border-red-500/50', track: 'bg-red-500/20', fill: 'bg-red-500' },
+/** The border tint, the countdown line's track and fill, and the reported line's icon, per variant. */
+const variantStyles: Record<Toast['variant'], { border: string; track: string; fill: string; icon: string }> = {
+  info: { border: 'border-accent/50', track: 'bg-accent/20', fill: 'bg-accent', icon: 'text-accent' },
+  success: { border: 'border-green-500/50', track: 'bg-green-500/20', fill: 'bg-green-500', icon: 'text-green-500' },
+  warning: { border: 'border-yellow-500/50', track: 'bg-yellow-500/20', fill: 'bg-yellow-500', icon: 'text-yellow-500' },
+  error: { border: 'border-red-500/50', track: 'bg-red-500/20', fill: 'bg-red-500', icon: 'text-red-500' },
 };
 
 const ACTION_ICONS: Record<ToastActionIcon, LucideIcon> = {
@@ -183,7 +183,8 @@ export function ToastItem({ toast, onDismiss, interactive }: ToastItemProps) {
   // the only copy of its own message. The card's text cannot be selected
   // (see the root below), which is the cost this button buys back. Scoped to
   // `error`, because nobody copies "Saved 1 column".
-  const copyText = `${toast.title}\n${toast.message}`;
+  const reportedLine = t`This issue has been automatically reported to Kangentic`;
+  const copyText = toast.reported ? `${toast.title}\n${toast.message}\n${reportedLine}` : `${toast.title}\n${toast.message}`;
   const handleCopyClick = useCallback(() => {
     navigator.clipboard.writeText(copyText).then(
       () => setCopied(true),
@@ -281,6 +282,18 @@ export function ToastItem({ toast, onDismiss, interactive }: ToastItemProps) {
         <span className="min-w-0 break-words text-[13px] leading-[19px] text-fg-muted" data-testid="toast-body">
           {toast.message}
         </span>
+        {/* Main sent this failure's report to Sentry. One fixed line, drawn only
+            here from `reported` (toast-shape.md), under a hairline so it reads
+            apart from the reason. It never takes a click. */}
+        {toast.reported && (
+          <span
+            className="mt-1 flex min-w-0 items-center gap-1.5 border-t border-edge pt-2 text-xs leading-4 text-fg-muted"
+            data-testid="toast-reported"
+          >
+            <Bug size={13} aria-hidden="true" className={`flex-shrink-0 ${styles.icon}`} />
+            <span className="min-w-0">{reportedLine}</span>
+          </span>
+        )}
         {toast.action && (
           <div className="mt-1.5 flex items-center justify-end gap-2">
             <button

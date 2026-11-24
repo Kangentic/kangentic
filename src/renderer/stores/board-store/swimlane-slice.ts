@@ -3,7 +3,7 @@ import { i18n } from '@lingui/core';
 import { msg } from '@lingui/core/runtime-macro';
 import type { BoardProfile, Swimlane, SwimlaneCreateInput, SwimlaneUpdateInput } from '../../../shared/types';
 import { useToastStore } from '../toast-store';
-import { describeIpcError, asSentence } from '../../lib/ipc-error';
+import { ipcFailureToastFields } from '../../lib/ipc-error';
 import { keepIfSameJson } from './structural-sharing';
 import type { BoardStore } from './types';
 
@@ -57,7 +57,7 @@ export const createSwimlaneSlice: StateCreator<BoardStore, [], [], SwimlaneSlice
       await get().loadBoardProfiles();
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't save profiles`),
-        message: asSentence(describeIpcError(error)),
+        ...ipcFailureToastFields(error),
         variant: 'error',
       });
       // Reported rather than rethrown: the toast and the reload are this
@@ -107,7 +107,7 @@ export const createSwimlaneSlice: StateCreator<BoardStore, [], [], SwimlaneSlice
       await get().loadBoard();
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't reorder columns`),
-        message: asSentence(describeIpcError(err)),
+        ...ipcFailureToastFields(err),
         variant: 'error',
       });
     }

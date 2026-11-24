@@ -345,6 +345,10 @@ msgstr "설정 표시"
 msgid "Sign in to {signedOutAgentName} to run tasks."
 msgstr "작업을 실행하려면 {signedOutAgentName}에 로그인하세요."
 
+#: src/renderer/components/layout/ToastItem.tsx
+msgid "This issue has been automatically reported to Kangentic"
+msgstr ""
+
 #: src/renderer/components/layout/TitleBar.tsx
 #, fuzzy
 msgid "Update available"

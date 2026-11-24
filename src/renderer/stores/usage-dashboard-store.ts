@@ -10,6 +10,7 @@ import type {
 } from '../../shared/types';
 import { useConfigStore } from './config-store';
 import { useProjectStore } from './project-store';
+import { rejectionMessage } from '../lib/ipc-error';
 
 /**
  * Usage-dashboard store: open state, the persisted range/scope selection, and
@@ -321,7 +322,7 @@ const usageDashboardStoreInitializer: StateCreator<UsageDashboardStore> = (set, 
             : {}),
         }));
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = rejectionMessage(error);
         set((current) =>
           current.activeKey === key
             ? { loading: false, refreshing: false, error: message, indexRestarting: false }

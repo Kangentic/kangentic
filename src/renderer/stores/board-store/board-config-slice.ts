@@ -3,7 +3,7 @@ import { i18n } from '@lingui/core';
 import { msg } from '@lingui/core/runtime-macro';
 import { useToastStore } from '../toast-store';
 import { useProjectStore } from '../project-store';
-import { describeIpcError, asSentence } from '../../lib/ipc-error';
+import { ipcFailureToastFields } from '../../lib/ipc-error';
 import type { BoardStore } from './types';
 
 export interface BoardConfigSlice {
@@ -86,7 +86,7 @@ export const createBoardConfigSlice: StateCreator<BoardStore, [], [], BoardConfi
     } catch (error) {
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't apply kangentic.json`),
-        message: asSentence(describeIpcError(error)),
+        ...ipcFailureToastFields(error),
         variant: 'error',
       });
       return;

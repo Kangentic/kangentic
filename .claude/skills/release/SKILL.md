@@ -464,23 +464,48 @@ Generate a concise, user-friendly summary for the GitHub Release draft body. Thi
    paragraph only, and an author who puts the note above a blank line and the `Co-Authored-By`
    line has written a paragraph git does not read as a trailer. v0.60.0's one note (`9098fbab`,
    the Windows signature timestamp) had that shape, and the trailer query returned nothing.
+   **Fixes from error reports.** A commit whose body names a Sentry shortId (`DESKTOP-`) is a fix
+   for a failure users hit. When it also carries a `Release-Note:` line, that line is the symptom
+   in the words the user saw ("Restart to update did nothing on Linux computers without a graphical
+   password prompt"), and it becomes an ordinary Bug Fixes entry worded from it. Never write the
+   shortId into the notes: nobody outside the team can open it. A `DESKTOP-` commit with no
+   `Release-Note:` line only improved diagnostics (a tag, a breadcrumb, a count) and stays out of
+   the notes. There is no separate section for these fixes: they are bug fixes.
 2. **Group into sections:**
    - **What's New** -- features and enhancements
    - **Bug Fixes** -- fixes
    - **Breaking Changes** -- only if applicable
    - Omit any section that has no entries. Do not include an "Other" section -- skip chores, docs, refactors, CI, and build commits.
-3. **Write the release notes** to `RELEASE_NOTES.md` at the repo root using the Write tool:
+3. **Link one GitHub number per entry.** Every entry ends with the number of what shipped it, as
+   a Markdown link: `([#123](https://github.com/Kangentic/kangentic/issues/123))` for an issue,
+   `.../pull/123` for a pull request. The number is the closing issue when the PR closed one (a
+   fix from error reports whose issue the /sentry sweep opened), otherwise the PR itself. An
+   entry folded from several PRs lists each: `([#120](...), [#124](...))`. What's New renders
+   the notes as Markdown and links nothing on its own, so write the link; the GitHub Release
+   page shows the same text.
+   - Our merges are rebase merges, so a commit subject carries no `(#N)`. Find each commit's PR,
+     one Bash call per commit:
+     `gh api repos/Kangentic/kangentic/commits/<sha>/pulls --jq ".[0].number"`
+     then its closing issue:
+     `gh pr view <number> --repo Kangentic/kangentic --json closingIssuesReferences --jq ".closingIssuesReferences[0].number"`
+   - A commit with no PR (a `/merge-back` direct push) gets no number.
+   - Take the number only from these two answers, never from a board task: a board task number
+     looks the same and must never appear in anything public.
+   - A lookup that fails is reported, never silently dropped (`.claude/rules/release-gates-fail-loudly.md`):
+     list the entries left without a number in the release report, with the error.
+4. **Write the release notes** to `RELEASE_NOTES.md` at the repo root using the Write tool:
 
 ```markdown
 ## What's New
-- Dark mode support
-- Desktop notifications for background tasks
+- Dark mode support ([#118](https://github.com/Kangentic/kangentic/pull/118))
+- Desktop notifications for background tasks ([#121](https://github.com/Kangentic/kangentic/pull/121))
 
 ## Bug Fixes
-- Fixed crash when opening an empty board
+- Restart to update did nothing on Linux computers without a graphical password prompt. ([#998](https://github.com/Kangentic/kangentic/issues/998))
+- Fixed crash when opening an empty board ([#124](https://github.com/Kangentic/kangentic/pull/124))
 ```
 
-4. This file is committed in Step 4 and used by CI to populate the draft GitHub Release body automatically.
+5. This file is committed in Step 4 and used by CI to populate the draft GitHub Release body automatically.
 
 ## Step 4 -- Commit
 

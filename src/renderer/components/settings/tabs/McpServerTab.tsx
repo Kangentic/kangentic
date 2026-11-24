@@ -15,6 +15,7 @@ import { settingProps } from '../settings-registry';
 import { useSettingVisible } from '../settings-search';
 import { SETTING_LABEL_CLASS } from '../../SettingText';
 import { Tooltip } from '../../Tooltip';
+import { rejectionMessage } from '../../../lib/ipc-error';
 
 /** What turning the server on does, behind the card's info icon. */
 const HOW_IT_WORKS = msg`Each agent session gets a local MCP server and discovers these tools on its own. Tasks an agent creates appear on the board with a toast.`;
@@ -27,7 +28,7 @@ const GROUPS_CLOSED_ON_ARRIVAL: ReadonlySet<McpToolCategoryId> = new Set(
 /** The connection check, answering a call that could not be made as a failure with its error. */
 function checkConnection(explicit: boolean): Promise<McpConnectionCheck> {
   return window.electronAPI.mcpServer.checkConnection({ explicit })
-    .catch((error: unknown): McpConnectionCheck => ({ connected: false, error: error instanceof Error ? error.message : String(error) }));
+    .catch((error: unknown): McpConnectionCheck => ({ connected: false, error: rejectionMessage(error) }));
 }
 
 /**

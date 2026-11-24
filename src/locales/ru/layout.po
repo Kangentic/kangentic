@@ -345,6 +345,10 @@ msgstr "Показать настройку"
 msgid "Sign in to {signedOutAgentName} to run tasks."
 msgstr "Войдите в {signedOutAgentName}, чтобы запускать задачи."
 
+#: src/renderer/components/layout/ToastItem.tsx
+msgid "This issue has been automatically reported to Kangentic"
+msgstr ""
+
 #: src/renderer/components/layout/TitleBar.tsx
 #, fuzzy
 msgid "Update available"

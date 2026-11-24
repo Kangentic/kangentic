@@ -17,7 +17,7 @@ import type {
   WorkflowTaskInput,
 } from '../../shared/types';
 import { WORKFLOW_REFUSALS } from '../../shared/workflow-refusals';
-import { describeIpcError, asSentence } from '../lib/ipc-error';
+import { describeIpcError, asSentence, ipcFailureToastFields } from '../lib/ipc-error';
 import { useProjectStore } from './project-store';
 import { useSessionStore } from './session-store';
 import { useToastStore } from './toast-store';
@@ -238,7 +238,7 @@ function currentProjectId(): string | null {
  * descriptor and is translated here, when the toast is raised.
  */
 function reportFailure(title: MessageDescriptor, error: unknown): void {
-  useToastStore.getState().addToast({ title: i18n._(title), message: asSentence(describeIpcError(error)), variant: 'error' });
+  useToastStore.getState().addToast({ title: i18n._(title), ...ipcFailureToastFields(error), variant: 'error' });
 }
 
 /**

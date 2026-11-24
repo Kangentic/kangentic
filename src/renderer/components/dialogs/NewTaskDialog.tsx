@@ -7,7 +7,7 @@ import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useToastStore } from '../../stores/toast-store';
 import { useWorkflowStore } from '../../stores/workflow-store';
-import { describeIpcError, asSentence } from '../../lib/ipc-error';
+import { ipcFailureToastFields } from '../../lib/ipc-error';
 import { openTaskFromNotification } from '../../utils/open-task-from-notification';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import { useWorkflowAgentWorking } from '../../hooks/useWorkflowAgentWorking';
@@ -500,7 +500,7 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
       console.error('[NewTaskDialog] Failed to create task:', error);
       useToastStore.getState().addToast({
         title: t`Couldn't create task`,
-        message: asSentence(describeIpcError(error)),
+        ...ipcFailureToastFields(error),
         variant: 'error',
       });
     } finally {

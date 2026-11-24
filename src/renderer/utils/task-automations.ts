@@ -4,7 +4,7 @@ import type { Task } from '../../shared/types';
 import { useBoardStore } from '../stores/board-store';
 import { useProjectStore } from '../stores/project-store';
 import { useToastStore } from '../stores/toast-store';
-import { describeIpcError, asSentence } from '../lib/ipc-error';
+import { describeIpcError, asSentence, ipcErrorWasReported } from '../lib/ipc-error';
 import { openTaskFromNotification } from './open-task-from-notification';
 import { resyncBoardAfterMonitorWrite } from '../components/monitor/resync-board-after-monitor-write';
 
@@ -56,6 +56,7 @@ export async function toggleTaskAutomations(
     useToastStore.getState().addToast({
       title: pause ? i18n._(msg`Couldn't pause automations`) : i18n._(msg`Couldn't resume automations`),
       message: `"${taskTitle}": ${reason}`,
+      reported: ipcErrorWasReported(error),
       variant: 'warning',
       onOpen: toastProjectId !== null ? () => openTaskFromNotification(toastProjectId, task.id) : undefined,
     });

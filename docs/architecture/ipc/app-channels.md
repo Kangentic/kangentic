@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: App IPC channels
-description: "The remaining IPC channels: config, keybindings, mobile bridge, git and diff watching, shell, window, pop-out, Browser pane, clipboard, updater, GPU health, leftover processes, agent accounts, announcements, the MCP connection check, diagnostics, dictation and the dev-only preview channels."
+description: "The remaining IPC channels: config, keybindings, mobile bridge, git and diff watching, shell, window, pop-out, Browser pane, clipboard, updater, GPU health, the crash notice, leftover processes, agent accounts, announcements, the MCP connection check, diagnostics, dictation and the dev-only preview channels."
 tags: [ipc, channels, config, git, browser]
 sources:
   - resource: src/shared/ipc-channels.ts
@@ -269,6 +269,12 @@ Machine-global (like Config), never project-scoped. Backs Settings > Accounts an
 |---------|---------|---------|
 | `gpuHealth:status` | invoke | How this launch is rendering, and whether the user still needs telling. Returns `GpuGraphicsStatus` (`{ softwareRendering, webglAvailable, webglFeatureStatus, noticePending }`) via `ElectronAPI.gpuHealth.readStatus()`. A PULL, not a push: both facts are decided during boot, before the renderer can have registered a listener, and the escalation record behind them is already cleared by then, so a dropped push would lose the notice for good. The main window's read consumes `noticePending`, so a renderer reload cannot re-toast; a pop-out reads the status for its terminals and always gets `noticePending: false`. `webglAvailable` is false where Chromium reports WebGL off with no fallback (DESKTOP-32) and in software mode; the handler waits up to 3 s for the GPU process's first `gpu-info-update` before answering it, because the status before that reads a preliminary `disabled_off` on every platform, and answers `true` with `webglFeatureStatus: 'pending'` on a timeout. See `src/main/diagnostics/gpu-health.ts` (Sentry DESKTOP-18 / DESKTOP-W / DESKTOP-32) |
 | `gpuHealth:setAccelerationAndRestart` | invoke | Save `graphicsAccelerationEnabled` (and `graphicsAccelerationOffBy`) and restart Kangentic, via `ElectronAPI.gpuHealth.setAccelerationAndRestart(enabled)`. One call because the graphics mode is chosen before `app.whenReady()`: a save without the restart would leave the saved value disagreeing with how the app renders. Restarts through `app.quit()`, so `before-quit` runs and the run records `clean`. Under `npm start` it asks `scripts/dev.js` to respawn Electron instead of calling `app.relaunch()`, and with an update already downloaded it installs it and relaunches into it, since a plain quit would run the installer without relaunching. See `src/main/app-relaunch.ts` |
+
+## Crash notice (2 channels)
+| Channel | Pattern | Purpose |
+|---------|---------|---------|
+| `crashNotice:take` | invoke | The main window's read of the one notice after a crash whose report Sentry accepted (`src/main/analytics/crash-notice.ts`): `{ kind: 'app' \| 'window', crashedAt }` or null. Clears it, so a reload never shows it twice; a pop-out gets null. |
+| `crashNotice:ready` | main -> renderer | A notice is waiting. Carries nothing: the window takes it, so a ping that reaches a page not yet subscribed loses nothing (the mount's take finds it). |
 
 ## Display language (2 channels)
 | Channel | Pattern | Purpose |

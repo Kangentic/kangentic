@@ -28,7 +28,7 @@ import { ArtifactsChip } from '../../artifacts/ArtifactsChip';
 import { ArtifactsKebabItems } from '../../artifacts/ArtifactsKebabItems';
 import { requestArtifactsFocus } from '../../artifacts/artifacts-focus';
 import { CountBadge } from '../../CountBadge';
-import { describeIpcError, asSentence } from '../../../lib/ipc-error';
+import { asSentence, ipcFailureToastFields, rejectionMessage } from '../../../lib/ipc-error';
 import type { Task, AgentCommand, ShortcutConfig, Swimlane } from '../../../../shared/types';
 
 /**
@@ -798,7 +798,7 @@ function TaskDetailKebabItems({
         }
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = rejectionMessage(error);
       useToastStore.getState().addToast({
         title: t`Update from base failed`,
         message: asSentence(message),
@@ -861,7 +861,7 @@ function TaskDetailKebabItems({
     } catch (error) {
       useToastStore.getState().addToast({
         title: t`Couldn't resolve PR`,
-        message: asSentence(describeIpcError(error, t`The PR host returned an error.`)),
+        ...ipcFailureToastFields(error, t`The PR host returned an error.`),
         variant: 'error',
       });
     } finally {

@@ -12,7 +12,7 @@ import type { useBranchConfig } from './useBranchConfig';
 import { hasSessionLifecycle } from '../../../utils/task-progress';
 import { prNumberFromUrl } from '../../../../shared/pr-url';
 import type { useTaskProgress } from '../../../utils/task-progress';
-import { describeIpcError, asSentence } from '../../../lib/ipc-error';
+import { describeIpcError, asSentence, ipcErrorWasReported, ipcFailureToastFields } from '../../../lib/ipc-error';
 import { sessionFailureBody, sessionToggleFailureToast, toastIfReconnectedResume } from '../../../utils/session-toggle';
 import { openTaskFromNotification } from '../../../utils/open-task-from-notification';
 
@@ -40,6 +40,7 @@ function reportActionFailure(
   useToastStore.getState().addToast({
     title: action === 'archive' ? i18n._(msg`Couldn't archive task`) : i18n._(msg`Couldn't send to backlog`),
     message: `"${task.title}": ${asSentence(describeIpcError(error, ''))}`,
+    reported: ipcErrorWasReported(error),
     variant: 'warning',
     ...opensTask(task.projectId, task.id),
   });
@@ -249,7 +250,7 @@ export function useTaskActions(input: {
       console.error('Reset session failed:', err);
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't reset session`),
-        message: asSentence(describeIpcError(err, '')),
+        ...ipcFailureToastFields(err, ''),
         variant: 'warning',
       });
     }
@@ -271,6 +272,7 @@ export function useTaskActions(input: {
         title: i18n._(msg`Couldn't run ${{ commandName }}`),
         // The command resumes the session, so a Resume refusal can be the reason.
         message: sessionFailureBody(error),
+        reported: ipcErrorWasReported(error),
         variant: 'warning',
       });
       await host.refresh().catch(() => {});
@@ -443,7 +445,7 @@ export function useTaskActions(input: {
           console.error('switchBranch failed:', error);
           useToastStore.getState().addToast({
             title: i18n._(msg`Couldn't switch branch`),
-            message: asSentence(describeIpcError(error, '')),
+            ...ipcFailureToastFields(error, ''),
             variant: 'warning',
           });
           return;
@@ -483,7 +485,7 @@ export function useTaskActions(input: {
           console.error('updateTask failed:', error);
           useToastStore.getState().addToast({
             title: i18n._(msg`Couldn't save task`),
-            message: asSentence(describeIpcError(error, '')),
+            ...ipcFailureToastFields(error, ''),
             variant: 'warning',
           });
           return;

@@ -8,7 +8,7 @@ import { msg } from '@lingui/core/macro';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { useBoardStore } from '../../../stores/board-store';
 import { useToastStore } from '../../../stores/toast-store';
-import { describeIpcError, asSentence } from '../../../lib/ipc-error';
+import { ipcFailureToastFields } from '../../../lib/ipc-error';
 import { IconPickerDialog } from '../../dialogs/IconPickerDialog';
 import { ShortcutGlyph } from '../../../utils/swimlane-icons';
 import { warmIconCatalog } from '../../../utils/icon-registry';
@@ -382,7 +382,7 @@ export function ShortcutsTab() {
     } catch (error) {
       useToastStore.getState().addToast({
         title: t`Couldn't save shortcuts`,
-        message: asSentence(describeIpcError(error)),
+        ...ipcFailureToastFields(error),
         variant: 'error',
       });
     }

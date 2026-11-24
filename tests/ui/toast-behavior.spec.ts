@@ -93,6 +93,110 @@ test.describe('toast behavior', () => {
     }
   });
 
+  // #1188: a failure main reported to Sentry says so in one fixed line under the
+  // body; a failure it did not report (a refusal, reporting off) says nothing.
+  test('a reported failure draws its line on one line under the body, and an unreported one draws none', async () => {
+    const { browser, page } = await launchPage();
+    try {
+      await raiseToast(page, {
+        title: "Couldn't resume session",
+        message: "Cannot read properties of undefined (reading 'cwd').",
+        variant: 'warning',
+        reported: true,
+        durationMs: 30_000,
+      });
+      const toast = page.getByTestId('toast');
+      await expect(toast).toHaveCount(1);
+      const line = toast.getByTestId('toast-reported');
+      await expect(line).toHaveText('This issue has been automatically reported to Kangentic');
+      const geometry = await page.evaluate(() => {
+        const body = document.querySelector('[data-testid="toast-body"]')!.getBoundingClientRect();
+        const reported = document.querySelector('[data-testid="toast-reported"] span')!.getBoundingClientRect();
+        return { bodyBottom: body.bottom, lineTop: reported.top, lineHeight: reported.height };
+      });
+      expect(geometry.lineTop).toBeGreaterThanOrEqual(geometry.bodyBottom);
+      // One line of 12px text at a 16px line height; a wrap would double it.
+      expect(geometry.lineHeight).toBeLessThan(24);
+
+      await raiseToast(page, { title: "Couldn't resume session", message: 'The task is in Done.', variant: 'warning', durationMs: 30_000 });
+      await expect(toast).toHaveCount(2);
+      // toast-count-ok: a part of a toast still on screen (both count down 30s), not whether a toast appeared.
+      await expect(page.getByTestId('toast-reported')).toHaveCount(1);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // #1188: the Copy button on an error toast copies title, body and, for a
+  // reported failure, the reported line; an unreported one copies no such line.
+  test('the Copy button copies the title and body, and the reported line only for a reported failure', async () => {
+    const { browser, page } = await launchPage();
+    try {
+      await page.evaluate(() => {
+        const copied: string[] = [];
+        (window as unknown as { __copiedTexts: string[] }).__copiedTexts = copied;
+        Object.defineProperty(navigator, 'clipboard', {
+          configurable: true,
+          value: { writeText: async (text: string) => { copied.push(text); } },
+        });
+      });
+      const copiedTexts = () => page.evaluate(() => (window as unknown as { __copiedTexts: string[] }).__copiedTexts);
+
+      await test.step('a reported error copies the reported line under the body', async () => {
+        await raiseToast(page, {
+          title: "Couldn't resume session",
+          message: "Cannot read properties of undefined (reading 'cwd').",
+          variant: 'error',
+          reported: true,
+          durationMs: 30_000,
+        });
+        const reportedToast = page.getByTestId('toast').filter({ hasText: "Couldn't resume session" });
+        await expect(reportedToast).toHaveCount(1);
+        await reportedToast.getByTestId('toast-copy').click();
+        await expect.poll(copiedTexts).toEqual([
+          "Couldn't resume session\nCannot read properties of undefined (reading 'cwd').\nThis issue has been automatically reported to Kangentic",
+        ]);
+      });
+
+      await test.step('an unreported error copies only the title and body', async () => {
+        await raiseToast(page, { title: "Couldn't reset session", message: 'The task is in Done.', variant: 'error', durationMs: 30_000 });
+        const plainToast = page.getByTestId('toast').filter({ hasText: "Couldn't reset session" });
+        await expect(plainToast).toHaveCount(1);
+        await plainToast.getByTestId('toast-copy').click();
+        await expect.poll(async () => (await copiedTexts()).length).toBe(2);
+        expect((await copiedTexts())[1]).toBe("Couldn't reset session\nThe task is in Done.");
+      });
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // #1188: the one notice after a crash whose report Sentry accepted. Main holds
+  // it until the main window takes it, on mount and on each ping.
+  test('the crash notice shows on mount and again when main pings with a new one, each with the reported line', async () => {
+    const { browser, page } = await launchPage({
+      beforeLoad: (target) => target.addInitScript(() => {
+        (window as unknown as { __mockCrashNoticePending: unknown }).__mockCrashNoticePending = { kind: 'app', crashedAt: null };
+      }),
+    });
+    try {
+      const appCrash = page.getByTestId('toast').filter({ hasText: 'Kangentic crashed' });
+      await expect(appCrash).toHaveCount(1);
+      await expect(appCrash.getByTestId('toast-body')).toHaveText('The last run ended in a crash.');
+      await expect(appCrash.getByTestId('toast-reported')).toHaveText('This issue has been automatically reported to Kangentic');
+
+      await page.evaluate(() => {
+        (window as unknown as { __mockFireCrashNotice: (notice: unknown) => void }).__mockFireCrashNotice({ kind: 'window', crashedAt: null });
+      });
+      const windowCrash = page.getByTestId('toast').filter({ hasText: 'The window crashed and reloaded' });
+      await expect(windowCrash).toHaveCount(1);
+      await expect(windowCrash.getByTestId('toast-body')).toHaveText('Your agents kept running.');
+      await expect(windowCrash.getByTestId('toast-reported')).toHaveCount(1);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('a persistent toast shows its button and its age, and draws no countdown', async () => {
     const { browser, page } = await launchPage();
     try {

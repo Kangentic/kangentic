@@ -32,7 +32,7 @@ import type { BrowserPaneVisibility, BrowserPickedElement, BrowserViewportOverri
 import type { AnnotationLayerState } from './annotations/annotationLayerScript';
 import { ALLOW_POPUPS_ATTRIBUTE, type WebviewElement } from './webview-types';
 import { MIN_ZOOM, MAX_ZOOM, stepZoom } from '../../../shared/zoom-steps';
-import { asSentence, describeIpcError } from '../../lib/ipc-error';
+import { asSentence, ipcFailureToastFields, rejectionMessage } from '../../lib/ipc-error';
 
 // Side-pane in the task-detail window that hosts an Electron <webview> and the
 // user's numbered annotations: elements selected on the page and drawings,
@@ -664,7 +664,7 @@ function BrowserPaneActive({
     } catch (caught) {
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't save URL`),
-        message: asSentence(describeIpcError(caught)),
+        ...ipcFailureToastFields(caught),
         variant: 'error',
       });
     } finally {
@@ -714,7 +714,7 @@ function BrowserPaneActive({
     } catch (caught) {
       // A navigation ends the page the script was waiting in; that is not an error.
       if (isCurrent()) {
-        setError(caught instanceof Error ? caught.message : i18n._(msg`Inspect failed`));
+        setError(caught instanceof Error ? rejectionMessage(caught) : i18n._(msg`Inspect failed`));
       }
     } finally {
       if (isCurrent()) {
@@ -815,7 +815,7 @@ function BrowserPaneActive({
       if (inspectActiveRef.current) cancelInspect();
       setDrawMode(false);
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
+      const message = rejectionMessage(caught);
       setError(message);
       // Surface paste/submit failures via toast as well, since the inline
       // error is easy to miss next to the URL bar.

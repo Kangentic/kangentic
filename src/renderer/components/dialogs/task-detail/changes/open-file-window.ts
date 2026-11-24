@@ -2,7 +2,7 @@ import { i18n } from '@lingui/core';
 import { msg, plural } from '@lingui/core/runtime-macro';
 import { POP_OUT_SURFACES, type PopOutChangesFileParams } from '../../../../../shared/pop-out';
 import { useToastStore } from '../../../../stores/toast-store';
-import { asSentence, describeIpcError } from '../../../../lib/ipc-error';
+import { ipcFailureToastFields } from '../../../../lib/ipc-error';
 
 /**
  * Open one file's diff in its own 'changes-file' window, or focus the one
@@ -28,7 +28,7 @@ export async function openChangesFileWindow(params: PopOutChangesFileParams): Pr
   } catch (error) {
     useToastStore.getState().addToast({
       title: i18n._(msg`Couldn't open file diff`),
-      message: asSentence(describeIpcError(error, i18n._(msg`The window could not be created.`))),
+      ...ipcFailureToastFields(error, i18n._(msg`The window could not be created.`)),
       variant: 'error',
     });
   }

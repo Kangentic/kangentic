@@ -741,6 +741,15 @@ const api: ElectronAPI = {
     setAccelerationAndRestart: (enabled: boolean) => ipcRenderer.invoke(IPC.GPU_HEALTH_SET_ACCELERATION, enabled),
   },
 
+  crashNotice: {
+    take: () => ipcRenderer.invoke(IPC.CRASH_NOTICE_TAKE),
+    onReady: (callback) => {
+      const handler = () => callback();
+      ipcRenderer.on(IPC.CRASH_NOTICE_READY, handler);
+      return () => ipcRenderer.removeListener(IPC.CRASH_NOTICE_READY, handler);
+    },
+  },
+
   language: {
     getBootLocale: () => bootLocale,
     getInfo: () => ipcRenderer.invoke(IPC.LANGUAGE_GET_INFO),

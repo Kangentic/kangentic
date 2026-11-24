@@ -22,7 +22,7 @@ import { isActive } from '../../shared/activity-state';
 import { useSessionStore } from '../stores/session-store';
 import { useToastStore } from '../stores/toast-store';
 import { sharedModuleState } from '../stores/hmr-store-pin';
-import { describeIpcError, asSentence } from '../lib/ipc-error';
+import { ipcFailureToastFields } from '../lib/ipc-error';
 
 interface DevRestartModuleState {
   /** The "Main process changed" toast on screen, if any. */
@@ -95,7 +95,7 @@ export async function performDevRestart(): Promise<void> {
   } catch (error) {
     useToastStore.getState().addToast({
       title: i18n._(msg`Couldn't restart Kangentic`),
-      message: asSentence(describeIpcError(error)),
+      ...ipcFailureToastFields(error),
       variant: 'error',
     });
   }

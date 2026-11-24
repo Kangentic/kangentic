@@ -2,7 +2,7 @@ import { i18n } from '@lingui/core';
 import { msg } from '@lingui/core/runtime-macro';
 import { useSessionStore } from '../stores/session-store';
 import { useToastStore } from '../stores/toast-store';
-import { describeIpcError, asSentence } from '../lib/ipc-error';
+import { describeIpcError, asSentence, ipcErrorWasReported } from '../lib/ipc-error';
 import { sessionLifecyclePhase } from './task-progress';
 import {
   resumeBlockRefusal,
@@ -62,10 +62,16 @@ export function sessionFailureBody(error: unknown): string {
   return refusal ? translateText(resumeBlockToastBody(refusal)) : asSentence(reason);
 }
 
-/** The toast for a pause or resume that failed. */
-export function sessionToggleFailureToast(direction: SessionToggleDirection, error: unknown): { title: string; message: string } {
+/**
+ * The toast for a pause or resume that failed. `reported` is set when main sent
+ * the failure's report; a refusal is never reported, so it never is.
+ */
+export function sessionToggleFailureToast(
+  direction: SessionToggleDirection,
+  error: unknown,
+): { title: string; message: string; reported: boolean } {
   const title = direction === 'pause' ? i18n._(msg`Couldn't pause session`) : i18n._(msg`Couldn't resume session`);
-  return { title, message: sessionFailureBody(error) };
+  return { title, message: sessionFailureBody(error), reported: ipcErrorWasReported(error) };
 }
 
 /**

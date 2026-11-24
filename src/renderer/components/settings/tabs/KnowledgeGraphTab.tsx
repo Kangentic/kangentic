@@ -20,7 +20,7 @@ import { KNOWLEDGE_GRAPH_UNAVAILABLE_TAG, knowledgeGraphOn, knowledgeGraphSuppor
 import type {
   AppConfig, DeepPartial, KnowledgeGraphStatus, KnowledgeGraphAcceleration,
 } from '../../../../shared/types';
-import { asSentence, describeIpcError } from '../../../lib/ipc-error';
+import { ipcFailureToastFields } from '../../../lib/ipc-error';
 import { translateText } from '../../../i18n/translate';
 
 /**
@@ -179,7 +179,7 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
       .catch((error: unknown) => {
         useToastStore.getState().addToast({
           title: t`Rebuild didn't start`,
-          message: asSentence(describeIpcError(error)),
+          ...ipcFailureToastFields(error),
           variant: 'error',
         });
       })

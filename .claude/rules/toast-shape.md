@@ -24,6 +24,14 @@ Manager's Save. `addToast` (`stores/toast-store.ts`) now takes one shape, and th
   wrote may follow as a second sentence (`asSentence`). A failure's title says what did not
   happen, most often "Couldn't ..." ("Couldn't resume session", "Automation failed"), and its body
   is the reason.
+- **A failure main reported says so in one fixed line, drawn only by the toast.** When main sent
+  the failure's report to Sentry in this run (`wasSentToErrorReporting`, carried to the renderer
+  by the IPC wrap's marker), the card draws "This issue has been automatically reported to
+  Kangentic" under a hairline below the body, with a bug icon in the card's color. A call site
+  never writes that text: it passes `reported` (`ipcFailureToastFields(error)` for a rejected IPC
+  call), and `ToastItem` draws the line. A refusal, an expected failure, a capped key and a run
+  with error reporting off never get it. The line promises no fix, takes no click and has no tip.
+  It is the one line a toast may carry beyond its title and body.
 - **A timed toast carries no button.** It closes on its own (`durationMs`, the Notifications
   setting by default), and a button on it can leave while the user reaches for it. When the toast
   is about one thing, give it `onOpen`: the card opens that thing (a task through
@@ -55,6 +63,12 @@ Manager's Save. `addToast` (`stores/toast-store.ts`) now takes one shape, and th
   off, a toast in a pop-out);
   `tests/ui/toast-click-through.spec.ts` pins that a card that opens nothing never eats a click on
   what is under it.
+- **Test (reported line):** `tests/unit/toast-reported-fields.test.ts` scans every renderer `.ts`
+  and `.tsx` and fails on a toast body built from `describeIpcError` that does not pass
+  `reported` (through `ipcFailureToastFields`, `ipcErrorWasReported`, or a helper that returns
+  it, such as `sessionToggleFailureToast`), and on the line's text written anywhere but `ToastItem.tsx`. `tests/ui/toast-behavior.spec.ts`
+  pins that a reported toast draws the line on one line under its body and an unreported one
+  draws none.
 - **Review:** the copy (one sentence, one line, "Couldn't") is judgment; `/code-review` checks it
   against [[writing-style]]. Whether a success is already visible on screen is judgment too, so a
   new success toast is review-only: `/code-review` asks where the result shows without it.

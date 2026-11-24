@@ -45,7 +45,7 @@ import { Trans, useLingui } from '@lingui/react/macro';
 import { Tooltip } from '../Tooltip';
 import { tipLabel } from '../../utils/tooltip';
 import { formatMonthDay, formatTimeAgo } from '../../lib/datetime';
-import { asSentence, describeIpcError } from '../../lib/ipc-error';
+import { ipcFailureToastFields } from '../../lib/ipc-error';
 import { useSessionStore } from '../../stores/session-store';
 import { transientKey } from '../../stores/session-store/transient-session-slice';
 import { useToastStore } from '../../stores/toast-store';
@@ -372,7 +372,7 @@ function EarlierRow({ projectId, match, atCap, atCapReason, now, editing, onEdit
         setPending(null);
         useToastStore.getState().addToast({
           title: t`Couldn't rename conversation`,
-          message: asSentence(describeIpcError(error, String(error))),
+          ...ipcFailureToastFields(error, String(error)),
           variant: 'error',
         });
       });
@@ -556,14 +556,17 @@ function EarlierList({ projectId, entries, atCap, atCapReason, onResume }: Earli
   // The row leaves on main's push, so a refusal leaves it where it was.
   const confirmRemove = (entry: CommandTerminalHistoryEntry): void => {
     setRemoving(null);
-    const failed = (message: string): void => {
-      useToastStore.getState().addToast({ title: t`Couldn't remove conversation`, message, variant: 'error' });
+    const failed = (message: string, reported = false): void => {
+      useToastStore.getState().addToast({ title: t`Couldn't remove conversation`, message, reported, variant: 'error' });
     };
     window.electronAPI.sessions.removeCommandTerminalHistory(projectId, entry.agentSessionId)
       .then((removed) => {
         if (!removed) failed(t`A terminal has this conversation open.`);
       })
-      .catch((error: unknown) => failed(asSentence(describeIpcError(error, String(error)))));
+      .catch((error: unknown) => {
+        const fields = ipcFailureToastFields(error, String(error));
+        failed(fields.message, fields.reported);
+      });
   };
 
   // No field, heading or hint until a conversation has ended. Past that this

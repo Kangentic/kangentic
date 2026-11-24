@@ -61,6 +61,10 @@ sources:
   - resource: src/renderer/components/layout/SurfaceBoundary.tsx
   - resource: src/preload/push-callback-guard.ts
   - resource: src/main/diagnostics/push-callback-report.ts
+  - resource: src/shared/reported-failure-marker.ts
+  - resource: src/renderer/lib/ipc-error.ts
+  - resource: src/main/analytics/crash-notice.ts
+  - resource: src/renderer/utils/crash-notice.ts
 ---
 # Error reporting (Sentry)
 
@@ -500,7 +504,10 @@ in one Sentry org, one triage surface.
     uncloneable result, which only the renderer sees. The channel is never in a fingerprint. Its
     cap is 100 keys, not 25, because a defect past it would reach Sentry from neither process. An
     `ipcMain.on` listener is not wrapped: it has no caller to reject to, so its throw is uncaught
-    and Sentry's own handler reports it.
+    and Sentry's own handler reports it. When the error's report reached Sentry in this run (see
+    What the user sees below), the wrap rethrows a copy whose message ends in
+    `REPORTED_FAILURE_MARKER`, leaving the original untouched for anything else that holds it; the
+    marker is a suffix, so `IPC_REJECTION_DUPLICATE_PATTERN` still matches the renderer's copy.
   - `mcp_tool`, `mcp_command`, `mcp_request`: a tool callback (tag `tool`), a command handler and
     the HTTP request layer of the MCP server (`src/main/agent/mcp-http/tool-reporting.ts`). A
     `mcp_command` report from a workflow reply carries `command` (`save_workflow`,
@@ -1160,6 +1167,53 @@ in one Sentry org, one triage surface.
   and latch report until the pipe ends, bounded at 500 ms (`STDERR_DRAIN_BOUND_MS`). Measured on
   44.5.1, `end` follows `exit` by about 3 ms. The count, backoff, telemetry and the latch decision
   stay synchronous.
+
+## What the user sees
+
+A failure users hit closes its loop in two places: the moment it happens, and the release that
+fixes it. Both are collective. Nothing matches a report to this install or tells a user "you hit
+this".
+
+- **A failure toast says it was reported.** When main sent the failure's report to Sentry in this
+  run, the failure toast the user already sees draws one more line under its body: a bug icon in
+  the card's color and "This issue has been automatically reported to Kangentic"
+  (`ToastItem.tsx`, `.claude/rules/toast-shape.md`). It never promises a fix: `/sentry` leaves
+  upstream and host-exhaustion issues unfiled. No toast is added for a handled error that
+  recovered on its own.
+- **What counts as sent.** `reportHandledError` returns whether it handed the report to Sentry
+  (false with reporting off or for a user-configuration error). `handled-report.ts` keeps the
+  errors whose report Sentry took in `wasSentToErrorReporting`: the error a send carried, and a
+  latched repeat of a key whose first send was taken. A refusal, an expected failure, a key past
+  the cap and a run with reporting off are never in it. `isReported` cannot answer this, since it
+  also holds errors marked while nothing was sent. "Sent" means the SDK took the event, not that
+  the transport delivered it: a `beforeSend` drop or an offline upload still counts. Waiting for
+  each handled event's `afterSendEvent` would tie a toast to a network round trip, so the toast
+  takes the SDK's word; the crash notice, which has no toast to hold up, waits for the 2xx.
+- **How the fact reaches the toast.** An IPC rejection reaches the renderer as message text only,
+  so the IPC wrap rethrows a sent error as a copy whose message ends in `REPORTED_FAILURE_MARKER`
+  (`src/shared/reported-failure-marker.ts`). `describeIpcError` strips it from every reason, and a failure toast passes
+  `ipcFailureToastFields(error)` (or `ipcErrorWasReported(error)`), so the toast's `reported` field
+  draws the line. `tests/unit/toast-reported-fields.test.ts` keeps new toast sites passing it.
+  An error from an inner chokepoint the handler rethrew is marked too: it is in the sent set.
+- **One notice after a crash.** `src/main/analytics/crash-notice.ts` listens to Sentry's
+  `afterSendEvent` and earns a notice only from a `fatal` native crash event the transport
+  accepted (2xx). A dump found at startup from a run whose exit was `abrupt` is the app crash
+  ("Kangentic crashed", with the dump's crash time); a live renderer crash sent within
+  `WINDOW_RELOAD_ARM_MS` (60 s) of the main window's reload gate arming the holder
+  (`armWindowReload`, in the `render-process-gone` handler) is "The window crashed and reloaded".
+  Past that window a renderer crash is some other window's, or one whose report never went out,
+  and shows nothing. The ping goes out even while the page is loading, since the mount's take can
+  run before the load finishes. A foreign dump is a `warning` and never uploads, a clean previous
+  exit shows nothing, and at most one notice shows per launch. The main window takes it on mount
+  and on each `IPC.CRASH_NOTICE_READY` ping (`IPC.CRASH_NOTICE_TAKE`), and the toast carries the
+  reported line.
+- **The fix reaches users through the release notes.** `/release` writes a fix whose commit names
+  a DESKTOP shortId and carries a `Release-Note:` line as an ordinary Bug Fixes entry in the
+  symptom's words, with no shortId, and links one GitHub number per entry (the issue the fix
+  closed, else the PR). A shortId commit with no `Release-Note:` line only improved diagnostics
+  and stays out. The `/sentry` sweep opens a short public GitHub issue for each user-visible bug,
+  read for anything sensitive first; Sentry's own GitHub issue automation stays off, because its
+  issues carry the event's stack, tags and a link into the project.
 
 ## Counted, not reported
 

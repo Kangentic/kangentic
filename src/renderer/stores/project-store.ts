@@ -4,7 +4,7 @@ import { i18n } from '@lingui/core';
 import { msg } from '@lingui/core/runtime-macro';
 import type { Project, ProjectCreateInput, ProjectGroup, ProjectGroupCreateInput, ProjectRelocateOptions, ProjectRelocateResult, ProjectOpenByPathOverrides, ProjectPathProbe, ProjectEnsureGitResult } from '../../shared/types';
 import { PROJECT_PATH_MISSING_PREFIX, PROJECT_NOT_FOUND_PREFIX } from '../../shared/ipc-channels';
-import { describeIpcError, asSentence } from '../lib/ipc-error';
+import { describeIpcError, ipcFailureToastFields } from '../lib/ipc-error';
 import { reportRendererFailure } from '../utils/renderer-failure';
 // Not `./session-store` directly: that would close an import cycle whose
 // circular-import invalidate full-reloads the dev page. See the module docblock.
@@ -252,7 +252,7 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
 
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't open project`),
-        message: asSentence(describeIpcError(err)),
+        ...ipcFailureToastFields(err),
         variant: 'error',
       });
       return 'failed';
@@ -269,7 +269,7 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
       } catch (err) {
         useToastStore.getState().addToast({
           title: i18n._(msg`Couldn't open project`),
-          message: asSentence(describeIpcError(err)),
+          ...ipcFailureToastFields(err),
           variant: 'error',
         });
         return 'failed';

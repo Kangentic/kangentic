@@ -6,7 +6,7 @@ import { PROJECT_FOLDER_NOT_WRITABLE_PREFIX } from '../../shared/ipc-channels';
 import { useProjectStore } from '../stores/project-store';
 import { useSshStore } from '../stores/ssh-store';
 import { useToastStore } from '../stores/toast-store';
-import { asSentence, describeIpcError } from '../lib/ipc-error';
+import { ipcFailureToastFields } from '../lib/ipc-error';
 
 /**
  * Pick a folder and open it as a project, in one step.
@@ -52,7 +52,7 @@ export function useAddProject() {
     } catch (error) {
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't read that folder`),
-        message: asSentence(describeIpcError(error)),
+        ...ipcFailureToastFields(error),
         variant: 'error',
       });
       return;
@@ -93,9 +93,9 @@ export function useAddProject() {
       const folderRefused = error instanceof Error && error.message.includes(PROJECT_FOLDER_NOT_WRITABLE_PREFIX);
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't add project`),
-        message: folderRefused
-          ? i18n._(msg`Kangentic can't write to that folder.`)
-          : asSentence(describeIpcError(error)),
+        ...(folderRefused
+          ? { message: i18n._(msg`Kangentic can't write to that folder.`) }
+          : ipcFailureToastFields(error)),
         variant: 'error',
       });
       return;

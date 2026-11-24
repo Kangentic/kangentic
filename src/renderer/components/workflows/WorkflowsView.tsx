@@ -12,7 +12,7 @@ import { useSessionStore } from '../../stores/session-store';
 import { useBoardStore } from '../../stores/board-store';
 import { useToastStore } from '../../stores/toast-store';
 import { useConfigStore } from '../../stores/config-store';
-import { describeIpcError, asSentence } from '../../lib/ipc-error';
+import { describeIpcError, asSentence, ipcErrorWasReported } from '../../lib/ipc-error';
 import { openTaskFromNotification } from '../../utils/open-task-from-notification';
 import { useHmrGeneration } from '../../utils/hmr-generation';
 import { boardTaskFilter, isOpenFilter, matchesBoardTaskFilter } from '../../utils/board-task-filter';
@@ -283,6 +283,7 @@ export function WorkflowsView() {
     useToastStore.getState().addToast({
       title: t`Couldn't delete task`,
       message: t`"${taskTitle}": ${reason}`,
+      reported: ipcErrorWasReported(error),
       variant: 'warning',
       onOpen: () => openTaskFromNotification(taskProjectId, task.id),
     });

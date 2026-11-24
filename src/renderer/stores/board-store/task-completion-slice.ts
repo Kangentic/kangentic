@@ -3,7 +3,7 @@ import { i18n } from '@lingui/core';
 import { msg } from '@lingui/core/runtime-macro';
 import { useToastStore } from '../toast-store';
 import { useProjectStore } from '../project-store';
-import { describeIpcError, asSentence } from '../../lib/ipc-error';
+import { ipcFailureToastFields } from '../../lib/ipc-error';
 import { openTaskFromNotification } from '../../utils/open-task-from-notification';
 import type { BoardStore, CompletingTask } from './types';
 import { type CompletionGate, createGate, canPersist } from './completion-gate';
@@ -102,7 +102,7 @@ export const createTaskCompletionSlice: StateCreator<BoardStore, [], [], TaskCom
       // failures, but guard an unexpected throw so the gate still cleans up below.
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't complete task`),
-        message: asSentence(describeIpcError(err)),
+        ...ipcFailureToastFields(err),
         variant: 'error',
       });
     } finally {

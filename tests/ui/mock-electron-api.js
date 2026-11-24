@@ -6803,6 +6803,33 @@
       },
     },
 
+    // The crash notice is taken once, like main's holder clears it. Arm it with
+    // window.__mockCrashNoticePending = { kind: 'app' | 'window', crashedAt }
+    // before load, or deliver one later with
+    // window.__mockFireCrashNotice(notice), which arms it and pings onReady.
+    crashNotice: {
+      take: function () {
+        var notice = window.__mockCrashNoticePending || null;
+        window.__mockCrashNoticePending = null;
+        return Promise.resolve(notice);
+      },
+      onReady: function (callback) {
+        if (!window.__mockCrashNoticeListeners) window.__mockCrashNoticeListeners = [];
+        window.__mockCrashNoticeListeners.push(callback);
+        if (!window.__mockFireCrashNotice) {
+          window.__mockFireCrashNotice = function (notice) {
+            window.__mockCrashNoticePending = notice;
+            var listeners = (window.__mockCrashNoticeListeners || []).slice();
+            listeners.forEach(function (listener) { listener(); });
+          };
+        }
+        return function () {
+          var index = window.__mockCrashNoticeListeners.indexOf(callback);
+          if (index >= 0) window.__mockCrashNoticeListeners.splice(index, 1);
+        };
+      },
+    },
+
     // noticePending is consumed on read, like the real handler, so a spec
     // asserting the toast fires exactly once gets main's real behaviour.
     // Arm with window.__mockGpuNoticePending / __mockGpuSoftwareRendering

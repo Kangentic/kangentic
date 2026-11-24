@@ -36,7 +36,7 @@ import { requestMonitorDetail } from './MonitorDetailLayer';
 import { resyncBoardAfterMonitorWrite } from './resync-board-after-monitor-write';
 import { sendToBacklogAsksFirst } from '../../utils/send-to-backlog-confirm';
 import { offersAutomationsSwitch, toggleTaskAutomations } from '../../utils/task-automations';
-import { describeIpcError, asSentence } from '../../lib/ipc-error';
+import { describeIpcError, asSentence, ipcErrorWasReported } from '../../lib/ipc-error';
 import { useTaskDisplayKind } from '../../utils/task-progress';
 import { runSessionToggle, sessionToggleRowFor } from '../../utils/session-toggle';
 import { openTaskFromNotification } from '../../utils/open-task-from-notification';
@@ -94,6 +94,7 @@ export function MonitorRowContextMenu({
     useToastStore.getState().addToast({
       title: failureTitle,
       message: t`"${taskTitle}": ${reason}`,
+      reported: ipcErrorWasReported(error),
       variant: 'warning',
       onOpen: () => openTaskFromNotification(row.projectId, row.taskId),
     });

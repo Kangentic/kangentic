@@ -13,6 +13,7 @@
  */
 import { i18n } from '@lingui/core';
 import { msg } from '@lingui/core/runtime-macro';
+import { hasReportedFailureMarker, withoutReportedFailureMarker } from '../../shared/reported-failure-marker';
 
 /** `Error invoking remote method '<channel>': ` */
 const REMOTE_METHOD_PREFIX = /^Error invoking remote method '[^']*':\s*/;
@@ -37,10 +38,51 @@ const ERROR_CLASS_PREFIX = new RegExp(`^${ERROR_CLASS}:\\s*`);
  */
 const ERROR_CLASS_NAME = new RegExp(`^(${ERROR_CLASS}):\\s`);
 
-/** The rejection's text with the channel prefix gone, or null when there is none to read. */
+/**
+ * The rejection's text with the channel prefix and main's reported marker gone,
+ * or null when there is none to read.
+ */
 function messageWithoutChannel(error: unknown): string | null {
   if (!(error instanceof Error) || !error.message) return null;
-  return error.message.replace(REMOTE_METHOD_PREFIX, '');
+  return withoutReportedFailureMarker(error.message.replace(REMOTE_METHOD_PREFIX, ''));
+}
+
+/**
+ * A caught error's own text, exactly as it arrived but without main's reported
+ * marker, or `String(error)` for a non-Error. For a site that shows or matches the
+ * raw text of a rejected call rather than `describeIpcError`'s cleaned reason.
+ */
+export function rejectionMessage(error: unknown): string {
+  return error instanceof Error ? withoutReportedFailureMarker(error.message) : String(error);
+}
+
+/**
+ * True when main reported this rejected call's failure to Sentry in this run: its
+ * IPC handler wrap marks the rejection (`REPORTED_FAILURE_MARKER`). False for a
+ * refusal, an expected failure, a capped key, error reporting off, and any
+ * rejection that is not an Error.
+ */
+export function ipcErrorWasReported(error: unknown): boolean {
+  return error instanceof Error && hasReportedFailureMarker(error.message);
+}
+
+/**
+ * The body and reported flag of a failure toast for a rejected IPC call. Spread it
+ * into `addToast` so the toast draws its "reported" line whenever main sent the
+ * report: `addToast({ title, ...ipcFailureToastFields(error), variant: 'error' })`.
+ * `reasonFallback` is `describeIpcError`'s fallback and `sentenceFallback` is
+ * `asSentence`'s, so the body reads exactly as
+ * `asSentence(describeIpcError(error, reasonFallback), sentenceFallback)`.
+ */
+export function ipcFailureToastFields(
+  error: unknown,
+  reasonFallback?: string,
+  sentenceFallback?: string,
+): { message: string; reported: boolean } {
+  return {
+    message: asSentence(describeIpcError(error, reasonFallback), sentenceFallback),
+    reported: ipcErrorWasReported(error),
+  };
 }
 
 /**

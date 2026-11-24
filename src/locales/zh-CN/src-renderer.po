@@ -917,6 +917,11 @@ msgstr "刚刚"
 msgid "Kangentic can't write to that folder."
 msgstr "Kangentic 无法写入该文件夹。"
 
+#: src/renderer/utils/crash-notice.ts
+#, fuzzy
+msgid "Kangentic crashed"
+msgstr "Kangentic 已崩溃"
+
 #: src/renderer/hooks/useProjectRelocation.tsx
 msgid "Kangentic will move the folder on disk. All tasks, history, and worktrees move with it."
 msgstr "Kangentic 将移动磁盘上的文件夹。所有任务、历史记录和工作树都会随之移动。"
@@ -1466,6 +1471,16 @@ msgstr "自动化未启动。"
 msgid "The description is too long to start an agent with."
 msgstr "描述太长，无法用它启动智能体。"
 
+#: src/renderer/utils/crash-notice.ts
+#, fuzzy
+msgid "The last run ended in a crash at {crashedAt}."
+msgstr "上次运行于 {crashedAt} 因崩溃而结束。"
+
+#: src/renderer/utils/crash-notice.ts
+#, fuzzy
+msgid "The last run ended in a crash."
+msgstr "上次运行因崩溃而结束。"
+
 #: src/renderer/stores/project-store.ts
 msgid "The list has been refreshed."
 msgstr "列表已刷新。"
@@ -1501,6 +1516,11 @@ msgstr "会话已在运行。"
 #: src/renderer/pop-out/roots/PopOutChangesRoot.tsx
 msgid "The task's changes could not be read"
 msgstr "无法读取任务的更改"
+
+#: src/renderer/utils/crash-notice.ts
+#, fuzzy
+msgid "The window crashed and reloaded"
+msgstr "窗口已崩溃并重新加载"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
 msgid "These active agent sessions will be stopped and resumed automatically at the new location:"
@@ -1607,6 +1627,11 @@ msgstr "工作流已停滞"
 #: src/renderer/components/DescriptionEditor.tsx
 msgid "Write"
 msgstr "编写"
+
+#: src/renderer/utils/crash-notice.ts
+#, fuzzy
+msgid "Your agents kept running."
+msgstr "你的代理仍在运行。"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 msgid "Your edits to this task are not saved."

@@ -21,12 +21,16 @@
  *
  * Skipped: refusals (`RefusalError` and every `UserConfigurationError`), the
  * classes `isExpectedFailure` names, aborts, the network, a quit, and an error a
- * reporter already sent (`markReported`). The error is always rethrown, so the
- * renderer sees exactly what it saw before.
+ * reporter already sent (`markReported`). The error is always rethrown. When its
+ * report reached Sentry in this run (this send, an inner reporter's, or an
+ * earlier send of the same key), the wrap rethrows a copy whose message ends in
+ * `REPORTED_FAILURE_MARKER`, so the renderer's failure toast can say the issue
+ * was reported. `describeIpcError` strips the marker, so every reason reads as before.
  */
 
 import type { IpcMain, IpcMainInvokeEvent } from 'electron';
-import { createChokepointReporter, type ChokepointReporter } from './handled-report';
+import { createChokepointReporter, wasSentToErrorReporting, type ChokepointReporter } from './handled-report';
+import { REPORTED_FAILURE_MARKER, hasReportedFailureMarker } from '../../shared/reported-failure-marker';
 
 export const IPC_HANDLER_REPORT_SOURCE = 'ipc_handler';
 
@@ -42,7 +46,25 @@ export const ipcHandlerReporter: ChokepointReporter = createChokepointReporter(I
 
 type HandleListener = (event: IpcMainInvokeEvent, ...handlerArguments: unknown[]) => unknown;
 
-/** Run `listener`, report a throw or a rejection, and rethrow it unchanged. */
+/**
+ * What the wrap rethrows: `error` itself, or, when its report reached Sentry, a
+ * copy whose message carries the reported marker. A copy, never the original
+ * changed in place: the same object can be held elsewhere (a memoized promise
+ * every caller awaits, a later `message` check in main), and none of those may
+ * see the marker. Electron sends the renderer only the error's `name: message`
+ * text, so the copy keeps the name and the stack and loses nothing on the way.
+ * A thrown string or plain object is rethrown as it is.
+ */
+export function rejectionToRethrow(error: unknown): unknown {
+  if (!(error instanceof Error) || !wasSentToErrorReporting(error)) return error;
+  if (hasReportedFailureMarker(error.message)) return error;
+  const marked = new Error(`${error.message}${REPORTED_FAILURE_MARKER}`);
+  marked.name = error.name;
+  if (error.stack) marked.stack = error.stack;
+  return marked;
+}
+
+/** Run `listener`, report a throw or a rejection, and rethrow it, marked when its report was sent. */
 export async function runReportedHandler(
   channel: string,
   listener: HandleListener,
@@ -53,7 +75,7 @@ export async function runReportedHandler(
     return await listener(event, ...handlerArguments);
   } catch (error) {
     ipcHandlerReporter.report(error, { tags: { channel } });
-    throw error;
+    throw rejectionToRethrow(error);
   }
 }
 
