@@ -35,7 +35,9 @@ interface ClassifiedStart {
 /**
  * Every file of ours in main's graph that imports `child_process`. A new one
  * fails until it routes through a drop-in (`execFileAsync` / `execAsync` in
- * off-main-exec.ts, `spawnOffMainCli` in off-main-cli.ts) or is classified here.
+ * off-main-exec.ts, `spawnOffMain` in off-main-spawn.ts) or is classified here.
+ * None of these starts a process on main's thread while a pty host is up,
+ * except the two that say so: the quit, and a stop after the host died.
  */
 const CLASSIFIED_STARTS: Record<string, ClassifiedStart> = {
   // The drop-ins' own fallbacks, which run only where no pty host is registered.
@@ -97,16 +99,6 @@ const CLASSIFIED_STARTS: Record<string, ClassifiedStart> = {
   'src/devtools/main/spawn-tracer.ts': {
     bindings: ['ChildProcess'],
     reason: 'wraps ChildProcess.prototype.spawn to time every start for the lag report, and starts nothing itself',
-  },
-
-  // Still started on main's thread.
-  'src/main/automations/adapters/run-script/index.ts': {
-    bindings: ['spawn'],
-    reason: 'a run_script automation row starts its shell here, one start per run',
-  },
-  'src/main/ipc/handlers/system.ts': {
-    bindings: ['spawn'],
-    reason: 'SHELL_EXEC: a shortcut command the user clicks, detached and never stopped',
   },
 };
 

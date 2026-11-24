@@ -69,6 +69,8 @@ describe('spawnOffMain with no pty host registered', () => {
     expect(result.code).toBe(3);
     expect(run.child.exitCode).toBe(3);
     expect(typeof run.child.pid).toBe('number');
+    // An error from this child is its own, never a lost host.
+    expect(run.hosted).toBe(false);
   }, 20_000);
 
   it('gives a run with ignored stdio streams that never emit, and still reports its exit', async () => {
@@ -187,6 +189,7 @@ describe('spawnOffMain with a pty host registered', () => {
     const run = spawnOffMain('/nonexistent/hosted-only-binary', ['--version'], { cwd: '/mock/repo', env: { KANGENTIC_RUN: 'yes', [PIPE_KEY]: 'pipe' } });
 
     expect(run.child).toBe(hosted);
+    expect(run.hosted).toBe(true);
     expect(received).toHaveLength(1);
     expect(received[0].command).toBe('/nonexistent/hosted-only-binary');
     expect(received[0].args).toEqual(['--version']);

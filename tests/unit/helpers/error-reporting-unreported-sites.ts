@@ -233,7 +233,6 @@ export const UNREPORTED_CATCH_SITES: Readonly<Record<string, number>> = {
   'src/main/announcements.ts': 1,
   'src/main/artifacts/artifact-domain-report.ts': 1,
   'src/main/artifacts/artifact-linking.ts': 1,
-  'src/main/automations/adapters/run-script/index.ts': 1,
   'src/main/automations/automation-agent.ts': 2,
   'src/main/automations/automation-runner.ts': 1,
   'src/main/automations/condition-check/condition-check.ts': 2,

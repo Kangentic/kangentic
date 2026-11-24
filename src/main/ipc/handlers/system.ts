@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
 import { app, BrowserWindow, ipcMain, Notification, dialog, shell, globalShortcut, clipboard, nativeImage } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { comboToAccelerator } from '../../../shared/keybindings';
@@ -32,6 +31,7 @@ import { readClipboardImage, writePastedImage } from '../helpers/clipboard-image
 import { openPathBounded } from '../helpers/open-path';
 import { resolveShellLaunch } from '../../pty/spawn/shell-launch';
 import { childProcessEnv } from '../../shared/child-env';
+import { spawnOffMain } from '../../utility-process/off-main-spawn';
 import { COMMAND_TERMINAL_NOTIFICATION_TASK_ID } from '../../../shared/notification-constants';
 import { desktopSoundPlan, effectiveNotificationConfig, resolveEventSound } from '../../../shared/notification-settings';
 import { pickCustomSound, readCustomSound } from '../../notifications/custom-sound';
@@ -695,18 +695,28 @@ export function registerSystemHandlers(context: IpcContext): void {
     console.log(`[shell:exec] command="${command}" cwd="${cwd}"`);
     // Detached and never killed, so a dev server started here can outlive the
     // app. resolveShellLaunch keeps it from holding Crashpad's port on macOS,
-    // and childProcessEnv from carrying its pipe name on Windows.
+    // and childProcessEnv from carrying its pipe name on Windows. It starts in
+    // the pty host, never on this thread (`spawnOffMain`), as a run nothing
+    // stops: not a quit, and not a host that is lost.
     const launch = resolveShellLaunch({ command });
-    const child = spawn(launch.file, launch.args, {
+    const run = spawnOffMain(launch.file, launch.args, {
       cwd,
       env: childProcessEnv(),
       shell: launch.shell,
       detached: true,
       stdio: 'ignore',
       windowsHide: false,
+      outlivesApp: true,
     });
-    child.unref();
-    return { pid: child.pid };
+    // The pid is known once the start is acknowledged. A command that could
+    // not be started answers with no pid, as it always did, and says why here.
+    return new Promise<{ pid: number | undefined }>((resolve) => {
+      run.child.once('spawn', () => resolve({ pid: run.child.pid }));
+      run.child.once('error', (error: Error) => {
+        console.warn(`[shell:exec] could not start: ${error.message}`);
+        resolve({ pid: undefined });
+      });
+    });
   });
 
   // === Git ===

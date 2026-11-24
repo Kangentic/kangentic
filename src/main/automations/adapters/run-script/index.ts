@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import { AUTOMATION_MANIFEST, DEFAULT_SCRIPT_TIMEOUT_MINUTES } from '../../../../shared/automation-manifest';
 import type { AutomationConfig } from '../../../../shared/types';
 import { describeAutomation } from '../../../../shared/automation-describe';
@@ -6,7 +5,8 @@ import { englishI18n } from '../../../../shared/i18n/english';
 import { resolveScriptInvocation } from '../../../pty/spawn/script-invocation';
 import { resolveShellLaunch } from '../../../pty/spawn/shell-launch';
 import { childProcessEnv } from '../../../shared/child-env';
-import { killChildTreeNow } from '../../../shared/child-tree-stop';
+import { childHasExited, killChildTreeByPid } from '../../../shared/child-tree-stop';
+import { spawnOffMain } from '../../../utility-process/off-main-spawn';
 import type { AutomationAdapter, AutomationContext, AutomationOutcome } from '../../shared/automation-adapter';
 import { AutomationPermanentError, AutomationTimeoutError } from '../../shared/automation-errors';
 import type { HostScriptRunner } from '../../../remote/host-script';
@@ -159,14 +159,14 @@ function runToCompletion(options: {
     // script starts holds Crashpad's exception port. The pid stays the shell's,
     // which the group kill below relies on.
     const launch = resolveShellLaunch({ file: exe, args });
-    const child = spawn(launch.file, launch.args, {
+    // Started in the pty host, never on this thread (`spawnOffMain`): on Windows
+    // the start is a CreateProcess that holds whichever thread makes it. No
+    // shell: the invocation is already `<shell> -c <script>`, and letting Node
+    // add a second one would re-parse the script through cmd.exe.
+    const run = spawnOffMain(launch.file, launch.args, {
       cwd: context.cwd,
       // A script can start anything, so no Crashpad pipe name (child-env.ts).
       env: childProcessEnv(scriptEnvironment(context)),
-      // No shell: the invocation is already `<shell> -c <script>`, and letting
-      // Node add a second one would re-parse the script through cmd.exe.
-      shell: false,
-      windowsHide: true,
       // Nothing reads the output, and an unread pipe fills and blocks a chatty
       // script. `ignore` closes stdin too, so a script that prompts fails fast
       // instead of waiting out its whole budget.
@@ -175,7 +175,10 @@ function runToCompletion(options: {
       // attachment rather than grouping, so the tree kill below is platform-
       // specific either way.
       detached: process.platform !== 'win32',
+      // A quit leaves a running script alone, as it did while main started it.
+      outlivesApp: true,
     });
+    const child = run.child;
 
     let settled = false;
     const finish = (apply: () => void): void => {
@@ -191,9 +194,9 @@ function runToCompletion(options: {
     // the process GROUP `detached` created on POSIX.
     const killTree = (): void => {
       try {
-        killChildTreeNow(child, { leadsGroup: true });
+        run.stop('treeNow');
       } catch {
-        // Already gone between the deadline and the kill. Nothing to do.
+        // report-ok: already gone between the deadline and the kill, which is what the stop wanted.
       }
     };
 
@@ -211,10 +214,23 @@ function runToCompletion(options: {
 
     // `error` fires instead of `close` when the shell itself cannot be started
     // (a missing executable, an unreadable cwd), so both paths settle.
-    child.on('error', (spawnError) => finish(() => reject(spawnError)));
+    child.on('error', (spawnError: Error) => {
+      // An error after the start is the pty host lost with the script running.
+      // Nothing can stop the script there any more and this run is recorded as
+      // failed, so what it started is ended by pid: left going, it would be
+      // running beside whatever the task does next. The host's own crash is
+      // reported where it is noticed, so this is the classified error, not a
+      // second defect.
+      if (run.hosted && child.pid !== undefined && !childHasExited(child)) {
+        killChildTreeByPid(child.pid);
+        finish(() => reject(new AutomationPermanentError('The script was stopped: the process running it ended unexpectedly.')));
+        return;
+      }
+      finish(() => reject(spawnError));
+    });
     // `close`, not `exit`: with stdio ignored they coincide, but `close` is the
     // one that waits for the streams in every other configuration.
-    child.on('close', (code, signal) => {
+    child.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
       // A signalled death reports a null code. Report it as a failure rather
       // than as the success a `?? 0` would invent.
       finish(() => resolve(code ?? (signal ? 1 : 0)));
