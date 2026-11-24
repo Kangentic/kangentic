@@ -95,8 +95,8 @@ It would also be dropped at the first resume, which passes none. So the screen a
 would write. Skip Approvals is the mode that does not ask. A message Kangentic types into this screen
 can wait at that question, as on a Non-Interactive resume.
 
-Only a customized legacy Start agent row whose prompt comes out empty reaches a `nonInteractive` start
-with no prompt. It opens the screen its own mode opens.
+A `nonInteractive` start with no prompt, which only a customized legacy Start agent row whose prompt
+comes out empty can make, opens the session screen too, whatever its permission mode.
 
 ### Resumed Session
 
