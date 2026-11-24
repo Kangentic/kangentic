@@ -16,7 +16,9 @@ import { runProjectMigrations } from '../../src/main/db/migrations';
 import { SessionRepository } from '../../src/main/db/repositories/session-repository';
 import { SwimlaneRepository } from '../../src/main/db/repositories/swimlane-repository';
 import { TaskRepository } from '../../src/main/db/repositories/task-repository';
-import { pruneOrphanedDirectories } from '../../src/main/transition-engine/resource-cleanup';
+import { TaskMoveRepository } from '../../src/main/db/repositories/task-move-repository';
+import { AutomationRunRepository } from '../../src/main/db/repositories/automation-run-repository';
+import { cleanupStaleResourcesAsync, pruneOrphanedDirectories } from '../../src/main/transition-engine/resource-cleanup';
 import { verifyProjectOwnership, type VerifiedOwnership } from '../../src/main/project-ownership/project-ownership';
 import {
   SET_ASIDE_RETENTION_MS,
@@ -24,6 +26,7 @@ import {
   purgeExpiredSetAside,
 } from '../../src/main/project-ownership/set-aside';
 import { asideTimeOf } from '../../src/main/git/removed-worktrees';
+import { makeSessionRecord } from './helpers/session-record-fixture';
 import { openTestDatabase } from './helpers/test-database';
 import { ownershipOf } from './helpers/verified-ownership';
 
@@ -127,6 +130,46 @@ describe('an owner\'s sweep', () => {
 
     for (const orphan of orphans) expect(fs.existsSync(orphan)).toBe(true);
     expect(setAsideNames('tasks')).toEqual([]);
+  });
+});
+
+// Sentry DESKTOP-50: the To Do pass deleted the rows and left the folders, in the
+// same cold open whose sweep then refused to clear them.
+describe('the To Do pass and the sweep, in one cold open', () => {
+  it('leaves nothing to refuse after the pass resets five tasks with two sessions each', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const todoLane = new SwimlaneRepository(database).list().find((lane) => lane.role === 'todo');
+    const folders: string[] = [];
+    for (let index = 0; index < 5; index++) {
+      const task = tasks.create({ title: `Stale ${index}`, description: '', swimlane_id: todoLane?.id ?? '' });
+      const rows = [
+        { id: `older-${index}`, status: 'exited', startedAt: '2026-11-20T10:00:00.000Z' },
+        { id: `paused-${index}`, status: 'suspended', startedAt: '2026-11-21T10:00:00.000Z' },
+      ] as const;
+      for (const row of rows) {
+        sessions.insert(makeSessionRecord({
+          id: row.id, task_id: task.id, agent_session_id: null, cwd: projectPath, status: row.status, started_at: row.startedAt,
+        }));
+        folders.push(oldFolder(path.join('sessions', row.id)));
+      }
+      tasks.update({ id: task.id, session_id: `paused-${index}` });
+    }
+
+    await cleanupStaleResourcesAsync(
+      ownershipOf(projectPath),
+      tasks,
+      new TaskMoveRepository(database),
+      new SwimlaneRepository(database),
+      sessions,
+      { ...sessionManager, kill: () => undefined, awaitExit: async () => undefined, remove: () => undefined } as never,
+      new AutomationRunRepository(database),
+      () => undefined,
+      { stoppingEnabled: () => false, onReport: () => undefined },
+    );
+
+    expect(sessions.listAllSessionIds()).toEqual([]);
+    expect(folders.filter((folder) => fs.existsSync(folder))).toEqual([]);
+    expect(warn.mock.calls.filter((call) => String(call[0]).includes('Refused to clear'))).toEqual([]);
   });
 });
 

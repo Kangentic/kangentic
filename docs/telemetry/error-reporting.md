@@ -30,6 +30,8 @@ sources:
   - resource: src/main/pty/agent-launch-report.ts
   - resource: src/main/pty/launch-output-class.ts
   - resource: src/main/pty/abandoned-launches.ts
+  - resource: src/main/transition-engine/resource-cleanup.ts
+    title: pruneDirectory's orphan_sweep_refused report
   - resource: src/main/quit-cause.ts
   - resource: src/main/git/worktree-errors.ts
   - resource: src/main/git/git-command-error.ts
@@ -688,7 +690,8 @@ in one Sentry org, one triage surface.
     draws that screen as cursor moves, which read as one run-on line, so
     `identifyUserSetupFailure`'s whole-line patterns cannot match it. A never-captured session
     whose agent died at start goes to the launch report instead, as stage `agent_exited` with
-    cause `no_conversation`, carrying every tag below. All four must hold: it settled at the
+    cause `no_conversation`, carrying every tag below and what the launch printed and how it ended
+    (`output_class`, `other_from`, `exit_code`, `exit_by`). All four must hold: it settled at the
     ceiling with its PTY exited on its own (`settled_by` `ceiling`, `session_status` `exited`),
     not by a removal and not by a `kill()` that kept its row (`intentionalExit`, such as the
     `cleanup_worktree` action's or a user's stop). The agent-absence sweep's retirement still
@@ -856,7 +859,16 @@ in one Sentry org, one triage surface.
   timeout killed it. `timeout`: it ran past its timeout. `pass` and `cause` stay out of the message
   and the once-per-launch key, so neither splits the issue. A Stop
   that refused a process, such as Kangentic's own tree or a held PTY, is not reported. Neither is
-  one that found the process still running after the force kill), and a guarded synchronous write that could not
+  one that found the process still running after the force kill), an orphan sweep at project open
+  that refused to clear most of a folder (`source: orphan_sweep_refused`, `pruneDirectory` in
+  `src/main/transition-engine/resource-cleanup.ts`, with `folder` (`worktree`, `session`, `task`),
+  fingerprinted `['orphan-sweep-refused', folder]`, once per folder kind per run, because a refusal
+  repeats at every open until the folder changes. Its `orphan_sweep` context holds the two counts,
+  `orphans` and `directories`, and two buckets that separate a wrong database that passed the
+  ownership check from leftovers of the right one, which Sentry DESKTOP-50 could not:
+  `newest_orphan_age` (`<1h`, `1-24h`, `1-7d`, `7-30d`, `>30d`) and `tasks` (`0`, `1-4`, `5-19`,
+  `20-99`, `>=100`, how many tasks the database holds, archived ones included). No folder name is
+  sent), and a guarded synchronous write that could not
   reach disk (`src/main/config/write-failure-notice.ts`, one report per failing `source` tag per
   outage: `config`, `config_dirs`, `config_project_override`, `import_source`, `browser_url`, the
   three `mobile_bridge_*` stores, `asana_credential`, `jira_credential`, `linear_credential`, `trello_credential`, `gitlab_credential`, plus `errno` and `syscall` tags when the
@@ -930,7 +942,7 @@ in one Sentry org, one triage surface.
   | `pty_spawn` | The shell did not spawn. Its `source` stays `pty_spawn` | `PtyOutputNotConnectedError`, or the plain `Error` every earlier issue was grouped on |
   | `shell_exit` | The shell exited on its own with no sign the agent ran | `AgentLaunchShellExitError` |
   | `never_started` | The sweep, or a timer where the sweep cannot judge, found no agent and no sign one ran; or a launch on an SSH host whose adapter reports its start and whose output named its cause | `AgentLaunchNeverStartedError` |
-  | `agent_exited` | A CLI named its own startup failure (`describeStartupFailure`), or a never-captured session's agent ran, then ended on its own under a minute later with no prompt, no session store and no deliberate kill (cause `no_conversation`, sent from the `agent_session_id` report with its tags). For a shell the agent-absence sweep retired, the agent's end is the shell's last output, since the sweep can kill it minutes later. A session whose launch already reported sends no capture report | `AgentLaunchAgentExitedError` |
+  | `agent_exited` | A CLI named its own startup failure (`describeStartupFailure`), or a never-captured session's agent ran, then ended on its own under a minute later with no prompt, no session store and no deliberate kill (cause `no_conversation`, sent from the `agent_session_id` report with its tags, `output_class`, `other_from`, `exit_code` and `exit_by`). For a shell the agent-absence sweep retired, the agent's end is the shell's last output, since the sweep can kill it minutes later. A session whose launch already reported sends no capture report | `AgentLaunchAgentExitedError` |
   | `abandoned` | A person, or a quit an update or the OS began, ended a launch that had shown nothing for 15 s | `AgentLaunchAbandonedError` |
   | `pty_port` | A renderer that stays open never got its terminal port | `PtyPortDeliveryError` |
 
@@ -965,7 +977,14 @@ in one Sentry org, one triage surface.
   report from a quit adds `quit_by` (below).
   `never_started` adds `judge` (`sweep`, `timer`). A launch on an SSH host judged on its output sends `sweep` though no sweep ran, with no `agent_process` tag and a `typed_line_bytes` of 0. An `agent_exited` report with cause
   `no_conversation` is the exception to this list: it carries `stage`, `cause`, `platform`,
-  `attempt`, `source` (`agent_launch`) and the `agent_session_id` report's tags, not these. A preflight report
+  `attempt`, `source` (`agent_launch`) and the `agent_session_id` report's tags, then `output_class`
+  and `other_from` as above, `exit_code` (`unknown` with none on the row) and `exit_by` (`pty`, or
+  `sweep` for a shell the agent-absence sweep retired, whose code the retirement masks to 0). Until
+  Sentry DESKTOP-4Z it had none of these four, and could not say why the agent left. Its output is
+  read when the ceiling settles it, minutes after the exit, because the host keeps an exited
+  session's output until its row is removed. A row that is gone, or a ring a restarted host no
+  longer holds, reads `not_read`, and a read that fails `unreadable`; either way it is sent. Its
+  cause stays `no_conversation` whatever the class, so one issue holds them all. A preflight report
   adds `error_type` and `errno` when the error has them, and `start_refused_reason` for a start
   refused before it had a PTY (`AgentStartRefusedError`): `worktree-missing` or `folder-missing`
   for a gone folder. The folder's path is redacted, so this tag is what tells a gone worktree from

@@ -74,6 +74,7 @@ const mockSessionRepoDeleteByTaskId = vi.fn();
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
   SessionRepository: class {
     deleteByTaskId = mockSessionRepoDeleteByTaskId;
+    listIdsForTask = vi.fn(() => []);
   },
 }));
 

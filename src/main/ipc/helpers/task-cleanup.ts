@@ -1,4 +1,3 @@
-import fs from 'node:fs';
 import path from 'node:path';
 import PQueue from 'p-queue';
 import { TaskRepository } from '../../db/repositories/task-repository';
@@ -22,6 +21,7 @@ import { withTaskLock } from '../task-lifecycle-lock';
 import { isShuttingDown } from '../../shutdown-state';
 import type { LeftoverSweepOptions } from '../../transition-engine/resource-cleanup';
 import { backgroundSessionHoldingConversation } from '../../transition-engine/resume-id-reconcile';
+import { removeSessionFolders } from './session-folders';
 import { closeTaskWindows } from './task-windows';
 import { stopBeforeReap } from '../../stop-script/terminal-stop';
 import { discardAnnotationDraft } from '../../browser/annotation-drafts';
@@ -557,51 +557,12 @@ export async function cleanupTaskSession(
     const db = getProjectDb(resolvedProjectId);
     const sessionRepo = new SessionRepository(db);
 
-    // Best-effort disk cleanup (non-fatal -- DB records are the source of truth).
-    // Uses async fs.promises.rm so the event loop stays responsive during bulk
-    // operations. The previous sync rmSync in a tight loop caused a multi-second
-    // event-loop stall when many tasks with multiple session records each
-    // landed in the bulk-delete handler concurrently - every IPC call from the
-    // renderer (including the click that triggered delete) queued up behind
-    // the sync work. Promise.all lets the kernel parallelize while keeping
-    // the main thread free to service other handlers.
     if (resolvedProjectPath) {
-      const records = db.prepare(
-        'SELECT id FROM sessions WHERE task_id = ?'
-      ).all(task.id) as Array<{ id: string }>;
-
-      // Never delete the on-disk directory of a session that is still live.
-      // The kills above (task.session_id + removeByTaskId) clear the
-      // intended-for-deletion sessions from the manager, so anything still
-      // running/queued here is a session a concurrent spawn brought to life
-      // for this task. Wiping its events.jsonl directory mid-write severs the
-      // activity feed and makes the card falsely read idle. A spared dir whose
-      // DB record we then delete is still protected from the orphan prune by
-      // pruneOrphanedDirectories' listSessions() guard until the session
-      // actually exits, at which point it gets pruned normally.
-      const liveSessionIds = new Set(
-        context.sessionManager.listSessions()
-          .filter((session) => session.status === 'running' || session.status === 'queued')
-          .map((session) => session.id),
-      );
-
-      await Promise.all(records.map(({ id }) => {
-        if (liveSessionIds.has(id)) return Promise.resolve();
-        const sessionDir = path.join(resolvedProjectPath, '.kangentic', 'sessions', id);
-        return fs.promises.rm(sessionDir, {
-          recursive: true,
-          force: true,
-          maxRetries: 5,
-          retryDelay: 100,
-        }).catch((error: NodeJS.ErrnoException) => {
-          // force: true already silences ENOENT, so anything surfacing here is
-          // a genuine problem (EACCES, EPERM, EBUSY post-retry). Best-effort:
-          // log and continue so the task DELETE still proceeds.
-          if (error.code !== 'ENOENT') {
-            console.warn(`[CLEANUP] Failed to remove session dir ${sessionDir}: ${error.message}`);
-          }
-        });
-      }));
+      await removeSessionFolders({
+        projectPath: resolvedProjectPath,
+        sessionIds: sessionRepo.listIdsForTask(task.id),
+        sessionManager: context.sessionManager,
+      });
     }
 
     // Always delete DB records -- this must succeed for task DELETE to pass FK check

@@ -28,17 +28,20 @@ let workspace: string;
 let projectPath: string;
 
 /** Five old folders under `.kangentic/<kind>`: no row names any, so all five are orphans of five. */
-function populate(kind: 'tasks' | 'worktrees'): void {
+function populate(kind: 'tasks' | 'worktrees' | 'sessions', ageMs = ONE_DAY_MS): void {
   for (const name of ORPHAN_NAMES) {
     const folder = path.join(projectPath, '.kangentic', kind, name);
     fs.mkdirSync(folder, { recursive: true });
-    const past = new Date(Date.now() - ONE_DAY_MS);
+    const past = new Date(Date.now() - ageMs);
     fs.utimesSync(folder, past, past);
   }
 }
 
-function sweep(): Promise<void> {
-  const noTasks = { list: () => [], listArchived: () => [] };
+/** Rows that name nothing on disk, as many as asked for, half of them archived. */
+function sweep(taskCount = 0): Promise<void> {
+  const rows = Array.from({ length: taskCount }, (_value, index) => ({ id: `row-${index}`, worktree_path: null, session_id: null }));
+  const archivedCount = Math.floor(taskCount / 2);
+  const noTasks = { list: () => rows.slice(archivedCount), listArchived: () => rows.slice(0, archivedCount) };
   const noSessions = { listAllSessionIds: () => [] };
   const noLiveSessions = { listSessions: () => [] };
   return pruneOrphanedDirectories(
@@ -98,5 +101,65 @@ describe('the refused orphan sweep report', () => {
     await sweep();
 
     expect(reportedFolders()).toEqual(['task', 'task']);
+  });
+
+  // Sentry DESKTOP-50 could not say which: a wrong database that passed the
+  // ownership check, or leftovers of the right one.
+  describe('what separates a wrong database from leftovers', () => {
+    const HOUR_MS = 60 * 60 * 1000;
+
+    function reportedSweep(): Record<string, unknown> {
+      expect(mockReportHandledError).toHaveBeenCalledTimes(1);
+      return (mockReportHandledError.mock.calls[0][2] as { orphan_sweep: Record<string, unknown> }).orphan_sweep;
+    }
+
+    it.each<[number, string]>([
+      [0.5 * HOUR_MS, '<1h'],
+      [2 * HOUR_MS, '1-24h'],
+      [23 * HOUR_MS, '1-24h'],
+      [25 * HOUR_MS, '1-7d'],
+      [8 * ONE_DAY_MS, '7-30d'],
+      [31 * ONE_DAY_MS, '>30d'],
+    ])('buckets orphans %d ms old', async (ageMs, bucket) => {
+      populate('tasks', ageMs);
+      await sweep();
+      expect(reportedSweep()).toEqual({ orphans: 5, directories: 5, newest_orphan_age: bucket, tasks: '0' });
+    });
+
+    it('takes the age from the newest orphan, not the oldest', async () => {
+      populate('tasks', 40 * ONE_DAY_MS);
+      const newer = new Date(Date.now() - 2 * HOUR_MS);
+      fs.utimesSync(path.join(projectPath, '.kangentic', 'tasks', 'c'), newer, newer);
+      await sweep();
+      expect(reportedSweep().newest_orphan_age).toBe('1-24h');
+    });
+
+    it.each<[number, string]>([
+      [0, '0'], [1, '1-4'], [4, '1-4'], [5, '5-19'], [19, '5-19'], [20, '20-99'], [99, '20-99'], [100, '>=100'],
+    ])('buckets a database of %d tasks, archived ones included', async (taskCount, bucket) => {
+      populate('tasks');
+      await sweep(taskCount);
+      expect(reportedSweep().tasks).toBe(bucket);
+    });
+
+    // Each folder kind reads the same count, archived rows included.
+    it.each<['tasks' | 'worktrees' | 'sessions', string]>([
+      ['worktrees', 'worktree'],
+      ['sessions', 'session'],
+      ['tasks', 'task'],
+    ])('buckets the %s folder by the database\'s tasks too', async (kind, folder) => {
+      populate(kind);
+      await sweep(7);
+      expect(reportedFolders()).toEqual([folder]);
+      expect(reportedSweep().tasks).toBe('5-19');
+    });
+
+    it('keeps both out of the tags and the grouping', async () => {
+      populate('tasks');
+      await sweep(3);
+      const [, tags, , fingerprint] = mockReportHandledError.mock.calls[0];
+      expect(tags).toEqual({ source: 'orphan_sweep_refused', folder: 'task' });
+      expect(fingerprint).toEqual(['orphan-sweep-refused', 'task']);
+    });
   });
 });

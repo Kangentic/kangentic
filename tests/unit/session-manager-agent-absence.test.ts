@@ -534,6 +534,59 @@ describe('SessionManager agent-absence wiring', () => {
       expect((reportHandledError.mock.calls[0][0] as Error).name).toBe('AgentLaunchAgentExitedError');
     });
 
+    // Sentry DESKTOP-4Z: the death at start is settled minutes after the exit, by
+    // the capture ceiling, and its report read nothing of what the agent printed.
+    describe('a death at start settled at the capture ceiling', () => {
+      /** Through the manager's own capture timers: past the window, dead, then the ceiling. */
+      async function settleDeathAtStart(beforeCeiling: () => void = () => undefined): Promise<Record<string, string>> {
+        vi.useFakeTimers();
+        const agentParser = { runtime: { sessionId: { fromHook: () => null } } } as unknown as AgentParser;
+        const session = seedSession({ agentParser, agentName: 'codex', firstOutputAt: Date.now(), startedAt: new Date().toISOString() });
+        (manager as unknown as {
+          sessionIdManager: { init(id: string, parser: AgentParser, cwd: string, agentName: string): void };
+        }).sessionIdManager.init('session-1', agentParser, '/mock/project-cwd', 'codex');
+        session.agentRanAt = Date.now() + 2_000;
+        await vi.advanceTimersByTimeAsync(31_000);
+        Object.assign(session, { status: 'exited', pty: null, exitCode: 1, exitedAt: Date.now() });
+        beforeCeiling();
+        await vi.advanceTimersByTimeAsync(5 * 60_000);
+        vi.useRealTimers();
+        await vi.waitFor(() => expect(reportHandledError).toHaveBeenCalledTimes(1));
+        return reportHandledError.mock.calls[0][1] as Record<string, string>;
+      }
+
+      it('reads what the session printed, which the host still holds', async () => {
+        const read = vi.spyOn(manager, 'getLaunchOutput').mockResolvedValue('Segmentation fault\r\n$ ');
+        expect(await settleDeathAtStart()).toMatchObject({
+          stage: 'agent_exited', cause: 'no_conversation', output_class: 'crashed', exit_code: '1', exit_by: 'pty',
+        });
+        expect(read).toHaveBeenCalledWith('session-1');
+      });
+
+      it('reads nothing for a session that printed nothing of its own', async () => {
+        const read = vi.spyOn(manager, 'getLaunchOutput').mockResolvedValue('the last session\'s words');
+        const tags = await settleDeathAtStart(() => {
+          (manager as unknown as { registry: { get(id: string): ManagedSession } }).registry.get('session-1').firstOutputAt = null;
+        });
+        expect(tags).toMatchObject({ cause: 'no_conversation', output_class: 'not_read' });
+        expect(read).not.toHaveBeenCalled();
+      });
+
+      // The ring under an id is the row's own. A different row under the same id,
+      // even one that printed and exited, holds output that is not this launch's.
+      // A removed row never reaches the read: its status is null, so no death at
+      // start is reported, and the guard has no case of its own to pin.
+      it('reads nothing once another session holds the id, though that one printed', async () => {
+        const read = vi.spyOn(manager, 'getLaunchOutput').mockResolvedValue('the other session\'s words');
+        const tags = await settleDeathAtStart(() => {
+          const registry = (manager as unknown as { registry: { get(id: string): ManagedSession; set(id: string, session: ManagedSession): void } }).registry;
+          registry.set('session-1', { ...registry.get('session-1'), firstOutputAt: Date.now() });
+        });
+        expect(tags).toMatchObject({ cause: 'no_conversation', output_class: 'not_read' });
+        expect(read).not.toHaveBeenCalled();
+      });
+    });
+
     it('does not double a launch already reported', () => {
       seedSession({ reportsAgentStart: true });
       retire();

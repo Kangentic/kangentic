@@ -155,7 +155,7 @@ Returns the linked PR (number, url, state, merge readiness) on success. The repl
 
 ## kangentic_move_task
 
-Move a task to a different column, optionally placing it at a chosen slot in that column. Triggers the same lifecycle as a UI drag: spawning/suspending agents, creating/cleaning up worktrees, and running configured transition actions. Moving to the Done column auto-archives the task, and moving OUT of Done un-archives it again so it returns to the board. Moving to To Do kills the session, removes the worktree, and drops the PR link of a task that did its own work.
+Move a task to a different column, optionally placing it at a chosen slot in that column. Triggers the same lifecycle as a UI drag: spawning/suspending agents, creating/cleaning up worktrees, and running configured transition actions. Moving to the Done column auto-archives the task, and moving OUT of Done un-archives it again so it returns to the board. Moving to To Do kills the session, removes its records and session folders, removes the worktree, and drops the PR link of a task that did its own work.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -251,7 +251,7 @@ echoes the first 25 display IDs.
 
 ## kangentic_delete_task
 
-Permanently delete a task from the board. Removes the task, its attachments, and session records. The associated worktree and branch may also be cleaned up. This cannot be undone.
+Permanently delete a task from the board. Removes the task, its attachments, its session records, and the session folders they name. The associated worktree and branch may also be cleaned up. This cannot be undone.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

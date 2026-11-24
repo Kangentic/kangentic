@@ -568,12 +568,47 @@ function causeOf(outputClass: LaunchOutputClass): string {
   return outputClass === 'not_read' || outputClass === 'unreadable' ? 'unknown' : outputClass;
 }
 
+/** Posts the read of a session's own output, or null when its ring is gone. */
+export type LaunchOutputReader = (() => Promise<string>) | null;
+
+/**
+ * Send a session's failure once its output has been classified. A cause
+ * identified as the user's own setup goes the same way and stops at
+ * `reportHandledError`, by its type; Aptabase counts it, for the volume.
+ */
+function sendClassifiedFailure(
+  session: ManagedSession,
+  stage: LaunchStage,
+  cause: string,
+  tags: LaunchTags,
+  outputClass: LaunchOutputClass,
+): void {
+  const userSetupFailure = isUserSetupFailureClass(outputClass) ? outputClass : null;
+  if (userSetupFailure) trackEvent('spawn_failed', { agent: tags.agent, reason: userSetupFailure });
+  reportLaunchFailure({
+    stage,
+    cause,
+    tags: { ...tags, output_class: outputClass },
+    sessionLabel: session.id.slice(0, 8),
+    ...(userSetupFailure ? { error: new AgentUserSetupError(userSetupFailure) } : {}),
+  });
+}
+
+/**
+ * The class of what a launch printed, with the tags it adds. Output that named
+ * no cause says who wrote it, when it can: a shell's refusal of the typed line
+ * and an agent that ran and left read the same.
+ */
+function classifiedOutputOf(session: ManagedSession, rawScrollback: string): { outputClass: LaunchOutputClass; readTags: LaunchTags } {
+  const outputClass = classifySessionOutput(session, rawScrollback);
+  return { outputClass, readTags: outputClass === 'other' ? { other_from: otherFromOf(rawScrollback) } : {} };
+}
+
 /** What `reportSessionLaunchFailure` takes. */
 export interface SessionLaunchFailure {
   session: ManagedSession;
   stage: LaunchStage;
-  /** Posts the read of the session's ring, or null when the ring is gone. */
-  readOutput: (() => Promise<string>) | null;
+  readOutput: LaunchOutputReader;
   /** More fixed values, such as `ended_by` or the exit code. */
   extraTags?: LaunchTags;
   /** Report only when the output names a cause, for an adapter whose silence proves nothing. */
@@ -593,9 +628,6 @@ export interface SessionLaunchFailure {
  * event goes when the read answers, and `launchOutputRead` holds what it found
  * for the retry to wait on. A read still out when the quit starts is dropped,
  * since nothing sent then would land.
- *
- * A cause identified as the user's goes through the same path and stops at
- * `reportHandledError`, by its type. Aptabase counts it, for the volume.
  */
 export function reportSessionLaunchFailure(failure: SessionLaunchFailure): void {
   const { session, stage, readOutput, extraTags, onlyWhenIdentified, agentProcess } = failure;
@@ -605,15 +637,7 @@ export function reportSessionLaunchFailure(failure: SessionLaunchFailure): void 
   const send = (outputClass: LaunchOutputClass, laterTags: LaunchTags = {}): LaunchOutputClass => {
     if (isShuttingDown()) return outputClass;
     if (onlyWhenIdentified === true && !isIdentifiedFailureClass(outputClass)) return outputClass;
-    const userSetupFailure = isUserSetupFailureClass(outputClass) ? outputClass : null;
-    if (userSetupFailure) trackEvent('spawn_failed', { agent: tags.agent, reason: userSetupFailure });
-    reportLaunchFailure({
-      stage,
-      cause: causeOf(outputClass),
-      tags: { ...tags, ...laterTags, output_class: outputClass },
-      sessionLabel: session.id.slice(0, 8),
-      ...(userSetupFailure ? { error: new AgentUserSetupError(userSetupFailure) } : {}),
-    });
+    sendClassifiedFailure(session, stage, causeOf(outputClass), { ...tags, ...laterTags }, outputClass);
     return outputClass;
   };
   const sendOnceRead = (outputClass: LaunchOutputClass, readTags: LaunchTags = {}): LaunchOutputClass | Promise<LaunchOutputClass> => {
@@ -629,10 +653,8 @@ export function reportSessionLaunchFailure(failure: SessionLaunchFailure): void 
   }
   session.launchOutputRead = readOutput().then(
     (rawScrollback) => {
-      const outputClass = classifySessionOutput(session, rawScrollback);
-      // Output that named no cause says who wrote it, when it can: a shell's
-      // refusal of the typed line and an agent that ran and left read the same.
-      return sendOnceRead(outputClass, outputClass === 'other' ? { other_from: otherFromOf(rawScrollback) } : {});
+      const { outputClass, readTags } = classifiedOutputOf(session, rawScrollback);
+      return sendOnceRead(outputClass, readTags);
     },
     () => sendOnceRead('unreadable'),
   );
@@ -1004,15 +1026,33 @@ function agentRanForTag(session: ManagedSession, outcome: Extract<SessionIdCaptu
 const AGENT_EXITED_AT_START_MS = 60_000;
 
 /**
+ * Whether the agent-absence sweep ended this session's shell. It kills through
+ * `kill()`, and only a shell whose agent had already exited, and
+ * `retireAgentlessSession` is the one writer of `overrideExitCode`, always 0.
+ */
+function retiredBySweep(session: ManagedSession): boolean {
+  return session.intentionalExit === true && session.overrideExitCode === 0;
+}
+
+/**
  * Whether the PTY ended without a person or Kangentic stopping the agent. A
  * `kill()` that keeps the row (the `cleanup_worktree` action, a user's stop)
- * leaves it `exited` with `intentionalExit` set. The agent-absence sweep kills
- * through `kill()` too, but only a shell whose agent had already exited, and
- * `retireAgentlessSession` is the one writer of `overrideExitCode`, always 0.
- * That retirement is the CLI's own end, seen late, so it still counts.
+ * leaves it `exited` with `intentionalExit` set. The sweep's retirement is the
+ * CLI's own end, seen late, so it still counts.
  */
 function endedOnItsOwn(session: ManagedSession): boolean {
-  return session.intentionalExit !== true || session.overrideExitCode === 0;
+  return session.intentionalExit !== true || retiredBySweep(session);
+}
+
+/**
+ * How a session that ended on its own ended. `exitCode` is masked to 0 for a
+ * shell the sweep retired, so `exit_by` says which one the code belongs to.
+ */
+function exitFactTags(session: ManagedSession): LaunchTags {
+  return {
+    exit_code: session.exitCode === null ? 'unknown' : String(session.exitCode),
+    exit_by: retiredBySweep(session) ? 'sweep' : 'pty',
+  };
 }
 
 /**
@@ -1024,9 +1064,8 @@ function endedOnItsOwn(session: ManagedSession): boolean {
  * from before the agent ran tells nothing about its end, so the exit stands.
  */
 function agentEndedAt(session: ManagedSession, agentRanAt: number, exitedAt: number): number {
-  const retiredBySweep = session.intentionalExit === true && session.overrideExitCode === 0;
   const lastOutputAt = session.lastOutputAt;
-  if (!retiredBySweep || typeof lastOutputAt !== 'number' || lastOutputAt < agentRanAt) return exitedAt;
+  if (!retiredBySweep(session) || typeof lastOutputAt !== 'number' || lastOutputAt < agentRanAt) return exitedAt;
   return Math.min(lastOutputAt, exitedAt);
 }
 
@@ -1082,12 +1121,16 @@ function exitedWithNoConversation(
  * cause `no_conversation`, with the same tags, and spends no capture report. It
  * is the session's one launch report (`launchFailureNoted`), so a CLI that
  * already named its startup failure sends nothing here, and the launch report's
- * own key keeps it to one per agent per run.
+ * own key keeps it to one per agent per run. That report also says what the
+ * launch printed: the host keeps an exited session's output until its row goes,
+ * so it is read here, minutes after the exit. `readOutputOf` gives the read, or
+ * null for a row that is gone.
  */
 export function reportSessionIdCaptureOutcome(
   sessionId: string,
   outcome: SessionIdCaptureOutcome,
   sessionStatus: string | null,
+  readOutputOf: (session: ManagedSession) => LaunchOutputReader = () => null,
 ): void {
   const pending = pendingSessionIdReports.get(sessionId);
   pendingSessionIdReports.delete(sessionId);
@@ -1096,7 +1139,10 @@ export function reportSessionIdCaptureOutcome(
   const session = pending.session;
   // Asked here too, so an agent that already sent this kind waits on nothing,
   // unless the session may still be a death at start, which is not that kind.
-  if (outcomeReport.latch.has(pending.agent) && !mayHaveExitedWithNoConversation(session, outcome, sessionStatus)) return;
+  const mayHaveDiedAtStart = mayHaveExitedWithNoConversation(session, outcome, sessionStatus);
+  if (outcomeReport.latch.has(pending.agent) && !mayHaveDiedAtStart) return;
+  // Posted now, so a row removed during the waits below cannot lose it.
+  const printed = readPrintedOutput(mayHaveDiedAtStart ? readOutputOf(session) : null);
   const lateEvidence = outcome.kind === 'late' ? lateEvidenceSettled(session, outcome.capturedBy) : Promise.resolve();
   const storeEvidence = outcome.kind === 'never' ? settleTimeStoreEvidence(pending) : pending.storeEvidence;
   void Promise.all([storeEvidence, pending.loginEvidence, pending.nodeEvidence, lateEvidence]).then(([idStore, login, nodeOnPath]) => {
@@ -1137,7 +1183,7 @@ export function reportSessionIdCaptureOutcome(
       node_on_path: nodeOnPath,
     };
     if (exitedWithNoConversation(session, outcome, sessionStatus, idStore)) {
-      reportExitedWithNoConversation(session, captureTags);
+      reportExitedWithNoConversation(session, captureTags, printed);
       return;
     }
     if (outcome.kind === 'never' && session.launchFailureNoted === true && idStore !== 'present') {
@@ -1167,12 +1213,36 @@ export function reportSessionIdCaptureOutcome(
   });
 }
 
+/** What a dead launch printed, or why it could not be read. */
+type PrintedOutput = { text: string } | { unread: Extract<LaunchOutputClass, 'not_read' | 'unreadable'> };
+
 /**
- * Send a death at start as the session's one launch report. A session that
- * already made one (a CLI that named its startup failure) sends nothing more.
- * `claimLaunchReport` keys on the agent and attempt, so both go in the tags.
+ * Read what a dead launch printed. Never rejects. An empty answer is a ring the
+ * host no longer holds (it restarted since the exit), so it is not output that
+ * named no cause.
  */
-function reportExitedWithNoConversation(session: ManagedSession, captureTags: Record<string, string>): void {
+function readPrintedOutput(readOutput: LaunchOutputReader): Promise<PrintedOutput> {
+  if (!readOutput) return Promise.resolve({ unread: 'not_read' });
+  return readOutput().then(
+    (text): PrintedOutput => (text === '' ? { unread: 'not_read' } : { text }),
+    (): PrintedOutput => ({ unread: 'unreadable' }),
+  );
+}
+
+/**
+ * Send a death at start as the session's one launch report, with the class of
+ * what it printed and how its PTY ended (Sentry DESKTOP-4Z had neither). A
+ * session that already made one (a CLI that named its startup failure) sends
+ * nothing more. Its one report is claimed before the read answers, so no other
+ * stage can send beside it. The cause stays `no_conversation` whatever the
+ * output says, since the issue is grouped on it. `claimLaunchReport` keys on the
+ * agent and attempt, so both go in the tags.
+ */
+function reportExitedWithNoConversation(
+  session: ManagedSession,
+  captureTags: Record<string, string>,
+  printed: Promise<PrintedOutput>,
+): void {
   const sessionLabel = session.id.slice(0, 8);
   if (session.launchFailureNoted === true) {
     // breadcrumb-ok: a session id, a fixed stage and an agent from a fixed list.
@@ -1180,11 +1250,13 @@ function reportExitedWithNoConversation(session: ManagedSession, captureTags: Re
     return;
   }
   session.launchFailureNoted = true;
-  reportLaunchFailure({
-    stage: 'agent_exited',
-    cause: 'no_conversation',
-    tags: { attempt: attemptOf(session.startPath), ...captureTags },
-    sessionLabel,
+  const tags = { attempt: attemptOf(session.startPath), ...captureTags, ...exitFactTags(session) };
+  void printed.then((output) => {
+    if (isShuttingDown()) return;
+    const { outputClass, readTags } = 'text' in output
+      ? classifiedOutputOf(session, output.text)
+      : { outputClass: output.unread, readTags: {} };
+    sendClassifiedFailure(session, 'agent_exited', 'no_conversation', { ...tags, ...readTags }, outputClass);
   });
 }
 

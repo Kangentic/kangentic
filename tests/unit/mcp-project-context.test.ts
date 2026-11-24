@@ -1169,7 +1169,7 @@ describe('buildCommandContextForProject - consolidated board-changed bus fan-out
     const { ipcContext, emitBoardChanged } = makeFanOutContext();
     const context = buildCommandContextForProject(ipcContext, DEFAULT_ID)!;
 
-    context.onTaskDeleted({ id: 'task-2', title: 'Task Two', session_id: null, worktree_path: null } as never);
+    context.onTaskDeleted({ id: 'task-2', title: 'Task Two', session_id: null, worktree_path: null } as never, []);
 
     expect(emitBoardChanged).toHaveBeenCalledWith({ projectId: DEFAULT_ID, change: 'task-deleted', ids: ['task-2'] });
   });
@@ -1553,7 +1553,7 @@ describe('buildCommandContextForProject - onTaskDeleted worktree teardown orderi
       session_id: 'session-1',
       worktree_path: '/projects/example/.kangentic/worktrees/task-1',
       branch_name: null,
-    } as never);
+    } as never, []);
 
     // onTaskDeleted's synchronous body (kill, capture awaitExit, remove) has
     // already run by the time the call above returns.
@@ -1630,7 +1630,7 @@ describe('buildCommandContextForProject - onTaskDeleted worktree teardown orderi
       session_id: null,
       worktree_path: worktreePath,
       branch_name: null,
-    } as never);
+    } as never, []);
 
     await vi.waitFor(() => {
       expect(removeWorktreeMock).toHaveBeenCalledTimes(1);
@@ -1708,7 +1708,7 @@ describe('buildCommandContextForProject - onTaskDeleted worktree teardown orderi
       session_id: null,
       worktree_path: '/projects/example/.kangentic/worktrees/task-1',
       branch_name: null,
-    } as never);
+    } as never, []);
 
     // The teardown asked for the spawns' settle, and the delete itself is not
     // held back by the wait: the board event fires on the same tick.
@@ -1763,7 +1763,7 @@ describe('buildCommandContextForProject - onTaskDeleted worktree teardown orderi
       session_id: 'session-3',
       worktree_path: null,
       branch_name: null,
-    } as never);
+    } as never, []);
 
     await vi.waitFor(() => {
       // The title travels with it, for the leftover-process toast.
@@ -1834,7 +1834,7 @@ describe('buildCommandContextForProject - onTaskDeleted worktree teardown orderi
       session_id: null,
       worktree_path: worktreePath,
       branch_name: null,
-    } as never);
+    } as never, []);
 
     try {
       await vi.waitFor(() => {
@@ -1887,7 +1887,7 @@ describe('buildCommandContextForProject - onTaskDeleted worktree teardown orderi
       session_id: null,
       worktree_path: null,
       branch_name: null,
-    } as never);
+    } as never, []);
 
     await vi.waitFor(() => {
       expect(reapTaskLeftovers).toHaveBeenCalledTimes(1);

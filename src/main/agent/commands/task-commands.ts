@@ -1467,8 +1467,10 @@ export function handleMoveTaskToProject(
   // Delete the source task in FK-safe order (attachments, sessions, then the
   // task row), mirroring handleDeleteTask.
   sourceAttachmentRepo.deleteByTaskId(task.id);
-  new SessionRepository(sourceDb).deleteByTaskId(task.id);
-  source.onTaskDeleted(task);
+  const sourceSessionRepo = new SessionRepository(sourceDb);
+  const sessionIds = sourceSessionRepo.listIdsForTask(task.id);
+  sourceSessionRepo.deleteByTaskId(task.id);
+  source.onTaskDeleted(task, sessionIds);
   sourceTaskRepo.delete(task.id);
 
   target.onTaskCreated(newTask, targetSwimlane.name, targetSwimlane.id);
@@ -1509,10 +1511,11 @@ export const handleDeleteTask: CommandHandler = (
 
     // Delete attachments and session records before task (FK constraints)
     attachmentRepo.deleteByTaskId(taskToDelete.id);
+    const sessionIds = sessionRepo.listIdsForTask(taskToDelete.id);
     sessionRepo.deleteByTaskId(taskToDelete.id);
 
-    // Fire-and-forget async cleanup (PTY kill, worktree removal, renderer notification)
-    context.onTaskDeleted(taskToDelete);
+    // Fire-and-forget async cleanup (PTY kill, session folder and worktree removal, renderer notification)
+    context.onTaskDeleted(taskToDelete, sessionIds);
 
     // Delete the task from DB
     taskRepo.delete(taskToDelete.id);

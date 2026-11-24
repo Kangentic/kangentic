@@ -151,10 +151,14 @@ function createMockRepos(backlogTasks: MockTask[] = []) {
 
   const sessionRepo = {
     deleteByTaskId: vi.fn(),
+    // The folders the pass removes are real in task-session-folder-cleanup.test.ts.
+    listIdsForTask: vi.fn(() => []),
     listAllSessionIds: vi.fn(() => []),
   };
 
   const sessionManager = {
+    kill: vi.fn(),
+    awaitExit: vi.fn(() => Promise.resolve()),
     remove: vi.fn(),
     listSessions: vi.fn(() => []),
   };

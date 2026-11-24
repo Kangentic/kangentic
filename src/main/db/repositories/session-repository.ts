@@ -520,6 +520,12 @@ export class SessionRepository {
     ).all() as SessionRecord[];
   }
 
+  /** The ids of a task's records, which name its session folders. Read before `deleteByTaskId` (`removeSessionFolders`). */
+  listIdsForTask(taskId: string): string[] {
+    const rows = this.db.prepare('SELECT id FROM sessions WHERE task_id = ?').all(taskId) as Array<{ id: string }>;
+    return rows.map((row) => row.id);
+  }
+
   /** Delete all session records for a given task */
   deleteByTaskId(taskId: string): void {
     this.db.prepare('DELETE FROM sessions WHERE task_id = ?').run(taskId);

@@ -109,7 +109,12 @@ export interface CommandContext {
    * hand-build a context. The production builder implements it.
    */
   onTaskSettingsChanged?: (task: Task, changed: { model: boolean; effort: boolean }) => void;
-  onTaskDeleted: (task: Task) => void;
+  /**
+   * Tear down a task whose rows are gone or going. `sessionIds` are its session
+   * records', read before they were deleted: nothing else names its session
+   * folders once they are (`removeSessionFolders`).
+   */
+  onTaskDeleted: (task: Task, sessionIds: readonly string[]) => void;
   /**
    * Move a task across columns through the one move path. `message`, when
    * given, reaches the agent where the task lands once its turn ends, after the
