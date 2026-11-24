@@ -2,15 +2,46 @@ import fs from 'node:fs';
 import path from 'node:path';
 import which from 'which';
 import { execVersion, type VersionLaunch } from './exec-version';
-import { isNpmShimCandidate, missingNpmShimTarget } from './npm-shim-target';
+import { isNpmShimCandidate, missingNpmShimTarget, npmShimTargetPath } from './npm-shim-target';
+import {
+  isAgentProbeStoreEnabled,
+  readProbeFileIdentity,
+  recordProbe,
+  rememberedProbe,
+  sameProbeFiles,
+  type ProbeFileIdentity,
+  type ProbeKey,
+} from './agent-probe-store';
 import { cliInvocationForTarget, parseWslCliPath, type CliTarget } from './cli-target';
 import { describeWslFailure, resolveWslDistroFacts, type WslDistroFacts } from './wsl-distro';
 import { execFileAsync, type ExecOutput, type OffMainExecOptions } from '../../utility-process/off-main-exec';
 import { PtyHostExitedError, PtyHostTimeoutError } from '../../pty/host/pty-host-request-errors';
 import { childProcessEnv } from '../../shared/child-env';
 import { recordDetectedCliIdentity } from './cli-identity';
-import type { AgentInfo } from '../agent-adapter';
+import type { AgentInfo, DetectOptions } from '../agent-adapter';
 import type { StoredCliTarget } from '../../../shared/types';
+
+/**
+ * One walk of the detection pipeline. `allowRemembered` lets a probe be
+ * answered from an earlier launch, and `usedMemory` says whether any was: a
+ * walk that used none is a live detection like any other.
+ */
+interface DetectionWalk {
+  allowRemembered: boolean;
+  usedMemory: boolean;
+}
+
+let firstLiveDetectionListener: (() => void) | null = null;
+
+/**
+ * Who to tell when a CLI this launch had only remembered is detected for real,
+ * which means something is starting it. Main points this at the agent
+ * inventory, so the agent's entry is then read from its CLI. One listener for
+ * every detector; null clears it.
+ */
+export function setFirstLiveDetectionListener(listener: (() => void) | null): void {
+  firstLiveDetectionListener = listener;
+}
 
 /** Long enough for a probe that boots the WSL VM after a reboot. */
 const WSL_PROBE_TIMEOUT_MS = 30_000;
@@ -40,7 +71,7 @@ const PROBE_DETAIL_MAX_LENGTH = 200;
  * that showed both).
  */
 type VersionProbe =
-  | { ok: true; version: string }
+  | { ok: true; version: string; remembered?: true }
   | { ok: false; reason: 'missing' | 'probe-failed' | 'empty-output' | 'unrecognized-output'; detail: string; transient: boolean };
 
 /** Appended to a NOT FOUND line that rests on a transient probe failure. */
@@ -181,6 +212,15 @@ export class AgentDetector {
    * (`VersionProbe`).
    */
   private readonly uncacheable = new WeakSet<AgentInfo>();
+  /**
+   * Detections answered at least partly from an earlier launch, keyed like
+   * `cached`. Kept apart from it on purpose: `cached` and `latest` are what a
+   * spawn and `getCachedVersion` read, and a remembered version can be stale
+   * (see `detect`).
+   */
+  private readonly remembered = new Map<string, AgentInfo>();
+  /** Remembered detections still running. A live detection never joins one. */
+  private readonly rememberedInflight = new Map<string, Promise<AgentInfo>>();
   private readonly platform: NodeJS.Platform;
   private readonly resolveFacts: (distro: string) => Promise<WslDistroFacts>;
   private readonly runWsl: (file: string, args: readonly string[], options: OffMainExecOptions) => Promise<ExecOutput>;
@@ -202,27 +242,76 @@ export class AgentDetector {
    * callers but never fills the cache: it was asked about the old override.
    * Before this, a CLI path saved while startup detection ran was overwritten
    * by the old path, and every spawn after it started the old CLI.
+   *
+   * Two tiers. With no options every probe runs, and the result is what a
+   * spawn uses. With `allowRemembered` a probe whose file is unchanged since an
+   * earlier launch is answered from the probe store with no process started,
+   * and that result is kept apart, marked `remembered`: it is shown, never
+   * spawned from. A live result, cached or still running, always answers
+   * first, so a remembered one is used only until something probes for real.
    */
-  async detect(overridePath?: string | null): Promise<AgentInfo> {
+  async detect(overridePath?: string | null, options?: DetectOptions): Promise<AgentInfo> {
     const key = overridePath || '';
     const cachedResult = this.cached.get(key);
     if (cachedResult) return cachedResult;
     const running = this.inflight.get(key);
     if (running) return running;
+    if (options?.allowRemembered && isAgentProbeStoreEnabled()) return this.detectRemembered(key, overridePath);
 
     const generation = this.generation;
-    const detection = this.performDetection(overridePath);
+    const detection = this.performDetection(overridePath, { allowRemembered: false, usedMemory: false });
     this.inflight.set(key, detection);
     try {
       const result = await detection;
       if (generation === this.generation && !this.uncacheable.has(result)) {
         this.cached.set(key, result);
         this.latest = result;
+        // The CLI was only remembered until now, so something is starting it:
+        // whoever listed it from the remembered answer reads it for real.
+        if (this.remembered.delete(key)) firstLiveDetectionListener?.();
       }
       return result;
     } finally {
       if (this.inflight.get(key) === detection) this.inflight.delete(key);
     }
+  }
+
+  /**
+   * A detection that may answer its probes from an earlier launch. A walk that
+   * used no stored answer (a changed file, a new install, nothing on PATH) ran
+   * every probe it needed, so it is cached as the live detection it is.
+   */
+  private detectRemembered(key: string, overridePath?: string | null): Promise<AgentInfo> {
+    const rememberedResult = this.remembered.get(key);
+    if (rememberedResult) return Promise.resolve(rememberedResult);
+    const running = this.rememberedInflight.get(key);
+    if (running) return running;
+
+    const generation = this.generation;
+    const walk: DetectionWalk = { allowRemembered: true, usedMemory: false };
+    const detection = this.performDetection(overridePath, walk).then((result) => {
+      const current = generation === this.generation && !this.uncacheable.has(result);
+      if (!walk.usedMemory) {
+        if (current && !this.cached.has(key)) {
+          this.cached.set(key, result);
+          this.latest = result;
+        }
+        return this.cached.get(key) ?? result;
+      }
+      // A live detection that landed while this walk ran answers first, as in
+      // `detect`. It found nothing remembered to drop, so it told nobody to
+      // read this caller's entry for real, and a remembered answer kept now
+      // would stay listed for an agent that is in use.
+      const live = this.cached.get(key);
+      if (live) return live;
+      const marked: AgentInfo = { ...result, remembered: true };
+      if (current) this.remembered.set(key, marked);
+      return marked;
+    }).finally(() => {
+      if (this.rememberedInflight.get(key) === detection) this.rememberedInflight.delete(key);
+    });
+    this.rememberedInflight.set(key, detection);
+    return detection;
   }
 
   /**
@@ -241,15 +330,29 @@ export class AgentDetector {
     return this.latest?.version ?? null;
   }
 
+  /**
+   * The paths of every CLI a live detection found this run: the ones something
+   * is starting, or has started. A remembered detection is not among them.
+   */
+  liveFoundPaths(): string[] {
+    const paths = new Set<string>();
+    for (const result of this.cached.values()) {
+      if (result.found && result.path) paths.add(result.path);
+    }
+    return [...paths];
+  }
+
   /** Clear cached detection results so the next `detect()` call re-runs. */
   invalidateCache(): void {
     this.generation += 1;
     this.cached.clear();
     this.inflight.clear();
+    this.remembered.clear();
+    this.rememberedInflight.clear();
     this.latest = null;
   }
 
-  private async performDetection(overridePath?: string | null): Promise<AgentInfo> {
+  private async performDetection(overridePath: string | null | undefined, walk: DetectionWalk): Promise<AgentInfo> {
     const name = this.config.binaryName;
 
     // 1. User-configured override path wins. On failure we report the
@@ -257,10 +360,10 @@ export class AgentDetector {
     //    to PATH lookup - that would mask the user's explicit choice.
     if (overridePath) {
       const wslCli = parseWslCliPath(overridePath, this.platform);
-      if (wslCli) return this.detectWslOverride(overridePath, wslCli);
-      const probe = await this.probeVersion(overridePath);
+      if (wslCli) return this.detectWslOverride(overridePath, wslCli, walk);
+      const probe = await this.probeVersion(overridePath, walk);
       if (probe.ok) {
-        console.log(`[agent-detect] ${name}: found via override ${overridePath} (${probe.version})`);
+        console.log(`[agent-detect] ${name}: found via override ${overridePath} (${describeVersion(probe)})`);
         recordDetectedCliIdentity(overridePath);
         return { found: true, path: overridePath, version: probe.version };
       }
@@ -313,9 +416,9 @@ export class AgentDetector {
           }
         }
         probedCount += 1;
-        const probe = await this.probeVersion(matchPath);
+        const probe = await this.probeVersion(matchPath, walk);
         if (probe.ok) {
-          console.log(`[agent-detect] ${name}: found via PATH at ${matchPath} (${probe.version})`);
+          console.log(`[agent-detect] ${name}: found via PATH at ${matchPath} (${describeVersion(probe)})`);
           recordDetectedCliIdentity(matchPath);
           return { found: true, path: matchPath, version: probe.version };
         }
@@ -343,9 +446,9 @@ export class AgentDetector {
     for (const fallbackPath of fallbackPaths) {
       if (!fs.existsSync(fallbackPath)) continue;
       existingFallbacks.push(fallbackPath);
-      const probe = await this.probeVersion(fallbackPath);
+      const probe = await this.probeVersion(fallbackPath, walk);
       if (probe.ok) {
-        console.log(`[agent-detect] ${name}: found via fallback ${fallbackPath} (${probe.version})`);
+        console.log(`[agent-detect] ${name}: found via fallback ${fallbackPath} (${describeVersion(probe)})`);
         recordDetectedCliIdentity(fallbackPath);
         return { found: true, path: fallbackPath, version: probe.version };
       }
@@ -413,12 +516,27 @@ export class AgentDetector {
   private async detectWslOverride(
     overridePath: string,
     wslCli: { distro: string; linuxCliPath: string },
+    walk: DetectionWalk,
   ): Promise<AgentInfo> {
     const name = this.config.binaryName;
     const cliTarget: StoredCliTarget = { kind: 'wsl', distro: wslCli.distro };
     if (!this.config.supportsWslCli) {
       console.warn(`[agent-detect] ${name}: override ${overridePath} is a WSL path, and ${name} does not run from WSL`);
       return { found: false, path: overridePath, version: null, cliTarget, unsupportedTarget: true };
+    }
+
+    // Remembered by path alone. Nothing on this side identifies the file: a
+    // stat over the distro's UNC path starts the distro, which is the cost a
+    // remembered answer exists to avoid.
+    const storeKey = this.probeKey(overridePath);
+    if (walk.allowRemembered) {
+      const stored = await rememberedProbe(storeKey);
+      if (stored) {
+        walk.usedMemory = true;
+        return stored.outcome.ok
+          ? { found: true, path: overridePath, version: stored.outcome.version, cliTarget }
+          : { found: false, path: overridePath, version: null, cliTarget, detectionError: stored.outcome.detail };
+      }
     }
 
     let target: CliTarget;
@@ -445,10 +563,12 @@ export class AgentDetector {
       const parsed = raw ? this.config.parseVersion(raw) : null;
       if (parsed) {
         console.log(`[agent-detect] ${name}: found in WSL ${wslCli.distro} at ${wslCli.linuxCliPath} (${parsed})`);
+        recordProbe({ ...storeKey, files: [], outcome: { ok: true, version: parsed }, probedAt: new Date().toISOString() });
         return { found: true, path: overridePath, version: parsed, cliTarget };
       }
       // Empty output is transient here as it is for a Windows path (`VersionProbe`).
       const detectionError = raw ? firstLine(raw) : 'empty output';
+      if (raw) recordProbe({ ...storeKey, files: [], outcome: { ok: false, detail: detectionError }, probedAt: new Date().toISOString() });
       return this.wslOverrideNotFound(
         `${overridePath} did not produce a version (${detectionError})`,
         { found: false, path: overridePath, version: null, cliTarget, detectionError },
@@ -471,13 +591,30 @@ export class AgentDetector {
     return result;
   }
 
-  private async probeVersion(candidatePath: string): Promise<VersionProbe> {
+  /** What the probe store files an answer under: this detector, its version command, the path. */
+  private probeKey(candidatePath: string): ProbeKey {
+    return { detector: this.config.binaryName, args: (this.config.versionArgs ?? ['--version']).join(' '), path: candidatePath };
+  }
+
+  private async probeVersion(candidatePath: string, walk: DetectionWalk): Promise<VersionProbe> {
     try {
       if (!fs.existsSync(candidatePath)) {
         return { ok: false, reason: 'missing', detail: 'the file does not exist on disk', transient: false };
       }
       const versionArgs = this.config.versionArgs;
       const launch = this.config.versionLaunch?.(candidatePath) ?? null;
+      // Read before the probe and again after it: an answer is never kept
+      // against a file an update replaced while the probe ran.
+      const filesBefore = isAgentProbeStoreEnabled() ? await probeFilesOf(candidatePath, launch) : null;
+      if (walk.allowRemembered && filesBefore) {
+        const stored = await rememberedProbe(this.probeKey(candidatePath));
+        if (stored && sameProbeFiles(stored.files, filesBefore)) {
+          walk.usedMemory = true;
+          return stored.outcome.ok
+            ? { ok: true, version: stored.outcome.version, remembered: true }
+            : { ok: false, reason: 'unrecognized-output', detail: stored.outcome.detail, transient: false };
+        }
+      }
       // Passes only the arguments this detector sets, so execVersion's own
       // defaults stay in one place.
       const runProbe = (timeout?: number): Promise<{ stdout: string; stderr: string }> => {
@@ -505,13 +642,49 @@ export class AgentDetector {
       // not evidence of a different one (see `VersionProbe`).
       if (!raw) return { ok: false, reason: 'empty-output', detail: 'empty output', transient: true };
       const parsed = this.config.parseVersion(raw);
-      return parsed && parsed.length > 0
-        ? { ok: true, version: parsed }
-        : { ok: false, reason: 'unrecognized-output', detail: firstLine(raw), transient: false };
+      // The two answers that say something about the file itself, so the two the store keeps.
+      const outcome = parsed && parsed.length > 0
+        ? { ok: true as const, version: parsed }
+        : { ok: false as const, detail: firstLine(raw) };
+      if (filesBefore) {
+        const filesAfter = await probeFilesOf(candidatePath, launch);
+        if (filesAfter && sameProbeFiles(filesBefore, filesAfter)) {
+          recordProbe({ ...this.probeKey(candidatePath), files: filesAfter, outcome, probedAt: new Date().toISOString() });
+        }
+      }
+      return outcome.ok
+        ? { ok: true, version: outcome.version }
+        : { ok: false, reason: 'unrecognized-output', detail: outcome.detail, transient: false };
     } catch (error) {
       return probeFailed(error);
     }
   }
+}
+
+/**
+ * Every file that decides what a version probe of `candidatePath` answers: the
+ * path itself, the script an npm shim hands to node (an update can replace the
+ * package and leave the shim as it was), and the program a launcher starts in
+ * the path's place. Null when any of them cannot be read, which keeps the
+ * answer out of the store: nothing would say when it changed.
+ */
+async function probeFilesOf(candidatePath: string, launch: VersionLaunch | null): Promise<ProbeFileIdentity[] | null> {
+  const candidate = await readProbeFileIdentity(candidatePath);
+  if (!candidate) return null;
+  const files = [candidate];
+  const shimTarget = isNpmShimCandidate(candidatePath) ? npmShimTargetPath(candidatePath) : null;
+  for (const dependency of [shimTarget, launch?.file ?? null]) {
+    if (!dependency) continue;
+    const identity = await readProbeFileIdentity(dependency);
+    if (!identity) return null;
+    files.push(identity);
+  }
+  return files;
+}
+
+/** A found version for a log line, saying when no process was started for it. */
+function describeVersion(probe: Extract<VersionProbe, { ok: true }>): string {
+  return probe.remembered ? `${probe.version}, remembered from an earlier launch` : probe.version;
 }
 
 /**

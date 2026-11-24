@@ -22,7 +22,7 @@ import {
 } from './chat-history-markdown';
 import type {
   AgentAdapter,
-  AgentInfo,
+  AgentInfo, DetectOptions,
   AnswerFromContextOptions,
   ParsedTranscript,
   SettingsChangeSpec,
@@ -192,8 +192,8 @@ export class AiderAdapter implements AgentAdapter {
     supportsWslCli: true,
   });
 
-  async detect(overridePath?: string | null): Promise<AgentInfo> {
-    return this.detector.detect(overridePath);
+  async detect(overridePath?: string | null, options?: DetectOptions): Promise<AgentInfo> {
+    return this.detector.detect(overridePath, options);
   }
 
   invalidateDetectionCache(): void {

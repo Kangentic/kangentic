@@ -47,11 +47,19 @@ export interface AccountUsageRefresherOptions {
   /** Reports a read that failed in a way the service did not handle. Absent: nothing is sent. */
   failureReporter?: Pick<ChokepointReporter, 'report'>;
   /**
-   * Called at the start of the startup pass, before it reads any account. The login file watch
-   * starts here rather than at registration: registration reads no database, and this pass is the
+   * Called once, before any account is read: at the start of the startup pass, or when the
+   * startup delay runs out if a `startupGate` holds the pass back longer. The login file watch
+   * starts here rather than at registration: registration reads no database, and this is the
    * first thing that does.
    */
   onStartup?: () => void;
+  /**
+   * Resolves when the startup pass may run. The pass starts a CLI per account, so main holds it
+   * until the launch has settled (`boot-settle.ts`) instead of landing it on the seconds the
+   * resumed agents are starting in. It is asked when the startup delay runs out, so a gate that
+   * is already open never brings the pass forward. Absent: the pass runs at the delay.
+   */
+  startupGate?: () => Promise<void>;
 }
 
 /** Which accounts a pass reads, and whose sign-in it reads first. */
@@ -83,6 +91,7 @@ export class AccountUsageRefresher {
   private startupTimer: ReturnType<typeof setTimeout> | null = null;
   private resetTimer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
+  private startupAnnounced = false;
 
   constructor(
     private readonly service: Pick<AccountService, 'refreshUsage' | 'refreshIdentity' | 'checkHomeIdentity'>,
@@ -93,9 +102,29 @@ export class AccountUsageRefresher {
     return this.options.now?.() ?? Date.now();
   }
 
+  /** Runs `onStartup` the first time it is asked, and never again. */
+  private announceStartup(): void {
+    if (this.startupAnnounced) return;
+    this.startupAnnounced = true;
+    this.options.onStartup?.();
+  }
+
   start(): void {
     if (this.interval || this.disposed) return;
-    this.startupTimer = setTimeout(() => void this.refreshAll('startup'), this.options.startupDelayMs ?? STARTUP_DELAY_MS);
+    const startupDelayMs = this.options.startupDelayMs ?? STARTUP_DELAY_MS;
+    const gate = this.options.startupGate;
+    if (gate) {
+      // Never sooner than the delay, and then not before the gate opens. The login file watch
+      // starts no process, so it starts at the delay either way. Only the reads wait.
+      this.startupTimer = setTimeout(() => {
+        this.announceStartup();
+        void gate().then(() => {
+          if (!this.disposed) void this.refreshAll('startup');
+        });
+      }, startupDelayMs);
+    } else {
+      this.startupTimer = setTimeout(() => void this.refreshAll('startup'), startupDelayMs);
+    }
     this.startupTimer.unref?.();
     this.interval = setInterval(() => void this.refreshAll('scheduled'), this.options.intervalMs ?? USAGE_REFRESH_INTERVAL_MS);
     this.interval.unref?.();
@@ -186,7 +215,7 @@ export class AccountUsageRefresher {
    */
   async refreshAll(scope: UsageRefreshScope): Promise<void> {
     if (this.disposed) return;
-    if (scope === 'startup') this.options.onStartup?.();
+    if (scope === 'startup') this.announceStartup();
     const accounts = this.options.listAccounts();
     const multiAccount = multiAccountAgents(accounts);
     for (const account of accounts) {

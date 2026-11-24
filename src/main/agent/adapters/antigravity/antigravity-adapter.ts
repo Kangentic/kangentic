@@ -20,6 +20,7 @@ import { runAntigravityPrint } from './print-runner';
 import { buildSummarizePrompt, cleanSummarizeOutput } from '../../shared/auto-name';
 import { forwardStreamLines, runCliPrintAnswer, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
+import { DiscoveryWarmup, SPAWN_DISCOVERY_SETTLE_MS } from '../../shared/discovery-warmup';
 import type { RemoteFileDeclaration } from '../../shared/remote-files';
 import { parseWslCliPath, peekCliTarget, placeFromStored, resolveCliTarget, type CliPlace } from '../../shared/cli-target';
 import { openStdinJsonSession } from '../../shared/answer-session/stdin-json-session';
@@ -32,7 +33,7 @@ import {
 } from './answer-stream';
 import type {
   AgentAdapter,
-  AgentInfo,
+  AgentInfo, DetectOptions,
   AnswerFromContextOptions,
   AnswerSession,
   AnswerSessionInput,
@@ -102,6 +103,8 @@ export class AntigravityAdapter implements AgentAdapter {
   readonly kangenticMcp = 'shared-folder' as const;
   /** An agy installed in a WSL distro runs there (#286). */
   readonly supportsWslCli = true;
+  /** The help flags a spawn waits for in `ensureTrust`. */
+  private readonly discoveryWarmup = new DiscoveryWarmup();
   /** On a remote host over SSH the CLI is `agy` from the host's own login PATH (#913). */
   readonly remoteCliName = 'agy';
   /**
@@ -183,12 +186,13 @@ export class AntigravityAdapter implements AgentAdapter {
     return identifyAntigravityUserSetupFailure(finalOutput);
   }
 
-  async detect(overridePath?: string | null): Promise<AgentInfo> {
-    return this.detector.detect(overridePath);
+  async detect(overridePath?: string | null, options?: DetectOptions): Promise<AgentInfo> {
+    return this.detector.detect(overridePath, options);
   }
 
   invalidateDetectionCache(): void {
     this.detector.invalidateCache();
+    this.discoveryWarmup.reset();
   }
 
   async discoverCapabilities(cliPath: string, forceRefresh?: boolean): Promise<AgentCapabilities> {
@@ -200,6 +204,14 @@ export class AntigravityAdapter implements AgentAdapter {
     // trust confirmation, which would otherwise block an automated spawn. An
     // agy in a WSL distro is trusted in the distro's settings.
     await ensureWorkspaceTrust(workingDirectory, place ?? null);
+    // The command builder picks its permission words and `--settings` from the
+    // flags this CLI's `--help` lists, and a launch no longer reads them for an
+    // agy nobody has started. So the spawn asks, and waits a bounded time.
+    await this.discoveryWarmup.settle(
+      this.detector.liveFoundPaths(),
+      (cliPath) => this.discoverCapabilities(cliPath),
+      SPAWN_DISCOVERY_SETTLE_MS,
+    );
   }
 
   /** Symmetric cleanup so trustedWorkspaces does not grow a dead entry per task. */

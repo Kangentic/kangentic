@@ -1348,6 +1348,21 @@ describe('CursorAdapter', () => {
       await expect(adapter.ensureTrust('/some/dir')).resolves.toBeUndefined();
     });
 
+    // A launch no longer runs discovery for a Cursor nobody has started, and
+    // `buildCommand` turns a stored model name into its `--model` id through
+    // the list discovery read. So the spawn asks for it before it builds.
+    it('ensureTrust reads the model list of the CLI the spawn detected, once', async () => {
+      const internals = adapter as unknown as { detector: { liveFoundPaths: () => string[] } };
+      vi.spyOn(internals.detector, 'liveFoundPaths').mockReturnValue(['/usr/local/bin/cursor-agent']);
+      const discover = vi.spyOn(adapter, 'discoverCapabilities').mockResolvedValue({ supportsModelOverride: true });
+
+      await adapter.ensureTrust('/some/dir');
+      await adapter.ensureTrust('/some/other/dir');
+
+      expect(discover).toHaveBeenCalledTimes(1);
+      expect(discover).toHaveBeenCalledWith('/usr/local/bin/cursor-agent');
+    });
+
     it('removeHooks does not throw', () => {
       expect(() => adapter.removeHooks('/some/dir')).not.toThrow();
     });

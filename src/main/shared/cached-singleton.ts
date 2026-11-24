@@ -26,6 +26,11 @@ export interface CachedSingleton<T> {
   get(builder: () => Promise<T>, forceRefresh?: boolean): Promise<T>;
   /** Discard the cached value and any in-flight build. */
   invalidate(): void;
+  /**
+   * Install `value` as the cached value, superseding any in-flight build. For a
+   * value built out of band, so that no caller of `get` had to wait on it.
+   */
+  replace(value: T): void;
 }
 
 export function createCachedSingleton<T>(): CachedSingleton<T> {
@@ -73,6 +78,12 @@ export function createCachedSingleton<T>(): CachedSingleton<T> {
     invalidate(): void {
       cache = null;
       inFlight = null;
+      buildSequence += 1;
+    },
+    replace(value: T): void {
+      cache = { value };
+      inFlight = null;
+      // An in-flight build that resolves later must not publish over this.
       buildSequence += 1;
     },
   };

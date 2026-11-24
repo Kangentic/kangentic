@@ -13,11 +13,13 @@ import { deepMergeConfig } from '../../../shared/object-utils';
 import { getProjectDb } from '../../db/database';
 import { HandoffRepository } from '../../db/repositories/handoff-repository';
 import { syncProjectMcpConfig } from './projects';
-import { noteAccountsConfigChanged } from '../../accounts/accounts-config-changed';
+import { noteAccountsConfigChanged, noteInstalledAgentsChanged } from '../../accounts/accounts-config-changed';
 import { resolvePickerStartFolder } from '../helpers/picker-start-folder';
 import { applyRuntimeConfig } from '../../config/apply-runtime-config';
 import { refreshPlanApprovals } from '../../plan-approval/plan-approval-writer';
-import { listAgents, listAgentsOnHost, invalidateAgentListCache, nameLearnedModels } from '../../agent/agent-list';
+import { agentNowInUse, listAgents, listAgentsOnHost, invalidateAgentListCache, nameLearnedModels, setAgentListHooks } from '../../agent/agent-list';
+import { setFirstLiveDetectionListener } from '../../agent/shared/agent-detector';
+import { createChokepointReporter } from '../../analytics/handled-report';
 import { agentRegistry } from '../../agent/agent-registry';
 import { tryAcquireSummarizeSlot } from '../../agent/shared/summarize-rate-limit';
 import { resolveAutomationAgent, runNamingCall } from '../../automations/automation-agent';
@@ -47,6 +49,9 @@ import type {
 } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import { RefusalError } from '../../../shared/refusal';
+
+/** Reports a defect in the agent inventory's read after a launch settles. */
+const agentListReporter = createChokepointReporter('agent_list');
 
 // Held only so a shown Notification is not garbage-collected before the user
 // interacts with it (Electron's Notification has no other owner).
@@ -411,6 +416,20 @@ export function registerSystemHandlers(context: IpcContext): void {
   // CLI paths are per project: the list is detected against the effective paths
   // of the project the caller names (the Agent tab editing another project), else
   // the open project's. With no project open it falls back to the global values.
+  //
+  // An agent nothing has started this launch is listed from what its CLI said
+  // on an earlier one, and an agent in use is read from its CLI once the launch
+  // has settled, or when something first starts it. When that read differs from
+  // what was listed, every window that lists agents is told to list again, and
+  // the account cards with them: a card exists only for an agent whose CLI was found.
+  setAgentListHooks({
+    onChanged: () => {
+      broadcast(context.mainWindow, IPC.AGENT_LIST_CHANGED);
+      noteInstalledAgentsChanged();
+    },
+    failureReporter: agentListReporter,
+  });
+  setFirstLiveDetectionListener(agentNowInUse);
   ipcMain.handle(IPC.AGENT_LIST, async (_event, forceRefresh?: boolean, projectPath?: string): Promise<AgentDetectionInfo[]> => {
     const globalConfig = context.configManager.load();
     const targetProjectPath = projectPath ?? context.currentProjectPath ?? undefined;

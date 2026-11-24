@@ -588,6 +588,45 @@ describe('AccountService.cards', () => {
     // The agent whose CLI is not found gets no card and no default row.
     expect(repository.listForAgent('not-installed')).toEqual([]);
   });
+
+  // At a launch the cards may be answered from an earlier launch's detection, so listing them
+  // starts no CLI. That lookup is the cards' alone: everything that runs the CLI asks the live one.
+  it('asks the list-only lookup for each CLI, all at once, and never the live one', async () => {
+    const adapters: Record<string, AgentAdapter> = {
+      first: adapterOf('first', folderSupport()),
+      second: adapterOf('second', folderSupport()),
+      'in-a-distro': adapterOf('in-a-distro', folderSupport()),
+    };
+    const asked: string[] = [];
+    const answers = new Map<string, (cliPath: string | null) => void>();
+    const resolveCliPath = vi.fn(async () => '/usr/bin/live-cli');
+    const remoteTargetAsked: Array<[string, string | undefined]> = [];
+    const accountService = makeService(adapters, {
+      resolveCliPath,
+      listCliPath: (agent) => new Promise<string | null>((resolve) => {
+        asked.push(agent);
+        answers.set(agent, resolve);
+      }),
+      usesRemoteTarget: async (agent, knownCliPath) => {
+        remoteTargetAsked.push([agent, knownCliPath]);
+        return agent === 'in-a-distro';
+      },
+    });
+
+    const pending = accountService.cards();
+    // Every agent was asked before any answered: one slow CLI does not hold the others.
+    expect(asked).toEqual(['first', 'second', 'in-a-distro']);
+    // Answered out of order, and the cards still come out in adapter order.
+    answers.get('in-a-distro')?.('/usr/bin/distro-cli');
+    answers.get('second')?.('/usr/bin/second-cli');
+    answers.get('first')?.(null);
+    const cards = await pending;
+
+    expect(cards.map((card) => [card.agent, card.unsupportedTarget])).toEqual([['second', false], ['in-a-distro', true]]);
+    expect(resolveCliPath).not.toHaveBeenCalled();
+    // Where the CLI runs is read off the path the list already holds, not detected again.
+    expect(remoteTargetAsked).toEqual([['in-a-distro', '/usr/bin/distro-cli'], ['second', '/usr/bin/second-cli']]);
+  });
 });
 
 describe('AccountService.resolveForSpawn under Automatic', () => {

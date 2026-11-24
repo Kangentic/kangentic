@@ -5,7 +5,7 @@ import { writeWarpMcpConfig } from './mcp-config';
 import { cliPathForTarget } from '../../shared/cli-target';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
-import type { AgentAdapter, AgentInfo, SpawnCommandOptions } from '../../agent-adapter';
+import type { AgentAdapter, AgentInfo, DetectOptions, SpawnCommandOptions } from '../../agent-adapter';
 import type {
   AgentCapabilities,
   AgentLiveTelemetryUnsupported,
@@ -95,8 +95,8 @@ export class WarpAdapter implements AgentAdapter {
     return identifyWarpUserSetupFailure(finalOutput);
   }
 
-  async detect(overridePath?: string | null): Promise<AgentInfo> {
-    return this.detector.detect(overridePath);
+  async detect(overridePath?: string | null, options?: DetectOptions): Promise<AgentInfo> {
+    return this.detector.detect(overridePath, options);
   }
 
   invalidateDetectionCache(): void {

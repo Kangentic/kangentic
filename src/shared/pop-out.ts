@@ -372,6 +372,10 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
       // browser that exists - which is the invisibility this whole mechanism was
       // built to remove, reappearing in one host.
       IPC.BROWSER_OFFSCREEN_SURFACES,
+      // The agent list this window loaded at a launch is the last launch's. Main
+      // says when its own read differs, and the Agent, Model and Permission
+      // cells list again.
+      IPC.AGENT_LIST_CHANGED,
     ],
   },
   'knowledge-graph': {
@@ -397,6 +401,9 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
       IPC.KNOWLEDGE_GRAPH_ANSWER_STREAM,
       IPC.CONFIG_CHANGED,
       ...DICTATION_CHANNELS,
+      // The ask box picks who answers from the agent list, which at a launch is
+      // the last launch's until main's own read says it differs.
+      IPC.AGENT_LIST_CHANGED,
     ],
   },
   // The Command Terminal panel for ONE project, in a window of its own. Its
@@ -442,6 +449,9 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
       IPC.BROWSER_PANE_OPEN_REQUEST,
       IPC.BROWSER_PANE_CLOSE_REQUEST,
       IPC.BROWSER_OFFSCREEN_SURFACES,
+      // The model and effort pickers read the agent list, which at a launch is
+      // the last launch's until main's own read says it differs.
+      IPC.AGENT_LIST_CHANGED,
     ],
   },
 };

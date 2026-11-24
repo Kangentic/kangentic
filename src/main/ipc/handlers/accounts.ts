@@ -27,6 +27,7 @@ import { setAccountsConfigListener } from '../../accounts/accounts-config-change
 import { agentRegistry } from '../../agent/agent-registry';
 import { resolveCliTarget } from '../../agent/shared/cli-target';
 import { PATHS } from '../../config/paths';
+import { whenBootSettled } from '../../boot-settle';
 import { AgentAccountRepository } from '../../db/repositories/agent-account-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { getProjectDb } from '../../db/database';
@@ -83,13 +84,20 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
   const repository = new AgentAccountRepository();
   const readConfig = () => context.configManager.load().agent.accounts ?? DEFAULT_AGENT_ACCOUNTS_CONFIG;
   // The adapter's detector caches its answer, so the path and the version are one read.
-  const detectCli = async (agent: string) => {
+  const detectCli = async (agent: string, forList = false) => {
     const adapter = agentRegistry.get(agent);
     if (!adapter) return null;
-    const detection = await adapter.detect(context.configManager.load().agent.cliPaths[agent] ?? null);
+    const configuredPath = context.configManager.load().agent.cliPaths[agent] ?? null;
+    // Only the cards may be answered from an earlier launch: listing them starts no CLI, so a
+    // CLI nobody is using is never started to draw its card. A live detection answers first when
+    // one exists, and everything that runs the CLI detects it for real.
+    const detection = forList
+      ? await adapter.detect(configuredPath, { allowRemembered: true })
+      : await adapter.detect(configuredPath);
     return detection.found ? detection : null;
   };
   const resolveCliPath = async (agent: string): Promise<string | null> => (await detectCli(agent))?.path || null;
+  const listCliPath = async (agent: string): Promise<string | null> => (await detectCli(agent, true))?.path || null;
   const resolveCliVersion = async (agent: string): Promise<string | null> => (await detectCli(agent))?.version || null;
   // Assigned below, once the service it reads exists. A change before then has nothing waiting.
   let continuation: AccountContinuation | null = null;
@@ -111,10 +119,11 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
       context.configManager.save({ agent: { ...context.configManager.load().agent, accounts: next } });
     },
     resolveCliPath,
+    listCliPath,
     resolveCliVersion,
-    usesRemoteTarget: async (agent) => {
+    usesRemoteTarget: async (agent, knownCliPath) => {
       const adapter = agentRegistry.get(agent);
-      const cliPath = await resolveCliPath(agent);
+      const cliPath = knownCliPath ?? await resolveCliPath(agent);
       return (await resolveCliTarget(cliPath, adapter?.supportsWslCli === true)) !== null;
     },
     onChanged: notifyChanged,
@@ -152,8 +161,10 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
   const refresher = new AccountUsageRefresher(service, {
     listAccounts: () => repository.list(),
     failureReporter: accountsReporter,
-    // Registration reads no database. The startup pass is the first read, and starts the watch.
+    // Registration reads no database. The watch starts when the startup delay runs out.
     onStartup: () => syncLoginWatch?.(),
+    // The pass runs a CLI per account, so it waits for the launch to settle.
+    startupGate: whenBootSettled,
   });
   refresher.start();
   usageRefresher = refresher;

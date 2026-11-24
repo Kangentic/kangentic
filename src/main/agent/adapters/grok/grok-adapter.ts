@@ -32,7 +32,7 @@ import { kangenticMcpServer, mcpBridgeScriptEnv, startRunMcpRelay } from '../../
 import { answerHomeForPlace, withAnswerRunDirectory } from '../../shared/answer-run-directory';
 import type {
   AgentAdapter,
-  AgentInfo,
+  AgentInfo, DetectOptions,
   AnswerFromContextOptions,
   SpawnCommandOptions,
   SettingsChangeSpec,
@@ -186,8 +186,8 @@ export class GrokAdapter implements AgentAdapter {
     return identifyGrokUserSetupFailure(finalOutput);
   }
 
-  async detect(overridePath?: string | null): Promise<AgentInfo> {
-    return this.detector.detect(overridePath);
+  async detect(overridePath?: string | null, options?: DetectOptions): Promise<AgentInfo> {
+    return this.detector.detect(overridePath, options);
   }
 
   invalidateDetectionCache(): void {

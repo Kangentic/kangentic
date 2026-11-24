@@ -21,6 +21,7 @@ sources:
   - resource: src/main/agent/shared/wsl-hook-transport.ts
   - resource: src/main/pty/readers/wsl-hook-inbox.ts
   - resource: src/main/agent/shared/agent-detector.ts
+  - resource: src/main/agent/shared/agent-probe-store.ts
 ---
 # Shells and paths
 
@@ -323,6 +324,27 @@ NOT FOUND failed the next spawn with "Claude Code not found on PATH". Now the ne
 one a spawn runs, probes again. The renderer's agent list is not pushed a correction, so the
 status bar and Settings show the miss until the list next loads. A NOT FOUND from another tool's
 output, a missing file, or a failed exit is still cached.
+
+A launch does not probe to draw its lists. Each probe's answer is kept across launches in
+`agent-probe-cache.json` in the config folder (`src/main/agent/shared/agent-probe-store.ts`),
+filed under the detector, its version command and the path, with the identity of every file
+that decides it: the path itself (resolved through links), an npm shim's target script, and the
+program a `versionLaunch` starts. Two answers are kept, a version and "not this agent". A
+transient failure never is. `detect(path, { allowRemembered: true })` walks `PATH`, the dead
+shim check and the fallback paths as always, and answers a probe from the file only while every
+one of those identities is unchanged, so a new install earlier on `PATH`, a removed binary and a
+replaced file are all seen at once. A path inside a WSL distro is remembered by path alone,
+because a stat over its UNC path starts the distro.
+
+A remembered detection is for display. It is marked `remembered`, kept apart from the live
+cache, and `getCachedVersion` never reads it, because a version manager's shim (volta, asdf,
+mise) keeps its identity across an upgrade and OpenCode and Qwen build their command line from
+the version. Two callers ask for one: the agent inventory and the account cards. Every spawn
+path calls `detect` with no options and probes. The first live detection of a CLI that had only
+been remembered tells the inventory (`setFirstLiveDetectionListener`), which then reads that
+agent's entry from its CLI. See
+[Agent inventory cache](../integrations/agents/adapter-types.md#which-agents-a-build-starts-a-cli-for)
+for which agents a list starts a CLI for, and the measurements behind it.
 
 Oz's empty output had a second cause that no retry fixes. Warp's `oz.cmd` sets `WARP_CLI_MODE=1`
 and runs `warp.exe`, a GUI-subsystem program, and through cmd its output never reaches the pipe:

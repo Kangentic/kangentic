@@ -12,7 +12,7 @@ import { parseBridgeEventLine } from '../../shared/hook-utils';
 import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import type {
   AgentAdapter,
-  AgentInfo,
+  AgentInfo, DetectOptions,
   ParsedTranscript,
   SpawnCommandOptions,
   SummarizeOptions,
@@ -217,8 +217,8 @@ export class GooseAdapter implements AgentAdapter {
   /** Launches `buildCommand` saw, keyed by PTY session id, for `attachSession`. */
   private readonly sessionLaunches = new Map<string, GooseSessionLaunch>();
 
-  async detect(overridePath?: string | null): Promise<AgentInfo> {
-    return this.detector.detect(overridePath);
+  async detect(overridePath?: string | null, options?: DetectOptions): Promise<AgentInfo> {
+    return this.detector.detect(overridePath, options);
   }
 
   invalidateDetectionCache(): void {

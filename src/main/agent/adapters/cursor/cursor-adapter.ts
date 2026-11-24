@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
 import { AgentDetector } from '../../shared/agent-detector';
+import { DiscoveryWarmup, SPAWN_DISCOVERY_SETTLE_MS } from '../../shared/discovery-warmup';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import { quoteCmdExecutable } from '../../../../shared/shell-quote';
@@ -39,7 +40,7 @@ import {
 import { cursorProjectMcpConfigProblem, removeCursorProjectMcpConfig, writeCursorProjectMcpConfig } from './project-mcp-config';
 import { cursorTranscriptFilePath, locateCursorTranscriptFile, resolveCursorTranscriptReadPath } from './session-paths';
 import { parseCursorTranscript, readCursorTranscriptPage } from './transcript-parser';
-import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, ParsedTranscript, SpawnCommandOptions, SettingsChangeSpec, SummarizeOptions, TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
+import type { AgentAdapter, AgentInfo, DetectOptions, AnswerFromContextOptions, ParsedTranscript, SpawnCommandOptions, SettingsChangeSpec, SummarizeOptions, TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
 import type {
   AgentCapabilities,
   AgentPermissionEntry,
@@ -254,6 +255,8 @@ export class CursorAdapter implements AgentAdapter {
   readonly kangenticMcp = 'per-session' as const;
   /** A Cursor installed in a WSL distro runs there (#286). */
   readonly supportsWslCli = true;
+  /** The model list a spawn waits for in `ensureTrust`. */
+  private readonly discoveryWarmup = new DiscoveryWarmup();
   /**
    * On a remote host over SSH the CLI is `cursor-agent` from the host's own login PATH (#913). The
    * installer's other name, `agent`, is shared with Grok's CLI, so the unambiguous one is declared.
@@ -352,17 +355,28 @@ export class CursorAdapter implements AgentAdapter {
     return identifyCursorUserSetupFailure(finalOutput);
   }
 
-  async detect(overridePath?: string | null): Promise<AgentInfo> {
-    return this.detector.detect(overridePath);
+  async detect(overridePath?: string | null, options?: DetectOptions): Promise<AgentInfo> {
+    return this.detector.detect(overridePath, options);
   }
 
   invalidateDetectionCache(): void {
     this.detector.invalidateCache();
+    this.discoveryWarmup.reset();
   }
 
   // Cursor records workspace trust on `--trust`, not a file Kangentic writes.
   // That flag rides every spawn except confirm-changes.
-  async ensureTrust(_workingDirectory: string): Promise<void> {}
+  //
+  // What a spawn does wait for here is the model list: `buildCommand` turns a
+  // stored model name into its `--model` id through it (`resolveCachedCursorModel`),
+  // and a launch no longer reads it for a Cursor nobody has started.
+  async ensureTrust(_workingDirectory: string): Promise<void> {
+    await this.discoveryWarmup.settle(
+      this.detector.liveFoundPaths(),
+      (cliPath) => this.discoverCapabilities(cliPath),
+      SPAWN_DISCOVERY_SETTLE_MS,
+    );
+  }
 
   buildCommand(options: SpawnCommandOptions): string {
     const { shell } = options;

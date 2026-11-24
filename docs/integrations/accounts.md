@@ -390,6 +390,20 @@ or the conversations. Typing `/usage` into a hidden terminal added both, so that
 window's reset passes, every 15 minutes, before a switch, and before a spawn ranks an account
 whose reading ran out. Nothing is read on a schedule for an agent with one account.
 
+The read when the app opens waits for the launch to settle
+([Crash recovery](../architecture/sessions/crash-recovery.md#when-a-launch-has-settled)), and
+never runs sooner than 20 s after registration. It runs a CLI per account, and on the old fixed
+20 s timer those runs landed while the resumed agents were still starting. A read a spawn asks for
+(`readBeforeRanking`) and the tab's own read do not wait.
+
+Listing the cards (`accounts:list`, `AccountService.cards`) runs no account CLI. Every field of a
+card is a row in `agent_accounts`, and the one thing the list waits for is whether each agent's
+CLI is installed. It asks for all of them at once through `listCliPath`, which takes a remembered
+detection ([Shells and paths](../platforms/shells-and-paths.md)) where nothing has started the
+agent this launch, so drawing a card never starts a CLI nobody is using. Everything that runs a
+CLI (a sign-in read, a usage read, a spawn) detects it through `resolveCliPath`, which always
+probes.
+
 A read that gives no windows keeps the last values and its read time, and is logged and reported
 (`usage-read-empty`) with why: the run failed, the state file was missing or unreadable
 (`state-unreadable`), it was not a record (`state-not-record`), it held no usage cache
@@ -515,8 +529,8 @@ of stored. `recordUsage` drops a live report stamped with a `replaced` row.
 **Detection.** The adapter declares two cheap reads on its account support: `readHomeIdentity` (the
 state file, no CLI run) and `loginFiles` (`<home>/.credentials.json` on Windows and Linux, nothing on
 macOS, where the login is in the Keychain). For an agent with two or more accounts, Kangentic
-watches each home's login file (`account-login-watch.ts`, debounced two seconds, started by the
-usage refresher's startup pass since registration reads no database), and checks a
+watches each home's login file (`account-login-watch.ts`, debounced two seconds, started 20 s
+after registration by the usage refresher, since registration reads no database), and checks a
 session's home at each turn end and when the session ends. Every scheduled pass checks every `ok`
 row the same way. A check runs `claude auth status` only when the state file names another login
 than the row. Startup and the tab opening read every row through the CLI, as before. The state file

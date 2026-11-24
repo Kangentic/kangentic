@@ -928,6 +928,14 @@
     mockConfigChangedListeners.slice().forEach(function (listener) { listener(); });
   };
 
+  // `agents.onListChanged` subscribers. Tests fire it with
+  // `window.__mockAgentListChanged()`, as main does once its read after a launch
+  // differs from the list the launch was shown.
+  const agentListChangedListeners = [];
+  window.__mockAgentListChanged = function () {
+    agentListChangedListeners.slice().forEach(function (listener) { listener(); });
+  };
+
   // What config.set / setProjectOverrides / setProjectOverridesByPath resolve with.
   // Defaults to a write that reached disk; a test forces the failure path by setting
   // window.__mockConfigSetPersisted = false, which is what the settings panel's
@@ -4872,6 +4880,17 @@
           return window.__mockProbeExecutionServer(agentName);
         }
         return { reachable: true, version: '1.14.25' };
+      },
+      // Main fires this once it has read every agent for real after a launch and the
+      // answer differs from the list the launch was shown. A spec plays that moment
+      // with window.__mockAgentListChanged(), usually after changing
+      // window.__mockAgentListOverrides so the re-list reads something new.
+      onListChanged: function (callback) {
+        agentListChangedListeners.push(callback);
+        return function () {
+          var index = agentListChangedListeners.indexOf(callback);
+          if (index !== -1) agentListChangedListeners.splice(index, 1);
+        };
       },
     },
 

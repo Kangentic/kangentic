@@ -46,6 +46,7 @@ import { trackEvent } from '../../analytics/analytics';
 import { trackMilestone, bucketTaskCount } from '../../analytics/usage';
 import { DEFAULT_SWIMLANES } from '../../db/migrations/default-data';
 import { isShuttingDown } from '../../shutdown-state';
+import { trackBootWork } from '../../boot-settle';
 import { runWithProjectLogContext } from '../../diagnostics/project-log-context';
 import { prRefreshScheduler } from '../../pr/pr-refresh-scheduler';
 import { gitFetchScheduler } from '../../git/git-fetch-scheduler';
@@ -949,13 +950,15 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
     // with leftover worktrees and previously blocked recovery for minutes, so
     // they are fired without awaiting.
     const openedProject = project;
-    runWithProjectLogContext(project.name, async () => {
+    // Tracked for the launch's settle signal: at boot this is the pass that
+    // resumes the open project's agents. A no-op once the launch has settled.
+    trackBootWork(runWithProjectLogContext(project.name, async () => {
       await runColdOpenPasses(context, openedProject, repositories, { stopOnFailure: false });
       startToolBreakdownRepair(openedProject);
     }).catch((error) => {
       console.error('[PROJECT_OPEN] Cold open failed:', error);
       reportRecoveryPassFailure('cold_open', error);
-    });
+    }));
   }
 
   return project;

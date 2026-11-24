@@ -18,7 +18,7 @@ import { isPlainIdName, placeFromStored, resolveCliTarget, toStoredCliTarget, ty
 import { extractGeminiAnswer, geminiAnswerEvents, removeGeminiChat } from './answer-stream';
 import type {
   AgentAdapter,
-  AgentInfo,
+  AgentInfo, DetectOptions,
   AnswerFromContextOptions,
   ParsedSubagentUsage,
   ParsedTranscriptWindow,
@@ -146,8 +146,8 @@ export class GeminiAdapter implements AgentAdapter {
     return identifyGeminiUserSetupFailure(finalOutput);
   }
 
-  async detect(overridePath?: string | null): Promise<AgentInfo> {
-    return this.detector.detect(overridePath);
+  async detect(overridePath?: string | null, options?: DetectOptions): Promise<AgentInfo> {
+    return this.detector.detect(overridePath, options);
   }
 
   invalidateDetectionCache(): void {

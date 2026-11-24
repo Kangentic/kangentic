@@ -21,6 +21,11 @@ export const knowledgeGraphSurface: SurfaceDescriptor<'knowledge-graph'> = {
     // else in this window loads them. Without the list every question read as
     // "no agent chosen" and asking was impossible detached.
     void useConfigStore.getState().loadAgentList();
+    // The list a launch shows is the last launch's; main says when its own read differs.
+    const unsubscribeAgentList = window.electronAPI.agents.onListChanged(() => {
+      void useConfigStore.getState().loadAgentList();
+    });
+    signal.addEventListener('abort', unsubscribeAgentList);
     // `close`, not a bare `detach`: it also lets the chat's warm answering
     // session go, which would otherwise idle in main until its own timeout.
     signal.addEventListener('abort', () => useKnowledgeGraphStore.getState().close());

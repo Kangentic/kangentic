@@ -15,3 +15,11 @@ export function setAccountsConfigListener(next: (() => void) | null): void {
 export function noteAccountsConfigChanged(): void {
   listener?.();
 }
+
+/**
+ * Called when the read after a launch found other agents installed than the launch was shown
+ * (`agent-list.ts`). A card exists only for an agent whose CLI was found, so the tab lists again.
+ */
+export function noteInstalledAgentsChanged(): void {
+  listener?.();
+}
