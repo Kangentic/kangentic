@@ -28,7 +28,7 @@ function row(id: string, email: string | null, options: { orgId?: string | null;
     lastUsage: options.usedPercentage === undefined ? null : [{
       id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: options.usedPercentage, resetsAt: NOW + 3600, windowDurationSeconds: 604_800,
     }],
-    lastUsageAt: null,
+    lastUsageAt: null, absentWindowIds: [],
     createdAt: options.createdAt ?? '2026-11-01T00:00:00.000Z',
   };
 }

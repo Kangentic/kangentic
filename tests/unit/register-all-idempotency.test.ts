@@ -454,7 +454,9 @@ describe('registerAllIpc idempotency', () => {
     //             reply and restarts it for new read access)
     //             + the turn-end runner (1: an idle edge marks where an
     //             expired conversation's recap turn ends)
-    //             + the app icon badge (1: its count recounts)         = 5
+    //             + the app icon badge (1: its count recounts)
+    //             + the account mover (1: a session waiting to move to
+    //             another account is looked at again on an activity edge) = 6
     //   exit:     the notifier, the recorder, the workflow agent and the
     //             badge, plus registerMonitorHandlers (1), plus the
     //             workflow engine (1: a session ending frees an agent slot,
@@ -472,7 +474,7 @@ describe('registerAllIpc idempotency', () => {
     // If this ever needs to change, re-attribute the count explicitly rather
     // than just bumping the number.
     expect(getOptionalIpcContext()?.desktopNotifier).toBeDefined();
-    expect(getSessionManager().listenerCount('activity')).toBe(5);
+    expect(getSessionManager().listenerCount('activity')).toBe(6);
     expect(getSessionManager().listenerCount('exit')).toBe(7);
   }, 30000);
 
@@ -553,10 +555,11 @@ describe('registerAllIpc idempotency', () => {
     // stops being reused across a second registerAllIpc call.
     //
     // Counts as attributed in the first test: activity is the notifier, the
-    // recorder, the workflow agent, the turn-end runner and the app badge; exit
-    // is the notifier, the recorder, the workflow agent and the badge plus
-    // registerMonitorHandlers, the workflow engine and the held-messages flush.
-    expect(getSessionManager().listenerCount('activity')).toBe(5);
+    // recorder, the workflow agent, the turn-end runner, the app badge and the
+    // account mover; exit is the notifier, the recorder, the workflow agent and
+    // the badge plus registerMonitorHandlers, the workflow engine and the
+    // held-messages flush.
+    expect(getSessionManager().listenerCount('activity')).toBe(6);
     expect(getSessionManager().listenerCount('exit')).toBe(7);
   }, 30000);
 

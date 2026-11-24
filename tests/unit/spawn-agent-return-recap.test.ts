@@ -534,7 +534,7 @@ describe('spawnAgent: the main conversation\'s return recap (task #952)', () => 
         id, agent: 'claude', kind: position === 1 ? 'default' : 'folder', folderPath: null, keyFilePath: null, keyNames: [],
         email: `${id}@example.com`, plan: 'Max', status: 'ok', position, historyPrivate: false,
         lastUsage: [{ id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage, resetsAt: NOW_MS / 1000 + 86_400, windowDurationSeconds: 604_800 }],
-        lastUsageAt: null, createdAt: '2026-01-01T00:00:00.000Z',
+        lastUsageAt: null, absentWindowIds: [], createdAt: '2026-01-01T00:00:00.000Z',
       };
     }
 

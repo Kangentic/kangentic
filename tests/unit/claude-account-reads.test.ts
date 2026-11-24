@@ -168,8 +168,11 @@ describe('CLAUDE_ACCOUNT_SUPPORT.readIdleUsage', () => {
 
   it('returns the windows of a cache the run just refreshed', async () => {
     writeState(cachedUsage(Date.now(), { seven_day: SEVEN_DAY, five_hour: null }));
-    const windows = await CLAUDE_ACCOUNT_SUPPORT.readIdleUsage!('claude', accountFolder);
-    expect(windows?.map((window) => window.id)).toEqual(['seven-day']);
+    const reading = await CLAUDE_ACCOUNT_SUPPORT.readIdleUsage!('claude', accountFolder);
+    if (!reading || Array.isArray(reading)) throw new Error('expected a reading that names absent windows');
+    expect(reading.windows.map((window) => window.id)).toEqual(['seven-day']);
+    // `five_hour: null` is a plan with no 5h window, not one it has yet to open.
+    expect(reading.absentWindowIds).toEqual(['five-hour']);
   });
 
   it('names a failed run', async () => {

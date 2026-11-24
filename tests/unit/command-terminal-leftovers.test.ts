@@ -265,6 +265,136 @@ describe('CommandTerminalLeftoverReaper', () => {
     });
   });
 
+  // A move to another account ends a terminal to start it again in its slot, under the same tag
+  // (`commandTerminalRespawn`). What its agent left running is the next terminal's, unless the move
+  // gives up, which makes the end an end like any other.
+  describe('a terminal ended to start again in its slot (a move to another account)', () => {
+    type Outcome = 'starting' | 'back' | 'gone';
+    const wslTarget: StoredCliTarget = {
+      kind: 'wsl',
+      distro: 'Ubuntu',
+      homeLinux: '/home/dev',
+      homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
+      uncRoot: '\\\\wsl.localhost\\Ubuntu',
+      env: {},
+      linuxCliPath: '/home/dev/.local/bin/claude',
+    };
+
+    function makeRespawnRig(options: { outcomes?: Outcome[]; withOutcomeDep?: boolean; willRestore?: (session: Session) => boolean } = {}) {
+      const sessionManager = new EventEmitter();
+      // The registry row the getters read, deleted right after the removal's emit, as remove() does.
+      const rows = new Map<string, { agentName: string; cliTarget: StoredCliTarget | null; homeAccountId: string | null }>([
+        ['session-1', { agentName: 'claude', cliTarget: wslTarget, homeAccountId: 'account-home' }],
+      ]);
+      Object.assign(sessionManager, {
+        getSessionAgentName: (sessionId: string) => rows.get(sessionId)?.agentName,
+        getSessionCliTarget: (sessionId: string) => rows.get(sessionId)?.cliTarget ?? null,
+        getSessionHomeAccountId: (sessionId: string) => rows.get(sessionId)?.homeAccountId ?? null,
+      });
+      const order: string[] = [];
+      const outcomes = [...(options.outcomes ?? [])];
+      const respawnOutcome = vi.fn((_session: Session): Outcome => outcomes.shift() ?? 'starting');
+      const stopBackgroundSession = vi.fn(async (_ended: unknown) => { order.push('stop'); });
+      const reaps: CommandTerminalLeftoverTask[] = [];
+      const reaper = new CommandTerminalLeftoverReaper({
+        sessionManager: sessionManager as never,
+        reap: async (_projectPath, task) => { order.push('reap'); reaps.push(task); },
+        stopBackgroundSession,
+        willRestore: options.willRestore,
+        ...(options.withOutcomeDep === false ? {} : { respawnOutcome }),
+        isShuttingDown: () => false,
+      });
+      reaper.start();
+      const remove = (session: Session) => {
+        sessionManager.emit('session-removed', session.id, session);
+        rows.delete(session.id);
+      };
+      return { reaper, remove, order, reaps, respawnOutcome, stopBackgroundSession, pushOutcome: (outcome: Outcome) => { outcomes.push(outcome); } };
+    }
+
+    function respawnedSession(overrides: Partial<Session> = {}): Session {
+      return removedSession({ commandTerminalRespawn: true, agentSessionId: 'conversation-1', accountId: 'account-new', ...overrides });
+    }
+
+    it('reaps nothing and stops no background session once a terminal is back under its tag', async () => {
+      const rig = makeRespawnRig({ outcomes: ['starting', 'back'] });
+      rig.remove(respawnedSession());
+
+      await vi.advanceTimersByTimeAsync(COMMAND_TERMINAL_REAP_DELAY_MS * 10);
+
+      // Asked while the start was in flight, asked once more, never asked again after it answered back.
+      expect(rig.respawnOutcome).toHaveBeenCalledTimes(2);
+      expect(rig.stopBackgroundSession).not.toHaveBeenCalled();
+      expect(rig.order).toEqual([]);
+    });
+
+    it('stops the background session the removal named and then reaps when the move gave up', async () => {
+      const rig = makeRespawnRig({ outcomes: ['starting', 'gone'] });
+      rig.remove(respawnedSession());
+
+      // The first check is a full delay out, and the start is still in flight at it.
+      await vi.advanceTimersByTimeAsync(COMMAND_TERMINAL_REAP_DELAY_MS);
+      expect(rig.order).toEqual([]);
+      await vi.advanceTimersByTimeAsync(COMMAND_TERMINAL_REAP_DELAY_MS);
+      expect(rig.order).toEqual(['stop']);
+      await vi.advanceTimersByTimeAsync(COMMAND_TERMINAL_REAP_DELAY_MS);
+
+      expect(rig.order).toEqual(['stop', 'reap']);
+      // Read during the emit: the row was gone, and the getters answer nothing, by the time the stop ran.
+      expect(rig.stopBackgroundSession).toHaveBeenCalledWith({
+        agentName: 'claude',
+        agentSessionId: 'conversation-1',
+        cwd: 'C:\\work\\project',
+        cliTarget: wslTarget,
+        // The home it ran in, not the account the session now carries.
+        accountId: 'account-home',
+      });
+      expect(rig.reaps).toEqual([{ id: 'transient-task-uuid', worktree_path: null, title: 'Count Markdown Files in Docs Folder' }]);
+    });
+
+    it('reaps nothing when no outcome source is wired', async () => {
+      const rig = makeRespawnRig({ withOutcomeDep: false });
+      rig.remove(respawnedSession());
+
+      await vi.advanceTimersByTimeAsync(COMMAND_TERMINAL_REAP_DELAY_MS * 10);
+
+      expect(rig.order).toEqual([]);
+    });
+
+    it('lets willRestore decide a normal end only, and the move\'s outcome decide a respawn end', async () => {
+      const willRestore = vi.fn((_session: Session) => true);
+      const rig = makeRespawnRig({ outcomes: ['gone'], willRestore });
+      // A normal end that will restore is skipped, whatever the outcome source says.
+      rig.remove(removedSession({ id: 'session-1', taskId: 'normal-task' }));
+      // A respawn end that gave up reaps, though willRestore would have said the terminal comes back.
+      rig.remove(respawnedSession({ id: 'session-2', taskId: 'respawn-task' }));
+
+      await vi.advanceTimersByTimeAsync(COMMAND_TERMINAL_REAP_DELAY_MS * 3);
+
+      expect(rig.reaps.map((task) => task.id)).toEqual(['respawn-task']);
+      expect(willRestore).toHaveBeenCalledTimes(1);
+      expect(willRestore).toHaveBeenCalledWith(expect.objectContaining({ id: 'session-1' }));
+      expect(rig.respawnOutcome).toHaveBeenCalledTimes(1);
+      expect(rig.respawnOutcome).toHaveBeenCalledWith(expect.objectContaining({ id: 'session-2' }));
+    });
+
+    it('cancels the wait, the background-session stop and the reap on dispose', async () => {
+      const rig = makeRespawnRig({ outcomes: ['starting'] });
+      rig.remove(respawnedSession());
+      await vi.advanceTimersByTimeAsync(COMMAND_TERMINAL_REAP_DELAY_MS);
+      expect(rig.respawnOutcome).toHaveBeenCalledTimes(1);
+
+      rig.reaper.dispose();
+      // Had the wait survived, the next check would see the move give up.
+      rig.pushOutcome('gone');
+      await vi.advanceTimersByTimeAsync(COMMAND_TERMINAL_REAP_DELAY_MS * 10);
+
+      expect(rig.respawnOutcome).toHaveBeenCalledTimes(1);
+      expect(rig.stopBackgroundSession).not.toHaveBeenCalled();
+      expect(rig.order).toEqual([]);
+    });
+  });
+
   it('logs a failed reap and never throws', async () => {
     const sessionManager = new EventEmitter();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);

@@ -12,7 +12,7 @@ function account(id: string, position: number, usedPercentage: number | null, st
     lastUsage: usedPercentage === null ? null : [
       { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage, resetsAt: NOW + 86_400 * position, windowDurationSeconds: 604_800 },
     ],
-    lastUsageAt: null, createdAt: '2026-01-01T00:00:00.000Z',
+    lastUsageAt: null, absentWindowIds: [], createdAt: '2026-01-01T00:00:00.000Z',
   };
 }
 
@@ -241,6 +241,48 @@ describe('AccountContinuation', () => {
     expect(await stays.continuation.onSessionStarted('session-1')).toBe('ignored');
     expect(await stays.continuation.onTurnFailure('session-1', 'rate_limit')).toBe('ignored');
     for (const { readUsageNow } of [fresh, off, other, stays]) expect(readUsageNow).not.toHaveBeenCalled();
+  });
+
+  // The follower of automatic order leaves a session alone while the continuation owns its next move.
+  describe('isHandling', () => {
+    it('is false for a session the continuation has not touched', () => {
+      const { continuation } = rig({ accounts: [account('one', 1, 100), account('two', 2, 40)] });
+      expect(continuation.isHandling('session-1')).toBe(false);
+    });
+
+    it('is true while the decision is in flight and false once it settles', async () => {
+      const { continuation, readUsageNow } = rig({ accounts: [account('one', 1, 100), account('two', 2, 40)] });
+      let finishRead: () => void = () => undefined;
+      readUsageNow.mockImplementationOnce(() => new Promise<void>((resolve) => { finishRead = resolve; }));
+      const decision = continuation.onTurnFailure('session-1', 'rate_limit');
+      expect(continuation.isHandling('session-1')).toBe(true);
+      expect(continuation.isHandling('another-session')).toBe(false);
+      finishRead();
+      expect(await decision).toBe('continued');
+      expect(continuation.isHandling('session-1')).toBe(false);
+    });
+
+    it('is false after a decision that left the session alone', async () => {
+      const { continuation } = rig({ accounts: [account('one', 1, 100), account('two', 2, 40)], freshUsage: { one: 50 } });
+      expect(await continuation.onTurnFailure('session-1', 'rate_limit')).toBe('ignored');
+      expect(continuation.isHandling('session-1')).toBe(false);
+    });
+
+    it('is true while the session waits for an account to free, and false once it was forgotten', async () => {
+      const { continuation } = rig({ accounts: [account('one', 1, 100), account('two', 2, 100)] });
+      expect(await continuation.onTurnFailure('session-1', 'rate_limit')).toBe('waiting');
+      expect(continuation.isHandling('session-1')).toBe(true);
+      continuation.forgetSession('session-1');
+      expect(continuation.isHandling('session-1')).toBe(false);
+    });
+
+    it('is false again once a waiting session was continued', async () => {
+      const { continuation, accounts } = rig({ accounts: [account('one', 1, 100), account('two', 2, 100)] });
+      expect(await continuation.onTurnFailure('session-1', 'rate_limit')).toBe('waiting');
+      accounts[1].lastUsage = [{ ...accounts[1].lastUsage![0], usedPercentage: 0 }];
+      await continuation.recheck();
+      expect(continuation.isHandling('session-1')).toBe(false);
+    });
   });
 
   it('reports nothing switched when the restart did not happen', async () => {
