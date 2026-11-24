@@ -537,8 +537,11 @@ interface ActivityEngineOptions {
   staleAfterHeartbeatForcedMs?: number; // default 30_000 (stale-thinking hold, heartbeat-forced turns only)
   idleStabilityWindowMs?: number;    // default 400
   now?: () => number;                // testability
+  isHeld?: (sessionId: string) => boolean; // SSH link down: a due watchdog waits, asking again every HELD_WATCHDOG_RECHECK_MS
 }
 ```
+
+`isHeld` answers true while nothing can reach the engine for a session, because it runs on an SSH host whose link is down, so silence proves nothing. A watchdog that comes due then waits instead of forcing idle, and asks again every `HELD_WATCHDOG_RECHECK_MS` (5 s, exported from `shapes.ts`). The caller resets the liveness anchor when the hold ends (`markThinkingSignal`).
 
 Plumbed through `SessionManagerOptions.activityEngineOptions` for tests.
 

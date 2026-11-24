@@ -41,7 +41,9 @@ Each task gets its own git worktree so agents work in isolation. Multiple agents
 Format: `{slug}-{taskId8}`, whatever the base branch (`computeAutoBranchName` in
 `src/shared/slugify.ts`).
 
-- `slug` - slugified task title (lowercase, hyphens, truncated)
+- `slug` - the task title, lowercased, each run of non-alphanumerics turned into one hyphen,
+  hyphens trimmed from both ends, cut to 20 characters, then trailing hyphens trimmed again
+  (`slugify`); `task` when nothing is left
 - `taskId8` - first 8 characters of the task UUID
 
 Example: `fix-auth-bug-a1b2c3d4`.

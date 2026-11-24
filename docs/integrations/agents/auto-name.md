@@ -6,6 +6,8 @@ tags: [agents, auto-name]
 sources:
   - resource: src/main/agent/shared/auto-name.ts
   - resource: src/main/agent/shared/cli-print.ts
+  - resource: src/main/agent/shared/cli-answer.ts
+    title: answer-run output parsing (runCliPrintAnswer)
   - resource: src/main/agent/shared/summarize-rate-limit.ts
   - resource: src/renderer/lib/auto-name-scheduler.ts
   - resource: src/renderer/components/NameFromPromptButton.tsx

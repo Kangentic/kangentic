@@ -526,7 +526,8 @@ in one Sentry org, one triage surface.
     defect. The runner rethrows whatever the row threw, so a `TypeError` that lands during the
     move still reports.
   - `mobile_verb` (tag `verb`, plus `relay_dial_id`), `automation_runner` (tag `automation_type`), `turn_end`,
-    `workflow_engine` (tag `stage`), `pr` (tag `stage`), `browser_driver` (tag `kind`, built-in
+    `workflow_engine` (tag `stage`), `pr` (tag `stage`), `git_actions` (tag `stage`:
+    `terminal_delivery` or `link_created_pr`), `board-sign-in-keep-alive` (tag `provider`), `browser_driver` (tag `kind`, built-in
     classes and the attach, capture and composite failures only), `browser_passkey_guard` (tag
     `surface`: `lane`, `drive` or `created`, for a virtual passkey authenticator a guest refused;
     `src/main/browser/passkey-guard.ts`, no new data class). A `ScreenshotNotComposited`
@@ -616,8 +617,10 @@ in one Sentry org, one triage surface.
     `utility_process.stderrTail` is the host's stderr, redacted as a crash report's is.
   - `pty_host` also reports the first host crash of a run, fingerprinted
     `['utility-process-first-crash', service, cause]`, apart from the five-crash latch.
-  - `retrieval`: the worker's reply carries the error's class and code, and a sqlite-vec load
-    failure and an embeddings init failure each report once. A sqlite-vec load failure
+  - `retrieval_worker`: the worker's reply carries the error's class and code, and a sqlite-vec load
+    failure and an embeddings init failure each report once. A worker report is fingerprinted
+    `['retrieval-worker', code, errorCode or errorName or 'none']`; the only worker `code` is
+    `sqlite_vec_load`. A sqlite-vec load failure
     (`sqlite_vec_load`) also carries `load_cause`, the loader's reason as a fixed word (`not_found`,
     `bad_image`, `blocked_by_policy`, `access_denied`, `entry_point` or `other`), and
     `vec_file_exists` (`yes` or `no`). The worker reads both: the cause from SQLite's message
@@ -831,7 +834,9 @@ in one Sentry org, one triage surface.
 - **Handled errors are forwarded too** (`reportHandledError`; the renderer counterpart,
   `reportHandledRendererError`, serves the monaco funnel above): the deliberate catch sites that
   otherwise emit only a sanitized count - updater structural failures (`source: updater`), PTY
-  spawn failures (`source: pty_spawn`), a Kangentic utility worker that has crashed past its restart cap
+  spawn failures (`source: pty_spawn`), an agent history view Kangentic did not recognize
+  (`source: history_view`, tag `agent`, fingerprinted `['history-view', agent]`), a failed read of
+  the global database (`source: global_db_read`, tag `operation`), a Kangentic utility worker that has crashed past its restart cap
   (`source: utility_process`, with `service`, `exitCode`, `crashCount`, and `cause`, fingerprinted
   `['utility-process-latched', service, cause]`, its stderr tail run through `redactEventText`; an embed
   worker that could not load a native module, `ERR_DLOPEN_FAILED`, is reported once a run in its place with
@@ -845,7 +850,8 @@ in one Sentry org, one triage surface.
   `empty_scan`, `process_list`, `window_list`, `connection_list`, `reap_error`, `host_timeout`,
   `host_exited`, `host_error`, `wsl_error`), once per stage and code per launch; the message is
   fixed, and only a `reader_load` event carries text, the path-stripped load error in a
-  `task_reap` context, since any other failure's text can come from a process scan. The three
+  `task_reap` context, since any other failure's text can come from a process scan. The report
+  is fingerprinted `['task-reap', stage, code]`. The three
   host codes are main's request to the pty host failing with no result. `host_timeout`: a running
   host did not answer within the budget, which starts when the request's batch starts running in
   the host, not when main sent it. `host_exited`: the host exited before it answered, or was still

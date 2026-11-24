@@ -16,6 +16,9 @@ sources:
   - resource: src/main/agent/commands/column-enums.ts
   - resource: src/main/agent/commands/task-ordering.ts
   - resource: src/main/agent/commands/running-work-guard.ts
+  - resource: src/main/agent/commands/task-resolver.ts
+  - resource: src/main/agent/commands/bounded-tail-read.ts
+  - resource: src/main/agent/commands/attachment-input.ts
   - resource: src/main/ipc/helpers/task-running-work.ts
   - resource: src/main/agent/shared/git-exclude.ts
   - resource: src/main/ipc/handlers/sessions.ts
