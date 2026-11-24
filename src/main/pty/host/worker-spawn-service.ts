@@ -25,7 +25,7 @@
 import { recordRelayedSyncSpan } from '../../diagnostics/event-loop-lag';
 import { killChildTreeByPid } from '../../shared/child-tree-stop';
 import { LocalSpawnService, type HostSpawnService, type ProcessTableProbe, type SpawnServiceHooks } from './host-spawn-service';
-import type { HostExecRequest, HostExecResult, PtyHostCliSpawnParams } from './protocol';
+import type { CliStopMode, HostExecRequest, HostExecResult, PtyHostCliSpawnParams } from './protocol';
 import { HostHandledErrors } from './host-handled-error';
 import type { FromSpawnWorkerMessage, SpawnWorkerData, ToSpawnWorkerMessage } from './spawn-worker/protocol';
 import type { ProcessInfo } from '../../activity-engine/background-shell/process-tree';
@@ -61,7 +61,9 @@ interface WorkerRun {
   pid: number | null;
   exited: boolean;
   /** A stop asked for before the pid was known, sent once it is so the pid can be pinned first. */
-  stopPending: boolean;
+  stopPending: CliStopMode | null;
+  /** The app never stops this run by itself (`PtyHostCliSpawnParams.outlivesApp`). */
+  outlivesApp: boolean;
 }
 
 interface RunPin {
@@ -121,7 +123,7 @@ export class WorkerSpawnService implements HostSpawnService {
       this.ensureFallback().startCli(params);
       return;
     }
-    this.runs.set(params.processId, { pid: null, exited: false, stopPending: false });
+    this.runs.set(params.processId, { pid: null, exited: false, stopPending: null, outlivesApp: params.outlivesApp === true });
     this.send(worker, { type: 'cliSpawn', params });
   }
 
@@ -141,9 +143,9 @@ export class WorkerSpawnService implements HostSpawnService {
     if (this.worker) this.send(this.worker, data === undefined ? { type: 'cliEndInput', processId } : { type: 'cliEndInput', processId, data });
   }
 
-  stopCli(processId: number): void {
+  stopCli(processId: number, mode: CliStopMode = 'tree'): void {
     if (this.forwardToFallback(processId)) {
-      this.fallback?.stopCli(processId);
+      this.fallback?.stopCli(processId, mode);
       return;
     }
     const run = this.runs.get(processId);
@@ -151,25 +153,28 @@ export class WorkerSpawnService implements HostSpawnService {
     // The pid comes back one round trip after the start; the stop follows it,
     // so a Windows tree kill never runs on a pid this thread has not pinned.
     if (run.pid === null && !run.exited) {
-      run.stopPending = true;
+      run.stopPending = mode;
       return;
     }
-    this.pinBeforeStop(run);
-    this.send(this.worker, { type: 'cliStop', processId });
+    this.sendStop(this.worker, processId, run, mode);
   }
 
   stopAllCli(): void {
     this.fallback?.stopAllCli();
     if (!this.worker) return;
-    for (const run of this.runs.values()) this.pinBeforeStop(run);
+    // The worker leaves a run that outlives the app alone, so its pid needs no pin.
+    for (const run of this.runs.values()) {
+      if (!run.outlivesApp) this.pinBeforeStop(run);
+    }
     this.send(this.worker, { type: 'cliStopAll' });
   }
 
   /** Every run posted and not yet exited, pid known or not: the worker may
-   *  already have started it, and the host's shutdown must wait for it. */
+   *  already have started it, and the host's shutdown must wait for it. A run
+   *  that outlives the app is not waited for. */
   get liveCliCount(): number {
     let count = this.fallback?.liveCliCount ?? 0;
-    for (const run of this.runs.values()) if (!run.exited) count += 1;
+    for (const run of this.runs.values()) if (!run.exited && !run.outlivesApp) count += 1;
     return count;
   }
 
@@ -323,11 +328,18 @@ export class WorkerSpawnService implements HostSpawnService {
     const run = this.runs.get(processId);
     if (!run || run.pid !== null) return;
     run.pid = pid;
-    if (!run.stopPending) return;
-    run.stopPending = false;
+    const pendingMode = run.stopPending;
+    if (pendingMode === null) return;
+    run.stopPending = null;
     if (!this.worker) return;
-    this.pinBeforeStop(run);
-    this.send(this.worker, { type: 'cliStop', processId });
+    this.sendStop(this.worker, processId, run, pendingMode);
+  }
+
+  /** Send a stop to the worker, pinning the run's pid first when the stop is a tree kill. */
+  private sendStop(worker: SpawnWorkerHandle, processId: number, run: WorkerRun, mode: CliStopMode): void {
+    // `process` starts no taskkill, so there is nothing for a pin to cover.
+    if (mode !== 'process') this.pinBeforeStop(run);
+    this.send(worker, mode === 'tree' ? { type: 'cliStop', processId } : { type: 'cliStop', processId, mode });
   }
 
   private failPendingRequests(message: string): void {
@@ -381,8 +393,9 @@ export class WorkerSpawnService implements HostSpawnService {
       // died, so it is still running with nothing reading it. Its tree is
       // stopped by pid, as main stops a run a lost host left behind. A pid is
       // unknown only when the worker died in the turn it spawned the child,
-      // before its `cliStarted` left.
-      if (run.pid !== null && !run.exited) killChildTreeByPid(run.pid);
+      // before its `cliStarted` left. A run that outlives the app is left
+      // running: only main's handle on it ends.
+      if (run.pid !== null && !run.exited && !run.outlivesApp) killChildTreeByPid(run.pid);
       this.options.emit({ type: 'cliError', processId, error: { message: lost } });
       this.options.emit({ type: 'cliClose', processId, code: null, signal: null });
     }

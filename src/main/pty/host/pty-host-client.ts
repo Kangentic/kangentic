@@ -18,6 +18,7 @@ import { killChildTreeByPid } from '../../shared/child-tree-stop';
 import { PtyHostCore } from './pty-host-core';
 import {
   fromPtyHostError,
+  type CliStopMode,
   type HostExecRequest,
   type HostExecResult,
   type HostProcessInfo,
@@ -316,6 +317,8 @@ export class RemoteCliProcess extends EventEmitter implements CliChildProcess {
   constructor(
     readonly processId: number,
     private readonly transport: Pick<PtyHostTransport, 'post'>,
+    /** The app never stops this run by itself (`PtyHostCliSpawnParams.outlivesApp`). */
+    private readonly outlivesApp = false,
   ) {
     super();
     this.stdin = new RemoteCliStdin(processId, transport);
@@ -331,9 +334,13 @@ export class RemoteCliProcess extends EventEmitter implements CliChildProcess {
     return true;
   }
 
-  stopTree(): void {
-    if (this.closed || this.exitCode !== null || this.signalCode !== null) return;
-    this.transport.post({ type: 'cliStop', processId: this.processId });
+  stopTree(mode: CliStopMode = 'tree'): void {
+    if (this.closed) return;
+    // `treeNow` reaches what an exited run left holding its output open (POSIX),
+    // so it is sent until the run closes. Every other stop is for a live run.
+    const exited = this.exitCode !== null || this.signalCode !== null;
+    if (exited && mode !== 'treeNow') return;
+    this.transport.post(mode === 'tree' ? { type: 'cliStop', processId: this.processId } : { type: 'cliStop', processId: this.processId, mode });
   }
 
   deliverSpawned(pid: number | null): void {
@@ -368,7 +375,8 @@ export class RemoteCliProcess extends EventEmitter implements CliChildProcess {
   deliverHostLost(): void {
     if (this.closed) return;
     // Its pipes went with the host, but on Windows a child outlives its parent.
-    if (this.pid !== undefined && this.exitCode === null && this.signalCode === null) killChildTreeByPid(this.pid);
+    // A run that outlives the app is left running: only this handle ends.
+    if (!this.outlivesApp && this.pid !== undefined && this.exitCode === null && this.signalCode === null) killChildTreeByPid(this.pid);
     this.deliverError(new Error('The pty host stopped while the agent was running'));
     if (this.exitCode === null && this.signalCode === null) this.deliverExit(null, 'SIGKILL');
     this.deliverClose(null, 'SIGKILL');
@@ -639,7 +647,7 @@ export class PtyHostClient {
   spawnCli(command: string, args: string[], options: OffMainCliOptions): RemoteCliProcess {
     const processId = this.nextProcessId;
     this.nextProcessId += 1;
-    const handle = new RemoteCliProcess(processId, this.transport);
+    const handle = new RemoteCliProcess(processId, this.transport, options.outlivesApp === true);
     this.cliHandles.set(processId, handle);
     this.transport.post({ type: 'cliSpawn', params: { processId, command, args, ...options } });
     return handle;

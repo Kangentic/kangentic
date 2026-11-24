@@ -19,7 +19,7 @@ import { childProcessEnv } from '../../shared/child-env';
 import { HostCliProcesses } from './host-cli-processes';
 import { runHostExec } from './host-exec';
 import type { ToolFailureCause, ToolRunner } from '../process-tag/process-scan';
-import type { HostExecFailure, HostExecRequest, HostExecResult, PtyHostCliSpawnParams, PtyHostEvent } from './protocol';
+import type { CliStopMode, HostExecFailure, HostExecRequest, HostExecResult, PtyHostCliSpawnParams, PtyHostEvent } from './protocol';
 
 /** The part of a process-tree probe the process table reads (`host-process-table.ts`). */
 export type ProcessTableProbe = Pick<ProcessTreeProbe, 'listAllProcesses' | 'dispose'>;
@@ -32,10 +32,11 @@ export interface HostSpawnService {
   startCli(params: PtyHostCliSpawnParams): void;
   writeCli(processId: number, data: string): void;
   endCliInput(processId: number, data: string | undefined): void;
-  stopCli(processId: number): void;
-  /** The host is quitting: stop every run still going. */
+  /** Stop a run (`CliStopMode`); its whole tree, with the grace, when no mode is given. */
+  stopCli(processId: number, mode?: CliStopMode): void;
+  /** The host is quitting: stop every run still going, but for one that outlives the app. */
   stopAllCli(): void;
-  /** Runs whose process started and has not exited yet. */
+  /** Runs a shutdown waits for: started, not yet exited, and not one that outlives the app. */
   readonly liveCliCount: number;
   /** Release what the service holds (the worker). */
   dispose(): void;
@@ -125,8 +126,8 @@ export class LocalSpawnService implements HostSpawnService {
     this.cliProcesses.endInput(processId, data);
   }
 
-  stopCli(processId: number): void {
-    this.cliProcesses.stop(processId);
+  stopCli(processId: number, mode?: CliStopMode): void {
+    this.cliProcesses.stop(processId, mode);
   }
 
   stopAllCli(): void {

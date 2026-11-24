@@ -7,8 +7,18 @@
  * instead of leaving its caller waiting.
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { spawn } from 'node:child_process';
+
+// The real by-pid stop, watched: one case needs to see that it was never asked
+// for a run the app leaves alone, and the others still stop a real process.
+const killChildTreeByPidSpy = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/shared/child-tree-stop', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/shared/child-tree-stop')>();
+  killChildTreeByPidSpy.mockImplementation(actual.killChildTreeByPid);
+  return { ...actual, killChildTreeByPid: killChildTreeByPidSpy };
+});
+
 import { PtyHostClient } from '../../src/main/pty/host/pty-host-client';
 import type { PtyHostCommand, PtyHostEvent } from '../../src/main/pty/host/protocol';
 import type { PtyHostLifecycleListener, PtyHostTransport } from '../../src/main/pty/host/pty-host-client';
@@ -103,6 +113,59 @@ describe('RemoteCliProcess', () => {
     host.posted.length = 0;
     child.stopTree();
     expect(host.posted).toEqual([]);
+  });
+
+  it('sends a stop\'s mode, and the immediate tree stop even after the run exited, until it closes', () => {
+    const host = fakeHost();
+    const child = host.client.spawnCli('sh', ['-c', 'npm install'], OPTIONS);
+    const processId = child.processId;
+    host.posted.length = 0;
+
+    child.stopTree('process');
+    host.emit({ type: 'cliExit', processId, code: 0, signal: null });
+    // Exited with its output still open, as a script that left something in the
+    // background is. Only the immediate tree stop still has anything to reach.
+    child.stopTree();
+    child.stopTree('process');
+    child.stopTree('treeNow');
+    host.emit({ type: 'cliClose', processId, code: 0, signal: null });
+    child.stopTree('treeNow');
+
+    expect(host.posted).toEqual([
+      { type: 'cliStop', processId, mode: 'process' },
+      { type: 'cliStop', processId, mode: 'treeNow' },
+    ]);
+  });
+
+  it('carries what the run was asked for to the host: no pipes, a shown window, a file as stdin', () => {
+    const host = fakeHost();
+    const asked = { ...OPTIONS, stdio: 'ignore' as const, windowsHide: false, outlivesApp: true, stdinFile: '/work/input.bin' };
+
+    const child = host.client.spawnCli('sh', [], asked);
+
+    expect(host.posted).toEqual([{ type: 'cliSpawn', params: { processId: child.processId, command: 'sh', args: [], ...asked } }]);
+  });
+
+  it('leaves a run that outlives the app running when the host dies, and still ends its handle', () => {
+    const host = fakeHost();
+    const child = host.client.spawnCli('sh', [], { ...OPTIONS, outlivesApp: true });
+    // A pid nothing here owns: the assertion is that no stop is ever aimed at it.
+    host.emit({ type: 'cliSpawned', processId: child.processId, pid: 987_654 });
+    const seen: string[] = [];
+    child.on('error', (error: Error) => seen.push(`error ${error.message}`));
+    child.on('exit', (code, signal) => seen.push(`exit ${code} ${signal}`));
+    child.on('close', () => seen.push('close'));
+    killChildTreeByPidSpy.mockClear();
+
+    host.hostDown();
+
+    expect(killChildTreeByPidSpy).not.toHaveBeenCalled();
+    // The caller still hears the run is over for it: nothing reads that process any more.
+    expect(seen).toEqual([
+      'error The pty host stopped while the agent was running',
+      'exit null SIGKILL',
+      'close',
+    ]);
   });
 
   it('reports a failed start as an error event with its code', () => {

@@ -1,34 +1,38 @@
 /**
- * The pty host's agent CLI runs: `off-main-cli.ts` on main's side, where
- * `spawnCli` starts every headless run (an Ask answer, a task summary, an
- * auto-name, a warm answer session). On Windows libuv runs CreateProcess
- * synchronously on the calling thread, 13 to 67 ms a run measured on main
- * during the summary backfill, so the runs start here instead.
+ * The pty host's streamed child processes: `off-main-cli.ts` on main's side.
+ * `spawnCli` starts every headless agent run through it (an Ask answer, a task
+ * summary, an auto-name, a warm answer session), and so does everything else
+ * main runs with a stream or a stop: git, a script, `ssh`. On Windows libuv
+ * runs CreateProcess synchronously on the calling thread, 13 to 67 ms a run
+ * measured on main during the summary backfill, so the runs start here instead.
  *
  * Output goes back as it arrives (`cliData`, in order, then `cliExit` and
- * `cliClose`), so a streamed answer still streams. A stop takes the CLI's
- * whole tree, as `stopCli` did on main: a `.cmd` shim runs the CLI as a child
- * of cmd.exe, and a POSIX wrapper script starts node under it.
+ * `cliClose`), so a streamed answer still streams. A stop takes the run's
+ * whole tree by default, as `stopCli` did on main: a `.cmd` shim runs the CLI
+ * as a child of cmd.exe, and a POSIX wrapper script starts node under it.
  *
  * It never launches this process's own executable: with the RunAsNode fuse
  * off, a packaged Kangentic.exe started as a child boots a second app.
  * `tests/unit/pty-host-boundary.test.ts` pins that, as it does for `host-exec.ts`.
  */
 
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, type ChildProcess, type StdioOptions } from 'node:child_process';
+import fs from 'node:fs';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
-import { childHasExited, stopChildTree } from '../../shared/child-tree-stop';
+import { childHasExited, killChildTreeNow, stopChildTree } from '../../shared/child-tree-stop';
 import { launchesOwnBinary, leadingExecutable, ownExecutables, spawnSpanLabel } from './host-exec';
-import { toPtyHostError, type PtyHostCliSpawnParams, type PtyHostEvent } from './protocol';
+import { toPtyHostError, type CliStopMode, type PtyHostCliSpawnParams, type PtyHostEvent } from './protocol';
 
 export { leadingExecutable };
 
 interface CliRun {
-  child: ChildProcessWithoutNullStreams;
+  child: ChildProcess;
   /** Leads its own process group (POSIX), so a stop signals the group. */
   leadsGroup: boolean;
   /** A Windows tree kill was started; a second would be a wasted spawn. */
   treeKillStarted: boolean;
+  /** The app never stops this run by itself (`PtyHostCliSpawnParams.outlivesApp`). */
+  outlivesApp: boolean;
 }
 
 export class HostCliProcesses {
@@ -55,29 +59,39 @@ export class HostCliProcesses {
       this.failToStart(processId, new Error('The pty host does not launch its own executable'));
       return;
     }
-    let child: ChildProcessWithoutNullStreams;
+    let child: ChildProcess;
+    // A file as stdin is opened here and handed to the child, which keeps its
+    // own copy: this one is closed as soon as the spawn returns.
+    let stdinDescriptor: number | null = null;
     try {
+      if (params.stdinFile !== undefined && params.stdio !== 'ignore') stdinDescriptor = fs.openSync(params.stdinFile, 'r');
+      const stdio: StdioOptions = params.stdio === 'ignore' ? 'ignore' : [stdinDescriptor ?? 'pipe', 'pipe', 'pipe'];
       // Labelled: this is the cost moved here from main, paid on the thread
       // that also carries terminal output. The label names the program.
       child = timeSyncWork(spawnSpanLabel('cli', executable, process.platform, params.caller), () => this.spawnChild(params.command, params.args, {
         cwd: params.cwd,
         shell: params.shell,
-        windowsHide: true,
-        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: params.windowsHide ?? true,
+        stdio,
         env: params.env,
         ...(params.detached ? { detached: true } : {}),
       }));
     } catch (error) {
       this.failToStart(processId, error);
       return;
+    } finally {
+      if (stdinDescriptor !== null) fs.closeSync(stdinDescriptor);
     }
-    this.runs.set(processId, { child, leadsGroup: params.detached, treeKillStarted: false });
+    const outlivesApp = params.outlivesApp === true;
+    this.runs.set(processId, { child, leadsGroup: params.detached, treeKillStarted: false, outlivesApp });
+    // Nothing here waits for a run the app leaves behind, so it does not hold this thread's loop open.
+    if (outlivesApp) child.unref();
     child.once('spawn', () => this.emit({ type: 'cliSpawned', processId, pid: child.pid ?? null }));
-    child.stdout.on('data', (chunk: Buffer) => this.emit({ type: 'cliData', processId, stream: 'stdout', data: chunk }));
-    child.stderr.on('data', (chunk: Buffer) => this.emit({ type: 'cliData', processId, stream: 'stderr', data: chunk }));
+    child.stdout?.on('data', (chunk: Buffer) => this.emit({ type: 'cliData', processId, stream: 'stdout', data: chunk }));
+    child.stderr?.on('data', (chunk: Buffer) => this.emit({ type: 'cliData', processId, stream: 'stderr', data: chunk }));
     // A CLI that exits before reading its stdin closes the pipe under a long
     // prompt, and the write fails as an EPIPE event; `cliExit` reports it.
-    child.stdin.on('error', () => undefined);
+    child.stdin?.on('error', () => undefined);
     child.on('error', (error) => this.emit({ type: 'cliError', processId, error: toPtyHostError(error) }));
     child.on('exit', (code, signal) => this.emit({ type: 'cliExit', processId, code, signal }));
     child.on('close', (code, signal) => {
@@ -90,7 +104,7 @@ export class HostCliProcesses {
     const run = this.runs.get(processId);
     if (!run) return;
     try {
-      run.child.stdin.write(data);
+      run.child.stdin?.write(data);
     } catch {
       // The stdin pipe is already closed; the exit reports why.
     }
@@ -100,21 +114,23 @@ export class HostCliProcesses {
     const run = this.runs.get(processId);
     if (!run) return;
     try {
-      if (data === undefined) run.child.stdin.end();
-      else run.child.stdin.end(data);
+      if (data === undefined) run.child.stdin?.end();
+      else run.child.stdin?.end(data);
     } catch {
       // As above.
     }
   }
 
-  stop(processId: number): void {
+  stop(processId: number, mode: CliStopMode = 'tree'): void {
     const run = this.runs.get(processId);
-    if (run) this.stopRun(run);
+    if (run) this.stopRun(run, mode);
   }
 
-  /** The app is quitting: stop every run still going. */
+  /** The app is quitting: stop every run still going, but for one that outlives it. */
   stopAll(): void {
-    for (const run of this.runs.values()) this.stopRun(run);
+    for (const run of this.runs.values()) {
+      if (!run.outlivesApp) this.stopRun(run, 'tree');
+    }
   }
 
   /** A started run's pid, known as soon as the spawn returns: before its
@@ -123,11 +139,12 @@ export class HostCliProcesses {
     return this.runs.get(processId)?.child.pid;
   }
 
-  /** Runs whose process started and has not exited yet. */
+  /** Runs whose process started and has not exited yet, which a shutdown
+   *  waits for. One that outlives the app is not waited for. */
   get liveCount(): number {
     let count = 0;
     for (const run of this.runs.values()) {
-      if (run.child.pid !== undefined && !childHasExited(run.child)) count += 1;
+      if (!run.outlivesApp && run.child.pid !== undefined && !childHasExited(run.child)) count += 1;
     }
     return count;
   }
@@ -138,11 +155,23 @@ export class HostCliProcesses {
     this.emit({ type: 'cliClose', processId, code: null, signal: null });
   }
 
-  /** Stop a run and what it started (`stopChildTree`): its `taskkill` goes
-   *  through this runner's spawn, the run is its own latch, so a second stop
-   *  of it spawns no second `taskkill`, and the run's pid is pinned while
-   *  taskkill runs where the host can pin it. */
-  private stopRun(run: CliRun): void {
-    stopChildTree(run.child, { leadsGroup: run.leadsGroup, spawnProcess: this.spawnChild, treeKillLatch: run, pinRoot: this.pinRoot });
+  /**
+   * Stop a run (`CliStopMode`). A tree stop's `taskkill` goes through this
+   * runner's spawn, the run is its own latch, so a second stop of it spawns no
+   * second `taskkill`, and the run's pid is pinned while taskkill runs where
+   * the host can pin it.
+   */
+  private stopRun(run: CliRun, mode: CliStopMode): void {
+    if (mode === 'process') {
+      try {
+        run.child.kill();
+      } catch {
+        // report-ok: the process is already gone, which is what the stop wanted.
+      }
+      return;
+    }
+    const treeStop = { leadsGroup: run.leadsGroup, spawnProcess: this.spawnChild, treeKillLatch: run, pinRoot: this.pinRoot };
+    if (mode === 'treeNow') killChildTreeNow(run.child, treeStop);
+    else stopChildTree(run.child, treeStop);
   }
 }

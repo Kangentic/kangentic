@@ -340,6 +340,71 @@ describe('WorkerSpawnService against a fake worker', () => {
     service.dispose();
   });
 
+  it('forwards a stop\'s mode, and takes no pin for a stop of the one process, which starts no taskkill', () => {
+    const pinRun = vi.fn((_pid: number) => () => undefined);
+    const { service, latest } = fakeService({ pinRun });
+    service.startCli(cliParams(1));
+    latest().reply({ type: 'cliStarted', processId: 1, pid: 7101 });
+
+    service.stopCli(1, 'process');
+    expect(pinRun).not.toHaveBeenCalled();
+    service.stopCli(1, 'treeNow');
+    expect(pinRun).toHaveBeenCalledWith(7101);
+
+    expect(sentOfType(latest(), 'cliStop')).toEqual([
+      { type: 'cliStop', processId: 1, mode: 'process' },
+      { type: 'cliStop', processId: 1, mode: 'treeNow' },
+    ]);
+    service.dispose();
+  });
+
+  it('keeps the mode of a stop asked for before the pid is known', () => {
+    const { service, latest } = fakeService();
+    service.startCli(cliParams(1));
+    service.stopCli(1, 'treeNow');
+    expect(sentOfType(latest(), 'cliStop')).toEqual([]);
+
+    latest().reply({ type: 'cliStarted', processId: 1, pid: 7102 });
+
+    expect(sentOfType(latest(), 'cliStop')).toEqual([{ type: 'cliStop', processId: 1, mode: 'treeNow' }]);
+    service.dispose();
+  });
+
+  it('sends the immediate tree stop for a run that exited but has not closed, with no pin on its dead pid', () => {
+    const pinRun = vi.fn((_pid: number) => () => undefined);
+    const { service, latest } = fakeService({ pinRun });
+    service.startCli(cliParams(1));
+    latest().reply({ type: 'cliStarted', processId: 1, pid: 7103 });
+    latest().reply({ type: 'cliEvent', event: { type: 'cliExit', processId: 1, code: 0, signal: null } });
+
+    service.stopCli(1, 'treeNow');
+
+    expect(pinRun).not.toHaveBeenCalled();
+    expect(sentOfType(latest(), 'cliStop')).toEqual([{ type: 'cliStop', processId: 1, mode: 'treeNow' }]);
+    service.dispose();
+  });
+
+  it('leaves a run that outlives the app out of the shutdown: not waited for, not pinned, and not stopped when the worker dies', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const pinned: number[] = [];
+    const { service, latest, events } = fakeService({ pinRun: (pid) => { pinned.push(pid); return () => undefined; } });
+    service.startCli(cliParams(1, { outlivesApp: true }));
+    service.startCli(cliParams(2));
+    latest().reply({ type: 'cliStarted', processId: 1, pid: 7201 });
+    latest().reply({ type: 'cliStarted', processId: 2, pid: 7202 });
+
+    // A shutdown waits for the ordinary run only.
+    expect(service.liveCliCount).toBe(1);
+    service.stopAllCli();
+    expect(pinned).toEqual([7202]);
+
+    latest().emit('exit', 1);
+    // The dead worker's ordinary run is stopped by pid. The other keeps running,
+    // and both end for main, since nothing reads either any more.
+    expect(killChildTreeByPidMock.mock.calls).toEqual([[7202]]);
+    expect(events.filter((event) => event.type === 'cliClose').map((event) => event.processId)).toEqual([1, 2]);
+  });
+
   it('counts a run from its start until its cliExit, or its cliClose when the start failed', () => {
     const { service, latest } = fakeService();
     for (const processId of [1, 2, 3]) service.startCli(cliParams(processId));
