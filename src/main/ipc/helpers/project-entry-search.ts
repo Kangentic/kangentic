@@ -1,10 +1,9 @@
 import fs from 'node:fs/promises';
 import type { Dirent } from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
 import { toForwardSlash } from '../../../shared/paths';
-import { stopChildTree } from '../../shared/child-tree-stop';
 import { mapWithConcurrency } from '../../shared/map-with-concurrency';
+import { spawnOffMain } from '../../utility-process/off-main-spawn';
 import type { ProjectSearchEntry, ProjectSearchEntriesInput, ProjectSearchEntriesResult } from '../../../shared/types';
 import { RefusalError } from '../../../shared/refusal';
 
@@ -55,15 +54,6 @@ export function clearProjectEntrySearchCache(cwd?: string): void {
   }
   workspaceIndexCache.clear();
   inFlightWorkspaceIndexBuilds.clear();
-}
-
-/**
- * `taskkill /T /F` on Windows, SIGTERM then SIGKILL on POSIX, and nothing once
- * Node has handled the child's exit, since its handle no longer pins the pid
- * (`child-tree-stop.ts`). The taskkill starts without blocking the main loop.
- */
-function killProcessTree(child: ReturnType<typeof spawn>): void {
-  stopChildTree(child, { leadsGroup: false });
 }
 
 function parentPathOf(input: string): string | undefined {
@@ -117,10 +107,14 @@ async function runGit(
   options?: { allowNonZeroExit?: boolean; stdin?: string },
 ): Promise<{ code: number; stdout: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn('git', args, {
-      cwd,
-      stdio: ['pipe', 'pipe', 'ignore'],
-    });
+    // Started in the pty host, never on this thread (`spawnOffMain`): the index
+    // is built while the user types, and on Windows a start here holds main.
+    // The stop is the tree stop: `taskkill /T /F` on Windows, SIGTERM then
+    // SIGKILL on POSIX, and nothing once git has exited (`child-tree-stop.ts`).
+    const run = spawnOffMain('git', args, { cwd });
+    const child = run.child;
+    // Nothing reads git's stderr, and a pipe nobody drains blocks it once full.
+    child.stderr.resume();
 
     const stdoutChunks: Buffer[] = [];
     let stdoutBytes = 0;
@@ -133,25 +127,25 @@ async function runGit(
     };
 
     const timeoutId = setTimeout(() => {
-      killProcessTree(child);
+      run.stop();
       finish(() => reject(new RefusalError(`git ${args.join(' ')} timed out`)));
     }, 20_000);
 
     child.stdout.on('data', (chunk: Buffer) => {
       stdoutBytes += chunk.length;
       if (stdoutBytes > GIT_MAX_BUFFER_BYTES) {
-        killProcessTree(child);
+        run.stop();
         finish(() => reject(new RefusalError(`git ${args.join(' ')} exceeded max buffer`)));
         return;
       }
       stdoutChunks.push(chunk);
     });
 
-    child.on('error', (error) => {
+    child.on('error', (error: Error) => {
       finish(() => reject(error));
     });
 
-    child.on('close', (code) => {
+    child.on('close', (code: number | null) => {
       const stdout = Buffer.concat(stdoutChunks).toString('utf8');
       if (code === 0 || options?.allowNonZeroExit) {
         finish(() => resolve({ code: code ?? 1, stdout }));

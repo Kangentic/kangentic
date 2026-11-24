@@ -1,5 +1,5 @@
-import { spawn } from 'node:child_process';
 import { remoteGitRunnerFor } from './remote-git';
+import { spawnOffMain } from '../utility-process/off-main-spawn';
 
 /**
  * One file's bytes from a repository's object database, read through a single
@@ -67,22 +67,27 @@ export function readGitObject(gitDirectory: string, objectName: string, options:
   const remote = remoteGitRunnerFor(gitDirectory);
   if (remote) return remote.readObject(objectName, options);
   return new Promise((resolve, reject) => {
-    const child = spawn('git', ['cat-file', '--batch'], { cwd: gitDirectory, windowsHide: true });
+    // Started in the pty host, never on this thread (`spawnOffMain`): on Windows
+    // the start is a CreateProcess that holds whichever thread makes it.
+    const run = spawnOffMain('git', ['cat-file', '--batch'], { cwd: gitDirectory });
+    const child = run.child;
     let settled = false;
     let headerChunks: Buffer[] = [];
     let content: { objectId: string; bytes: Buffer; filled: number } | null = null;
     let stderrText = '';
 
+    // git starts nothing here, so stopping it early ends the one process: a
+    // tree stop would start a taskkill for every read answered by its header.
     const finish = (result: GitObjectRead, stopGit: boolean) => {
       if (settled) return;
       settled = true;
-      if (stopGit) child.kill();
+      if (stopGit) run.stop('process');
       resolve(result);
     };
     const fail = (message: string) => {
       if (settled) return;
       settled = true;
-      child.kill();
+      run.stop('process');
       reject(new Error(message));
     };
 
@@ -136,8 +141,8 @@ export function readGitObject(gitDirectory: string, objectName: string, options:
     child.stderr.on('data', (data: Buffer) => {
       if (stderrText.length < STDERR_KEPT_BYTES) stderrText += data.toString('utf8').slice(0, STDERR_KEPT_BYTES - stderrText.length);
     });
-    child.on('error', (error) => fail(`git cat-file could not start: ${error.message}`));
-    child.on('close', (code) => {
+    child.on('error', (error: Error) => fail(`git cat-file could not start: ${error.message}`));
+    child.on('close', (code: number | null) => {
       const detail = stderrText.trim();
       fail(`git cat-file exited with ${code} before it answered${detail === '' ? '' : `: ${detail}`}`);
     });
