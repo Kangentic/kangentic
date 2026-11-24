@@ -76,8 +76,8 @@
  *     app restart failed to clear the zombies).
  */
 
-import { spawn, type SpawnOptions } from 'node:child_process';
 import { isProcessAlive } from '../shared/process-liveness';
+import { execFileAsync, execRunFailureOf } from '../utility-process/off-main-exec';
 import type { StopProcessOutcome } from '../pty/process-tag/tagged-reap';
 
 export interface ZombieScanOptions {
@@ -824,8 +824,8 @@ export async function describeWorktreeHolders(
  */
 export async function killProcess(pid: number): Promise<void> {
   if (process.platform === 'win32') {
-    // /T walks the child tree, /F is force. Synchronous via spawn is
-    // fine here because we want to know if it failed.
+    // /T walks the child tree, /F is force. Awaited, because we want to
+    // know if it failed.
     try {
       await runCommandWithTimeout(
         'taskkill',
@@ -1025,8 +1025,9 @@ export const _internals = {
 };
 
 // ---------------------------------------------------------------------------
-// Generic spawn-with-timeout (purposefully not in git-spawn.ts because
-// that module's runGitWithTimeout is hard-coded to spawn `git`)
+// One command with a timeout, its stdout returned (purposefully not in
+// git-spawn.ts because that module's runGitWithTimeout is hard-coded to
+// spawn `git`)
 // ---------------------------------------------------------------------------
 
 interface RunCommandOptions {
@@ -1034,43 +1035,39 @@ interface RunCommandOptions {
   windowsHide?: boolean;
 }
 
-function runCommandWithTimeout(
+/**
+ * Past any process table these commands print. The full Windows listing with
+ * command lines runs to a few megabytes, and execFile's own cap is 1 MiB.
+ */
+const COMMAND_OUTPUT_MAX_BUFFER = 64 * 1024 * 1024;
+
+/**
+ * Runs through `execFileAsync`, so inside the app the process starts on the pty
+ * host's spawn worker: on Windows CreateProcess holds the thread that calls it,
+ * and the PowerShell scans measured 20 and 46 ms on main at boot. Loaded outside
+ * the app (the E2E janitor), no host is registered and the child starts here.
+ */
+async function runCommandWithTimeout(
   command: string,
   args: readonly string[],
   options: RunCommandOptions,
 ): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const controller = new AbortController();
-    const timeoutHandle = setTimeout(() => controller.abort(), options.timeoutMs);
-
-    const spawnOptions: SpawnOptions = {
-      signal: controller.signal,
+  try {
+    const { stdout } = await execFileAsync(command, args, {
+      timeout: options.timeoutMs,
       windowsHide: options.windowsHide ?? true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    };
-
-    const child = spawn(command, [...args], spawnOptions);
-    let stdout = '';
-    let stderr = '';
-    child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf8'); });
-    child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8'); });
-
-    child.on('error', (error: NodeJS.ErrnoException) => {
-      clearTimeout(timeoutHandle);
-      if (error.name === 'AbortError' || error.code === 'ABORT_ERR') {
-        reject(new Error(`${command} timed out after ${options.timeoutMs}ms`));
-        return;
-      }
-      reject(error);
+      maxBuffer: COMMAND_OUTPUT_MAX_BUFFER,
     });
-
-    child.on('close', (code) => {
-      clearTimeout(timeoutHandle);
-      if (code !== 0) {
-        reject(new Error(`${command} exited with code ${code}: ${stderr.trim()}`));
-        return;
-      }
-      resolve(stdout);
-    });
-  });
+    return stdout;
+  } catch (error) {
+    const failure = execRunFailureOf(error);
+    if (failure.kind === 'timeout') {
+      throw new Error(`${command} timed out after ${options.timeoutMs}ms`, { cause: error });
+    }
+    if (failure.kind === 'exit_code') {
+      const stderr = error instanceof Error && 'stderr' in error && typeof error.stderr === 'string' ? error.stderr : '';
+      throw new Error(`${command} exited with code ${failure.exitCode}: ${stderr.trim()}`, { cause: error });
+    }
+    throw error;
+  }
 }

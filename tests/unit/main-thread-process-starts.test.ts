@@ -96,10 +96,6 @@ const CLASSIFIED_STARTS: Record<string, ClassifiedStart> = {
   },
 
   // Still started on main's thread.
-  'src/devtools/main/ephemeral-projects.ts': {
-    bindings: ['execFile'],
-    reason: 'dev only: git clone and config for a preview project, on a TestHarness button press',
-  },
   'src/main/agent/shared/git-exclude.ts': {
     bindings: ['execFileSync'],
     reason: 'git ls-files during a Gemini or Qwen command build in a worktree: synchronous, bounded at one second',
@@ -111,10 +107,6 @@ const CLASSIFIED_STARTS: Record<string, ClassifiedStart> = {
   'src/main/git/git-object-reader.ts': {
     bindings: ['spawn'],
     reason: 'git cat-file --batch for one image preview read in the Changes panel',
-  },
-  'src/main/git/zombie-reaper.ts': {
-    bindings: ['spawn'],
-    reason: 'PowerShell or ps process scans: the dev boot sweep, and after a worktree removal failed',
   },
   'src/main/ipc/handlers/system.ts': {
     bindings: ['spawn'],
@@ -143,7 +135,6 @@ const CLASSIFIED_PACKAGES: Record<string, string> = {
   '@sentry/electron': 'additionalContext runs PowerShell or system_profiler only with deviceModelManufacturer on, which main never sets (pinned below)',
   '@sentry/node': 'nodeContextIntegration runs /usr/bin/sw_vers once at init, on macOS only',
   'electron-updater': 'the installer launch at quit-and-install, and one PowerShell signature check after an update downloads when the feed names a publisher',
-  'node-machine-id': 'REG.exe, ioreg or cat for the analytics client id, only when its file is missing, which is a first launch',
   'simple-git': 'every git read off a task lifecycle: branch summary, commit graph, blame, file history, the diff watcher and the Done probe',
 };
 
@@ -167,8 +158,12 @@ const EXTERNAL_PACKAGES: Record<string, { startsProcess: boolean; reason: string
   'sqlite-vec': { startsProcess: false, reason: 'resolves the vec0 extension\'s path, and starts no process' },
 };
 
-/** Packages that start a process from the thread that calls them. Never in main's graph, and never declared. */
-const BANNED_PACKAGES = ['font-list'];
+/**
+ * Packages that start a process from the thread that calls them, each replaced
+ * by code of ours: `font-list` by src/preload/local-fonts.ts, `node-machine-id`
+ * by src/main/analytics/machine-id.ts. Never in main's graph, never declared.
+ */
+const BANNED_PACKAGES = ['font-list', 'node-machine-id'];
 
 function readEsbuildExternals(): string[] {
   const buildSource = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'build.js'), 'utf-8');
@@ -375,8 +370,10 @@ describe('main starts no process on its own thread', () => {
     expect(inGraph, 'These packages start a process from the thread that calls them.').toEqual([]);
     const manifest = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf-8')) as {
       dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
     };
-    expect(BANNED_PACKAGES.filter((packageName) => packageName in (manifest.dependencies ?? {}))).toEqual([]);
+    const declared = { ...manifest.dependencies, ...manifest.devDependencies };
+    expect(BANNED_PACKAGES.filter((packageName) => packageName in declared)).toEqual([]);
   });
 
   it('never turns on the Sentry option that starts PowerShell from main', () => {
