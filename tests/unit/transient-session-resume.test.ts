@@ -78,6 +78,7 @@ vi.mock('../../src/main/agent/agent-registry', () => ({
 import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import { setAccountService, type AccountService } from '../../src/main/accounts/account-service';
+import { CursorAdapter } from '../../src/main/agent/adapters/cursor';
 import { registerTransientSessionHandlers, startCommandTerminal } from '../../src/main/ipc/handlers/transient-sessions';
 import { trackFeatureUsed } from '../../src/main/analytics/usage';
 import { IPC } from '../../src/shared/ipc-channels';
@@ -610,6 +611,28 @@ describe('startCommandTerminal: the conversation a fresh start opens', () => {
     // announced only after the spawn put the row in the registry.
     expect(adapter.createSessionId.mock.invocationCallOrder[0]).toBeLessThan(adapter.buildCommand.mock.invocationCallOrder[0]);
     expect(context.sessionManager.spawn.mock.invocationCallOrder[0]).toBeLessThan(context.sessionManager.emit.mock.invocationCallOrder[0]);
+  });
+
+  // Sentry DESKTOP-45: a Command Terminal never carries a prompt, so a Cursor in
+  // a mode it runs as a print turn has nothing to print and opens its session
+  // screen, which prints no id. Cursor's own decision answers, not a stub of it.
+  it.each(['bypassPermissions', 'dontAsk', 'auto'] as const)('creates and opens a chat for a Cursor terminal in %s, so it can be resumed from Earlier', async (permissionMode) => {
+    const cursor = new CursorAdapter();
+    const adapter = { ...makeChatAdapter('codex'), reportsLaunchSessionId: vi.fn(cursor.reportsLaunchSessionId.bind(cursor)) };
+    adapters.set('codex', adapter);
+    const context = createContext({});
+    context.configManager.getEffectiveConfig.mockReturnValue({
+      agent: { cliPaths: {}, permissionMode },
+      git: { worktreesEnabled: false, defaultBaseBranch: 'main' },
+      mcpServer: { enabled: false },
+    });
+
+    await spawn(context, { projectId: 'proj-1', slot: 'slot-1' });
+
+    expect(adapter.createSessionId).toHaveBeenCalledTimes(1);
+    expect(adapter.buildCommand).toHaveBeenCalledWith(expect.objectContaining({ permissionMode, sessionId: 'chat-created', resume: false }));
+    expect(context.sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ agentSessionId: 'chat-created', sessionIdCreation: 'ok' }));
+    expect(context.sessionManager.emit).toHaveBeenCalledWith('agent-session-id', 'session-1', 'mock-transient-task-id', 'proj-1', 'chat-created');
   });
 
   it('announces nothing for a shell that did not start', async () => {

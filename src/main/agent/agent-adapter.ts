@@ -782,8 +782,13 @@ export interface AgentAdapter {
    * must not create one first. Cursor's print path does (`stream-json` init).
    * Its session screen does not. Omitted, a fresh start that has
    * `createSessionId` creates one.
+   *
+   * `prompt` is the one the launch's command carries, the same value
+   * `buildCommand` gets, since a CLI may run a different way with none: a
+   * prompt typed in after launch is undefined here. It is a required key, so a
+   * caller cannot leave it out.
    */
-  reportsLaunchSessionId?(options: { permissionMode: PermissionMode; nonInteractive?: boolean }): boolean;
+  reportsLaunchSessionId?(options: { permissionMode: PermissionMode; nonInteractive?: boolean; prompt: string | undefined }): boolean;
 
   /**
    * Why a session started in `workingDirectory` would not reach Kangentic's MCP

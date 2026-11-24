@@ -2771,7 +2771,7 @@ describe('TransitionEngine - the id of a fresh agent session', () => {
   const TASK_WORKTREE = '/some/project/.kangentic/worktrees/fix-login';
 
   const createSessionId = vi.fn(async (_cliPath: string, _workingDirectory: string): Promise<SessionIdCreation> => ({ agentSessionId: 'chat-created', outcome: 'ok' }));
-  const reportsLaunchSessionId = vi.fn((_options: { permissionMode: string; nonInteractive?: boolean }): boolean => false);
+  const reportsLaunchSessionId = vi.fn((_options: { permissionMode: string; nonInteractive?: boolean; prompt: string | undefined }): boolean => false);
   // mockAdapter is shared module state typed by its literal, which declares
   // neither optional method, so the cases set and clear them through this view.
   const chatCapableAdapter = mockAdapter as unknown as {
@@ -2800,8 +2800,8 @@ describe('TransitionEngine - the id of a fresh agent session', () => {
     mockAdapter.detect.mockResolvedValue({ found: true, path: '/usr/bin/claude', version: '1.0.0' });
   });
 
-  function buildCommandOptions(): { sessionId?: string; resume?: boolean } {
-    return mockAdapter.buildCommand.mock.calls[0][0] as { sessionId?: string; resume?: boolean };
+  function buildCommandOptions(): { sessionId?: string; resume?: boolean; prompt?: string } {
+    return mockAdapter.buildCommand.mock.calls[0][0] as { sessionId?: string; resume?: boolean; prompt?: string };
   }
 
   it('creates a chat in the task\'s directory with the detected CLI, then opens it fresh and records it as the agent session id', async () => {
@@ -2866,9 +2866,50 @@ describe('TransitionEngine - the id of a fresh agent session', () => {
     await runSpawn(makeTask(), 'acceptEdits');
 
     expect(reportsLaunchSessionId).toHaveBeenCalledTimes(1);
-    expect(reportsLaunchSessionId).toHaveBeenCalledWith({ permissionMode: 'acceptEdits', nonInteractive });
+    expect(reportsLaunchSessionId).toHaveBeenCalledWith({ permissionMode: 'acceptEdits', nonInteractive, prompt: buildCommandOptions().prompt });
     expect(createSessionId).toHaveBeenCalledTimes(chatCreated ? 1 : 0);
     expect(buildCommandOptions().sessionId).toBe(chatCreated ? 'chat-created' : undefined);
+  });
+
+  // What the launch is judged on is what its command carries (Sentry
+  // DESKTOP-45), so every step that shapes the prompt runs before the question:
+  // a handoff pointer alone is a prompt, and one typed in later is not.
+  describe('the prompt reportsLaunchSessionId is asked about is the one the command carries', () => {
+    afterEach(() => {
+      mockAdapter.freshPromptDelivery = undefined;
+    });
+
+    async function freshStart(options: { prompt?: string; handoff?: string }): Promise<{ asked: string | undefined; carried: string | undefined }> {
+      const { engine } = makeEngine({});
+      await engine.resumeSuspendedSession(
+        makeTask({ worktree_path: null }) as Parameters<typeof engine.resumeSuspendedSession>[0],
+        null, true, options.prompt, undefined, 'claude', options.handoff,
+      );
+      expect(reportsLaunchSessionId).toHaveBeenCalledTimes(1);
+      return { asked: reportsLaunchSessionId.mock.calls[0][0].prompt, carried: buildCommandOptions().prompt };
+    }
+
+    it('is none for a start with no prompt, whose created chat the command opens', async () => {
+      expect(await freshStart({})).toEqual({ asked: undefined, carried: undefined });
+      expect(buildCommandOptions().sessionId).toBe('chat-created');
+    });
+
+    it('is the handoff pointer when that is all there is', async () => {
+      const { asked, carried } = await freshStart({ handoff: 'Read the prior session first.' });
+      expect(asked).toBe('Read the prior session first.');
+      expect(carried).toBe(asked);
+    });
+
+    it('is the whole opening, handoff included', async () => {
+      const { asked, carried } = await freshStart({ prompt: 'Review the diff', handoff: 'Read the prior session first.' });
+      expect(asked).toBe('Read the prior session first.\n\nReview the diff');
+      expect(carried).toBe(asked);
+    });
+
+    it('is none when the prompt is typed in after launch', async () => {
+      mockAdapter.freshPromptDelivery = 'typed';
+      expect(await freshStart({ prompt: 'Review the diff' })).toEqual({ asked: undefined, carried: undefined });
+    });
   });
 
   it('hands a CLI that accepts a chosen id a fresh UUID and never asks it to create a chat', async () => {

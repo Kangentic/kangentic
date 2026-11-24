@@ -31,6 +31,8 @@ export async function resolveFreshAgentSessionId(
     workingDirectory: string;
     permissionMode: PermissionMode;
     nonInteractive?: boolean;
+    /** The prompt the launch's command carries: undefined with none, or one typed in after launch. */
+    prompt: string | undefined;
     signal?: AbortSignal;
     /** Where the CLI runs when it is not on this computer (a WSL distro, an SSH host): the chat is made there. */
     place?: CliPlace | null;
@@ -41,6 +43,7 @@ export async function resolveFreshAgentSessionId(
   if (adapter.reportsLaunchSessionId?.({
     permissionMode: input.permissionMode,
     nonInteractive: input.nonInteractive,
+    prompt: input.prompt,
   })) {
     return { agentSessionId: null, sessionIdCreation: 'not_asked' };
   }

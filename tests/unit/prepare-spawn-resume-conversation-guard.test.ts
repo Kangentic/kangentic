@@ -291,6 +291,31 @@ describe('prepareAgentSpawn downgrades a resume to fresh when the conversation w
     expect(result.data.prompt).toBe('Fix the login redirect');
   });
 
+  // The launch is judged on the prompt its command carries (Sentry DESKTOP-45),
+  // so a start that replays an owed prompt is asked about with it. A print
+  // launch then reports its own id and no chat is created first.
+  it('asks whether the launch reports its own id with the owed prompt its command carries', async () => {
+    const reportsLaunchSessionId = vi.fn((launch: { prompt: string | undefined }) => launch.prompt !== undefined);
+    const createSessionId = vi.fn();
+    const chatFields = { supportsCallerSessionId: false, reportsLaunchSessionId, createSessionId };
+    Object.assign(adapter, chatFields);
+    try {
+      await runPrepare({
+        taskRecords: [makeSessionRecord({
+          id: RECORD_ID,
+          prompt: 'Fix the login redirect',
+          launch_failed_at: '2026-11-05T12:00:00.000Z',
+        })],
+      });
+    } finally {
+      Object.assign(adapter, { supportsCallerSessionId: true, reportsLaunchSessionId: undefined, createSessionId: undefined });
+    }
+
+    expect(reportsLaunchSessionId).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'Fix the login redirect' }));
+    expect(buildCommandMock.mock.calls[0][0]).toMatchObject({ prompt: 'Fix the login redirect' });
+    expect(createSessionId).not.toHaveBeenCalled();
+  });
+
   it('finds the owed prompt on the fresh launch when the marked record is a resume of it', async () => {
     // A launch 0.54.0 paused unmarked, and the resume a restart tried: the newest
     // record is marked and holds no prompt of its own.

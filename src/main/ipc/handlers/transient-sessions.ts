@@ -377,6 +377,7 @@ export async function startCommandTerminal(
           cliPath: detection.path,
           workingDirectory: projectRoot,
           permissionMode,
+          prompt: launch.prompt,
         });
     const createdAgentSessionId = freshId?.agentSessionId ?? null;
     // The conversation the command opens and the session record carries: the

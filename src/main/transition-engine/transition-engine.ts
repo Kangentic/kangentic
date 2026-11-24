@@ -1199,6 +1199,30 @@ export class TransitionEngine {
       await earlyAgent.discard();
     }
 
+    let prompt = intent.prompt;
+
+    // Session history reference overlay (separate from the resume/fresh decision).
+    // Prepends a pointer to the source agent's native session file.
+    if (handoffPromptPrefix) {
+      prompt = prompt
+        ? handoffPromptPrefix + '\n\n' + prompt
+        : handoffPromptPrefix;
+    }
+
+    // Generate PTY session ID upfront (used for directory naming, DB primary key).
+    // This is Kangentic's internal ID, separate from the agent CLI's session ID.
+    const ptySessionId = randomUUID();
+
+    // Resolved before a fresh conversation's id, which depends on the prompt the
+    // command ends up carrying: the handoff and a follow-up are in it by now, and
+    // one that will be typed in is not. It starts nothing, so an abort below
+    // leaves nothing behind.
+    const launch = await this.resolveLaunch({
+      ...launchBase, canResume, ptySessionId, agentSessionId: canResume ? resumedAgentSessionId : null, prompt,
+      promptFollowUp: carriedFollowUp,
+      retiredPermissionMode: canResume ? intent.retiredPermissionMode : null,
+    });
+
     // agent_session_id: the agent CLI's real session ID for --resume/--session-id.
     // - Resume: the reconciled id above.
     // - Fresh: an id the CLI accepts, or one it creates before launch when this
@@ -1211,19 +1235,15 @@ export class TransitionEngine {
           workingDirectory: cwd,
           permissionMode,
           nonInteractive: config.nonInteractive,
+          prompt: launch.commandOptions.prompt,
           signal,
           place: cliTarget,
         });
     const agentSessionId = canResume ? resumedAgentSessionId : freshId?.agentSessionId ?? null;
+    launch.commandOptions.sessionId = agentSessionId ?? undefined;
     // A move that aborted this spawn while the chat was being created stops
     // here, before the session directory and the command exist.
     signal?.throwIfAborted();
-
-    let prompt = intent.prompt;
-
-    // Generate PTY session ID upfront (used for directory naming, DB primary key).
-    // This is Kangentic's internal ID, separate from the agent CLI's session ID.
-    const ptySessionId = randomUUID();
 
     console.log(
       // Reports the mode actually spawned, not the resolver's proposal: a
@@ -1235,19 +1255,6 @@ export class TransitionEngine {
       + (startOver ? ` startOver=${startOver}` : ''),
     );
 
-    // Session history reference overlay (separate from the resume/fresh decision).
-    // Prepends a pointer to the source agent's native session file.
-    if (handoffPromptPrefix) {
-      prompt = prompt
-        ? handoffPromptPrefix + '\n\n' + prompt
-        : handoffPromptPrefix;
-    }
-
-    const launch = await this.resolveLaunch({
-      ...launchBase, canResume, ptySessionId, agentSessionId, prompt,
-      promptFollowUp: carriedFollowUp,
-      retiredPermissionMode: canResume ? intent.retiredPermissionMode : null,
-    });
     const { statusOutputPath, eventsOutputPath, shell, promptKeptOff } = launch;
     // The opening as launched: the follow-up is in it when it fit.
     prompt = launch.prompt;

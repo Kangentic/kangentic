@@ -18,6 +18,7 @@ import type { AgentAdapter, SpawnCommandOptions } from '../../src/main/agent/age
 import type { Task, Swimlane, AppConfig } from '../../src/shared/types';
 import { OpenCodeCommandBuilder, type OpenCodeCommandOptions } from '../../src/main/agent/adapters/opencode';
 import { CodexCommandBuilder, type CodexCommandOptions } from '../../src/main/agent/adapters/codex';
+import { CursorAdapter } from '../../src/main/agent/adapters/cursor';
 import type { AgentLaunchOptionInfo, SessionIdCreation } from '../../src/shared/types';
 // Type-only: erased at compile time, so importing it does not drag the heavy
 // mcp-http-server module graph (SDK, agent commands, ...) into this test.
@@ -910,6 +911,29 @@ describe('prepareAgentSpawn - the id of a fresh agent session', () => {
     const launch = reportsLaunchSessionId.mock.calls[0][0];
     expect(launch.permissionMode).toBe('auto');
     expect(launch.nonInteractive).toBeUndefined();
+  });
+
+  // Sentry DESKTOP-45: a startup start carries no prompt, so a Cursor in a mode
+  // it runs as a print turn has nothing to print and opens its session screen,
+  // which prints no id. Cursor's own decision answers, not a stub of it.
+  it.each(['bypassPermissions', 'dontAsk', 'auto'] as const)('asks for a chat and passes its id for a Cursor start with no prompt in %s', async (permissionMode) => {
+    const cursor = new CursorAdapter();
+    const createSessionId = vi.fn(async (): Promise<SessionIdCreation> => ({ agentSessionId: 'chat-created', outcome: 'ok' }));
+    const { adapter, capturedCommandOptions } = makeCaptureAdapter({
+      createSessionId,
+      reportsLaunchSessionId: (launch) => cursor.reportsLaunchSessionId(launch),
+    });
+    agentRegistryGetMock.mockReturnValue(adapter);
+
+    const result = await prepareAgentSpawn(makeSpawnInput({ task: makeTask({ permission_mode: permissionMode }) }));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('Expected ok:true');
+    expect(createSessionId).toHaveBeenCalledTimes(1);
+    expect(capturedCommandOptions[0]).toMatchObject({ permissionMode, sessionId: 'chat-created', resume: false });
+    expect(capturedCommandOptions[0].prompt).toBeUndefined();
+    expect(result.data.agentSessionId).toBe('chat-created');
+    expect(result.data.sessionIdCreation).toBe('ok');
   });
 
   it('creates no chat when the launch reports its own id, and starts with no agent session id', async () => {
