@@ -177,8 +177,8 @@ at the Windows timer floor.
   `taskkill` down with it. A stop names its mode (`CliStopMode`): the tree with the grace, the tree
   at once (on POSIX even after the run exited, for what still holds its output), or the one
   process. Measured on Windows on 2026-11-24: a non-detached shell ends when the process that
-  started it exits and what the shell started keeps running, for a plain Node parent and for the
-  host at a quit alike, so a script's quit is the same from either parent.
+  started it exits and what the shell started keeps running, for Electron's main process, a plain
+  Node parent and the host at a quit alike, so a script's quit is the same from either parent.
 
 ## Enforcement (self-maintaining)
 
