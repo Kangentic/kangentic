@@ -15,7 +15,7 @@ import { DiffErrorBoundary } from './DiffErrorBoundary';
 import { ChangesHistorySection } from './ChangesHistorySection';
 import { RAIL_SECTION_HEADER_PX } from './ChangesRailSection';
 import { ChangesPullRequestSection } from './ChangesPullRequestSection';
-import { asSentence, describeIpcError } from '../../../../lib/ipc-error';
+import { ipcFailureToastFields, rejectionMessage } from '../../../../lib/ipc-error';
 import { usePrChecks, prFixCount } from '../../../../hooks/usePrChecks';
 import { useToastStore } from '../../../../stores/toast-store';
 import { CommitSelectionBar } from './CommitSelectionBar';
@@ -316,7 +316,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
       // Only show errors on initial load - transient failures during live
       // updates (e.g. git lock contention) are silently ignored.
       if (generation === filesFetchGenerationRef.current && !initialFetchDoneRef.current) {
-        setError(fetchError instanceof Error ? fetchError.message : t`Failed to load diff`);
+        setError(fetchError instanceof Error ? rejectionMessage(fetchError) : t`Failed to load diff`);
       }
     } finally {
       filesFetchInFlightRef.current = false;
@@ -899,7 +899,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
       (caught: unknown) => {
         useToastStore.getState().addToast({
           title: t`Couldn't send the failed checks`,
-          message: asSentence(describeIpcError(caught)),
+          ...ipcFailureToastFields(caught),
           variant: 'error',
         });
       },

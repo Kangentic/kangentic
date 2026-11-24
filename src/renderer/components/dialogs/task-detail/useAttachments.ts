@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { i18n } from '@lingui/core';
 import { msg } from '@lingui/core/runtime-macro';
 import { useToastStore } from '../../../stores/toast-store';
-import { describeIpcError, asSentence } from '../../../lib/ipc-error';
+import { ipcFailureToastFields } from '../../../lib/ipc-error';
 import { MAX_ATTACHMENT_BYTES, MEDIA_TYPE_EXT, resolveMediaType, isImageMediaType, pastedAttachmentPrefix, reserveNextPastedIndex, openAttachmentWithToast } from '../attachment-utils';
 import { compressClipboardImage } from '../image-compress';
 import type { TaskAttachment } from '../../../../shared/types';
@@ -98,7 +98,7 @@ export function useAttachments(taskId: string, updateAttachmentCount: (taskId: s
       console.error('Failed to add attachment:', error);
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't add "${{ filename }}"`),
-        message: asSentence(describeIpcError(error)),
+        ...ipcFailureToastFields(error),
         variant: 'warning',
       });
     }
@@ -113,7 +113,7 @@ export function useAttachments(taskId: string, updateAttachmentCount: (taskId: s
       console.error('Failed to remove attachment:', error);
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't remove attachment`),
-        message: asSentence(describeIpcError(error)),
+        ...ipcFailureToastFields(error),
         variant: 'warning',
       });
     }

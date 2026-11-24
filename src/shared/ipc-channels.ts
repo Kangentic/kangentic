@@ -754,6 +754,15 @@ export const IPC = {
   // value disagreeing with how the app is actually rendering.
   GPU_HEALTH_SET_ACCELERATION: 'gpuHealth:setAccelerationAndRestart',
 
+  // The one notice after a crash whose report Sentry accepted
+  // (src/main/analytics/crash-notice.ts). The report uploads seconds after
+  // startup, before or after the window loads, so the main window takes it on
+  // mount and on each READY ping, which carries nothing (a ping that reaches a
+  // page not yet subscribed loses nothing). Main window only; the take clears
+  // it, so a reload never shows it twice.
+  CRASH_NOTICE_TAKE: 'crashNotice:take',
+  CRASH_NOTICE_READY: 'crashNotice:ready',
+
   // Display language (Settings > Language and the first-launch suggestion).
   // The session's language and the languages that ship, plus the OS language to
   // offer, read fresh from config on each call.

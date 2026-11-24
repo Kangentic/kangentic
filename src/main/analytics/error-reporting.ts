@@ -2,6 +2,7 @@ import path from 'node:path';
 import { app } from 'electron';
 import * as Sentry from '@sentry/electron/main';
 import type { ErrorEvent, EventHint } from '@sentry/electron/main';
+import { crashNoticeHolder } from './crash-notice';
 import { isUserConfigurationError } from '../../shared/user-configuration-error';
 import { BENIGN_RENDERER_ERRORS } from '../../shared/benign-renderer-errors';
 import { IPC_REJECTION_DUPLICATE_PATTERN } from '../../shared/ipc-rejection';
@@ -118,14 +119,20 @@ export function setErrorReportingUser(clientId: string): void {
  */
 export type ErrorReportContexts = Record<string, Record<string, unknown>>;
 
+/**
+ * Returns true when the report was handed to Sentry, false when it was skipped
+ * (error reporting off, a user-configuration error, or a throw inside the SDK
+ * call). A failure toast says it was reported only on true
+ * (`wasSentToErrorReporting` in `handled-report.ts`).
+ */
 export function reportHandledError(
   error: unknown,
   tags: Record<string, string> = {},
   contexts: ErrorReportContexts = {},
   fingerprint?: string[],
-): void {
-  if (!active) return;
-  if (isUserConfigurationError(error)) return;
+): boolean {
+  if (!active) return false;
+  if (isUserConfigurationError(error)) return false;
   try {
     Sentry.withScope((scope) => {
       for (const [tagKey, tagValue] of Object.entries(tags)) scope.setTag(tagKey, tagValue);
@@ -137,8 +144,10 @@ export function reportHandledError(
       if (fingerprint) scope.setFingerprint(fingerprint);
       Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
     });
+    return true;
   } catch {
-    // Error reporting must never cascade into the failing path itself
+    // report-ok: error reporting must never cascade into the failing path itself; false says nothing was sent
+    return false;
   }
 }
 
@@ -576,5 +585,22 @@ export function initErrorReporting(options: { previousRun?: PreviousRun | null }
   } catch (error) {
     console.error('[ANALYTICS] Failed to initialize error reporting:', error);
     active = false;
+  }
+  if (active) subscribeCrashNotice();
+}
+
+/**
+ * The crash notice is earned by a crash report the transport accepted, never by
+ * the previous run's exit alone (crash-notice.ts). Kept apart from the init's
+ * try: a client without the hook must cost the notice, never error reporting.
+ */
+function subscribeCrashNotice(): void {
+  try {
+    Sentry.getClient?.()?.on?.('afterSendEvent', (event, response) => {
+      crashNoticeHolder.onSentEvent(event, response);
+    });
+  } catch (error) {
+    // report-ok: reporting is up; without the hook only the crash notice is lost, and a report of the hook's own failure would ride every launch
+    console.warn('[ANALYTICS] Could not watch sent crash reports:', error);
   }
 }

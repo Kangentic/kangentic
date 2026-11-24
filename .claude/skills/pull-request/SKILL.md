@@ -321,8 +321,10 @@ fails because someone else pushed to the branch, report it and stop - never bare
    with the Write tool (avoids shell escaping). Mirror the section order of
    `.github/pull_request_template.md` so skill-created PRs match UI-created ones:
    - `## What` - what changed and the affected components.
-   - `## Why` - the motivation or problem. Link any related issue with a closing keyword
-     (e.g. `Closes #123`).
+   - `## Why` - the motivation or problem. Close a GitHub issue the task names (its
+     `GitHub issue: #<n>` line, opened by the /sentry sweep) with a closing keyword (`Fixes #123`).
+     The number is a GitHub issue's, never a board task's: a board task number looks the same,
+     links to an unrelated issue, and must not appear in anything public.
    - `## How` - the approach and any trade-offs worth a reviewer's attention.
    - `## Breaking changes` - any API, config, or behavioral change that requires user action, with
      migration notes; otherwise `None`.

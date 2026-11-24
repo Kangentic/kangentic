@@ -477,9 +477,35 @@ parallel worktrees and prefers fewer, larger ones, so:
   each get one line in the report with the reason, and no task. They stay unassigned (see the
   assignment rules below), so offer to archive them in Sentry and do it only on the user's OK.
 
+**For a bug a user could see, also open a public GitHub issue.** Users close the loop through the
+release notes, which link each fix's issue (`/release` Step 3.5), so a filed task whose issue a
+user could notice (a failure toast, a button that did nothing, a crash, a feature that silently
+stopped) gets one. A fix that only improves diagnostics (a tag, a breadcrumb, a count), an issue
+with no visible effect, and everything left unfiled above get none.
+
+- **Write the symptom first.** One line in the words the user saw, past tense:
+  "Restart to update did nothing on Linux computers without a graphical password prompt". It is
+  the issue's title, it goes in the task description as `Symptom:`, and the task tells the fixer
+  to carry it as the fix commit's `Release-Note:` line, which is how it reaches the release notes.
+- **The body is short prose:** what happened, on which versions and platforms, and that it came
+  from error reports. Never a DESKTOP shortId, a Sentry link, a stack frame, a tag value, an
+  install count from one machine, a path, or a board task number. The repo is public and the
+  issue is permanent and indexed.
+- **Read it once more for anything sensitive before it goes out.** This read is the reason the
+  sweep files these and Sentry's automatic GitHub issues stay off: an automatic issue carries the
+  event's stack, tags and a link into the project.
+- **File it,** one Bash call, the body written with the Write tool to `.kangentic/ISSUE_BODY.tmp`
+  in the checkout the command runs from (the path is relative):
+  `gh issue create --repo Kangentic/kangentic --label bug --title "<symptom>" --body-file .kangentic/ISSUE_BODY.tmp`
+  Word the title so it holds no double quote, backtick or dollar sign. Those are the characters
+  that break or expand inside double quotes, and an apostrophe ("didn't") is safe there.
+- **Record the number in the task** as `GitHub issue: #<n>`, with the instruction that the fix PR's
+  body says `Fixes #<n>`, so merging closes the issue and `/release` links it. One issue per
+  symptom: a grouped task with two symptoms gets two issues.
+
 Close the sweep with the filed tasks (number, title, priority, and the files each touches, which
-is what shows the set is safe to run at once), the issues not filed and why, and any recurrence
-of an assigned issue on the newest release.
+is what shows the set is safe to run at once), the GitHub issues opened (number and title), the
+issues not filed and why, and any recurrence of an assigned issue on the newest release.
 
 **"Investigate this issue / create a follow-up task."** Retrieve the issue and latest event,
 diagnose (below), then - when asked for a task - create ONE task via the kangentic MCP tools,

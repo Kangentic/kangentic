@@ -345,6 +345,10 @@ msgstr "Einrichtung anzeigen"
 msgid "Sign in to {signedOutAgentName} to run tasks."
 msgstr "Melden Sie sich bei {signedOutAgentName} an, um Aufgaben auszuführen."
 
+#: src/renderer/components/layout/ToastItem.tsx
+msgid "This issue has been automatically reported to Kangentic"
+msgstr ""
+
 #: src/renderer/components/layout/TitleBar.tsx
 #, fuzzy
 msgid "Update available"

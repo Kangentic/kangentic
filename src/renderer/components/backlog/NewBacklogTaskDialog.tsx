@@ -13,7 +13,7 @@ import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useToastStore } from '../../stores/toast-store';
 import { useConfigStore } from '../../stores/config-store';
-import { describeIpcError, asSentence } from '../../lib/ipc-error';
+import { ipcFailureToastFields } from '../../lib/ipc-error';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import { DescriptionEditor } from '../DescriptionEditor';
 import { AttachmentChipStrip } from '../dialogs/AttachmentChipStrip';
@@ -236,7 +236,7 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
         console.error('[NewBacklogTaskDialog] Failed to remove saved attachment:', error);
         useToastStore.getState().addToast({
           title: t`Couldn't remove attachment`,
-          message: asSentence(describeIpcError(error)),
+          ...ipcFailureToastFields(error),
           variant: 'warning',
         });
       });
@@ -358,7 +358,7 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
       console.error('[NewBacklogTaskDialog] Failed to save backlog task:', error);
       useToastStore.getState().addToast({
         title: t`Couldn't save backlog task`,
-        message: asSentence(describeIpcError(error)),
+        ...ipcFailureToastFields(error),
         variant: 'error',
       });
     } finally {
@@ -384,7 +384,7 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
       console.error('[NewBacklogTaskDialog] Failed to delete backlog task:', error);
       useToastStore.getState().addToast({
         title: t`Couldn't delete backlog task`,
-        message: asSentence(describeIpcError(error)),
+        ...ipcFailureToastFields(error),
         variant: 'error',
       });
       setDeleting(false);

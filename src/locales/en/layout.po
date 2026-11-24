@@ -288,6 +288,10 @@ msgstr "Show setup"
 msgid "Sign in to {signedOutAgentName} to run tasks."
 msgstr "Sign in to {signedOutAgentName} to run tasks."
 
+#: src/renderer/components/layout/ToastItem.tsx
+msgid "This issue has been automatically reported to Kangentic"
+msgstr "This issue has been automatically reported to Kangentic"
+
 #: src/renderer/components/layout/TitleBar.tsx
 msgid "Update available"
 msgstr "Update available"

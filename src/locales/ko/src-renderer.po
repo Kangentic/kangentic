@@ -1106,6 +1106,10 @@ msgstr "방금 전"
 msgid "Kangentic can't write to that folder."
 msgstr "Kangentic이 해당 폴더에 쓸 수 없습니다."
 
+#: src/renderer/utils/crash-notice.ts
+msgid "Kangentic crashed"
+msgstr ""
+
 #: src/renderer/hooks/useProjectRelocation.tsx
 #, fuzzy
 msgid "Kangentic will move the folder on disk. All tasks, history, and worktrees move with it."
@@ -1769,6 +1773,14 @@ msgstr "자동화가 시작되지 않았습니다."
 msgid "The description is too long to start an agent with."
 msgstr ""
 
+#: src/renderer/utils/crash-notice.ts
+msgid "The last run ended in a crash at {crashedAt}."
+msgstr ""
+
+#: src/renderer/utils/crash-notice.ts
+msgid "The last run ended in a crash."
+msgstr ""
+
 #: src/renderer/stores/project-store.ts
 #, fuzzy
 msgid "The list has been refreshed."
@@ -1813,6 +1825,10 @@ msgstr "세션이 이미 실행 중입니다."
 #, fuzzy
 msgid "The task's changes could not be read"
 msgstr "작업의 변경 사항을 읽을 수 없습니다"
+
+#: src/renderer/utils/crash-notice.ts
+msgid "The window crashed and reloaded"
+msgstr ""
 
 #: src/renderer/hooks/useProjectRelocation.tsx
 #, fuzzy
@@ -1945,6 +1961,10 @@ msgstr "워크플로 중단됨"
 #, fuzzy
 msgid "Write"
 msgstr "작성"
+
+#: src/renderer/utils/crash-notice.ts
+msgid "Your agents kept running."
+msgstr ""
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 #, fuzzy

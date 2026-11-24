@@ -18,6 +18,7 @@ const {
   markReported,
   pathFreeCopy,
   sendHandledFailure,
+  wasSentToErrorReporting,
   EXPECTED_FAILURE_NAMES,
   NETWORK_ERRNOS,
 } = await import('../../src/main/analytics/handled-report');
@@ -193,6 +194,66 @@ describe('sendHandledFailure', () => {
     expect(contexts).toEqual({});
     expect(JSON.stringify([sent.message, sent.stack, tags, contexts])).not.toContain('Acme');
     expect(fingerprint).toBeUndefined();
+  });
+});
+
+// A failure toast says "This issue has been automatically reported to Kangentic"
+// only for an error whose report Sentry took (#1188). `isReported` cannot answer
+// that: it also holds errors marked while reporting was off, and a latched
+// repeat's own report was never sent.
+describe('wasSentToErrorReporting', () => {
+  beforeEach(() => reportHandledError.mockReset());
+
+  const defectFrom = (): Error => new TypeError('same throw site');
+
+  it('marks an error Sentry took, and not one it skipped', () => {
+    reportHandledError.mockReturnValueOnce(true);
+    const sent = new TypeError('sent');
+    expect(sendHandledFailure('ipc', sent)).toBe(true);
+    expect(wasSentToErrorReporting(sent)).toBe(true);
+
+    reportHandledError.mockReturnValueOnce(false);
+    const skipped = new TypeError('reporting off');
+    expect(sendHandledFailure('ipc', skipped)).toBe(false);
+    expect(isReported(skipped)).toBe(true);
+    expect(wasSentToErrorReporting(skipped)).toBe(false);
+  });
+
+  it('marks a latched repeat of a key that was sent, and not of one that was not', () => {
+    reportHandledError.mockReturnValue(true);
+    const sentReporter = createChokepointReporter('ipc');
+    expect(sentReporter.report(defectFrom())).toBe(true);
+    const repeat = defectFrom();
+    expect(sentReporter.report(repeat)).toBe(false);
+    expect(wasSentToErrorReporting(repeat)).toBe(true);
+
+    reportHandledError.mockReturnValue(false);
+    const offReporter = createChokepointReporter('ipc');
+    offReporter.report(defectFrom());
+    const offRepeat = defectFrom();
+    offReporter.report(offRepeat);
+    expect(wasSentToErrorReporting(offRepeat)).toBe(false);
+  });
+
+  it('never marks an expected failure or a key past the cap', () => {
+    reportHandledError.mockReturnValue(true);
+    const reporter = createChokepointReporter('ipc', { cap: 1 });
+    const refusal = new RefusalError('The task is in Done.');
+    reporter.report(refusal);
+    expect(wasSentToErrorReporting(refusal)).toBe(false);
+
+    reporter.report(new TypeError('first key'));
+    const capped = new RangeError('second key');
+    expect(reporter.report(capped)).toBe(false);
+    expect(wasSentToErrorReporting(capped)).toBe(false);
+  });
+
+  it('reads one level of cause, as a wrapper rethrown past the reporter carries it', () => {
+    reportHandledError.mockReturnValue(true);
+    const inner = new TypeError('inner');
+    sendHandledFailure('worktree', inner);
+    expect(wasSentToErrorReporting(new Error('wrapped', { cause: inner }))).toBe(true);
+    expect(wasSentToErrorReporting('a string')).toBe(false);
   });
 });
 

@@ -9,6 +9,7 @@ import { previewEventSound } from '../../../utils/event-sound-player';
 import { BUILT_IN_SOUNDS } from '../../../../shared/notification-settings';
 import type { NotificationConfig, NotificationEventKey, NotificationSound } from '../../../../shared/types';
 import { useScopedUpdate } from '../shared';
+import { rejectionMessage } from '../../../lib/ipc-error';
 
 const OPTION_CLASS = 'flex h-[30px] min-w-0 flex-1 cursor-pointer select-none items-center rounded px-2.5 text-left text-[13px] text-fg-secondary hover:bg-surface-hover';
 
@@ -92,7 +93,7 @@ export function NotificationSoundPicker({ eventKey, eventName, config, disabled,
       updateGlobal({ notifications: { sounds: { [eventKey]: 'custom' }, customSounds: { [eventKey]: result.fileName } } });
       previewEventSound(eventKey, 'custom');
     } catch (error) {
-      onRefused(error instanceof Error ? error.message : String(error));
+      onRefused(rejectionMessage(error));
     }
   };
 

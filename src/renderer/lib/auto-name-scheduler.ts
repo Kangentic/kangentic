@@ -47,7 +47,7 @@ import { useSessionStore } from '../stores/session-store';
 import { useToastStore } from '../stores/toast-store';
 import { invalidateProject } from '../stores/project-cache';
 import { openTaskFromNotification } from '../utils/open-task-from-notification';
-import { describeIpcError, asSentence } from './ipc-error';
+import { ipcFailureToastFields } from './ipc-error';
 import { isPlaceholderTitle } from './placeholder-title';
 
 /** A generated title waiting for its session to stop working. Plain data, so it survives HMR. */
@@ -223,7 +223,7 @@ async function applyGeneratedTitle(rename: PendingAutoRename): Promise<void> {
     if (isOpenProject(projectId)) {
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't rename task`),
-        message: asSentence(describeIpcError(error, ''), i18n._(msg`The new title was not saved.`)),
+        ...ipcFailureToastFields(error, '', i18n._(msg`The new title was not saved.`)),
         variant: 'error',
       });
     } else {

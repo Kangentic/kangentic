@@ -50,6 +50,7 @@ import { isBenignStreamWriteError } from './diagnostics/benign-stream-error';
 const windowConfigManager = new ConfigManager();
 import { initAnalytics, trackEvent, sanitizeErrorMessage, shouldEmitHeartbeat, setAnalyticsClientId, HEARTBEAT_INTERVAL_MS } from './analytics/analytics';
 import { initErrorReporting, isErrorReportingActive, reportHandledError, setErrorReportingUser, setHostMemoryContext } from './analytics/error-reporting';
+import { crashNoticeHolder } from './analytics/crash-notice';
 import { initUsageAnalytics, trackUpdateOutcome } from './analytics/usage';
 import { initRunUptimeTracking, checkpointRunUptime, recordRunExit, previousRunLaunchProps, previousRunLastAliveAt, previousRunLogLine, peekPreviousRun, RUN_UPTIME_CHECKPOINT_INTERVAL_MS } from './analytics/run-uptime';
 import { readPendingGpuEscalation, clearGpuEscalation, isEscalationFromCurrentRun, gpuEndedPreviousRun, summarizeGpuFaults, shouldReportEscalation, buildGpuProcessContext, createWebglAvailabilityGate, readGpuGraphicsStatus } from './diagnostics/gpu-health';
@@ -495,6 +496,22 @@ ipcMain.handle(IPC.GPU_HEALTH_STATUS, (event): Promise<GpuGraphicsStatus> => rea
     return noticePending;
   },
 }));
+
+// The one notice after a crash whose report Sentry accepted
+// (analytics/crash-notice.ts). The main window takes it on mount and on each
+// ping; a pop-out gets null. The ping carries nothing, so one sent to a page
+// not yet subscribed loses nothing: the mount's take finds it. It is sent while
+// the page is still loading too, because the mount's take can run before the
+// load finishes, and a notice earned after that take has only the ping.
+ipcMain.handle(IPC.CRASH_NOTICE_TAKE, (event) => (
+  event.sender === mainWindow?.webContents ? crashNoticeHolder.take() : null
+));
+crashNoticeHolder.setOnWaiting(() => {
+  if (isShuttingDown()) return;
+  const window = mainWindow;
+  if (!window || window.isDestroyed()) return;
+  sendToRenderer(window, IPC.CRASH_NOTICE_READY);
+});
 
 // The Graphics acceleration toggle's only write path. Saving and restarting are
 // one call because the mode is chosen before whenReady above: a save with no
@@ -1555,6 +1572,9 @@ const createWindow = () => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
 
     if (rendererReloadGate.tryReload()) {
+      // The reloaded window says it crashed once Sentry accepts the renderer's
+      // crash report (analytics/crash-notice.ts); no report, no notice.
+      crashNoticeHolder.armWindowReload();
       if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
         mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
       } else {

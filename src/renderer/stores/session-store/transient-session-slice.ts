@@ -6,7 +6,7 @@ import { isActive, requiresUserInteraction } from '../../../shared/activity-stat
 import { isCommandTerminalSession } from '../../../shared/session-owner';
 import { useProjectStore } from '../project-store';
 import { useToastStore } from '../toast-store';
-import { describeIpcError, asSentence } from '../../lib/ipc-error';
+import { asSentence, ipcFailureToastFields } from '../../lib/ipc-error';
 import type { SessionStore } from './types';
 import { withoutSessionsIndexed } from './session-index';
 import { sharedModuleState } from '../hmr-store-pin';
@@ -560,7 +560,7 @@ export function createTransientSessionSlice(preserved: {
       } catch (error) {
         useToastStore.getState().addToast({
           title: i18n._(msg`Couldn't apply model or effort`),
-          message: asSentence(describeIpcError(error, '')),
+          ...ipcFailureToastFields(error, ''),
           variant: 'error',
         });
       }

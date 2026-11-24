@@ -13,7 +13,7 @@ import type {
 import { useBoardStore } from './board-store';
 import { useProjectStore } from './project-store';
 import { useToastStore } from './toast-store';
-import { describeIpcError, asSentence } from '../lib/ipc-error';
+import { ipcFailureToastFields } from '../lib/ipc-error';
 
 interface BacklogState {
   items: BacklogTask[];
@@ -199,7 +199,7 @@ const backlogStoreInitializer: StateCreator<BacklogState> = (set, get) => ({
       set((state) => ({ items: [...state.items, ...removedItems] }));
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't promote tasks`),
-        message: asSentence(describeIpcError(error)),
+        ...ipcFailureToastFields(error),
         variant: 'error',
       });
       throw error;

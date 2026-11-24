@@ -9,7 +9,7 @@ import { SettingsCard, CardRow, CardToggleRow, SettingTag } from '../settings-ca
 import { settingProps } from '../settings-registry';
 import { useSettingsProject } from '../use-settings-project';
 import { useToastStore } from '../../../stores/toast-store';
-import { describeIpcError, asSentence } from '../../../lib/ipc-error';
+import { ipcFailureToastFields } from '../../../lib/ipc-error';
 
 /**
  * The Stop script lives in the project's board config files, not in the project
@@ -55,7 +55,7 @@ function StopScriptRow() {
               (error: unknown) => {
                 useToastStore.getState().addToast({
                   title: t`Couldn't save Stop script`,
-                  message: asSentence(describeIpcError(error)),
+                  ...ipcFailureToastFields(error),
                   variant: 'error',
                 });
               },
@@ -102,7 +102,7 @@ export function GitTab({ config }: { config: AppConfig }) {
               window.electronAPI.boardConfig.setDefaultBaseBranch(branch).catch((error: unknown) => {
                 useToastStore.getState().addToast({
                   title: t`Couldn't save base branch`,
-                  message: asSentence(describeIpcError(error)),
+                  ...ipcFailureToastFields(error),
                   variant: 'error',
                 });
               });

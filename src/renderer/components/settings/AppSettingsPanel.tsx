@@ -4,7 +4,7 @@ import { useLingui } from '@lingui/react/macro';
 import { Bell, Bot, Brain, Bug, FolderCog, Gauge, GitBranch, GitCompare, Globe, Keyboard, Languages, LayoutGrid, Mic, MousePointerClick, Palette, Plug, Server, ShieldCheck, SlidersHorizontal, Smartphone, SquareKanban, Terminal, Users, Workflow as WorkflowIcon, Zap } from 'lucide-react';
 import { useConfigStore } from '../../stores/config-store';
 import { useToastStore } from '../../stores/toast-store';
-import { describeIpcError, asSentence } from '../../lib/ipc-error';
+import { ipcFailureToastFields } from '../../lib/ipc-error';
 import { SettingsPanelProvider, SearchTabGroupHeader, NoSearchResults } from './shared';
 import type { SettingsTabDefinition, SettingScope, SettingsContentProps } from './shared';
 import { SETTINGS_TABS } from './settings-tabs';
@@ -164,7 +164,7 @@ export function SettingsContent({ activeTab, isSearching, searchQuery, matchingT
    *  `config.set` also carries window layouts, model caches and announcement
    *  dismissals - which is why the check lives here and not in the IPC handler. */
   const updateSetting = useCallback((partial: DeepPartial<AppConfig>, scope: SettingScope, projectPath?: string) => {
-    const reportFailure = (message: string) => {
+    const reportFailure = (message: string, reported = false) => {
       // One user gesture can still be many writes: NUMBER fields commit on every
       // keystroke (typing "120" writes 1, then 12, then 120), the Theme tab commits on
       // every arrow key, and the CLI path and remote-execution fields stay per-keystroke
@@ -175,7 +175,7 @@ export function SettingsContent({ activeTab, isSearching, searchQuery, matchingT
       const lastAt = lastFailureToastByKeyRef.current.get(settingKey) ?? 0;
       if (Date.now() - lastAt < FAILED_WRITE_TOAST_COOLDOWN_MS) return;
       lastFailureToastByKeyRef.current.set(settingKey, Date.now());
-      useToastStore.getState().addToast({ title: t`Setting not saved`, message, variant: 'error', durationMs: 12000 });
+      useToastStore.getState().addToast({ title: t`Setting not saved`, message, reported, variant: 'error', durationMs: 12000 });
     };
 
     const write = scope === 'project' ? updateProjectOverride(partial, projectPath) : updateConfig(partial);
@@ -200,7 +200,10 @@ export function SettingsContent({ activeTab, isSearching, searchQuery, matchingT
       // setting did not save"), which is identical either way; the clause only
       // explains it. Giving each branch its own timer would toast twice for one
       // setting that is failing for two reasons at once.
-      (error: unknown) => reportFailure(asSentence(describeIpcError(error, t`The change was not written.`))),
+      (error: unknown) => {
+        const fields = ipcFailureToastFields(error, t`The change was not written.`);
+        reportFailure(fields.message, fields.reported);
+      },
     );
   }, [updateProjectOverride, updateConfig, t]);
 

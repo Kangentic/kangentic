@@ -35,9 +35,10 @@ import { invalidateProject } from './stores/project-cache';
 import { resolveAutoFocusTarget } from './utils/auto-focus';
 import { endsOwnCallTurn, resolveIdleToast } from './utils/idle-toast';
 import { openTaskFromNotification } from './utils/open-task-from-notification';
-import { asSentence, describeIpcError } from './lib/ipc-error';
+import { asSentence, ipcFailureToastFields } from './lib/ipc-error';
 import { stopScriptFailureBody } from './lib/stop-script-toast';
 import { resolveGpuNotice } from './utils/gpu-notice';
+import { showWaitingCrashNotice } from './utils/crash-notice';
 import { setTerminalGraphicsSupport } from './utils/terminal-webgl';
 import { derivePanelSessions } from './utils/panel-sessions';
 import { notificationConfigNow, playEventSound } from './utils/event-sound-player';
@@ -236,6 +237,14 @@ export function App() {
       console.warn('[GPU-HEALTH] Could not apply graphics status:', error);
     });
 
+    // The one notice after a crash whose report Sentry accepted. Subscribed
+    // before the first take, so a notice that lands in between is taken on its
+    // ping. The take clears it in main, so a reload never shows it twice.
+    const cleanupCrashNotice = window.electronAPI.crashNotice?.onReady(() => {
+      void showWaitingCrashNotice();
+    });
+    void showWaitingCrashNotice();
+
     // Announcements: hydrate the active list (the first poll may have landed
     // before this renderer mounted) and the local archive (which, unlike the
     // in-memory active list, is non-empty before the first poll and offline),
@@ -289,6 +298,7 @@ export function App() {
       cleanupPopOutChanged?.();
       cleanupUpdateListener?.();
       cleanupAnnouncementsChanged?.();
+      cleanupCrashNotice?.();
       cleanupOffscreenSurfaces?.();
       cleanupMcpConnectionFailed?.();
     };
@@ -1303,7 +1313,7 @@ export function App() {
                 .catch((error: unknown) => {
                   useToastStore.getState().addToast({
                     title: i18n._(msg`Couldn't run again`),
-                    message: asSentence(describeIpcError(error, ''), i18n._(msg`The automation did not start.`)),
+                    ...ipcFailureToastFields(error, '', i18n._(msg`The automation did not start.`)),
                     variant: 'error',
                     durationMs: 8000,
                   });

@@ -7,7 +7,7 @@ import { useBoardStore } from '../stores/board-store';
 import { useToastStore } from '../stores/toast-store';
 import { ConfirmDialog } from '../components/dialogs/ConfirmDialog';
 import type { Project, ProjectMoveProgress } from '../../shared/types';
-import { asSentence, describeIpcError } from '../lib/ipc-error';
+import { ipcFailureToastFields } from '../lib/ipc-error';
 
 interface PendingMove {
   project: Project;
@@ -84,7 +84,7 @@ export function useProjectRelocation(onRelocated?: (project: Project) => void) {
     } catch (err) {
       useToastStore.getState().addToast({
         title: t`Couldn't move project`,
-        message: asSentence(describeIpcError(err)),
+        ...ipcFailureToastFields(err),
         variant: 'error',
       });
     } finally {

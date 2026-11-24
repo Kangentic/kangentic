@@ -9,7 +9,7 @@ import { withoutSessionsForTasks } from '../session-store/session-index';
 import { useToastStore } from '../toast-store';
 import { useProjectStore } from '../project-store';
 import { invalidateProject } from '../project-cache';
-import { describeIpcError, asSentence } from '../../lib/ipc-error';
+import { describeIpcError, asSentence, ipcErrorWasReported, ipcFailureToastFields } from '../../lib/ipc-error';
 import { isWorkflowLockMessage } from '../../utils/board-workflow';
 import { boardWorkflowNow, refusedBoardMove, showWorkflowRefusal } from '../../utils/workflow-refusal';
 import { openTaskFromNotification } from '../../utils/open-task-from-notification';
@@ -147,7 +147,7 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
       }
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't apply model or effort`),
-        message: asSentence(describeIpcError(err)),
+        ...ipcFailureToastFields(err),
         variant: 'error',
       });
       throw err;
@@ -226,7 +226,7 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
       set({ tasks: previousTasks, archivedTasks: previousArchivedTasks, archivedTotalCount: previousArchivedTotalCount });
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't delete task`),
-        message: asSentence(describeIpcError(err)),
+        ...ipcFailureToastFields(err),
         variant: 'error',
       });
       // Re-throw so callers skip their own success toast on failure.
@@ -503,6 +503,7 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't move task`),
         message: asSentence(message),
+        reported: ipcErrorWasReported(err),
         variant: 'error',
       });
       return { ok: false };
@@ -574,7 +575,7 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
       await get().loadBoard();
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't reorder task`),
-        message: asSentence(describeIpcError(err)),
+        ...ipcFailureToastFields(err),
         variant: 'error',
       });
     }

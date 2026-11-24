@@ -1,6 +1,79 @@
 import { describe, it, expect } from 'vitest';
-import { asSentence, capitalizeFirstWord, describeIpcError, ipcErrorClassName } from '../../src/renderer/lib/ipc-error';
+import { asSentence, capitalizeFirstWord, describeIpcError, ipcErrorClassName, ipcErrorWasReported, ipcFailureToastFields, rejectionMessage } from '../../src/renderer/lib/ipc-error';
 import { RefusalError, SIGN_IN_REFUSED_ERROR_NAME, SignInRefusedError } from '../../src/shared/refusal';
+import { REPORTED_FAILURE_MARKER, hasReportedFailureMarker, withoutReportedFailureMarker } from '../../src/shared/reported-failure-marker';
+
+// What Electron hands the renderer for a rejection main marked as reported (#1188).
+const reportedRejection = new Error(
+  `Error invoking remote method 'session:resume': TypeError: Cannot read properties of undefined (reading 'cwd')${REPORTED_FAILURE_MARKER}`,
+);
+
+describe('the reported marker', () => {
+  it('is stripped from every reason and read as reported', () => {
+    expect(describeIpcError(reportedRejection)).toBe("Cannot read properties of undefined (reading 'cwd')");
+    expect(ipcErrorWasReported(reportedRejection)).toBe(true);
+    expect(ipcErrorClassName(reportedRejection)).toBe('TypeError');
+  });
+
+  it('is absent from a refusal, a plain rejection and a non-Error', () => {
+    expect(ipcErrorWasReported(new Error("Error invoking remote method 'session:resume': Error: The task is in Done."))).toBe(false);
+    expect(ipcErrorWasReported('a string')).toBe(false);
+    expect(ipcErrorWasReported(null)).toBe(false);
+  });
+
+  it('gives a toast its sentence body and the reported flag', () => {
+    expect(ipcFailureToastFields(reportedRejection)).toEqual({
+      message: "Cannot read properties of undefined (reading 'cwd').",
+      reported: true,
+    });
+    expect(ipcFailureToastFields('not an error', '', 'Nothing was saved.')).toEqual({ message: 'Nothing was saved.', reported: false });
+  });
+});
+
+describe('rejectionMessage', () => {
+  it('drops a trailing marker but keeps the Electron channel prefix', () => {
+    expect(rejectionMessage(reportedRejection)).toBe(
+      "Error invoking remote method 'session:resume': TypeError: Cannot read properties of undefined (reading 'cwd')",
+    );
+  });
+
+  it('returns an unmarked Error message unchanged and String(value) for a non-Error', () => {
+    const plain = "Error invoking remote method 'x': Error: disk full ";
+    expect(rejectionMessage(new Error(plain))).toBe(plain);
+    expect(rejectionMessage('a string')).toBe('a string');
+    expect(rejectionMessage(42)).toBe('42');
+    expect(rejectionMessage(null)).toBe('null');
+  });
+});
+
+describe('the reported failure marker text helpers', () => {
+  it('reads a marker followed only by whitespace as marked, and strips it with the whitespace', () => {
+    const text = `Disk full${REPORTED_FAILURE_MARKER}  \n`;
+    expect(hasReportedFailureMarker(text)).toBe(true);
+    expect(withoutReportedFailureMarker(text)).toBe('Disk full');
+  });
+
+  it('leaves a marker in the middle of a message alone', () => {
+    const text = `Disk full${REPORTED_FAILURE_MARKER} while saving`;
+    expect(hasReportedFailureMarker(text)).toBe(false);
+    expect(withoutReportedFailureMarker(text)).toBe(text);
+  });
+
+  it('turns a message that is only the marker into an empty string', () => {
+    expect(withoutReportedFailureMarker(REPORTED_FAILURE_MARKER)).toBe('');
+  });
+
+  it('does not count the marker text without its leading space', () => {
+    const text = 'Disk full(kangentic:reported)';
+    expect(hasReportedFailureMarker(text)).toBe(false);
+    expect(withoutReportedFailureMarker(text)).toBe(text);
+  });
+
+  it('returns an unmarked message as the same string, trailing whitespace kept', () => {
+    const text = 'Disk full \n';
+    expect(withoutReportedFailureMarker(text)).toBe(text);
+  });
+});
 
 describe('capitalizeFirstWord', () => {
   it('capitalizes a leading lowercase word and changes nothing else, adding no stop', () => {

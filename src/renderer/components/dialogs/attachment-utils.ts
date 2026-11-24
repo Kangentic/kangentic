@@ -3,7 +3,7 @@ import type { LucideIcon } from 'lucide-react';
 import { i18n } from '@lingui/core';
 import { msg } from '@lingui/core/runtime-macro';
 import { useToastStore } from '../../stores/toast-store';
-import { asSentence } from '../../lib/ipc-error';
+import { asSentence, rejectionMessage } from '../../lib/ipc-error';
 
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024; // 10MB
 
@@ -92,7 +92,7 @@ export async function openAttachmentWithToast(
       });
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = rejectionMessage(error);
     useToastStore.getState().addToast({
       title: i18n._(msg`Couldn't open "${{ filename }}"`),
       message: asSentence(message),

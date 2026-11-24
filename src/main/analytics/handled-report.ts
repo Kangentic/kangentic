@@ -108,9 +108,39 @@ export const NETWORK_ERRNOS: ReadonlySet<string> = new Set([
 const reportedErrors = new WeakSet<object>();
 
 /**
+ * Errors whose report was handed to Sentry: sent now, or a latched repeat of a
+ * key that was sent earlier this run. A subset of `reportedErrors`, which also
+ * holds errors marked while error reporting was off or a send was skipped. A
+ * failure toast says the issue was reported only for these (`ipc-handler-report.ts`).
+ */
+const sentErrors = new WeakSet<object>();
+
+/** True when `error`, or the error it wraps (`cause`, one level), is in `marks`. */
+function inSetOrCause(marks: WeakSet<object>, error: unknown): boolean {
+  if (error === null || typeof error !== 'object') return false;
+  if (marks.has(error)) return true;
+  const cause = (error as { cause?: unknown }).cause;
+  return cause !== null && typeof cause === 'object' && marks.has(cause);
+}
+
+function markSent(error: unknown): void {
+  if (error !== null && typeof error === 'object') sentErrors.add(error);
+}
+
+/**
+ * True when `error`, or the error it wraps (`cause`, one level), had its report
+ * handed to Sentry in this run, by this send or by an earlier send of the same
+ * failure key.
+ */
+export function wasSentToErrorReporting(error: unknown): boolean {
+  return inSetOrCause(sentErrors, error);
+}
+
+/**
  * Mark `error` (the ORIGINAL, never the copy a reporter sends) as reported, so a
- * chokepoint further up the stack skips it. Every reporter calls this, because the
- * copies they send mean a set of sent errors could never match a rethrown original.
+ * chokepoint further up the stack skips it. Every reporter calls this. Both
+ * `reportedErrors` and `sentErrors` hold originals, because a rethrown original
+ * is what a later chokepoint sees, never the copy that went out.
  */
 export function markReported(error: unknown): void {
   if (error !== null && typeof error === 'object') reportedErrors.add(error);
@@ -122,10 +152,7 @@ export function markReported(error: unknown): void {
  * cause it was handed, so the wrapper alone would look unreported.
  */
 export function isReported(error: unknown): boolean {
-  if (error === null || typeof error !== 'object') return false;
-  if (reportedErrors.has(error)) return true;
-  const cause = (error as { cause?: unknown }).cause;
-  return cause !== null && typeof cause === 'object' && reportedErrors.has(cause);
+  return inSetOrCause(reportedErrors, error);
 }
 
 /** The syscall of a Node system error (`open`, `rename`), else undefined. */
@@ -238,7 +265,8 @@ export function firstFrameOf(error: unknown): string {
  * Send one handled failure from `source`, path-free, with the tags every report
  * carries (`source`, `error_name`, and `errno`, `syscall`, `git_cause` and
  * `az_server_code` when the error has them) plus the caller's own short enums.
- * Marks the original reported.
+ * Marks the original reported, and sent when Sentry took the report. Returns
+ * whether it did.
  * Does not latch and does not filter: a caller that wants either uses
  * `createChokepointReporter`.
  */
@@ -248,7 +276,7 @@ export function sendHandledFailure(
   tags: Record<string, string> = {},
   contexts: ErrorReportContexts = {},
   fingerprint: string[] | undefined = fingerprintOf(error),
-): void {
+): boolean {
   const allTags: Record<string, string> = { ...tags, source, error_name: errorNameOf(error) };
   const code = errorCodeOf(error);
   if (code) allTags.errno = code;
@@ -259,7 +287,9 @@ export function sendHandledFailure(
   const azServerCode = azServerCodeOf(error);
   if (azServerCode) allTags.az_server_code = azServerCode;
   markReported(error);
-  reportHandledError(pathFreeCopy(source, error), allTags, contexts, fingerprint);
+  const sent = reportHandledError(pathFreeCopy(source, error), allTags, contexts, fingerprint);
+  if (sent) markSent(error);
+  return sent;
 }
 
 export interface ChokepointReportOptions {
@@ -307,6 +337,9 @@ export interface ChokepointReporterOptions {
 export function createChokepointReporter(source: string, options: ChokepointReporterOptions = {}): ChokepointReporter {
   const cap = options.cap ?? DEFAULT_CHOKEPOINT_KEY_CAP;
   const reportedKeys = new Set<string>();
+  // The keys whose first report Sentry took, so a latched repeat of one can
+  // still say it was reported.
+  const sentKeys = new Set<string>();
   return {
     report(error, reportOptions = {}) {
       try {
@@ -325,17 +358,19 @@ export function createChokepointReporter(source: string, options: ChokepointRepo
         ].join('|');
         if (reportedKeys.has(key)) {
           markReported(error);
+          if (sentKeys.has(key)) markSent(error);
           return false;
         }
         if (reportedKeys.size >= cap) return false;
         reportedKeys.add(key);
-        sendHandledFailure(
+        const sent = sendHandledFailure(
           source,
           error,
           { ...reportOptions.correlationTags, ...tags },
           reportOptions.contexts,
           reportOptions.fingerprint ?? fingerprintOf(error),
         );
+        if (sent) sentKeys.add(key);
         return true;
       } catch {
         // report-ok: this is the reporter; a failed send must never break the path that called it.
@@ -344,6 +379,7 @@ export function createChokepointReporter(source: string, options: ChokepointRepo
     },
     reset() {
       reportedKeys.clear();
+      sentKeys.clear();
     },
   };
 }

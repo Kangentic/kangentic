@@ -2,7 +2,7 @@ import { Trans, useLingui } from '@lingui/react/macro';
 import { useProjectStore } from '../../stores/project-store';
 import { useToastStore } from '../../stores/toast-store';
 import { ConfirmDialog } from './ConfirmDialog';
-import { asSentence, describeIpcError } from '../../lib/ipc-error';
+import { ipcFailureToastFields } from '../../lib/ipc-error';
 
 /**
  * Shown when a registered project's folder no longer exists on disk (moved
@@ -54,7 +54,7 @@ export function ProjectPathMissingDialog() {
     } catch (error) {
       useToastStore.getState().addToast({
         title: t`Couldn't relocate project`,
-        message: asSentence(describeIpcError(error, ''), t`The folder could not be used.`),
+        ...ipcFailureToastFields(error, '', t`The folder could not be used.`),
         variant: 'error',
       });
     }

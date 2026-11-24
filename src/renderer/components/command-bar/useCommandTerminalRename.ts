@@ -15,7 +15,7 @@ import { msg } from '@lingui/core/runtime-macro';
 import { useSessionStore } from '../../stores/session-store';
 import { useToastStore } from '../../stores/toast-store';
 import { commandTerminalDisplayName, normalizeCommandTerminalName } from '../../../shared/command-terminal-name';
-import { asSentence, describeIpcError } from '../../lib/ipc-error';
+import { ipcFailureToastFields } from '../../lib/ipc-error';
 
 export interface CommandTerminalRename {
   /** The name as stored (null: none), the committed one while it is on its way. */
@@ -73,7 +73,7 @@ export function useCommandTerminalRename(sessionId: string | null, slot: string)
         setPending(null);
         useToastStore.getState().addToast({
           title: i18n._(msg`Couldn't rename terminal`),
-          message: asSentence(describeIpcError(error, String(error))),
+          ...ipcFailureToastFields(error, String(error)),
           variant: 'error',
         });
       });

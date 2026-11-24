@@ -903,6 +903,10 @@ msgstr "just now"
 msgid "Kangentic can't write to that folder."
 msgstr "Kangentic can't write to that folder."
 
+#: src/renderer/utils/crash-notice.ts
+msgid "Kangentic crashed"
+msgstr "Kangentic crashed"
+
 #: src/renderer/hooks/useProjectRelocation.tsx
 msgid "Kangentic will move the folder on disk. All tasks, history, and worktrees move with it."
 msgstr "Kangentic will move the folder on disk. All tasks, history, and worktrees move with it."
@@ -1446,6 +1450,14 @@ msgstr "The automation did not start."
 msgid "The description is too long to start an agent with."
 msgstr "The description is too long to start an agent with."
 
+#: src/renderer/utils/crash-notice.ts
+msgid "The last run ended in a crash at {crashedAt}."
+msgstr "The last run ended in a crash at {crashedAt}."
+
+#: src/renderer/utils/crash-notice.ts
+msgid "The last run ended in a crash."
+msgstr "The last run ended in a crash."
+
 #: src/renderer/stores/project-store.ts
 msgid "The list has been refreshed."
 msgstr "The list has been refreshed."
@@ -1481,6 +1493,10 @@ msgstr "The session was already running."
 #: src/renderer/pop-out/roots/PopOutChangesRoot.tsx
 msgid "The task's changes could not be read"
 msgstr "The task's changes could not be read"
+
+#: src/renderer/utils/crash-notice.ts
+msgid "The window crashed and reloaded"
+msgstr "The window crashed and reloaded"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
 msgid "These active agent sessions will be stopped and resumed automatically at the new location:"
@@ -1587,6 +1603,10 @@ msgstr "Workflow stalled"
 #: src/renderer/components/DescriptionEditor.tsx
 msgid "Write"
 msgstr "Write"
+
+#: src/renderer/utils/crash-notice.ts
+msgid "Your agents kept running."
+msgstr "Your agents kept running."
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 msgid "Your edits to this task are not saved."

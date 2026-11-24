@@ -15,7 +15,7 @@ import { useRegisterOpenOverlay } from '../../utils/overlay-gate';
 import { usePopOut } from '../../pop-out/usePopOut';
 import { Tooltip } from '../Tooltip';
 import type { SearchHit, SearchHitKind } from '../../../shared/types';
-import { asSentence } from '../../lib/ipc-error';
+import { asSentence, rejectionMessage } from '../../lib/ipc-error';
 
 const SEARCH_DEBOUNCE_MS = 200;
 
@@ -113,7 +113,7 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
       })
       .catch((error) => {
         if (seq !== requestSeq.current) return;
-        const message = error instanceof Error ? error.message : String(error);
+        const message = rejectionMessage(error);
         useToastStore.getState().addToast({ title: t`Search failed`, message: asSentence(message), variant: 'error' });
         setSearch({ key: searchKey, hits: [] });
       });

@@ -8,6 +8,7 @@ import type { GitDiffFileEntry } from '../../../shared/types';
 import { fetchDiffContent, type DiffContent, type DiffContentScope } from '../../components/dialogs/task-detail/changes/diff-content';
 import { openChangesFileWindow } from '../../components/dialogs/task-detail/changes/open-file-window';
 import type { DiffLinkedFiles } from '../../components/dialogs/task-detail/changes/DiffViewer';
+import { rejectionMessage } from '../../lib/ipc-error';
 
 const ChangesFileDiffPane = lazy(() =>
   import('./ChangesFileDiffPane').then((module) => ({ default: module.ChangesFileDiffPane })),
@@ -127,7 +128,7 @@ export function PopOutChangesFileRoot({ params }: { params: PopOutChangesFilePar
       // A watcher-triggered refetch failure keeps the last displayed content
       // (ChangesPanel's transient-failure policy); the error line only renders
       // while nothing is displayed yet.
-      setLoadError(error instanceof Error ? error.message : String(error));
+      setLoadError(rejectionMessage(error));
     }
   }, [worktreePath, projectPath, baseBranch, filePath, scope, commitOid, rangeBase, rangeHead]);
 

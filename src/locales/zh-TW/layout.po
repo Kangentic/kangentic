@@ -289,6 +289,11 @@ msgstr "顯示設定"
 msgid "Sign in to {signedOutAgentName} to run tasks."
 msgstr "登入 {signedOutAgentName} 即可執行任務。"
 
+#: src/renderer/components/layout/ToastItem.tsx
+#, fuzzy
+msgid "This issue has been automatically reported to Kangentic"
+msgstr "此問題已自動回報給 Kangentic"
+
 #: src/renderer/components/layout/TitleBar.tsx
 msgid "Update available"
 msgstr "有可用的更新"

@@ -7,7 +7,7 @@ import { useSessionStore } from '../session-store';
 import { withoutSessionsForTasks } from '../session-store/session-index';
 import { useToastStore } from '../toast-store';
 import { useProjectStore } from '../project-store';
-import { describeIpcError, asSentence } from '../../lib/ipc-error';
+import { ipcFailureToastFields } from '../../lib/ipc-error';
 import { openTaskFromNotification } from '../../utils/open-task-from-notification';
 import { applyStructuralSharing } from './structural-sharing';
 import { applyTaskListPayload } from './lane-pins';
@@ -295,7 +295,7 @@ export const createArchivedTasksSlice: StateCreator<BoardStore, [], [], Archived
       if (targetLane?.role === 'todo') await useSessionStore.getState().syncSessions();
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't restore task`),
-        message: asSentence(describeIpcError(err)),
+        ...ipcFailureToastFields(err),
         variant: 'error',
       });
     } finally {
@@ -328,7 +328,7 @@ export const createArchivedTasksSlice: StateCreator<BoardStore, [], [], Archived
       set({ archivedTasks: prevArchived, archivedTotalCount: prevArchivedTotalCount });
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't delete task`),
-        message: asSentence(describeIpcError(err)),
+        ...ipcFailureToastFields(err),
         variant: 'error',
       });
     }
@@ -385,7 +385,7 @@ export const createArchivedTasksSlice: StateCreator<BoardStore, [], [], Archived
       set({ archivedTasks: prevArchived, archivedTotalCount: prevArchivedTotalCount });
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't delete tasks`),
-        message: asSentence(describeIpcError(error)),
+        ...ipcFailureToastFields(error),
         variant: 'error',
       });
     } finally {
@@ -436,7 +436,7 @@ export const createArchivedTasksSlice: StateCreator<BoardStore, [], [], Archived
       if (bulkTargetLane?.role === 'todo') await useSessionStore.getState().syncSessions();
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't restore tasks`),
-        message: asSentence(describeIpcError(error)),
+        ...ipcFailureToastFields(error),
         variant: 'error',
       });
     }

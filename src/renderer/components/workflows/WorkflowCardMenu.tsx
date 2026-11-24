@@ -7,7 +7,7 @@ import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useToastStore } from '../../stores/toast-store';
 import { useWorkflowStore } from '../../stores/workflow-store';
-import { describeIpcError, asSentence } from '../../lib/ipc-error';
+import { describeIpcError, asSentence, ipcErrorWasReported } from '../../lib/ipc-error';
 import { boardMoveRefusal, boardWorkflowOf, sendAwayRefusal } from '../../utils/board-workflow';
 import { taskStoppedNow } from '../../utils/workflow-refusal';
 import { findBoardTask } from '../../utils/board-task-index';
@@ -83,6 +83,7 @@ export function WorkflowCardMenu({ viewTask, position, onClose, onOpenOnBoard, o
     useToastStore.getState().addToast({
       title: t`Couldn't move task`,
       message: t`"${taskTitle}": ${reason}`,
+      reported: ipcErrorWasReported(error),
       variant: 'warning',
       onOpen: openTask,
     });

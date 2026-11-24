@@ -574,6 +574,7 @@ describe('scheduleAutoNameSuggestion - applying the title at an idle edge', () =
     expect(addToast.mock.calls[0][0]).toEqual({
       title: "Couldn't rename task",
       message: 'Task not found.',
+      reported: false,
       variant: 'error',
     });
     expect(world.boardTasks[0].title).toBe('fix bug');

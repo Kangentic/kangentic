@@ -42,6 +42,12 @@ export interface Toast {
   since?: string;
   /** A persistent toast's: runs when the user closes the card with its X. */
   onDismiss?: () => void;
+  /**
+   * Main sent this failure's report to Sentry in this run, so the card draws its
+   * reported line (`ToastItem`). Set from `ipcFailureToastFields`, never composed
+   * by a call site.
+   */
+  reported?: boolean;
 }
 
 interface ToastFields {
@@ -52,6 +58,8 @@ interface ToastFields {
   variant?: ToastVariant;
   since?: string;
   onOpen?: () => void;
+  /** The failure was reported to Sentry (`ipcFailureToastFields`); the card draws its reported line. */
+  reported?: boolean;
 }
 
 /** A toast that closes on its own after `durationMs` (the Notifications setting by default). */
@@ -76,8 +84,8 @@ export interface PersistentToastInput extends ToastFields {
 
 export type ToastInput = TimedToastInput | PersistentToastInput;
 
-/** What `updateToast` may change in place: the words, the age, the button. */
-export type ToastPatch = Partial<Pick<Toast, 'title' | 'message' | 'variant' | 'since' | 'action' | 'onOpen'>>;
+/** What `updateToast` may change in place: the words, the age, the button, the reported line. */
+export type ToastPatch = Partial<Pick<Toast, 'title' | 'message' | 'variant' | 'since' | 'action' | 'onOpen' | 'reported'>>;
 
 interface ToastStore {
   toasts: Toast[];
@@ -114,6 +122,7 @@ export function resolveToast(input: ToastInput, id: string, defaultDurationMs: n
     onOpen: input.onOpen,
     since: input.since,
     onDismiss: input.persistent === true ? input.onDismiss : undefined,
+    reported: input.reported === true ? true : undefined,
   };
 }
 
