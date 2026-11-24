@@ -406,6 +406,22 @@ describe('host runs: no pipes, a file as stdin, and a run the app leaves alone',
     }
     await closed(23);
   }, 20_000);
+
+  it('waits at shutdown for a run that outlives the app once main asked for it to stop', async () => {
+    // An aborted script at a quit: a host that exits before the stop has ended
+    // the tree takes its own `taskkill` down with it.
+    const { processes, events, closed } = runner();
+    processes.start({ ...nodeRun(25, 'setInterval(() => {}, 1000);'), outlivesApp: true });
+    await waitFor(() => spawnedCount(events) === 1);
+    expect(processes.liveCount).toBe(0);
+
+    processes.stop(25, 'treeNow');
+    // Read in the same turn as the stop: the process cannot have been reaped yet.
+    expect(processes.liveCount).toBe(1);
+
+    await closed(25);
+    expect(processes.liveCount).toBe(0);
+  }, 20_000);
 });
 
 /**

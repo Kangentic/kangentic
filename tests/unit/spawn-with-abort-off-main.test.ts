@@ -1,32 +1,44 @@
 /**
- * `spawnWithAbort` starts a binary (git, through `runGitWithTimeout`) in the
- * pty host when one is registered (src/main/git/spawn-with-abort.ts). On
- * Windows a spawn is CreateProcess on the calling thread, 15 to 30 ms each, and
- * a workflow's task lifecycles stalled main on them.
+ * `spawnWithAbort` starts its child in the pty host when one is registered
+ * (src/main/git/spawn-with-abort.ts): git, through `runGitWithTimeout`, and a
+ * project's script (the Post-Worktree Script, the Stop script). On Windows a
+ * spawn is CreateProcess on the calling thread, 15 to 30 ms each, and a
+ * workflow's task lifecycles stalled main on them.
  *
- * Pinned: the run goes to `spawnOffMainCli` with its arguments, working
+ * Pinned for git: the run goes to `spawnOffMainCli` with its arguments, working
  * directory and whole environment, no shell and no group lead, its stdin ended
  * (the local spawn's is 'ignore'), and nothing spawns here. The timeout and the
  * external signal stop the host's run and settle with the wording the local
- * abort gives, which `isGitTimeoutError` and `classifyFetchFailure` read. A
- * shell command (the init script) never goes to the host.
+ * abort gives, which `isGitTimeoutError` and `classifyFetchFailure` read.
+ *
+ * Pinned for a script: it starts in the host as a run the app does not stop at
+ * a quit, an abort or a timeout stops its whole tree there and settles only
+ * once the tree has closed (or at the bound), and a host lost with the script
+ * running ends what it left by pid. A user loses a clean worktree otherwise: a
+ * script's leftover `npm install` held the next creation at that path for 12 s.
  *
  * `node:child_process` is mocked, so no process is spawned.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 
-const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
+const { spawnMock, killByPidMock } = vi.hoisted(() => ({ spawnMock: vi.fn(), killByPidMock: vi.fn() }));
 vi.mock('node:child_process', () => ({ spawn: spawnMock }));
 // No macOS spawn-helper, whatever platform this runs on (see spawn-with-abort.test.ts).
 vi.mock('../../src/main/pty/spawn/spawn-helper-permissions', () => ({
   spawnHelperCandidatePaths: (): string[] => [],
 }));
+// The stop by pid is recorded, never run: on POSIX the real one signals a
+// process group, and the pid here is made up.
+vi.mock('../../src/main/shared/child-tree-stop', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/shared/child-tree-stop')>()),
+  killChildTreeByPid: killByPidMock,
+}));
 
-import { spawnWithAbort } from '../../src/main/git/spawn-with-abort';
+import { spawnWithAbort, TREE_EXIT_WAIT_MS } from '../../src/main/git/spawn-with-abort';
 import { runGitWithTimeout, isGitTimeoutError } from '../../src/main/git/git-spawn';
 import { classifyFetchFailure, nonInteractiveGitEnv } from '../../src/main/git/fetch-throttle';
-import { setOffMainCliSpawner, type CliChildProcess, type OffMainCliOptions } from '../../src/main/utility-process/off-main-cli';
+import { setOffMainCliSpawner, type CliChildProcess, type CliStopMode, type OffMainCliOptions } from '../../src/main/utility-process/off-main-cli';
 
 class FakeOutput extends EventEmitter {
   resume(): this {
@@ -46,21 +58,27 @@ class FakeStdin extends EventEmitter {
 
 /** A host run as `RemoteCliProcess` presents it, driven by the test. */
 class FakeHostRun extends EventEmitter implements CliChildProcess {
-  readonly pid = 4242;
+  /** Undefined until the host has acknowledged the start, and for a start that failed. */
+  pid: number | undefined = 4242;
   exitCode: number | null = null;
   signalCode: NodeJS.Signals | null = null;
   readonly stdout = new FakeOutput();
   readonly stderr = new FakeOutput();
   readonly stdin = new FakeStdin();
-  stops = 0;
+  /** The mode of each stop asked for, undefined for the default. */
+  readonly stopModes: Array<CliStopMode | undefined> = [];
+
+  get stops(): number {
+    return this.stopModes.length;
+  }
 
   kill(): boolean {
     this.stopTree();
     return true;
   }
 
-  stopTree(): void {
-    this.stops += 1;
+  stopTree(mode?: CliStopMode): void {
+    this.stopModes.push(mode);
   }
 
   finish(code: number, stdout = '', stderr = ''): void {
@@ -93,6 +111,7 @@ function registerHost(): void {
 describe('spawnWithAbort with a pty host registered', () => {
   beforeEach(() => {
     spawnMock.mockReset();
+    killByPidMock.mockReset();
     registerHost();
   });
 
@@ -146,7 +165,8 @@ describe('spawnWithAbort with a pty host registered', () => {
     vi.advanceTimersByTime(1_000);
     const error = await settled;
 
-    expect(hostRun.stops).toBe(1);
+    // The default stop: git's tree with the grace, never the script's stop at once.
+    expect(hostRun.stopModes).toEqual([undefined]);
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toBe('git fetch --no-auto-gc origin main aborted (timeout after 1000ms) (child process killed)');
     expect(isGitTimeoutError(error)).toBe(true);
@@ -183,21 +203,146 @@ describe('spawnWithAbort with a pty host registered', () => {
     hostRun.emit('close', null, null);
 
     await expect(pending).rejects.toThrow('spawn git ENOENT');
+    // Git is not a script: a host lost under it ends nothing by pid here.
+    expect(killByPidMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('a script (a shell command) with a pty host registered', () => {
+  const SCRIPT = { command: 'npm install', cwd: '/mock/worktree', label: 'init script', signalKillAssertsTimeout: false };
+
+  beforeEach(() => {
+    spawnMock.mockReset();
+    killByPidMock.mockReset();
+    registerHost();
   });
 
-  it('keeps a shell command (the init script) in this process', async () => {
-    const localChild = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), stderr: new EventEmitter(), pid: 99 });
-    spawnMock.mockReturnValue(localChild);
+  afterEach(() => {
+    setOffMainCliSpawner(null);
+    vi.useRealTimers();
+  });
 
-    const pending = spawnWithAbort(
-      { command: 'npm install', cwd: '/mock/repo', label: 'init script', signalKillAssertsTimeout: false },
-      { timeoutMs: 60_000 },
-    );
-    localChild.emit('close', 0, null);
-    await pending;
+  it('starts in the host through the shell, as a run a quit leaves alone, and spawns nothing here', async () => {
+    const pending = spawnWithAbort(SCRIPT, { timeoutMs: 60_000, env: { KANGENTIC_SCRIPT: 'yes', CHROME_CRASHPAD_PIPE_NAME: 'pipe' } });
+    hostRun.finish(0, 'added 12 packages\n');
 
-    expect(hostCalls).toHaveLength(0);
-    expect(spawnMock).toHaveBeenCalledTimes(1);
+    await expect(pending).resolves.toEqual({ stdout: 'added 12 packages\n', stderr: '' });
+    expect(hostCalls).toHaveLength(1);
+    const [call] = hostCalls;
+    // The whole command line for the platform shell, with no args array.
+    expect(call.command).toBe('npm install');
+    expect(call.args).toEqual([]);
+    expect(call.options.cwd).toBe('/mock/worktree');
+    expect(call.options.shell).toBe(true);
+    // Its own process group where there is one, so a stop reaches what it started.
+    expect(call.options.detached).toBe(process.platform !== 'win32');
+    expect(call.options.outlivesApp).toBe(true);
+    expect(call.options.env).toEqual({ KANGENTIC_SCRIPT: 'yes' });
+    expect(hostRun.stdin.ended).toBe(true);
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it('stops the whole tree at once on an external abort, and settles only when the tree has closed', async () => {
+    const external = new AbortController();
+    const pending = spawnWithAbort(SCRIPT, { timeoutMs: 60_000, signal: external.signal });
+    let settled = false;
+    const outcome = pending.then(() => null, (error: unknown) => error).finally(() => { settled = true; });
+
+    external.abort();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(hostRun.stopModes).toEqual(['treeNow']);
+    // Something the script started may still be running in the worktree.
+    expect(settled).toBe(false);
+
+    // The killed shell closes, with whatever exit code the kill left.
+    hostRun.finish(1);
+    const error = await outcome;
+    expect((error as Error).message).toBe('init script aborted (external abort) (child process killed)');
+    expect((error as { timedOut?: boolean }).timedOut).toBe(false);
+    expect(killByPidMock).not.toHaveBeenCalled();
+  });
+
+  it('stops the tree on its timeout and reports the timeout as the cause', async () => {
+    vi.useFakeTimers();
+    const pending = spawnWithAbort(SCRIPT, { timeoutMs: 1_000 });
+    const outcome = pending.then(() => null, (error: unknown) => error);
+
+    vi.advanceTimersByTime(1_000);
+    expect(hostRun.stopModes).toEqual(['treeNow']);
+    hostRun.finish(1);
+
+    const error = await outcome;
+    expect((error as Error).message).toBe('init script aborted (timeout after 1000ms) (child process killed)');
+    expect((error as { timedOut?: boolean }).timedOut).toBe(true);
+  });
+
+  it('settles at the bound when the killed tree never closes', async () => {
+    vi.useFakeTimers();
+    const external = new AbortController();
+    const pending = spawnWithAbort(SCRIPT, { timeoutMs: 600_000, signal: external.signal });
+    let settled = false;
+    const outcome = pending.then(() => null, (error: unknown) => error).finally(() => { settled = true; });
+
+    external.abort();
+    await vi.advanceTimersByTimeAsync(TREE_EXIT_WAIT_MS - 1);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(((await outcome) as Error).message).toBe('init script aborted (external abort) (child process killed)');
+  });
+
+  it('sends the stop for a script the host has not acknowledged yet, and still waits for its close', async () => {
+    hostRun.pid = undefined;
+    const external = new AbortController();
+    const pending = spawnWithAbort(SCRIPT, { timeoutMs: 60_000, signal: external.signal });
+    let settled = false;
+    const outcome = pending.then(() => null, (error: unknown) => error).finally(() => { settled = true; });
+
+    external.abort();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // The host holds the stop until the run has a pid, so it is always sent.
+    expect(hostRun.stopModes).toEqual(['treeNow']);
+    expect(settled).toBe(false);
+    hostRun.finish(1);
+    expect(((await outcome) as Error).message).toContain('aborted (external abort)');
+  });
+
+  it('ends by pid what a script left when its host is lost, and rejects with the host\'s error', async () => {
+    const pending = spawnWithAbort(SCRIPT, { timeoutMs: 60_000 });
+    const lost = new Error('The pty host stopped while the agent was running');
+    // The order `RemoteCliProcess.deliverHostLost` uses: the error first, then the exit and the close.
+    hostRun.emit('error', lost);
+    hostRun.signalCode = 'SIGKILL';
+    hostRun.emit('exit', null, 'SIGKILL');
+    hostRun.emit('close', null, 'SIGKILL');
+
+    await expect(pending).rejects.toBe(lost);
+    expect(killByPidMock).toHaveBeenCalledTimes(1);
+    expect(killByPidMock).toHaveBeenCalledWith(4242);
+  });
+
+  it('ends nothing by pid for a script that never started', async () => {
+    hostRun.pid = undefined;
+    const pending = spawnWithAbort(SCRIPT, { timeoutMs: 60_000 });
+    hostRun.emit('error', new Error('spawn /bin/sh ENOENT'));
+    hostRun.emit('close', null, null);
+
+    await expect(pending).rejects.toThrow('spawn /bin/sh ENOENT');
+    expect(killByPidMock).not.toHaveBeenCalled();
+  });
+
+  it('reports a script that fails on its own with its exit code and output', async () => {
+    const pending = spawnWithAbort(SCRIPT, { timeoutMs: 60_000 });
+    hostRun.finish(2, '', 'npm ERR! code ENOENT\n');
+
+    const error = await pending.then(() => null, (failure: unknown) => failure);
+    expect((error as Error).message).toBe('init script exited with code 2: npm ERR! code ENOENT');
+    expect((error as { exitCode?: number }).exitCode).toBe(2);
+    expect(hostRun.stops).toBe(0);
   });
 });
 

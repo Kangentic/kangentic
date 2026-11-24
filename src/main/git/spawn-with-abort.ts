@@ -2,7 +2,7 @@ import { spawn, type SpawnOptions } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 import { resolveShellLaunch } from '../pty/spawn/shell-launch';
 import { withoutCrashpadPipeName } from '../shared/child-env';
-import { killChildTreeNow } from '../shared/child-tree-stop';
+import { childHasExited, killChildTreeByPid, killChildTreeNow } from '../shared/child-tree-stop';
 import { spawnOffMainCli, type CliChildProcess } from '../utility-process/off-main-cli';
 
 /**
@@ -114,14 +114,15 @@ export function capturedOutputOf(error: unknown): CapturedOutput | null {
  * once, not twice. Each caller keeps its own error wording via `label` and
  * `signalKillAssertsTimeout`.
  *
- * A binary (git) starts in the pty host when one is registered
+ * Every child starts in the pty host when one is registered
  * (`spawnOffMainCli`), because on Windows the spawn is CreateProcess on the
  * calling thread, 15 to 30 ms each. The lifecycle around it stays here: the
  * timeout and the external signal stop the host's run (`stopTree`) and settle
  * with the same "aborted (...)" wording the local spawn's abort produces, which
- * `isGitTimeoutError` and `classifyFetchFailure` read. A shell command (the
- * init script) always runs here: it can start anything, and on macOS it goes
- * through the spawn-helper.
+ * `isGitTimeoutError` and `classifyFetchFailure` read. A shell command (a
+ * project's script) is resolved here first, so on macOS it still goes through
+ * the spawn-helper, and starts there as a run the app does not stop at a quit.
+ * With no host (unit tests, startup before the host) the child starts here.
  */
 export function spawnWithAbort(
   target: SpawnWithAbortTarget,
@@ -235,54 +236,96 @@ export function spawnWithAbort(
       settleResolve({ stdout, stderr });
     };
 
-    // A binary starts in the pty host when one is registered. The host's stop
-    // ends the child's tree with no exit signal to report on Windows, so an
-    // abort settles here at once, with the wording a local abort gives.
-    const remoteChild: CliChildProcess | null = args === undefined
-      ? null
-      : spawnOffMainCli(command, [...args], {
-        cwd,
-        shell: false,
-        env,
-        detached: false,
-      });
-    if (remoteChild) {
-      controller.signal.addEventListener('abort', () => {
-        if (remoteChild.stopTree) remoteChild.stopTree();
-        else remoteChild.kill();
-        settleReject(abortedError());
-      }, { once: true });
-      remoteChild.stdout.on('data', onStdout);
-      remoteChild.stderr.on('data', onStderr);
-      remoteChild.on('error', onError);
-      remoteChild.on('close', onClose);
-      // The local spawn's stdin is 'ignore'; an ended pipe reads the same.
-      remoteChild.stdin.end();
-      return;
-    }
-
-    // A command string is the post-worktree init script, which can start
-    // anything, so on macOS it runs through the spawn-helper and keeps nothing
-    // it starts on Crashpad's exception port (see shell-launch.ts). A binary
-    // spawn (git) is left alone.
+    // A command string is a project's script (the Post-Worktree Script, the
+    // Stop script), which can start anything, so on macOS it runs through the
+    // spawn-helper and keeps nothing it starts on Crashpad's exception port
+    // (see shell-launch.ts). A binary spawn (git) is left alone.
     const launch = args === undefined
       ? resolveShellLaunch({ command })
       : { file: command, args: [...args], shell: false };
     // A shell command can start children of its own: cmd.exe always runs the
-    // script as one, and `sh -c` forks for a compound script. Node's `signal`
-    // option kills the shell only, which left whatever the script started (an
-    // `npm install`) running in a worktree about to be removed, and on Windows
-    // holding it open: a superseded move's leftover script stalled the next
-    // creation at that path by 12 s until it exited. So a shell command leads
-    // its own process group on POSIX and loses its whole tree on abort or
-    // timeout, the way the run-script automation's script does. A binary (git)
-    // keeps Node's own kill.
+    // script as one, and `sh -c` forks for a compound script. Killing the shell
+    // only left whatever the script started (an `npm install`) running in a
+    // worktree about to be removed, and on Windows holding it open: a
+    // superseded move's leftover script stalled the next creation at that path
+    // by 12 s until it exited. So a shell command leads its own process group
+    // on POSIX and loses its whole tree on abort or timeout, the way the
+    // run-script automation's script does. A binary (git) is stopped alone.
     const killsTree = args === undefined;
-    // Set once the abort listener below has killed the tree: from then on the
-    // close settles with the abort's wording, whatever exit code the kill left,
-    // and clears the bound on that wait.
+    // Set once an abort has killed the tree: from then on the close settles
+    // with the abort's wording, whatever exit code the kill left, and clears
+    // the bound on that wait.
     let treeKilled = false;
     let treeExitWait: ReturnType<typeof setTimeout> | undefined;
+    // Settle when the killed shell closes (every holder of its output pipes is
+    // gone), or at TREE_EXIT_WAIT_MS, so an aborted call returns only once
+    // nothing it started is still running in its directory.
+    const awaitKilledTree = (): void => {
+      treeKilled = true;
+      treeExitWait = setTimeout(() => settleReject(abortedError()), TREE_EXIT_WAIT_MS);
+      treeExitWait.unref?.();
+    };
+    const onCloseAfterKill = (code: number | null, signalName: NodeJS.Signals | null): void => {
+      if (treeKilled) {
+        clearTimeout(treeExitWait);
+        settleReject(abortedError());
+        return;
+      }
+      onClose(code, signalName);
+    };
+
+    // Either starts in the pty host when one is registered, so the start never
+    // runs on this thread. A script is a run the app leaves alone at a quit
+    // (`outlivesApp`), as it was while main started it: nothing here stopped a
+    // script because the app was closing, and the host must not start to.
+    const hostedChild: CliChildProcess | null = spawnOffMainCli(launch.file, launch.args, {
+      cwd,
+      shell: launch.shell,
+      env,
+      // Windows has no process groups; there `taskkill /T` walks the tree.
+      detached: killsTree && process.platform !== 'win32',
+      ...(killsTree ? { outlivesApp: true } : {}),
+    });
+    if (hostedChild) {
+      controller.signal.addEventListener('abort', () => {
+        if (killsTree) {
+          // The whole tree at once, in the host, and on POSIX even when the
+          // shell has exited and something it started still holds its output.
+          // The stop is sent whether or not the start has been acknowledged:
+          // the host holds it until the run has a pid.
+          awaitKilledTree();
+          if (hostedChild.stopTree) hostedChild.stopTree('treeNow');
+          else hostedChild.kill();
+          return;
+        }
+        // The host's stop ends git's tree with no exit signal to report on
+        // Windows, so the abort settles here at once, with a local abort's wording.
+        if (hostedChild.stopTree) hostedChild.stopTree();
+        else hostedChild.kill();
+        settleReject(abortedError());
+      }, { once: true });
+      hostedChild.stdout.on('data', onStdout);
+      hostedChild.stderr.on('data', onStderr);
+      hostedChild.on('error', (error: NodeJS.ErrnoException) => {
+        // An error after the start is the pty host, or its spawn worker, lost
+        // with the script running. Nothing can stop the script there any more,
+        // and this call settles as failed, so what it started is ended by pid:
+        // left running, it would be in the worktree when the creation is tried
+        // again. A start that failed has no pid, and nothing to end.
+        if (killsTree && hostedChild.pid !== undefined && !childHasExited(hostedChild)) killChildTreeByPid(hostedChild.pid);
+        if (treeKilled) {
+          clearTimeout(treeExitWait);
+          settleReject(abortedError());
+          return;
+        }
+        onError(error);
+      });
+      hostedChild.on('close', onCloseAfterKill);
+      // The local spawn's stdin is 'ignore'; an ended pipe reads the same.
+      hostedChild.stdin.end();
+      return;
+    }
+
     const spawnOptions: SpawnOptions = {
       cwd,
       shell: launch.shell,
@@ -300,34 +343,22 @@ export function spawnWithAbort(
     if (killsTree) {
       // Kill the tree instead of the shell, never after it: `taskkill /T` finds
       // the children through their parent, which a dead shell no longer is.
-      // Settle when the killed shell closes (every holder of its output pipes is
-      // gone), or at TREE_EXIT_WAIT_MS, so an aborted call returns only once
-      // nothing it started is still running in its directory. On Windows a
-      // shell that already exited, its pipes still held open by something it
-      // started, is not tree-killed: Node no longer pins its pid, which may name
-      // a stranger by then (`child-tree-stop.ts`).
+      // On Windows a shell that already exited, its pipes still held open by
+      // something it started, is not tree-killed: Node no longer pins its pid,
+      // which may name a stranger by then (`child-tree-stop.ts`).
       controller.signal.addEventListener('abort', () => {
         if (child.pid === undefined) {
           settleReject(abortedError());
           return;
         }
-        treeKilled = true;
+        awaitKilledTree();
         killChildTreeNow(child, { leadsGroup: true });
-        treeExitWait = setTimeout(() => settleReject(abortedError()), TREE_EXIT_WAIT_MS);
-        treeExitWait.unref?.();
       }, { once: true });
     }
 
     child.stdout?.on('data', onStdout);
     child.stderr?.on('data', onStderr);
     child.on('error', onError);
-    child.on('close', (code: number | null, signalName: NodeJS.Signals | null) => {
-      if (treeKilled) {
-        clearTimeout(treeExitWait);
-        settleReject(abortedError());
-        return;
-      }
-      onClose(code, signalName);
-    });
+    child.on('close', onCloseAfterKill);
   });
 }
