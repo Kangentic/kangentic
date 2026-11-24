@@ -22,7 +22,7 @@ function account(id: string, agent: string, readAgoMs: number | null, lastUsage:
     id, agent, kind: 'folder', folderPath: null, keyFilePath: null, keyNames: [],
     email: `${id}@example.com`, plan: 'Pro', status: 'ok', position: 1, historyPrivate: false,
     lastUsage, lastUsageAt: readAgoMs === null ? null : new Date(NOW_MS - readAgoMs).toISOString(),
-    createdAt: '2026-01-01T00:00:00.000Z',
+    absentWindowIds: [], createdAt: '2026-01-01T00:00:00.000Z',
   };
 }
 
@@ -57,6 +57,95 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+});
+
+describe('AccountUsageRefresher onReadSettled', () => {
+  // Automatic order can change after any read, or on the clock alone, so running sessions are
+  // re-placed from here (task #1200), never from each accounts:changed push.
+  it('is called after a single read settles, a read that failed included', async () => {
+    const onReadSettled = vi.fn();
+    const { refresher, refreshUsage } = rig([account('one', 'a', null)], { onReadSettled });
+    refreshUsage.mockRejectedValueOnce(new Error('read failed'));
+    await refresher.refreshAccount('one');
+    expect(onReadSettled).toHaveBeenCalledTimes(1);
+  });
+
+  it('is called at the end of a pass, after its reads', async () => {
+    const order: string[] = [];
+    const accounts = [account('one', 'a', null), account('two', 'a', null)];
+    const { refresher, refreshUsage } = rig(accounts, { onReadSettled: () => order.push('settled') });
+    refreshUsage.mockImplementation(async (accountId: string) => {
+      order.push(`read:${accountId}`);
+      return true;
+    });
+    await refresher.refreshAll('scheduled');
+    expect(order.at(-1)).toBe('settled');
+    expect(order.filter((entry) => entry.startsWith('read:'))).toEqual(['read:one', 'read:two']);
+  });
+
+  it('runs the pass the reset timer starts, so a reset with no new reading still re-places sessions', async () => {
+    const onReadSettled = vi.fn();
+    // A weekly window that resets in a minute, on an agent with two accounts.
+    const accounts = [account('one', 'a', 1000, [window(NOW_SECONDS + 60)]), account('two', 'a', 1000)];
+    const { refresher } = rig(accounts, { onReadSettled });
+    await refresher.refreshAll('scheduled');
+    onReadSettled.mockClear();
+    await vi.advanceTimersByTimeAsync(60_000 + 30_000);
+    expect(onReadSettled).toHaveBeenCalled();
+  });
+
+  it('never throws into the read queue', async () => {
+    const { refresher, refreshUsage } = rig([account('one', 'a', null), account('two', 'a', null)], {
+      onReadSettled: () => { throw new Error('follower defect'); },
+    });
+    await refresher.refreshAccount('one');
+    await refresher.refreshAccount('two');
+    expect(refreshUsage).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports a callback that throws with the follow_order stage, and the next read still runs and settles', async () => {
+    const failureReporter = { report: vi.fn() };
+    const onReadSettled = vi.fn();
+    onReadSettled.mockImplementationOnce(() => { throw new Error('follower defect'); });
+    const { refresher, refreshUsage } = rig([account('one', 'a', null), account('two', 'a', null)], { onReadSettled, failureReporter });
+    await expect(refresher.refreshAccount('one')).resolves.toBeUndefined();
+    expect(failureReporter.report).toHaveBeenCalledTimes(1);
+    expect(failureReporter.report).toHaveBeenCalledWith(expect.any(Error), { tags: { stage: 'follow_order' } });
+
+    await refresher.refreshAccount('two');
+    expect(refreshUsage.mock.calls.map(([accountId]) => accountId)).toEqual(['one', 'two']);
+    expect(onReadSettled).toHaveBeenCalledTimes(2);
+    expect(failureReporter.report).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a callback that throws at the end of a pass too, and the pass resolves', async () => {
+    const failureReporter = { report: vi.fn() };
+    const { refresher } = rig([account('one', 'a', null), account('two', 'a', null)], {
+      onReadSettled: () => { throw new Error('follower defect'); },
+      failureReporter,
+    });
+    await expect(refresher.refreshAll('scheduled')).resolves.toBeUndefined();
+    // One per read, and one for the pass.
+    expect(failureReporter.report).toHaveBeenCalledTimes(3);
+    for (const [, context] of failureReporter.report.mock.calls) expect(context).toEqual({ tags: { stage: 'follow_order' } });
+  });
+
+  it('calls no callback for a read that settles after dispose', async () => {
+    const onReadSettled = vi.fn();
+    const failureReporter = { report: vi.fn() };
+    const { refresher, refreshUsage } = rig([account('one', 'a', null)], { onReadSettled, failureReporter });
+    let finishRead: () => void = () => undefined;
+    refreshUsage.mockImplementationOnce(() => new Promise<boolean>((resolve) => { finishRead = () => resolve(true); }));
+    const read = refresher.refreshAccount('one');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(refreshUsage).toHaveBeenCalledTimes(1);
+
+    refresher.dispose();
+    finishRead();
+    await read;
+    expect(onReadSettled).not.toHaveBeenCalled();
+    expect(failureReporter.report).not.toHaveBeenCalled();
+  });
 });
 
 describe('AccountUsageRefresher.refreshAccount', () => {

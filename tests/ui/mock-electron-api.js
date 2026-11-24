@@ -4183,7 +4183,7 @@
     // Calls are recorded in window.__mockAccountCalls. A sign-in stays open until a test ends it
     // with window.__mockFinishAccountLogin({ email, plan }) or the dialog cancels it.
     accounts: (function () {
-      var listeners = { changed: [], loginOutput: [], loginEnded: [], switched: [], allFull: [] };
+      var listeners = { changed: [], loginOutput: [], loginEnded: [], switched: [], allFull: [], following: [] };
       var state = null;
       var nextLogin = 1;
       var openLogin = null;
@@ -4237,6 +4237,8 @@
           historyPrivate: !!seed.historyPrivate,
           lastUsage: seed.lastUsage ? seed.lastUsage.map(usageWindow) : null,
           lastUsageAt: seed.lastUsage ? new Date().toISOString() : null,
+          // The declared windows the plan does not have (a Claude plan with no 5h limit).
+          absentWindowIds: seed.absentWindowIds || [],
           createdAt: '2026-01-01T00:00:00.000Z',
         };
       }
@@ -4377,14 +4379,14 @@
         switchTo: async function (accountId) {
           record('switchTo', [accountId]);
           var card = cardOf(accountId);
-          if (!card) return { ok: false, agent: null, accountName: null, moved: 0, failed: 0 };
+          if (!card) return { ok: false, agent: null, accountName: null, moved: 0, pending: 0, failed: 0 };
           var moved = card.accounts.filter(function (entry) { return entry.id === accountId; })[0];
           card.accounts = [moved].concat(card.accounts.filter(function (entry) { return entry.id !== accountId; }));
           fire('changed');
-          // Main answers once the agent's running sessions have moved. A test names how that
-          // went with window.__mockAccountSwitchOutcome = { moved, failed }.
-          var outcome = window.__mockAccountSwitchOutcome || { moved: 0, failed: 0 };
-          return { ok: true, agent: card.agent, accountName: moved.email || null, moved: outcome.moved, failed: outcome.failed };
+          // Main answers once each running session was looked at once. A test names how that
+          // went with window.__mockAccountSwitchOutcome = { moved, pending, failed }.
+          var outcome = window.__mockAccountSwitchOutcome || { moved: 0, pending: 0, failed: 0 };
+          return { ok: true, agent: card.agent, accountName: moved.email || null, moved: outcome.moved, pending: outcome.pending || 0, failed: outcome.failed };
         },
         refreshUsage: async function () { record('refreshUsage', []); },
         onChanged: function (callback) { return subscribe('changed', callback); },
@@ -4398,6 +4400,12 @@
         onAllFull: function (callback) {
           window.__mockFireAccountsAllFull = function (payload) { fire('allFull', payload); };
           return subscribe('allFull', callback);
+        },
+        // Main pushes this when Automatic order puts another account first and running sessions
+        // move to it. Tests push one via window.__mockFireAccountsFollowing(payload).
+        onFollowing: function (callback) {
+          window.__mockFireAccountsFollowing = function (payload) { fire('following', payload); };
+          return subscribe('following', callback);
         },
       };
     })(),

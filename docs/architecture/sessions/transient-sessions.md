@@ -38,7 +38,10 @@ Main is the authority for the pairing. `ManagedSession` retains `commandTerminal
 `commandTerminalBranch`, `commandTerminalLabel` and `commandTerminalNamedByUser` (in memory, not a
 DB row, so this does not make a transient session persistent), and `toSession` carries them to the
 renderer on every session row. The flag marks a label the user set or cleared by hand
-(`session:renameTransient`), which the namer and the resume seed then leave alone. `planTransientRecovery`
+(`session:renameTransient`), which the namer and the resume seed then leave alone. A row main ends
+only to start it again in its slot (a move to another account, `restartCommandTerminalOn`) also
+carries `commandTerminalRespawn` on its removal's snapshot: the window stays and adopts the slot's
+next terminal, and closes after 60 s if none arrives. `planTransientRecovery`
 (`src/renderer/stores/session-store/transient-recovery.ts`) rebuilds the map from that on every
 `syncSessions`, for every project:
 
@@ -177,6 +180,8 @@ and the end settle do, and throws for a session that is not a Command Terminal.
 
 1. `kill()` the session (a young typed-into one gets its exit sequence and the 1500 ms grace; a Claude session on Windows or Linux is closed at once) and capture `awaitExit`, then detach the session files without deleting them (`detachPreservingFiles`) and `remove()` the row from `SessionManager`, which announces `session-removed`; the handler returns at once, so the window closes immediately
 2. Once the process has exited, delete the session directory from disk (best-effort). This is the only delete, so the agent's SessionEnd hook still has a directory to write into
+
+A move to another account (`restartCommandTerminalOn`) ends a terminal through the same call with `{ respawn: true }`, which marks the removal's snapshot `commandTerminalRespawn` and starts the slot's next terminal on the same conversation and tag. The leftover reaper then waits on the outcome (`respawnOutcome`): while the next start is in flight it checks again, once a terminal runs under the tag again it reaps nothing, and when the move gave up the end is an ordinary one and is reaped as any other.
 
 Transient sessions are counted by the `session_spawn` analytics event with `isTransient: true`
 (volume) and by `feature_used: command_terminal` (adoption); see [Usage analytics](../../telemetry/usage-analytics.md).

@@ -136,7 +136,10 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   so the CLI stops it at every end, before the leftover reap, and before an Earlier resume, which
   then names the id `resolveResumableSessionId` returns. Both run on the agent's own files alone
   (`backgroundSessionOf`, `command-terminal-background-session.ts`), so an ordinary end or resume
-  runs no CLI, and never on a background session a live terminal still holds.
+  runs no CLI, and never on a background session a live terminal still holds. A move to another
+  account is an end and a start in the same slot, the one end main starts again on its own: it
+  waits for the old agent's exit, then resumes the conversation under the same tag and grid through
+  `startCommandTerminal`'s main-only third argument, which carries the account and any prompt.
 - **A running terminal survives a restart: Stop is the only end for good.** A row with no end is
   the signal: a quit removes no registry row, and a crash or an OS kill leaves the same state, so
   nothing runs on the quit path. `command-terminal-restore.ts` brings it back in its slot with its
@@ -229,7 +232,13 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   map still points at. A renderer-initiated end (Stop, a branch switch, a resume in place) must
   scrub its map entry BEFORE it sends the kill, or the subscriber closes the window a second time
   (a branch switch would lose its window). Do not move this into App.tsx's removal handler, whose
-  mapping the replica convergence test pins.
+  mapping the replica convergence test pins. One main-initiated end keeps the window: a move to
+  another account (`restartCommandTerminalOn`, task #1200) ends the terminal with
+  `endCommandTerminal(id, { respawn: true })`, which marks the removal's snapshot
+  `commandTerminalRespawn`. The subscriber then scrubs the map entry and leaves the window, which
+  adopts the slot's next terminal when it arrives (`CommandTerminalWindow`'s own subscription). The
+  leftover reaper waits out the slot's next start and reaps, after the background-session stop,
+  only when no terminal came back under the tag: a move that gives up is an end like any other.
 - **The panel can live in a window of its own, and then never also in the app.** Open in new
   window opens the project-scoped pop-out `command-terminal` (`command-terminal:<projectId>`,
   see `pop-out-surface-registry.md`), and stays off while a terminal is still starting: main

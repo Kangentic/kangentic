@@ -15,6 +15,7 @@ sources:
   - resource: src/main/shell-env.ts
   - resource: src/main/agent/adapters/claude/accounts.ts
   - resource: src/main/agent/adapters/claude/plan-carry.ts
+  - resource: src/main/agent/adapters/claude/tool-results-written.ts
   - resource: src/main/agent/adapters/claude/auto-memory-folder.ts
   - resource: src/main/agent/adapters/codex/accounts.ts
   - resource: src/main/agent/adapters/codex/rate-limits.ts
@@ -313,11 +314,16 @@ nothing gets no card.
 never removes one from a session's environment. When one is set where Kangentic started, the
 agent's card shows one line naming it.
 
-`usageWindows`, on either kind, names the usage windows the CLI always has, shortest first, as an
-id, label, icon and duration. A CLI can leave a window out until an account opens it: Claude
-reports its 5h window only once the account has run in it. Each row in the tab then draws a line
-per declared window, and one the account has not opened reads Not started, so every row of an
-agent is one height. Claude declares its 5h and 7d windows from `RATE_LIMIT_WINDOWS`
+`usageWindows`, on either kind, names the usage windows the CLI's plans have, shortest first, as an
+id, label, icon and duration. Each row in the tab draws a line per declared window the account has.
+A window the account has but has not opened reads Not started: Claude reports a 5h window in its
+status line only once the account has run in it. A window the account does not have at all draws
+no line. Not every Claude plan has a 5h limit, and Claude's own cached usage says so with
+`five_hour: null`, so the idle read names it absent (`IdleUsageReading.absentWindowIds`) and the
+row keeps it in `absent_windows_json` (`AgentAccount.absentWindowIds`). Rows of one agent can then
+differ in height. Only the idle read sets that list, since a status line that leaves a window out
+says nothing about the plan. A live report of a window the list holds takes it off again, which is
+a plan that gained the window. Claude declares its 5h and 7d windows from `RATE_LIMIT_WINDOWS`
 (`status-parser.ts`), the table its status line is parsed with.
 
 ## Which account a session runs on
@@ -345,13 +351,14 @@ That holds for an agent that reports usage. One that reports none has no reset t
 list is always the saved order (`followsOrderMode` in `account-service.ts`), and a drag or Switch
 to on it leaves the order mode alone.
 A drag only reorders, for new sessions. Switch to is a deliberate switch: the account goes to the top
-and the agent's running task sessions restart in place on it, one at a time, each resuming its
-conversation. One that was mid-turn is told to continue. Command Terminals and workflow agents
-stay where they are. For an agent whose conversations stay on their account (Codex), Switch to
-moves no running session, and its tip says so. The call answers once the sessions have moved,
-and the renderer raises one toast from it (`describeAccountSwitchResult`): how many running
-sessions moved, that new sessions start on the account when none was running, or that some
-could not be moved and stay on their accounts.
+and the agent's running sessions move to it, task sessions, Command Terminals and workflow agents
+alike, each at its first safe point (below). For an agent whose conversations stay on their account
+(Codex), Switch to moves no running session, and its tip says so. The call answers once each
+session has been looked at once, and the renderer raises one toast from it
+(`describeAccountSwitchResult`): how many running sessions moved, how many working ones move at
+their next pause, that new sessions start on the account when none was running, or that some could
+not move. A task session that could not move stays on its account; a Command Terminal or workflow
+agent whose start failed after its stop is ended or paused, with its conversation kept.
 An account that is signed out or `replaced`, has no plan, or has a window at 100% is skipped. A
 window at 100% stays there until its reset, whatever a later report says (see "Usage").
 
@@ -374,6 +381,82 @@ keeps on its own (Claude's plan file, `carryConversation`), let any account resu
 conversation. The exception is an agent that declares `conversationsStayOnAccount`: both task
 spawn chokepoints hand `resolveSpawnAccount` the account on the conversation's session record
 (`conversationAccountOf`), and the resume runs there while that account is signed in.
+
+### Running sessions follow the order
+
+Under Automatic order, the agent's running sessions follow its top account with room (task #1200).
+Automatic puts first the account whose week resets soonest, so its allowance is used before it
+resets. Once that reset passes, another account leads, and a session left on the old one spends a
+new week while the new leader's last days run out unused. On 2026-11-24 two task sessions did that
+for 8 and 11 minutes, until they were paused, and an app that stays up for days had nothing else to
+move them.
+
+`AutomaticOrderFollower` (`account-order-follow.ts`) compares the agent's top account with room
+(`topAccountWithRoom`, never the first row, so a full account is never the target) with the one it
+last saw. It looks after each usage read and each pass of the refresher (`onReadSettled`), the pass
+its reset timer starts 30 seconds after a window resets included, and after the accounts settings
+are saved. It never looks on an `accounts:changed` push: a dogfood app sent about 2,000 of those in
+one day. When the top changed, every running session of the agent on another account waits to move
+there, and one toast says so (`accounts:following`). A reading that leaves the top where it was
+moves nothing, so sessions do not flip back and forth: a resume on another account starts with a
+cold prompt cache, one full prefill of the conversation charged to the new account, and the order
+changes only at resets, a few times a week. The first look at an agent, at a launch or on a switch
+back to Automatic, asks too; startup recovery already put its sessions on the top account, so that
+is normally a no-op. Manual moves nothing. An agent that reports no usage, or whose conversations
+stay on their account, moves nothing.
+
+`SessionAccountMover` (`account-session-move.ts`) moves each waiting session at its first safe
+point, one at a time, for the follower and Switch to alike. A newer target replaces the one a
+session waited for, and a session found on its target, or on another row of the same login, no
+longer waits. A session the usage-limit continuation holds is left to it. A safe point is:
+
+- no tool call in flight and no permission prompt or question open (`automatedKeysBlocker`);
+- no background shell or subagent of the session alive (`getOpenWork`, and the engine's subagent
+  depth, which counts a background subagent from its start), since each dies with the restart. A
+  shell the agent marked as a service is not one, as for the idle pause;
+- nothing typed into its input box, which the restart would throw away (read again from the pty
+  host just before the restart);
+- and, mid-turn, the transcript holds the result of every tool call in the message whose call just
+  ended (`transcriptToolResultsWritten`, read in the retrieval worker as
+  `transcript.toolResultsWritten`).
+
+The last point is measured. On Claude Code 2.1.331 a call's result is not in the transcript when its
+PostToolUse hook fires: Claude appends a message's results when its next call starts, or 130 to
+170 ms after the last one ends (15 of 15 tool ends, 128 ms to 2.4 s after the hook). Between two
+parallel calls nothing open shows in the ledger while the first call's result is still unwritten. A
+restart there would lose it. So after a tool end that leaves nothing open, the mover looks again at
+150, 300, 600, 1,200 and 2,500 ms, and the next tool start cancels what is left. A restart in that
+window cuts the reply the model is writing, which `Continue.` asks for again. An agent without the
+capability, or one tracked from its PTY output alone, moves only when idle.
+
+A session at its turn's end, or idle at its prompt, moves at once and resumes idle with nothing sent
+to it. One caught between two tools resumes with `Continue.`. One that never reaches an in-turn safe
+point moves at its turn end, which fires only once background work has drained. There is no forced
+bound: a long-running background job holds the move until it ends. The safe point is asked again
+under the task's lock, or just before the stop, and a session that left it waits for the next one.
+
+Each kind restarts in place its own way: a task session through `restartTaskOn`
+(`restartSessionForSettingsChange`), a workflow's agent through `restartWorkflowAgentOn`
+(suspended, then started again on its conversation with the account named), and a Command Terminal
+through `restartCommandTerminalOn`. The terminal's end is marked a respawn
+(`Session.commandTerminalRespawn`): its window stays and adopts the slot's next terminal, and its
+Browser pane stays. The leftover reaper waits while the slot's next start is in flight, then leaves
+what the old agent left running alone when a terminal runs under its tag again, and reaps it, after
+the background-session stop, when none does. The conversation is claimed in the same tick as the
+end, so an Earlier resume cannot take it while the old agent exits. It starts again in the same
+slot, with its tag, grid and name, on the account named, only once its old agent has exited, so two
+agents never hold one conversation, and the slot stays reserved meanwhile. A move that gives up
+after the end releases the slot and the claim, so the conversation is back in Earlier. A Stop
+pressed on the window in that gap names the ended session, and the move then starts nothing.
+Everything that can refuse is checked before the end: a terminal whose agent cannot resume a
+conversation by id, or whose conversation has no history row, stays where it is, and one nobody has
+used yet waits for its first turn, since its row is deleted when it ends. A window whose next
+terminal never arrives closes after 60 seconds, as an end would. A workflow's agent with no
+conversation id recorded yet waits too, since a restart would begin a new conversation.
+
+A switch to Manual cancels the moves Automatic order asked for that still wait, and keeps the ones
+Switch to asked for, since Switch to itself sets the order to Manual. A newer target that lands
+while a session's restart runs moves the replacement session there too.
 
 ## Usage
 
@@ -417,7 +500,8 @@ logs it and sends nothing. Once an account has had a reading, losing the cache i
 DESKTOP-4E: one install sent the earlier word `cache-missing`, now `no-cache`, on every launch). An account whose sign-in read says
 it has no subscription (`no-subscription`) is not read for idle usage at all, because such a login
 has no plan windows. A Claude cache whose
-windows are all null (Ultra has no 5h window) is `no-windows`. One whose `utilization` names none
+windows are all null is `no-windows`. A cache with some null windows is a reading, and names the
+null ones absent (`absentWindowIds`): the plan does not have them (see "The adapter contract"). One whose `utilization` names none
 of the windows the reader knows is `usage-read-unreadable` instead, with its keys, and so is one
 with no `utilization` record at all, with the cache's keys. Either is a Claude Code release renaming
 the fields, which would empty every Claude account's reading.
@@ -601,7 +685,8 @@ prompt instead.
 
 When every account is full, the session waits where it is, one toast names the first reset, and it
 continues once a later read shows room. A Command Terminal or a workflow's own agent is not
-continued: at its limit it waits as before.
+continued: at its limit it waits as before. A session the continuation is deciding, or holds
+waiting, is left to it by a move that follows the order (`isHandling`).
 
 The read that proved an account full is the stored 100, which holds until the window resets (see
 "Usage"). So every later spawn, a column move included, passes over that account.
@@ -645,8 +730,9 @@ usage, so its description names those agents.
 Rows carry no number. The list's order is the position, and the Active pill marks where new
 sessions start. A row shows its drag grip only while the list is in the user's order: Manual, or an
 agent that reports no usage, which Automatic cannot sort. Usage lines come from
-`accountUsageLines` (`utils/rate-limit-window.ts`), one per declared window and then any other
-window the CLI reported. A reset reads as a countdown (`41m`, `3h 14m`, `1d 4h`) and its tip gives
+`accountUsageLines` (`utils/rate-limit-window.ts`), one per declared window the account has and
+then any other window the CLI reported. A declared window the account does not have draws no line,
+so two rows of one agent can differ in height. A reset reads as a countdown (`41m`, `3h 14m`, `1d 4h`) and its tip gives
 the moment. The percent beside the bar is what is used. The bar's tip says how much of the window
 has passed, which is what the tick on the bar marks.
 

@@ -86,6 +86,12 @@ import { popOutLinkBrowser } from '../../utils/pop-out-link-browser';
 
 const ChangesPanel = lazy(() => import('../dialogs/task-detail/changes/ChangesPanel').then((module) => ({ default: module.ChangesPanel })));
 
+/**
+ * How long a window main ended to start again in its slot (a move to another account) waits for
+ * that terminal. Main waits up to 10 s for the old agent's exit, then runs a whole start.
+ */
+const RESPAWN_ADOPT_TIMEOUT_MS = 60_000;
+
 /** What a window attaches to at mount; see `resolveMountAttach`. */
 type MountAttach =
   | { kind: 'reattach'; sessionId: string; session: Session }
@@ -615,6 +621,55 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
   useEffect(() => useSessionStore.subscribe((state, previous) => {
     if (state.pendingCommandTerminalResumes !== previous.pendingCommandTerminalResumes) takePendingResume();
   }), [takePendingResume]);
+
+  // Main moved this terminal to another account (task #1200): it ended the session only to start
+  // it again in this slot on the same conversation, and the removal left this window open. When the
+  // slot's next terminal arrives, the window takes it, as a reload survivor is adopted. One that
+  // never arrives (its start was refused) closes the window as an end would, after
+  // `RESPAWN_ADOPT_TIMEOUT_MS`. A respawn the window runs itself (a branch switch, a resume in
+  // place) clears `liveSessionIdRef` first, so it never reaches this.
+  const respawnTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    const clearRespawnTimer = (): void => {
+      if (respawnTimerRef.current) clearTimeout(respawnTimerRef.current);
+      respawnTimerRef.current = null;
+    };
+    const follow = (state: ReturnType<typeof useSessionStore.getState>): void => {
+      const liveSessionId = liveSessionIdRef.current;
+      const currentProjectId = useProjectStore.getState().currentProject?.id ?? null;
+      if (!liveSessionId || !currentProjectId) return;
+      if (state.sessions.some((session) => session.id === liveSessionId)) {
+        clearRespawnTimer();
+        return;
+      }
+      const next = findAdoptableTransientSession(state.sessions, state.transientSessions, currentProjectId, slot);
+      if (!next) {
+        respawnTimerRef.current ??= setTimeout(() => {
+          respawnTimerRef.current = null;
+          const stillGone = liveSessionIdRef.current === liveSessionId
+            && !useSessionStore.getState().sessions.some((session) => session.id === liveSessionId);
+          if (stillGone) changeLayout(() => closeWindow(windowId));
+        }, RESPAWN_ADOPT_TIMEOUT_MS);
+        return;
+      }
+      clearRespawnTimer();
+      liveSessionIdRef.current = next.id;
+      state.adoptTransientSession(currentProjectId, slot, next);
+      setSessionId(next.id);
+      setReadyLatch(false);
+      setStartingResume(true);
+    };
+    const unsubscribe = useSessionStore.subscribe((state, previous) => {
+      if (state.sessions !== previous.sessions) follow(state);
+    });
+    // Once now: an effect that re-ran (a Fast Refresh, new deps) while a move was in flight
+    // cleared the close timer, and no session change may come to arm it again.
+    follow(useSessionStore.getState());
+    return () => {
+      unsubscribe();
+      clearRespawnTimer();
+    };
+  }, [slot, changeLayout, closeWindow, windowId]);
 
   // Stop = destroy THIS terminal's PTY and close its window. The layer's count
   // bridge hides the whole layer when the last window closes. Hiding the layer

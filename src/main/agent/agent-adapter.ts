@@ -1409,6 +1409,22 @@ export interface AgentAdapter {
   }): Promise<Record<string, number> | null>;
 
   /**
+   * Optional: whether the agent's transcript already holds the result of every tool call in the
+   * message that made `toolUseId`, so a restart there loses none of them. A session moved to
+   * another account mid-turn restarts only once this answers true (`account-session-move.ts`);
+   * an agent without it moves at its turn end. Same location contract as `transcriptUsage`; must
+   * not throw; null when the transcript cannot be read or does not hold the call. Read in the
+   * retrieval worker (`transcript.toolResultsWritten`).
+   */
+  transcriptToolResultsWritten?(input: {
+    transcriptPath?: string | null;
+    agentSessionId?: string | null;
+    cwd?: string | null;
+    place?: CliPlace | null;
+    toolUseId: string;
+  }): Promise<boolean | null>;
+
+  /**
    * Optional: return a callback that confirms a submission was processed.
    * The callback receives a `SubmissionContext` and resolves `Promise<boolean>`.
    *

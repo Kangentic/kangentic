@@ -856,6 +856,27 @@ describe('AccountService.resolveForSpawn', () => {
 });
 
 describe('AccountService.recordUsage', () => {
+  it('brings back a window the idle read named absent once a live report shows it, and never marks one absent', () => {
+    const accountService = folderService();
+    const own = accountService.ensureDefaultAccount(AGENT)!;
+    repository.updateUsage(own.id, [sevenDay(40, NOW + 86_400)], ['five-hour']);
+    // A report with only the weekly window says nothing about the 5h one.
+    accountService.recordUsage([{ ...sevenDay(41, NOW + 86_400), accountId: own.id }]);
+    expect(repository.getById(own.id)?.absentWindowIds).toEqual(['five-hour']);
+    // The plan has a 5h window now: the live report shows it.
+    const fiveHour: RateLimitWindow = { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 3, resetsAt: NOW + 3600, windowDurationSeconds: 18_000 };
+    expect(accountService.recordUsage([{ ...fiveHour, accountId: own.id }])).toEqual([own.id]);
+    expect(repository.getById(own.id)?.absentWindowIds).toEqual([]);
+  });
+
+  it('stores the windows an idle read names absent', async () => {
+    const support = folderSupport({ readIdleUsage: async () => ({ windows: [sevenDay(20, NOW + 86_400)], absentWindowIds: ['five-hour'] }) });
+    const accountService = folderService(support);
+    const own = accountService.ensureDefaultAccount(AGENT)!;
+    expect(await accountService.refreshUsage(own.id)).toBe(true);
+    expect(repository.getById(own.id)?.absentWindowIds).toEqual(['five-hour']);
+  });
+
   it('writes only when the whole percent, the full state or the reset changes', () => {
     const accountService = folderService();
     const own = accountService.ensureDefaultAccount(AGENT)!;

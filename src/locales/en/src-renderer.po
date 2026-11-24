@@ -189,8 +189,8 @@ msgid "{count, plural, one {Unknown variable: {variableNames}. It will be sent a
 msgstr "{count, plural, one {Unknown variable: {variableNames}. It will be sent as written.} other {Unknown variables: {variableNames}. They will be sent as written.}}"
 
 #: src/renderer/lib/account-toasts.ts
-msgid "{failed, plural, one {# running session stays on its account.} other {# running sessions stay on their accounts.}}"
-msgstr "{failed, plural, one {# running session stays on its account.} other {# running sessions stay on their accounts.}}"
+msgid "{failed, plural, one {# running session could not move.} other {# running sessions could not move.}}"
+msgstr "{failed, plural, one {# running session could not move.} other {# running sessions could not move.}}"
 
 #: src/renderer/lib/leftover-processes.ts
 msgid "{failedCount, plural, one {Couldn't stop # process from \"{taskTitle}\", and {keptCount, plural, one {# more is still running.} other {# more are still running.}}} other {Couldn't stop # processes from \"{taskTitle}\", and {keptCount, plural, one {# more is still running.} other {# more are still running.}}}}"
@@ -236,9 +236,17 @@ msgstr "{minutes}m {seconds}s"
 msgid "{moved, plural, one {# running session} other {# running sessions}} moved to {accountName}."
 msgstr "{moved, plural, one {# running session} other {# running sessions}} moved to {accountName}."
 
+#: src/renderer/lib/account-toasts.ts
+msgid "{moved, plural, one {# session moved} other {# sessions moved}} to {accountName}, {pending} more at the next pause."
+msgstr "{moved, plural, one {# session moved} other {# sessions moved}} to {accountName}, {pending} more at the next pause."
+
 #: src/renderer/components/MarkdownRenderer.tsx
 msgid "{path} has no changes in this view"
 msgstr "{path} has no changes in this view"
+
+#: src/renderer/lib/account-toasts.ts
+msgid "{pending, plural, one {# working session moves} other {# working sessions move}} to {accountName} at the next pause."
+msgstr "{pending, plural, one {# working session moves} other {# working sessions move}} to {accountName} at the next pause."
 
 #: src/renderer/lib/leftover-processes.ts
 msgid "{processCount, plural, one {\"{taskTitle}\" left # process running.} other {\"{taskTitle}\" left # processes running.}}"
@@ -1290,6 +1298,10 @@ msgstr "Run again"
 msgid "running"
 msgstr "running"
 
+#: src/renderer/lib/account-toasts.ts
+msgid "Running {agentName} sessions move to {accountName}."
+msgstr "Running {agentName} sessions move to {accountName}."
+
 #: src/renderer/App.tsx
 msgid "Running agents are resuming."
 msgstr "Running agents are resuming."
@@ -1393,6 +1405,10 @@ msgstr "Stop script failed"
 #: src/renderer/lib/account-toasts.ts
 msgid "Switched account"
 msgstr "Switched account"
+
+#: src/renderer/lib/account-toasts.ts
+msgid "Switching account"
+msgstr "Switching account"
 
 #: src/renderer/stores/board-store/task-completion-slice.ts
 msgid "Task completed"

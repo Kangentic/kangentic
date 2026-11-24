@@ -146,7 +146,7 @@ function AccountRowContent({
   const name = account.email ?? keyFileName ?? (account.kind === 'default' ? ownName : unnamed);
   const showsUsage = reportsUsage && account.kind !== 'key-file' && !signedOut;
   const lines = showsUsage
-    ? accountUsageLines(usageWindows, liveRateLimitWindows(account.lastUsage ?? [], now), account.lastUsage !== null)
+    ? accountUsageLines(usageWindows, liveRateLimitWindows(account.lastUsage ?? [], now), account.lastUsage !== null, account.absentWindowIds ?? [])
     : [];
   // The agent's own login has nothing in the menu (it is signed in from the CLI, and cannot be
   // removed), so it gets none, signed out or not.

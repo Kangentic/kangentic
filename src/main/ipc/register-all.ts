@@ -58,7 +58,8 @@ import { isSessionInOwnCall } from './handlers/own-call-turn-wait';
 import { registerWorkflowHandlers } from './handlers/workflows';
 import { registerLeftoverProcessHandlers } from './handlers/leftover-processes';
 import { startMetricsSnapshotTimer } from './handlers/metrics-snapshot-timer';
-import { registerTransientSessionHandlers } from './handlers/transient-sessions';
+import { isCommandTerminalSlotStarting, registerTransientSessionHandlers } from './handlers/transient-sessions';
+import { isCommandTerminalSession } from '../../shared/session-owner';
 import {
   claimCommandTerminalRestore,
   claimLostCommandTerminal,
@@ -436,6 +437,15 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
     },
     stopBackgroundSession: (ended) => stopEndedCommandTerminalBackgroundSession(requireContext(), ended),
     willRestore: (session) => isRestorableAfterHostLoss(requireContext(), session),
+    // A terminal moved to another account starts again in its slot under the
+    // same tag, so what its agent left running stays its own (task #1200),
+    // unless the move gave up and no terminal came back under that tag.
+    respawnOutcome: (session) => {
+      if (session.commandTerminalSlot && isCommandTerminalSlotStarting(session.projectId, session.commandTerminalSlot)) return 'starting';
+      const back = sessionManager.listSessions().some((live) => isCommandTerminalSession(live)
+        && live.projectId === session.projectId && live.taskId === session.taskId && live.status !== 'exited');
+      return back ? 'back' : 'gone';
+    },
     isShuttingDown,
   });
   commandTerminalLeftovers.start();

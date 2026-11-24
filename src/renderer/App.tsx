@@ -21,7 +21,7 @@ import { showConversationExpiredNotices } from './lib/conversation-expired-toast
 import { useUpdaterStore } from './stores/updater-store';
 import { useAnnouncementsStore } from './stores/announcements-store';
 import { useAccountsStore } from './stores/accounts-store';
-import { describeAccountSwitched, describeAccountsAllFull } from './lib/account-toasts';
+import { describeAccountSwitched, describeAccountsAllFull, describeAccountsFollowing } from './lib/account-toasts';
 import { useUsageDashboardStore } from './stores/usage-dashboard-store';
 import { useMonitorStore } from './stores/monitor-store';
 import { useKnowledgeGraphStore } from './stores/knowledge-graph-store';
@@ -1146,6 +1146,11 @@ export function App() {
       }));
       cleanups.push(window.electronAPI.accounts.onAllFull((allFull) => {
         useToastStore.getState().addToast({ ...describeAccountsAllFull(allFull, Date.now()), variant: 'warning' });
+      }));
+      // Automatic order put another account first, and running sessions follow it. Which account a
+      // session runs on is not on its card, so the move gets one toast per order change.
+      cleanups.push(window.electronAPI.accounts.onFollowing((following) => {
+        useToastStore.getState().addToast({ ...describeAccountsFollowing(following), variant: 'info' });
       }));
     }
     // A Stop main gave up waiting for reads `failed`; the host finished it

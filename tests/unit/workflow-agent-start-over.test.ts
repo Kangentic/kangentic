@@ -130,6 +130,7 @@ interface FakeSession {
   transient: boolean;
   workflowId?: string;
   agentSessionId: string | null;
+  accountId?: string | null;
 }
 
 interface SpawnOptions {
@@ -140,6 +141,7 @@ interface SpawnOptions {
   transient: boolean;
   workflowId: string;
   agentSessionId: string | null;
+  accountId?: string | null;
 }
 
 /** The slice of SessionManager the workflow agent drives. */
@@ -176,6 +178,7 @@ class FakeSessionManager extends EventEmitter {
       transient: options.transient,
       workflowId: options.workflowId,
       agentSessionId: options.agentSessionId,
+      accountId: options.accountId ?? null,
     };
     this.sessions.push(session);
     return session;
@@ -865,6 +868,167 @@ describe('a workflow\'s own agent starting over', () => {
       expect(resolveForSpawn).toHaveBeenCalledTimes(1);
       expect((resolveForSpawn.mock.calls[0] as unknown[])[3]).toBeUndefined();
       agentEffort.forgetWorkflowAgentEffort(status.session!.id);
+    });
+  });
+
+  // Task #1200: the agent follows the account order like any session, restarted in place on its
+  // conversation on the account named, told to continue when it was caught mid-turn.
+  describe('a move to another account', () => {
+    const resolveForSpawn = vi.fn(async (agentName: string, accountId?: string | null) => (
+      { id: accountId ?? 'top-account', agent: agentName, kind: 'folder', env: {} }
+    ));
+
+    beforeEach(() => {
+      resolveForSpawn.mockClear();
+      setAccountService({ resolveForSpawn } as unknown as AccountService);
+    });
+    afterEach(() => {
+      setAccountService(null);
+    });
+
+    it('suspends the agent and resumes its conversation on the account, told to continue', async () => {
+      const first = await agent.openWorkflowAgent(context, 'home', workflowId, {});
+      expect(first.session?.resuming).toBe(true);
+
+      expect(await agent.restartWorkflowAgentOn(context, workflowId, 'account-2', 'Continue.', () => true)).toBe('moved');
+      expect(manager.suspend).toHaveBeenCalledWith(first.session!.id);
+      expect((resolveForSpawn.mock.calls.at(-1) as unknown[])[1]).toBe('account-2');
+      const buildCommand = (harness.adapter as { buildCommand: ReturnType<typeof vi.fn> }).buildCommand;
+      expect(buildCommand.mock.calls.at(-1)?.[0]).toMatchObject({ sessionId: 'conv-gone', resume: true, prompt: 'Continue.' });
+      for (const session of manager.sessions) agentEffort.forgetWorkflowAgentEffort(session.id);
+    });
+
+    it('stops nothing when the agent left its safe point', async () => {
+      const first = await agent.openWorkflowAgent(context, 'home', workflowId, {});
+      expect(await agent.restartWorkflowAgentOn(context, workflowId, 'account-2', undefined, () => false)).toBe('deferred');
+      expect(manager.suspend).not.toHaveBeenCalled();
+      agentEffort.forgetWorkflowAgentEffort(first.session!.id);
+    });
+
+    it('waits while no conversation id is recorded, since a restart would drop the conversation running', async () => {
+      const first = await agent.openWorkflowAgent(context, 'home', workflowId, {});
+      new WorkflowRepository(harness.dbs.get('home') as Database.Database).forgetAgentSessionId(workflowId);
+      expect(await agent.restartWorkflowAgentOn(context, workflowId, 'account-2', undefined, () => true)).toBe('deferred');
+      expect(manager.suspend).not.toHaveBeenCalled();
+      agentEffort.forgetWorkflowAgentEffort(first.session!.id);
+    });
+
+    /** Forget the effort every session the test spawned recorded, as the other tests here do. */
+    function forgetEveryEffort(): void {
+      for (const session of manager.sessions) agentEffort.forgetWorkflowAgentEffort(session.id);
+    }
+
+    it('fails, and stops nothing, when the user paused the agent before the move', async () => {
+      await agent.openWorkflowAgent(context, 'home', workflowId, {});
+      // A Pause that leaves the session running: the stop is a no-op, so only the user's pause is on record.
+      manager.suspend.mockImplementationOnce(async () => undefined);
+      await agent.pauseWorkflowAgent(context, workflowId);
+      manager.suspend.mockClear();
+
+      expect(await agent.restartWorkflowAgentOn(context, workflowId, 'account-2', 'Continue.', () => true)).toBe('failed');
+      expect(manager.suspend).not.toHaveBeenCalled();
+      expect(manager.spawn).toHaveBeenCalledTimes(1);
+      forgetEveryEffort();
+    });
+
+    it('fails and starts nothing when the user pressed Pause while the agent was being stopped', async () => {
+      await agent.openWorkflowAgent(context, 'home', workflowId, {});
+      manager.suspend.mockImplementationOnce(async (sessionId: string) => {
+        // The Pause lands in the middle of the stop: it records itself, then the stop completes.
+        await agent.pauseWorkflowAgent(context, workflowId);
+        manager.getSession(sessionId)!.status = 'suspended';
+      });
+
+      expect(await agent.restartWorkflowAgentOn(context, workflowId, 'account-2', 'Continue.', () => true)).toBe('failed');
+      expect(manager.spawn).toHaveBeenCalledTimes(1);
+      expect(agent.findWorkflowAgentSession(context, workflowId)?.status).toBe('suspended');
+      forgetEveryEffort();
+    });
+
+    it('leaves the agent suspended when the user pressed Pause while the new start was finding its CLI', async () => {
+      await agent.openWorkflowAgent(context, 'home', workflowId, {});
+      // The start reads the CLI's trust before it checks for the Pause: the agent is already
+      // suspended by then, so this Pause stops nothing and only records itself.
+      (harness.adapter as { ensureTrust: ReturnType<typeof vi.fn> }).ensureTrust.mockImplementationOnce(async () => {
+        await agent.pauseWorkflowAgent(context, workflowId);
+      });
+
+      expect(await agent.restartWorkflowAgentOn(context, workflowId, 'account-2', 'Continue.', () => true)).toBe('failed');
+      expect(manager.spawn).toHaveBeenCalledTimes(1);
+      expect(agent.findWorkflowAgentSession(context, workflowId)?.status).toBe('suspended');
+      expect(agent.workflowAgentSummary(context, workflowId)).toMatchObject({ state: 'paused' });
+      forgetEveryEffort();
+    });
+
+    describe('with a read-access restart still owed', () => {
+      const buildCommandOf = () => (harness.adapter as { buildCommand: ReturnType<typeof vi.fn> }).buildCommand;
+
+      /** The agent is mid-turn and a second project's checkout is granted: the restart is owed for its next idle. */
+      async function openWithAccessOwed(): Promise<void> {
+        (harness.adapter as { supportsReadableDirectories: boolean }).supportsReadableDirectories = true;
+        const checkout = path.join(root, 'other');
+        fs.mkdirSync(checkout);
+        (context.projectRepo.list() as unknown as Array<Record<string, unknown>>).push(
+          { id: 'other', name: 'Other project', path: checkout, default_agent: null, default_model: null, default_effort: null },
+        );
+        const first = await agent.openWorkflowAgent(context, 'home', workflowId, {});
+        vi.spyOn(manager, 'getActivityCache').mockReturnValue({ [first.session!.id]: 'thinking' });
+        expect(agent.requestWorkflowAgentProjectAccess(context, 'home', workflowId, 'other').when).toBe('next-turn');
+      }
+
+      it('folds the owed message into a move that passes none, and the agent restarts once', async () => {
+        await openWithAccessOwed();
+
+        expect(await agent.restartWorkflowAgentOn(context, workflowId, 'account-2', undefined, () => true)).toBe('moved');
+
+        expect(manager.spawn).toHaveBeenCalledTimes(2);
+        expect(buildCommandOf().mock.calls.at(-1)?.[0]).toMatchObject({
+          resume: true,
+          prompt: expect.stringContaining('so you can read Other project'),
+          readableDirectories: [path.join(root, 'other')],
+        });
+        forgetEveryEffort();
+      });
+
+      it('does not owe the message again after the move, so the next move carries none', async () => {
+        await openWithAccessOwed();
+        expect(await agent.restartWorkflowAgentOn(context, workflowId, 'account-2', undefined, () => true)).toBe('moved');
+        // The fake keeps the row the start replaced beside the new one, which the real registry drops.
+        manager.sessions = manager.sessions.filter((session) => session.status === 'running');
+
+        expect(await agent.restartWorkflowAgentOn(context, workflowId, 'account-3', undefined, () => true)).toBe('moved');
+
+        expect(buildCommandOf().mock.calls.at(-1)?.[0].prompt).toBeUndefined();
+        forgetEveryEffort();
+      });
+    });
+
+    describe('when the new start does not bring the agent back on the account', () => {
+      it.each([
+        { name: 'the MCP server is off', stopStarts: () => { context.mcpServerHandle = null; } },
+        { name: 'the Workflow agent setting is no longer complete', stopStarts: () => { harness.workflows = {}; } },
+      ])('fails and leaves the agent suspended when $name', async ({ stopStarts }) => {
+        await agent.openWorkflowAgent(context, 'home', workflowId, {});
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        stopStarts();
+
+        expect(await agent.restartWorkflowAgentOn(context, workflowId, 'account-2', 'Continue.', () => true)).toBe('failed');
+        expect(manager.spawn).toHaveBeenCalledTimes(1);
+        expect(agent.findWorkflowAgentSession(context, workflowId)?.status).toBe('suspended');
+        forgetEveryEffort();
+      });
+
+      it('fails when the session that started is on another account than the one asked for', async () => {
+        await agent.openWorkflowAgent(context, 'home', workflowId, {});
+        resolveForSpawn.mockImplementationOnce(async (agentName: string) => (
+          { id: 'another-account', agent: agentName, kind: 'folder', env: {} }
+        ));
+
+        expect(await agent.restartWorkflowAgentOn(context, workflowId, 'account-2', 'Continue.', () => true)).toBe('failed');
+        expect(manager.spawn).toHaveBeenCalledTimes(2);
+        expect(manager.spawn.mock.calls[1][0].accountId).toBe('another-account');
+        forgetEveryEffort();
+      });
     });
   });
 

@@ -246,7 +246,7 @@ Detach a registered UI surface (`stats` for usage stats, `changes` for git chang
 | `leftoverProcesses:stopSettled` | push | The real outcome of a Stop that `stop` answered `'failed'` because main stopped waiting for the pty host, which finished it anyway (`LeftoverStopSettled`). The row takes it only while it still reads failed; no toast. Main window only |
 | `leftoverProcesses:check` | invoke | Which reported processes, named by their report ids, have ended since the report. The pty host checks each by pid and start key, never a scan (`isRunning` on the reader), and an id main no longer knows, or a process it cannot read, is left out. Asked by `useLeftoverRecheck` while a row that claims a live process is on screen, through its toast or its open list; an ended one retries its Done task's worktree removal, as a Stop does |
 
-## Agent accounts (16 channels)
+## Agent accounts (17 channels)
 Machine-global (like Config), never project-scoped. Backs Settings > Accounts and the toasts of the continuation at a usage limit, through `ElectronAPI.accounts`. Handlers live in `src/main/ipc/handlers/accounts.ts`. See [Agent accounts](../../integrations/accounts.md) for the account model, the sign-in and the continuation.
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
@@ -261,11 +261,12 @@ Machine-global (like Config), never project-scoped. Backs Settings > Accounts an
 | `accounts:addKeyFile` | invoke | Show a file picker and add the picked file as a key-file account of an agent. Resolves `AgentAccountKeyFileResult`, or null when the picker was closed |
 | `accounts:remove` | invoke | Delete an account's row. Its folder and sign-in stay on disk. Resolves false for the agent's own login (`default`), which cannot be removed |
 | `accounts:reorder` | invoke | A drag: the agent's list takes the given order, and for an agent that reports usage the run order becomes Manual. New sessions only |
-| `accounts:switchTo` | invoke | Move an account to the top and, for an agent that reports usage, set Manual order, then restart the agent's running task sessions in place on it, one at a time. Resolves an `AgentAccountSwitchResult` once they have moved (how many moved, how many could not), which the renderer turns into one toast |
+| `accounts:switchTo` | invoke | Move an account to the top and, for an agent that reports usage, set Manual order, then move the agent's running sessions (task sessions, Command Terminals, workflow agents) to it, each at its first safe point, one at a time. Resolves an `AgentAccountSwitchResult` once each was looked at once (how many moved, how many wait for a safe point, how many could not), which the renderer turns into one toast |
 | `accounts:refreshUsage` | invoke | Ask the CLI who is signed in on each account that is not a key file, then read every account's usage. Resolves once the reads are done. Calls that overlap share one batch |
 | `accounts:changed` | on | Event with no payload: something the tab shows changed, so it re-lists. Main sends it for a service change and when `config:set` saves the accounts settings, and rechecks waiting continuations on it |
 | `accounts:switched` | on | Event: a task's session reached its account's limit and continues on another account (`AgentAccountSwitched`) |
 | `accounts:allFull` | on | Event: every account of an agent is at its limit and a session waits for the first reset (`AgentAccountsAllFull`) |
+| `accounts:following` | on | Event: Automatic order put another account first and the agent's running sessions move to it, each at its next safe point (`AgentAccountsFollowing`). One per order change |
 
 ## GPU health (2 channels)
 | Channel | Pattern | Purpose |

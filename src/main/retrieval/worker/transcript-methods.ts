@@ -172,6 +172,15 @@ export interface TranscriptMethods {
     params: RunTranscriptRef & { sinceMs: number | null; untilMs?: number | null };
     result: Record<string, number> | null;
   };
+  /**
+   * Whether the transcript holds the result of every tool call in the message that made
+   * `toolUseId` (`transcriptToolResultsWritten`): a session moved to another account mid-turn
+   * restarts only then. Null when the agent cannot tell, or the transcript does not hold the call.
+   */
+  'transcript.toolResultsWritten': {
+    params: RunTranscriptRef & { toolUseId: string };
+    result: boolean | null;
+  };
 }
 
 type TranscriptHandlers = {
@@ -427,5 +436,11 @@ export const transcriptHandlers: TranscriptHandlers = {
     const adapter = agentRegistry.get(agentName);
     if (!adapter?.transcriptToolResultTokens) return null;
     return adapter.transcriptToolResultTokens({ transcriptPath, agentSessionId, cwd, sinceMs, untilMs, place: placeFromStored(cliTarget ?? null) });
+  },
+
+  'transcript.toolResultsWritten': async ({ agentName, transcriptPath, agentSessionId, cwd, cliTarget, toolUseId }) => {
+    const adapter = agentRegistry.get(agentName);
+    if (!adapter?.transcriptToolResultsWritten) return null;
+    return adapter.transcriptToolResultsWritten({ transcriptPath, agentSessionId, cwd, toolUseId, place: placeFromStored(cliTarget ?? null) });
   },
 };

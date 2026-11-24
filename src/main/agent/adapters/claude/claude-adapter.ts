@@ -8,6 +8,7 @@ import { ClaudeStatusParser } from './status-parser';
 import { kangenticMcpServer, startRunMcpRelay, type KangenticMcpServer } from '../../shared/kangentic-mcp-server';
 import { findClaudeResumeTranscriptFile, findClaudeTranscriptFile, resolveClaudeTranscriptFile } from './transcript-locator';
 import { readClaudeQueuedUserMessages } from './queued-user-messages';
+import { readToolResultsWritten } from './tool-results-written';
 import {
   parseClaudeTranscript,
   parseClaudeTranscriptWindow,
@@ -847,6 +848,19 @@ export class ClaudeAdapter implements AgentAdapter {
     const filePath = await claudeRunTranscriptPath(input);
     if (!filePath) return null;
     return parseClaudeTranscriptToolResultTokens(filePath, input.sinceMs, input.untilMs);
+  }
+
+  /** Whether Claude has written every result of the message that made `toolUseId` (`tool-results-written.ts`). */
+  async transcriptToolResultsWritten(input: {
+    transcriptPath?: string | null;
+    agentSessionId?: string | null;
+    cwd?: string | null;
+    place?: CliPlace | null;
+    toolUseId: string;
+  }): Promise<boolean | null> {
+    const filePath = await claudeRunTranscriptPath(input);
+    if (!filePath) return null;
+    return readToolResultsWritten(filePath, input.toolUseId);
   }
 
   /**

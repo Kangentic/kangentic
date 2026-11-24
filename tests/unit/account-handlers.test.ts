@@ -23,6 +23,9 @@ interface FakeSession {
   accountId: string | null;
   agentName: string;
   resuming?: boolean;
+  workflowId?: string;
+  agentSessionId?: string;
+  cwd?: string;
 }
 
 const hoisted = vi.hoisted(() => ({
@@ -36,6 +39,8 @@ const hoisted = vi.hoisted(() => ({
   report: vi.fn(),
   defectReport: vi.fn(),
   restart: vi.fn(),
+  restartTerminal: vi.fn(async (..._args: unknown[]) => 'moved'),
+  restartWorkflow: vi.fn(async (..._args: unknown[]) => 'moved'),
   runner: {
     start: vi.fn(),
     cancel: vi.fn(),
@@ -58,6 +63,22 @@ const hoisted = vi.hoisted(() => ({
   sessionHomes: {} as Record<string, string | null>,
   /** What the handlers gave the session manager to find an account's home with. */
   accountHomeResolver: null as ((accountId: string) => string | null | undefined) | null,
+  /** Each session's activity; a session not named reads idle. */
+  activity: {} as Record<string, string>,
+  /** Text typed into a session's input box. */
+  drafts: {} as Record<string, string>,
+  /** What `automatedKeysBlocker` answers: a reason, or null for none. */
+  keysBlocker: null as string | null,
+  /** What `getOpenWork` answers for every session. */
+  openWork: { toolCalls: [], backgroundShells: [], backgroundSubagents: [] } as { toolCalls: unknown[]; backgroundShells: unknown[]; backgroundSubagents: unknown[] },
+  /** What `getActivityStatsSnapshot` answers for every session. */
+  activityStats: null as { subagentDepth: number } | null,
+  /** What `getSessionCliTarget` answers for every session. */
+  cliTarget: null as unknown,
+  /** How many times the activity cache was read, to tell which look of the mover a test is at. */
+  activityReads: 0,
+  /** The retrieval worker's answer to `transcript.toolResultsWritten`. */
+  retrievalCall: vi.fn(async (..._args: unknown[]): Promise<boolean | null> => true),
 }));
 
 vi.mock('electron', () => ({
@@ -96,6 +117,13 @@ vi.mock('../../src/main/agent/agent-registry', () => ({
 vi.mock('../../src/main/agent/shared/cli-target', () => ({ resolveCliTarget: async () => null }));
 vi.mock('../../src/main/ipc/send-to-renderer', () => ({ sendToRenderer: vi.fn() }));
 vi.mock('../../src/main/ipc/handlers/session-reconcile', () => ({ restartSessionForSettingsChange: hoisted.restart }));
+// A Command Terminal and a workflow's agent restart through their own handlers (task #1200).
+vi.mock('../../src/main/ipc/handlers/transient-sessions', () => ({ restartCommandTerminalOn: hoisted.restartTerminal }));
+vi.mock('../../src/main/workflows/workflow-agent', () => ({ restartWorkflowAgentOn: hoisted.restartWorkflow }));
+vi.mock('../../src/main/retrieval/retrieval-client', async () => ({
+  ...(await vi.importActual<typeof import('../../src/main/retrieval/retrieval-client')>('../../src/main/retrieval/retrieval-client')),
+  retrievalClient: { call: hoisted.retrievalCall },
+}));
 vi.mock('../../src/main/ipc/helpers', () => ({
   getProjectRepos: () => ({
     tasks: {
@@ -116,6 +144,8 @@ const { beginBoot, noteWindowLoaded, resetBootSettleForTests, isBootSettled, BOO
 // The mock above stands in for the refresher everywhere else; the startup gate needs the real one.
 const { AccountUsageRefresher: ActualAccountUsageRefresher } = await vi.importActual<typeof import('../../src/main/accounts/account-usage')>('../../src/main/accounts/account-usage');
 const { EventType } = await import('../../src/shared/types');
+const { CONTINUE_PROMPT } = await import('../../src/main/accounts/account-continuation');
+const { withTaskLock } = await import('../../src/main/ipc/task-lifecycle-lock');
 const { forgetRecapSession, markRecapSession, recapKindOf, resetRecapSessionsForTests, whenRecapTurnEnds } = await import('../../src/main/automations/turn-end/recap-turns');
 
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
@@ -192,16 +222,38 @@ beforeEach(() => {
   hoisted.refresher.refreshAccount.mockClear();
   hoisted.runner.start.mockReset();
   // A restart that succeeds puts the task's live session on the account it was asked for.
+  hoisted.restartTerminal.mockClear();
+  hoisted.restartWorkflow.mockClear();
   hoisted.restart.mockReset();
   hoisted.restart.mockImplementation(async (_context: unknown, _projectId: string, _path: string, taskId: string, options: { accountId: string }) => {
     const live = hoisted.sessions.find((session) => session.taskId === taskId && session.status === 'running' && !session.transient);
     if (live) live.accountId = options.accountId;
     return { ok: true };
   });
+  hoisted.activity = {};
+  hoisted.drafts = {};
+  hoisted.keysBlocker = null;
+  hoisted.openWork = { toolCalls: [], backgroundShells: [], backgroundSubagents: [] };
+  hoisted.activityStats = null;
+  hoisted.cliTarget = null;
+  hoisted.activityReads = 0;
+  hoisted.retrievalCall.mockReset();
+  hoisted.retrievalCall.mockResolvedValue(true);
   sessionManager = Object.assign(new EventEmitter(), {
     listSessions: () => hoisted.sessions,
+    getSession: (sessionId: string) => hoisted.sessions.find((session) => session.id === sessionId),
     getSessionAgentName: (sessionId: string) => hoisted.sessions.find((session) => session.id === sessionId)?.agentName,
-    getActivityCache: () => ({}),
+    // Every session sits idle at its prompt unless a test says otherwise: a move takes it at once.
+    getActivityCache: () => {
+      hoisted.activityReads += 1;
+      return Object.fromEntries(hoisted.sessions.map((session) => [session.id, hoisted.activity[session.id] ?? 'idle']));
+    },
+    automatedKeysBlocker: () => hoisted.keysBlocker,
+    getOpenWork: () => hoisted.openWork,
+    getActivityStatsSnapshot: () => hoisted.activityStats,
+    getPendingDraft: (sessionId: string) => hoisted.drafts[sessionId] ?? null,
+    readPendingDraft: async (sessionId: string) => hoisted.drafts[sessionId] ?? null,
+    getSessionCliTarget: () => hoisted.cliTarget,
     getSessionHomeAccountId: (sessionId: string) => hoisted.sessionHomes[sessionId] ?? null,
     setAccountHomeResolver: (resolver: (accountId: string) => string | null | undefined) => { hoisted.accountHomeResolver = resolver; },
   });
@@ -454,6 +506,56 @@ describe('ACCOUNTS_SWITCH_TO restarting sessions', () => {
     expect(hoisted.restart.mock.calls[0][4]).toMatchObject({ phase: 'switching-account', accountId: second.id });
   });
 
+  it('moves a Command Terminal and a workflow agent too, each through its own restart', async () => {
+    hoisted.adapters = { 'move-agent': adapterFor('move-agent') };
+    const { own, second } = seedAccounts('move-agent');
+    register();
+    addSession({ id: 'terminal', taskId: 'tag-1', agentName: 'move-agent', accountId: own.id, transient: true });
+    addSession({ id: 'planner', taskId: 'workflow-1', agentName: 'move-agent', accountId: own.id, transient: true, workflowId: 'workflow-1' });
+
+    const result = await invoke(IPC.ACCOUNTS_SWITCH_TO, second.id);
+    expect(result).toMatchObject({ ok: true, moved: 2, pending: 0, failed: 0 });
+    // Idle, so nothing is sent to either.
+    expect(hoisted.restartTerminal.mock.calls[0].slice(1, 4)).toEqual(['terminal', second.id, undefined]);
+    expect(hoisted.restartWorkflow.mock.calls[0].slice(1, 4)).toEqual(['workflow-1', second.id, undefined]);
+    expect(hoisted.restart).not.toHaveBeenCalled();
+  });
+
+  it('leaves a working session waiting, and moves it at its turn end', async () => {
+    hoisted.adapters = { 'move-agent': adapterFor('move-agent') };
+    const { own, second } = seedAccounts('move-agent');
+    register();
+    addSession({ id: 's1', taskId: 't1', agentName: 'move-agent', accountId: own.id });
+    hoisted.activity.s1 = 'thinking';
+
+    const result = await invoke(IPC.ACCOUNTS_SWITCH_TO, second.id);
+    expect(result).toMatchObject({ ok: true, moved: 0, pending: 1, failed: 0 });
+    expect(hoisted.restart).not.toHaveBeenCalled();
+
+    hoisted.activity.s1 = 'idle';
+    sessionManager.emit('turn-ended', { sessionId: 's1' });
+    await vi.waitFor(() => expect(hoisted.restart).toHaveBeenCalledTimes(1));
+    // Its turn was over, so it resumes idle: no prompt.
+    expect(hoisted.restart.mock.calls[0][4]).toMatchObject({ accountId: second.id, resumePrompt: undefined });
+  });
+
+  it('never moves a session while text sits in its input box', async () => {
+    hoisted.adapters = { 'move-agent': adapterFor('move-agent') };
+    const { own, second } = seedAccounts('move-agent');
+    register();
+    addSession({ id: 's1', taskId: 't1', agentName: 'move-agent', accountId: own.id });
+    hoisted.drafts.s1 = 'half a thought';
+
+    expect(await invoke(IPC.ACCOUNTS_SWITCH_TO, second.id)).toMatchObject({ moved: 0, pending: 1 });
+    sessionManager.emit('activity', 's1', 'idle');
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(hoisted.restart).not.toHaveBeenCalled();
+
+    hoisted.drafts.s1 = '';
+    sessionManager.emit('activity', 's1', 'idle');
+    await vi.waitFor(() => expect(hoisted.restart).toHaveBeenCalledTimes(1));
+  });
+
   it('moves no session for an agent whose conversations stay on their account', async () => {
     hoisted.adapters = { 'stay-agent': adapterFor('stay-agent', { conversationsStayOnAccount: true }) };
     const { own, second } = seedAccounts('stay-agent');
@@ -698,6 +800,59 @@ describe('keeping Automatic and the tab current', () => {
     stopAccounts();
     noteAccountsConfigChanged();
     expect(sendToRenderer).toHaveBeenCalledTimes(1);
+  });
+
+  /** Two accounts under Automatic, the agent's own login's week resetting first, and a session on the other. */
+  function seedFollowing(): { own: AgentAccount; second: AgentAccount } {
+    hoisted.adapters = { 'move-agent': { ...(adapterFor('move-agent') as object), reportsRateLimits: true } };
+    hoisted.accountsConfig = { orderMode: 'automatic', autoSwitchAtLimit: true };
+    const accounts = seedAccounts('move-agent');
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const weekly = (resetsInSeconds: number, usedPercentage: number) => ({
+      id: 'seven-day', label: '7d weekly', iconKind: 'period' as const, usedPercentage, resetsAt: nowSeconds + resetsInSeconds, windowDurationSeconds: 604_800,
+    });
+    repository.updateUsage(accounts.own.id, [weekly(86_400, 86)]);
+    repository.updateUsage(accounts.second.id, [weekly(6 * 86_400, 5)]);
+    return accounts;
+  }
+
+  /** What registration handed the refresher to call after each read. */
+  function readSettled(): () => void {
+    const options = vi.mocked(AccountUsageRefresher).mock.calls.at(-1)?.[1] as { onReadSettled?: () => void } | undefined;
+    if (!options?.onReadSettled) throw new Error('registration gave the refresher no onReadSettled');
+    return options.onReadSettled;
+  }
+
+  it('moves running sessions to the top account after a usage read, once, with one notice', async () => {
+    const { own, second } = seedFollowing();
+    register();
+    addSession({ id: 's1', taskId: 't1', agentName: 'move-agent', accountId: second.id });
+
+    readSettled()();
+    await vi.waitFor(() => expect(hoisted.restart).toHaveBeenCalledTimes(1));
+    expect(hoisted.restart.mock.calls[0][4]).toMatchObject({ phase: 'switching-account', accountId: own.id });
+    await vi.waitFor(() => expect(vi.mocked(sendToRenderer).mock.calls.filter((call) => call[1] === IPC.ACCOUNTS_FOLLOWING)).toHaveLength(1));
+
+    // Another read that leaves the top where it was moves nothing, even a session left behind.
+    addSession({ id: 's2', taskId: 't2', agentName: 'move-agent', accountId: second.id });
+    readSettled()();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(hoisted.restart).toHaveBeenCalledTimes(1);
+  });
+
+  it('moves nothing under Manual, and re-places sessions when the order goes back to Automatic', async () => {
+    const { own, second } = seedFollowing();
+    hoisted.accountsConfig = { orderMode: 'manual', autoSwitchAtLimit: true };
+    register();
+    addSession({ id: 's1', taskId: 't1', agentName: 'move-agent', accountId: second.id });
+    readSettled()();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(hoisted.restart).not.toHaveBeenCalled();
+
+    hoisted.accountsConfig = { orderMode: 'automatic', autoSwitchAtLimit: true };
+    noteAccountsConfigChanged();
+    await vi.waitFor(() => expect(hoisted.restart).toHaveBeenCalledTimes(1));
+    expect(hoisted.restart.mock.calls[0][4]).toMatchObject({ accountId: own.id });
   });
 
   it('shares one refresh between two that overlap, so a double mount runs each CLI once', async () => {
@@ -957,5 +1112,350 @@ describe('the login files the watch holds', () => {
     repository.insert({ agent: 'move-agent', kind: 'folder', folderPath: path.join(root, 'accounts', 'move-agent', '3') });
     noteAccountsConfigChanged();
     expect(lastWatchedSet()).toHaveLength(3);
+  });
+});
+
+// Task #1200: the handler decides where a running session stands (`quickSafePoint`, `safePoint`,
+// `stillAt`) and wires the session manager's events to the mover. The mover itself is pinned in
+// account-session-move.test.ts; these pin what only the handler's wiring does.
+describe('moving running sessions: the handler wiring', () => {
+  const WORK_DIRECTORY = 'work-directory';
+
+  /** An adapter that can say whether a transcript holds a call's results. */
+  function seedMidTurnAgent(withTranscriptRead = true): { own: AgentAccount; second: AgentAccount } {
+    hoisted.adapters = {
+      'move-agent': {
+        ...(adapterFor('move-agent') as Record<string, unknown>),
+        ...(withTranscriptRead ? { transcriptToolResultsWritten: async () => true } : {}),
+      },
+    };
+    return seedAccounts('move-agent');
+  }
+
+  /** A working task session on the agent's own login, with the fields the transcript read sends. */
+  function addWorkingSession(accountId: string, sessionId = 's1', taskId = 't1'): void {
+    addSession({ id: sessionId, taskId, agentName: 'move-agent', accountId, agentSessionId: 'conversation-1', cwd: WORK_DIRECTORY });
+    hoisted.activity[sessionId] = 'thinking';
+  }
+
+  function toolEnded(sessionId: string, toolId?: string, subagentId?: string): void {
+    sessionManager.emit('event', sessionId, { type: EventType.ToolEnd, toolId, subagentId });
+  }
+
+  async function letTimersAndImmediatesRun(): Promise<void> {
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+
+  describe('what leaves a session waiting before any transcript read', () => {
+    it.each([
+      ['an automated-keys blocker names a reason', () => { hoisted.keysBlocker = 'a prompt is open'; }],
+      ['a background shell is open', () => { hoisted.openWork = { toolCalls: [], backgroundShells: [{ id: 'shell-1' }], backgroundSubagents: [] }; }],
+      ['a background subagent is open', () => { hoisted.openWork = { toolCalls: [], backgroundShells: [], backgroundSubagents: [{ id: 'subagent-1' }] }; }],
+      ['the activity engine counts a subagent running', () => { hoisted.activityStats = { subagentDepth: 1 }; }],
+    ])('keeps an idle session pending while %s', async (_label, arrange) => {
+      const { own, second } = seedMidTurnAgent();
+      register();
+      addSession({ id: 's1', taskId: 't1', agentName: 'move-agent', accountId: own.id });
+      arrange();
+
+      const result = await invoke(IPC.ACCOUNTS_SWITCH_TO, second.id);
+      expect(result).toMatchObject({ ok: true, moved: 0, pending: 1, failed: 0 });
+      expect(hoisted.restart).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('mid-turn, between two tool calls', () => {
+    it('restarts with the continue prompt once the worker says the results are written, asking with the session\'s own details', async () => {
+      const { own, second } = seedMidTurnAgent();
+      register();
+      addWorkingSession(own.id);
+      hoisted.cliTarget = { kind: 'remote-target-marker' };
+      toolEnded('s1', 'toolu_a');
+
+      const result = await invoke(IPC.ACCOUNTS_SWITCH_TO, second.id);
+
+      expect(result).toMatchObject({ ok: true, moved: 1, pending: 0, failed: 0 });
+      expect(hoisted.retrievalCall).toHaveBeenCalledWith('transcript.toolResultsWritten', {
+        agentName: 'move-agent',
+        transcriptPath: null,
+        agentSessionId: 'conversation-1',
+        cwd: WORK_DIRECTORY,
+        cliTarget: { kind: 'remote-target-marker' },
+        toolUseId: 'toolu_a',
+      }, { timeoutMs: 5000 });
+      expect(hoisted.restart).toHaveBeenCalledTimes(1);
+      expect(hoisted.restart.mock.calls[0][4]).toMatchObject({ accountId: second.id, resumePrompt: CONTINUE_PROMPT });
+    });
+
+    it('reads the transcript once for a call, across the mover\'s two looks of one attempt', async () => {
+      const { own, second } = seedMidTurnAgent();
+      register();
+      addWorkingSession(own.id);
+      toolEnded('s1', 'toolu_a');
+
+      await invoke(IPC.ACCOUNTS_SWITCH_TO, second.id);
+
+      expect(hoisted.restart).toHaveBeenCalledTimes(1);
+      expect(hoisted.retrievalCall).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ['says the results are not written', () => hoisted.retrievalCall.mockResolvedValue(false)],
+      ['cannot read the transcript', () => hoisted.retrievalCall.mockResolvedValue(null)],
+      ['fails', () => hoisted.retrievalCall.mockRejectedValue(new Error('worker down'))],
+    ])('keeps the session pending, with no restart, when the worker %s', async (_label, arrange) => {
+      const { own, second } = seedMidTurnAgent();
+      register();
+      addWorkingSession(own.id);
+      toolEnded('s1', 'toolu_a');
+      arrange();
+
+      const result = await invoke(IPC.ACCOUNTS_SWITCH_TO, second.id);
+
+      expect(result).toMatchObject({ ok: true, moved: 0, pending: 1, failed: 0 });
+      expect(hoisted.retrievalCall).toHaveBeenCalled();
+      expect(hoisted.restart).not.toHaveBeenCalled();
+    });
+
+    it('waits for the turn end, reading nothing, for an adapter that cannot say whether results are written', async () => {
+      const { own, second } = seedMidTurnAgent(false);
+      register();
+      addWorkingSession(own.id);
+      toolEnded('s1', 'toolu_a');
+
+      const result = await invoke(IPC.ACCOUNTS_SWITCH_TO, second.id);
+
+      expect(result).toMatchObject({ moved: 0, pending: 1 });
+      expect(hoisted.retrievalCall).not.toHaveBeenCalled();
+      expect(hoisted.restart).not.toHaveBeenCalled();
+    });
+
+    it('ignores a tool end that came from a subagent: nothing is read and the session waits', async () => {
+      const { own, second } = seedMidTurnAgent();
+      register();
+      addWorkingSession(own.id);
+      toolEnded('s1', 'toolu_sub', 'subagent-1');
+
+      const result = await invoke(IPC.ACCOUNTS_SWITCH_TO, second.id);
+
+      expect(result).toMatchObject({ moved: 0, pending: 1 });
+      expect(hoisted.retrievalCall).not.toHaveBeenCalled();
+    });
+
+    it('has nothing to check for a tool end with no id, even after one with an id', async () => {
+      const { own, second } = seedMidTurnAgent();
+      register();
+      addWorkingSession(own.id);
+      toolEnded('s1', 'toolu_a');
+      toolEnded('s1', undefined);
+
+      const result = await invoke(IPC.ACCOUNTS_SWITCH_TO, second.id);
+
+      expect(result).toMatchObject({ moved: 0, pending: 1 });
+      expect(hoisted.retrievalCall).not.toHaveBeenCalled();
+    });
+
+    it('drops the recorded call when a tool starts after it', async () => {
+      const { own, second } = seedMidTurnAgent();
+      register();
+      addWorkingSession(own.id);
+      toolEnded('s1', 'toolu_a');
+      sessionManager.emit('event', 's1', { type: EventType.ToolStart, toolId: 'toolu_b' });
+
+      const result = await invoke(IPC.ACCOUNTS_SWITCH_TO, second.id);
+
+      expect(result).toMatchObject({ moved: 0, pending: 1 });
+      expect(hoisted.retrievalCall).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('the check made again just before the stop', () => {
+    it('hands a Command Terminal and a workflow agent a check that holds while idle and fails once it works or has a draft', async () => {
+      const { own, second } = seedMidTurnAgent();
+      register();
+      addSession({ id: 'terminal', taskId: 'tag-1', agentName: 'move-agent', accountId: own.id, transient: true });
+      addSession({ id: 'planner', taskId: 'workflow-1', agentName: 'move-agent', accountId: own.id, transient: true, workflowId: 'workflow-1' });
+
+      await invoke(IPC.ACCOUNTS_SWITCH_TO, second.id);
+
+      const checks = [
+        { sessionId: 'terminal', stillSafe: hoisted.restartTerminal.mock.calls[0].at(-1) as () => boolean },
+        { sessionId: 'planner', stillSafe: hoisted.restartWorkflow.mock.calls[0].at(-1) as () => boolean },
+      ];
+      for (const { sessionId, stillSafe } of checks) {
+        expect(stillSafe(), `${sessionId} idle`).toBe(true);
+        hoisted.activity[sessionId] = 'thinking';
+        expect(stillSafe(), `${sessionId} working`).toBe(false);
+        hoisted.activity[sessionId] = 'idle';
+        expect(stillSafe(), `${sessionId} idle again`).toBe(true);
+        hoisted.drafts[sessionId] = 'half a thought';
+        expect(stillSafe(), `${sessionId} with a draft`).toBe(false);
+      }
+    });
+
+    it('does not restart a task session that stopped being idle while it waited for its task lock', async () => {
+      const { own, second } = seedMidTurnAgent();
+      register();
+      addSession({ id: 's1', taskId: 't1', agentName: 'move-agent', accountId: own.id });
+      let releaseLock: () => void = () => undefined;
+      const held = withTaskLock('t1', () => new Promise<void>((resolve) => { releaseLock = resolve; }));
+
+      const switching = invoke(IPC.ACCOUNTS_SWITCH_TO, second.id);
+      // Two reads: the mover's two looks have passed and its restart now waits behind the held lock.
+      await expect.poll(() => hoisted.activityReads).toBeGreaterThanOrEqual(2);
+      hoisted.activity.s1 = 'thinking';
+      releaseLock();
+      await held;
+
+      expect(await switching).toMatchObject({ ok: true, moved: 0, pending: 1, failed: 0 });
+      expect(hoisted.restart).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('the session manager events', () => {
+    it('drops a pending session when it is removed: a later idle moves nothing', async () => {
+      const { own, second } = seedMidTurnAgent();
+      register();
+      addWorkingSession(own.id);
+      expect(await invoke(IPC.ACCOUNTS_SWITCH_TO, second.id)).toMatchObject({ pending: 1 });
+
+      sessionManager.emit('session-removed', 's1');
+      hoisted.activity.s1 = 'idle';
+      sessionManager.emit('activity', 's1', 'idle');
+      await letTimersAndImmediatesRun();
+
+      expect(hoisted.restart).not.toHaveBeenCalled();
+    });
+
+    it('releases a pending session that is now idle on an event alone', async () => {
+      const { own, second } = seedMidTurnAgent();
+      register();
+      addWorkingSession(own.id);
+      expect(await invoke(IPC.ACCOUNTS_SWITCH_TO, second.id)).toMatchObject({ pending: 1 });
+
+      hoisted.activity.s1 = 'idle';
+      sessionManager.emit('event', 's1', { type: EventType.ToolStart, toolId: 'toolu_b' });
+
+      await vi.waitFor(() => expect(hoisted.restart).toHaveBeenCalledTimes(1));
+      // Its turn was over: nothing is sent.
+      expect(hoisted.restart.mock.calls[0][4]).toMatchObject({ accountId: second.id, resumePrompt: undefined });
+    });
+  });
+
+  it('moves neither a suspended nor a queued session of the agent, and counts neither as pending', async () => {
+    const { own, second } = seedMidTurnAgent();
+    register();
+    addSession({ id: 's-run', taskId: 't-run', agentName: 'move-agent', accountId: own.id });
+    addSession({ id: 's-suspended', taskId: 't-suspended', agentName: 'move-agent', accountId: own.id, status: 'suspended' });
+    addSession({ id: 's-queued', taskId: 't-queued', agentName: 'move-agent', accountId: own.id, status: 'queued' });
+
+    const result = await invoke(IPC.ACCOUNTS_SWITCH_TO, second.id);
+
+    expect(result).toMatchObject({ ok: true, moved: 1, pending: 0, failed: 0 });
+    expect(hoisted.restart).toHaveBeenCalledTimes(1);
+    expect(hoisted.restart.mock.calls[0][3]).toBe('t-run');
+  });
+
+  it('leaves a session the usage-limit continuation is deciding pending on Switch to', async () => {
+    hoisted.adapters = {
+      'move-agent': adapterFor('move-agent', { isUsageLimitFailure: () => true }),
+    };
+    const { own, second } = seedAccounts('move-agent');
+    register();
+    addSession({ id: 's1', taskId: 't1', agentName: 'move-agent', accountId: own.id });
+    // The continuation's read of the account never settles, so it keeps deciding the session.
+    let finishRead: () => void = () => undefined;
+    hoisted.refresher.refreshAccount.mockImplementationOnce(() => new Promise<undefined>((resolve) => { finishRead = () => resolve(undefined); }));
+    fail('s1', 'usage limit reached');
+    await expect.poll(() => hoisted.refresher.refreshAccount.mock.calls.length).toBe(1);
+
+    const result = await invoke(IPC.ACCOUNTS_SWITCH_TO, second.id);
+    expect(result).toMatchObject({ ok: true, moved: 0, pending: 1, failed: 0 });
+    expect(hoisted.restart).not.toHaveBeenCalled();
+    finishRead();
+  });
+});
+
+describe('moving running sessions: following Automatic order', () => {
+  const OWN_EMAIL = 'own@example.test';
+
+  function followingPushes(): unknown[][] {
+    return vi.mocked(sendToRenderer).mock.calls.filter((call) => call[1] === IPC.ACCOUNTS_FOLLOWING);
+  }
+
+  /** Two accounts under Automatic, the agent's own login's week resetting first; a working session on the other. */
+  function seedFollowingWorkingSession(): { own: AgentAccount; second: AgentAccount } {
+    hoisted.adapters = { 'move-agent': { ...(adapterFor('move-agent') as object), reportsRateLimits: true } };
+    hoisted.accountsConfig = { orderMode: 'automatic', autoSwitchAtLimit: true };
+    const accounts = seedAccounts('move-agent');
+    repository.updateIdentity(accounts.own.id, { email: OWN_EMAIL, orgId: null, plan: null, status: 'ok' });
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const weekly = (resetsInSeconds: number, usedPercentage: number) => ({
+      id: 'seven-day', label: '7d weekly', iconKind: 'period' as const, usedPercentage, resetsAt: nowSeconds + resetsInSeconds, windowDurationSeconds: 604_800,
+    });
+    repository.updateUsage(accounts.own.id, [weekly(86_400, 86)]);
+    repository.updateUsage(accounts.second.id, [weekly(6 * 86_400, 5)]);
+    vi.mocked(sendToRenderer).mockClear();
+    register();
+    addSession({ id: 's1', taskId: 't1', agentName: 'move-agent', accountId: accounts.second.id });
+    hoisted.activity.s1 = 'thinking';
+    return accounts;
+  }
+
+  function readSettled(): () => void {
+    const options = vi.mocked(AccountUsageRefresher).mock.calls.at(-1)?.[1] as { onReadSettled?: () => void } | undefined;
+    if (!options?.onReadSettled) throw new Error('registration gave the refresher no onReadSettled');
+    return options.onReadSettled;
+  }
+
+  it('pushes exactly the agent and the account\'s name when the top account changes', async () => {
+    seedFollowingWorkingSession();
+
+    readSettled()();
+
+    await vi.waitFor(() => expect(followingPushes()).toHaveLength(1));
+    expect(followingPushes()[0][2]).toEqual({ agent: 'move-agent', accountName: OWN_EMAIL });
+  });
+
+  it('sends no following push for a Switch to that leaves sessions pending', async () => {
+    const { own } = seedFollowingWorkingSession();
+
+    const result = await invoke(IPC.ACCOUNTS_SWITCH_TO, own.id);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(result).toMatchObject({ ok: true, pending: 1 });
+    expect(followingPushes()).toHaveLength(0);
+  });
+
+  it('cancels the move Automatic asked for when the order goes to Manual: the session stays put when it goes idle', async () => {
+    seedFollowingWorkingSession();
+    readSettled()();
+    await vi.waitFor(() => expect(followingPushes()).toHaveLength(1));
+
+    hoisted.accountsConfig = { orderMode: 'manual', autoSwitchAtLimit: true };
+    noteAccountsConfigChanged();
+    hoisted.activity.s1 = 'idle';
+    sessionManager.emit('activity', 's1', 'idle');
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(hoisted.restart).not.toHaveBeenCalled();
+  });
+
+  it('keeps the move Switch to asked for when the order goes to Manual: the session moves when it goes idle', async () => {
+    const { own } = seedFollowingWorkingSession();
+    readSettled()();
+    await vi.waitFor(() => expect(followingPushes()).toHaveLength(1));
+    // Switch to names the same account, so the pending move now belongs to it, not to Automatic.
+    expect(await invoke(IPC.ACCOUNTS_SWITCH_TO, own.id)).toMatchObject({ pending: 1 });
+
+    hoisted.accountsConfig = { orderMode: 'manual', autoSwitchAtLimit: true };
+    noteAccountsConfigChanged();
+    hoisted.activity.s1 = 'idle';
+    sessionManager.emit('activity', 's1', 'idle');
+
+    await vi.waitFor(() => expect(hoisted.restart).toHaveBeenCalledTimes(1));
+    expect(hoisted.restart.mock.calls[0][4]).toMatchObject({ accountId: own.id });
   });
 });

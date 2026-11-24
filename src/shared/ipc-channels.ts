@@ -743,6 +743,8 @@ export const IPC = {
   // or every account of an agent is full and the session waits.
   ACCOUNTS_SWITCHED: 'accounts:switched',
   ACCOUNTS_ALL_FULL: 'accounts:allFull',
+  // Automatic order put another account first and running sessions are moving to it (task #1200).
+  ACCOUNTS_FOLLOWING: 'accounts:following',
 
   // How this launch is rendering, and whether the user still needs telling
   // (Sentry DESKTOP-18/DESKTOP-W; src/main/diagnostics/gpu-health.ts)

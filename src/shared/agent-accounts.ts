@@ -71,6 +71,12 @@ export interface AgentAccount {
   lastUsage: RateLimitWindow[] | null;
   /** UTC ISO time of `lastUsage`. */
   lastUsageAt: string | null;
+  /**
+   * Ids of the agent's declared usage windows this account does not have at all, as its last idle
+   * read said (a Claude plan with no 5h limit). Its row draws no line for them. Empty until a read
+   * says so; a window the account has but has not opened yet is not one.
+   */
+  absentWindowIds: string[];
   createdAt: string;
 }
 
@@ -131,17 +137,29 @@ export type AgentAccountKeyFileResult =
   /** `no-keys`: the file sets none of the agent's key variables. */
   | { ok: false; reason: 'unsupported' | 'unreadable' | 'no-keys' | 'duplicate' };
 
-/** How a Switch to ended, once the agent's running sessions have been moved or left. */
+/** How a Switch to ended, once the agent's running sessions have each been looked at once. */
 export interface AgentAccountSwitchResult {
   /** The account is now #1. False when it is no longer in the list. */
   ok: boolean;
   agent: string | null;
   /** The account as its row names it (its email, or its key file), when it has a name. */
   accountName: string | null;
-  /** Running sessions restarted on the account. */
+  /** Running sessions restarted on the account now: they were idle, or between two tool calls. */
   moved: number;
+  /** Running sessions that move at their next safe point: they were mid-tool, or had a draft. */
+  pending: number;
   /** Running sessions that could not be restarted, and stay on the account they were on. */
   failed: number;
+}
+
+/**
+ * Automatic order put another account first, and the agent's running sessions are moving to it,
+ * each at its next safe point (task #1200). One per order change, not one per session.
+ */
+export interface AgentAccountsFollowing {
+  agent: string;
+  /** The account they move to, as its row names it. */
+  accountName: string | null;
 }
 
 /** A task's session reached its account's usage limit and continues on another account. */
@@ -161,9 +179,10 @@ export interface AgentAccountsAllFull {
 }
 
 /**
- * A usage window the agent's CLI always has, whether or not an account has opened it yet
- * (Claude reports its 5h window only once an account has run in it). The Accounts tab draws one
- * line per declared window on every row, so the rows are one height.
+ * A usage window the agent's plans have, whether or not an account has opened it yet (Claude
+ * reports its 5h window only once an account has run in it). The Accounts tab draws one line per
+ * declared window on a row, an unopened one as Not started, and none for a window the account
+ * does not have (`AgentAccount.absentWindowIds`), so the rows of one agent can differ in height.
  */
 export type AgentUsageWindowShape = Pick<RateLimitWindow, 'id' | 'label' | 'iconKind' | 'windowDurationSeconds'>;
 

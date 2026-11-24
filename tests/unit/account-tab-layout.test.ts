@@ -20,7 +20,7 @@ const NOW_SECONDS = NOW_MS / 1000;
 function account(id: string, overrides: Partial<AgentAccount> = {}): AgentAccount {
   return {
     id, agent: 'agent', kind: 'default', folderPath: null, keyFilePath: null, keyNames: [], email: null, plan: null,
-    status: 'ok', position: 1, historyPrivate: false, lastUsage: null, lastUsageAt: null, createdAt: '2026-01-01T00:00:00.000Z',
+    status: 'ok', position: 1, historyPrivate: false, lastUsage: null, lastUsageAt: null, absentWindowIds: [], createdAt: '2026-01-01T00:00:00.000Z',
     ...overrides,
   };
 }
@@ -107,6 +107,19 @@ describe('accountUsageLines', () => {
   it('marks every declared window unread before any reading, and one unnamed line for an agent that declares none', () => {
     expect(accountUsageLines([FIVE_HOUR, SEVEN_DAY], [], false).map((line) => line.kind)).toEqual(['unread', 'unread']);
     expect(accountUsageLines([], [], false)).toEqual([{ kind: 'unread', shape: null }]);
+  });
+
+  it('draws no line for a window the account does not have, and keeps Not started for one it has', () => {
+    const noFiveHour = accountUsageLines([FIVE_HOUR, SEVEN_DAY], [reading(SEVEN_DAY, 86, 86_400)], true, ['five-hour']);
+    expect(noFiveHour.map((line) => (line.kind === 'live' ? line.window.id : line.kind))).toEqual(['seven-day']);
+    // A plan with a 5h window it has not opened is a different row: one line Not started.
+    const unopened = accountUsageLines([FIVE_HOUR, SEVEN_DAY], [reading(SEVEN_DAY, 86, 86_400)], true, []);
+    expect(unopened.map((line) => line.kind)).toEqual(['not-started', 'live']);
+  });
+
+  it('draws a window marked absent once a live report brings it back', () => {
+    const lines = accountUsageLines([FIVE_HOUR, SEVEN_DAY], [reading(FIVE_HOUR, 4, 3600), reading(SEVEN_DAY, 10, 86_400)], true, ['five-hour']);
+    expect(lines.map((line) => line.kind)).toEqual(['live', 'live']);
   });
 
   it('shows only the reported windows for an agent that declares none', () => {

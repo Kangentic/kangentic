@@ -248,9 +248,11 @@ interface AccountSupportBase {
    */
   isUsageLimitFailure?(detail: string): boolean;
   /**
-   * The usage windows the CLI always has, shortest first, including one an account has not opened
-   * yet (Claude's 5h window, reported only once the account has run in it). Each account row draws
-   * a line per window, an unopened one as Not started. Absent: rows show only what was reported.
+   * The usage windows the CLI's plans have, shortest first, including one an account has not
+   * opened yet (Claude's 5h window, reported only once the account has run in it). Each account
+   * row draws a line per window, an unopened one as Not started, and none for a window its idle
+   * read says the account does not have (`IdleUsageReading.absentWindowIds`). Absent: rows show
+   * only what was reported.
    */
   usageWindows?: readonly AgentUsageWindowShape[];
 }
@@ -349,9 +351,20 @@ export interface FolderAccountSupport extends AccountSupportBase {
    * nothing written to the shared history or conversations. Null, an empty list, or a thrown
    * `EmptyUsageReadError` (which names why) when it gives no windows; the account then keeps its
    * last values and the service logs it. Throws `UnreadableUsageError` for an answer in a shape
-   * it does not know. Absent for a CLI with no such read.
+   * it does not know. Absent for a CLI with no such read. A reading may also name the declared
+   * windows the account does not have at all (`IdleUsageReading.absentWindowIds`).
    */
-  readIdleUsage?(cliPath: string, home: string | null): Promise<RateLimitWindow[] | null>;
+  readIdleUsage?(cliPath: string, home: string | null): Promise<RateLimitWindow[] | IdleUsageReading | null>;
+}
+
+/**
+ * An idle read that says which declared windows the account does not have, besides the ones it
+ * reported: Claude's cache names a window the plan lacks as null (a plan with no 5h limit).
+ */
+export interface IdleUsageReading {
+  windows: RateLimitWindow[];
+  /** Ids of `usageWindows` the account does not have. A window merely not opened yet is not one. */
+  absentWindowIds: string[];
 }
 
 export interface KeyFileAccountSupport extends AccountSupportBase {
@@ -367,3 +380,13 @@ export interface KeyFileAccountSupport extends AccountSupportBase {
 }
 
 export type AgentAccountSupport = FolderAccountSupport | KeyFileAccountSupport;
+
+/**
+ * Whether a running session of the agent can be moved to another account: restarted there,
+ * resuming its conversation. False where a conversation stays on the account that started it
+ * (`conversationsStayOnAccount`, Codex). Null for an agent that declares no accounts.
+ */
+export function sessionsCanMove(support: AgentAccountSupport | undefined): boolean | null {
+  if (!support) return null;
+  return !(support.kind === 'folder' && support.conversationsStayOnAccount === true);
+}

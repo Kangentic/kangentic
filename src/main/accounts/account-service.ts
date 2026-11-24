@@ -13,6 +13,7 @@ import {
   EmptyUsageReadError,
   IdentityReadError,
   UnreadableUsageError,
+  sessionsCanMove,
   type AccountIdentity,
   type EmptyUsageReadReason,
 } from './account-support';
@@ -177,7 +178,7 @@ export class AccountService {
    * reset to sort by, so its list is always the user's order, and a drag or Switch to on it leaves
    * the mode alone. An agent with no registered adapter keeps following the mode.
    */
-  private followsOrderMode(agent: string): boolean {
+  followsOrderMode(agent: string): boolean {
     const adapter = this.dependencies.getAdapter(agent);
     return adapter === undefined || adapterReportsUsage(adapter);
   }
@@ -361,7 +362,7 @@ export class AccountService {
         reportsUsage: adapterReportsUsage(adapter),
         usageWindows: [...(support.usageWindows ?? [])],
         signInIsInteractive: support.kind === 'folder' && support.loginIsInteractive === true,
-        switchMovesSessions: !(support.kind === 'folder' && support.conversationsStayOnAccount === true),
+        switchMovesSessions: sessionsCanMove(support) === true,
         overrides: support.overridingCredentialEnvVars
           .filter((variable) => (environment[variable] ?? '').trim() !== '')
           .map((variable) => ({ variable, source: 'environment' as const })),
@@ -692,8 +693,16 @@ export class AccountService {
     if (!cliPath) return false;
     if (account.kind === 'folder' && (await this.usesRemoteTarget(account.agent))) return false;
     let windows: RateLimitWindow[] | null;
+    // Only a reading that says which windows the account lacks replaces that set.
+    let absentWindowIds: string[] | undefined;
     try {
-      windows = await support.readIdleUsage(cliPath, account.folderPath);
+      const reading = await support.readIdleUsage(cliPath, account.folderPath);
+      if (reading && !Array.isArray(reading)) {
+        windows = reading.windows;
+        absentWindowIds = reading.absentWindowIds;
+      } else {
+        windows = reading;
+      }
     } catch (error) {
       if (error instanceof EmptyUsageReadError) {
         await this.noteEmptyUsageRead(account, error.reason, error);
@@ -723,8 +732,11 @@ export class AccountService {
     }
     // A full window the row holds stays full until its reset (`keepFullWindows`). Read again: a
     // live report may have landed while the CLI ran.
-    const stored = this.dependencies.repository.getById(accountId)?.lastUsage ?? [];
-    this.dependencies.repository.updateUsage(accountId, keepFullWindows(stored, windows, this.nowSeconds()));
+    // A window the read says the account does not have is not carried over, full or not: its plan
+    // changed, and a kept line would contradict the absent set it is stored beside.
+    const stored = (this.dependencies.repository.getById(accountId)?.lastUsage ?? [])
+      .filter((window) => !absentWindowIds?.includes(window.id));
+    this.dependencies.repository.updateUsage(accountId, keepFullWindows(stored, windows, this.nowSeconds()), absentWindowIds);
     this.changed();
     return true;
   }
@@ -984,8 +996,12 @@ export class AccountService {
       if (!account || account.status === 'replaced') continue;
       const previous = account.lastUsage ?? [];
       const next = keepFullWindows(previous, mergeUsage(previous, reported), this.nowSeconds());
-      if (sameUsage(previous, next)) continue;
-      this.dependencies.repository.updateUsage(accountId, next);
+      // A window the account was read as not having, now reported live: its plan has it now. A
+      // report that leaves a window out says nothing about it, so nothing is ever added here.
+      const absent = account.absentWindowIds ?? [];
+      const stillAbsent = absent.filter((id) => !reported.some((rateLimitWindow) => rateLimitWindow.id === id));
+      if (sameUsage(previous, next) && stillAbsent.length === absent.length) continue;
+      this.dependencies.repository.updateUsage(accountId, next, stillAbsent.length === absent.length ? undefined : stillAbsent);
       changed.push(accountId);
     }
     if (changed.length > 0) this.changed();
