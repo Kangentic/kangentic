@@ -57,7 +57,7 @@ will spend agent calls ("Rebuild everything?", naming how many summaries are rew
 about how many calls); otherwise it runs at once. A Search quality change re-embeds on its own.
 
 A task-summary pass is asked for (`summaryScheduler.request` in `retrieval-service.ts`) at these
-points, and a pass that finds nothing changed since the last one caught up costs one query:
+points:
 
 - A minute into each launch, for every registered project whose folder exists, the open one first
   (`requestEveryProject`).
@@ -70,6 +70,8 @@ points, and a pass that finds nothing changed since the last one caught up costs
   agent, model or effort the summaries are written with changed, it also ends that project's
   failure back-off, since the new writer may be what fixes the failed call.
 - On Rebuild, for the open project. Every other project's rewrite waits for one of the asks above.
+
+A pass that finds nothing changed since the last one caught up costs one query.
 
 When the embedding worker crashes three times inside five minutes, the restart
 policy stops respawning it and search falls back to keyword matches until the
