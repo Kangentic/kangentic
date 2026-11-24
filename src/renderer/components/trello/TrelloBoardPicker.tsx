@@ -3,6 +3,7 @@ import { Trans } from '@lingui/react/macro';
 import { ArrowLeft, LoaderCircle } from 'lucide-react';
 import { ArtifactPlatformLogo } from '../VendorMark';
 import { reportRendererFailure } from '../../utils/renderer-failure';
+import { rejectionMessage } from '../../lib/ipc-error';
 import type { SourcePickerProps } from '../backlog/import-providers';
 import type { TrelloBoardSummary } from '../../../shared/types';
 import { groupBoardsByWorkspace } from './group-boards';
@@ -37,7 +38,7 @@ export function TrelloBoardPicker({
       // A rejection is not Trello refusing the token (that comes back as `result.error`): no
       // network, or a defect. Show it here rather than sending the user to Connect again.
       reportRendererFailure('trello', 'list-boards', listError);
-      if (!cancelled) setLoadError(listError instanceof Error ? listError.message : String(listError));
+      if (!cancelled) setLoadError(rejectionMessage(listError));
     });
     return () => {
       cancelled = true;
