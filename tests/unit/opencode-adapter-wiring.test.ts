@@ -91,6 +91,15 @@ describe('OpenCodeAdapter - fromFilesystem getAgentVersion wiring', () => {
     getCachedVersionSpy.mockRestore();
   });
 
+  it('forwards shouldContinue to the parser as the same function', async () => {
+    const adapter = new OpenCodeAdapter();
+    const shouldContinue = (): boolean => false;
+
+    await adapter.runtime.sessionId.fromFilesystem({ spawnedAt: new Date(), cwd: '/some/project', shouldContinue });
+
+    expect(parserSpy.mock.calls[0]?.[0]?.shouldContinue).toBe(shouldContinue);
+  });
+
   it('passes spawnedAt and cwd through to the parser unchanged', async () => {
     const adapter = new OpenCodeAdapter();
     const spawnedAt = new Date('2026-01-01T00:00:00.000Z');

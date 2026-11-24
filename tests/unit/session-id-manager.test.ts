@@ -4,7 +4,7 @@ import type { AgentParser } from '../../src/shared/types';
 
 function makeAdapter(sessionIdStrategy: Partial<{
   fromOutput: (data: string) => string | null;
-  fromFilesystem: (input: { spawnedAt: Date; cwd: string }) => Promise<string | null>;
+  fromFilesystem: (input: { spawnedAt: Date; cwd: string; shouldContinue?: () => boolean }) => Promise<string | null>;
   fromHook: (hookContext: string) => string | null;
 }>): AgentParser {
   return {
@@ -139,6 +139,74 @@ describe('SessionIdManager', () => {
       await Promise.resolve();
       expect(warnSpy).toHaveBeenCalled();
       expect(capturedIds.has('s1')).toBe(false);
+    });
+  });
+
+  // The scan polls for up to 30 s. It asks whether its answer would still be
+  // used, so a scan for a session that got its id another way, or is gone, ends.
+  describe('init with filesystem strategy: shouldContinue', () => {
+    /** Start a scan that never settles and hand back the predicate it was given. */
+    function startScan(sessionId: string): () => boolean {
+      const fromFilesystem = vi.fn().mockReturnValue(new Promise(() => undefined));
+      manager.init(sessionId, makeAdapter({ fromFilesystem }), '/cwd', 'opencode');
+      const { shouldContinue } = fromFilesystem.mock.calls[0][0] as { shouldContinue: () => boolean };
+      return shouldContinue;
+    }
+
+    it('answers yes while the session exists and holds no agent session id', () => {
+      existingSessions.add('s1');
+      expect(startScan('s1')()).toBe(true);
+    });
+
+    it('answers no once the session holds an agent session id', () => {
+      existingSessions.add('s1');
+      const shouldContinue = startScan('s1');
+      capturedIds.set('s1', 'plugin-id');
+      expect(shouldContinue()).toBe(false);
+    });
+
+    it('answers no once the session is gone', () => {
+      existingSessions.add('s1');
+      const shouldContinue = startScan('s1');
+      existingSessions.delete('s1');
+      expect(shouldContinue()).toBe(false);
+    });
+
+    it('answers no for the old scan once the same id is spawned again, and yes for the new one', () => {
+      existingSessions.add('s1');
+      const oldScan = startScan('s1');
+      const newScan = startScan('s1');
+      expect(oldScan()).toBe(false);
+      expect(newScan()).toBe(true);
+    });
+
+    // A resume holds an id from the start and reported none yet, so its scan still runs.
+    it('keeps answering yes for a resume, which holds an id but has not reported one', () => {
+      const resumeManager = new SessionIdManager({
+        hasAgentSessionId: () => false,
+        notifyAgentSessionId: () => undefined,
+        sessionExists: () => true,
+        agentSessionIdOf: () => 'resumed-id',
+      });
+      const fromFilesystem = vi.fn().mockReturnValue(new Promise(() => undefined));
+      resumeManager.init('s1', makeAdapter({ fromFilesystem }), '/cwd', 'opencode');
+      const { shouldContinue } = fromFilesystem.mock.calls[0][0] as { shouldContinue: () => boolean };
+      expect(shouldContinue()).toBe(true);
+    });
+
+    // A status write with no id marks hasAgentSessionId true, so only
+    // agentSessionIdOf says whether an id is actually held.
+    it('keeps answering yes when hasAgentSessionId is true but agentSessionIdOf is null', () => {
+      const flagOnlyManager = new SessionIdManager({
+        hasAgentSessionId: () => true,
+        notifyAgentSessionId: () => undefined,
+        sessionExists: () => true,
+        agentSessionIdOf: () => null,
+      });
+      const fromFilesystem = vi.fn().mockReturnValue(new Promise(() => undefined));
+      flagOnlyManager.init('s1', makeAdapter({ fromFilesystem }), '/cwd', 'opencode');
+      const { shouldContinue } = fromFilesystem.mock.calls[0][0] as { shouldContinue: () => boolean };
+      expect(shouldContinue()).toBe(true);
     });
   });
 
