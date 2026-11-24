@@ -426,12 +426,19 @@ export async function notifyAdaptersWorktreeRemoved(
   for (const adapterName of agentRegistry.list()) {
     const adapter = agentRegistry.get(adapterName);
     if (!adapter?.onWorktreeRemoved) continue;
+    // Two tries, so a failure on this machine's file still lets the distro's go.
     try {
       await adapter.onWorktreeRemoved(worktreePath);
+    } catch (error) {
+      // report-ok: a failed removal leaves a stale entry that the next launch's removed-folder sweep drops.
+      console.warn(`[WORKTREE] ${adapterName} onWorktreeRemoved failed (non-fatal):`, error);
+    }
+    try {
       const place = await wslPlaceOfWorktree(adapter, worktreePath, cliPathsOf);
       if (place) await adapter.onWorktreeRemoved(worktreePath, place);
     } catch (error) {
-      console.warn(`[WORKTREE] ${adapterName} onWorktreeRemoved failed (non-fatal):`, error);
+      // report-ok: a failed distro removal leaves a stale entry in the distro's file; the worktree is already gone.
+      console.warn(`[WORKTREE] ${adapterName} onWorktreeRemoved in WSL failed (non-fatal):`, error);
     }
   }
 }

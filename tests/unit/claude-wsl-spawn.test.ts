@@ -36,6 +36,7 @@ const factsRef = vi.hoisted(() => ({
 
 import { CommandBuilder } from '../../src/main/agent/adapters/claude/command-builder';
 import { ensureClaudeSpawnConfig } from '../../src/main/agent/adapters/claude/trust-manager';
+import { ClaudeAdapter } from '../../src/main/agent/adapters/claude/claude-adapter';
 import { discoverClaudeStaticCapabilities } from '../../src/main/agent/adapters/claude/capability-discovery';
 import { cliPathForTarget, type CliTarget } from '../../src/main/agent/shared/cli-target';
 import { wslHookPaths } from '../../src/main/agent/shared/wsl-hook-transport';
@@ -193,6 +194,20 @@ describe('a Claude installed in a WSL distro: trust', () => {
     expect(written.diffSidebarOpen).toBe(false);
     // The lock beside the distro's file is released.
     expect(fs.existsSync(path.join(distroHome, '.claude.json.lock'))).toBe(false);
+  });
+
+  // Red-green: dropping `place` in removeWorktreeEntry, or in the adapter's
+  // forward, edits this machine's file instead and leaves the distro's entry.
+  it('drops a removed worktree\'s entry from the distro\'s ~/.claude.json, and keeps a folder Kangentic did not make', async () => {
+    const worktree = path.join(projectDirectory, '.kangentic', 'worktrees', 'task-1');
+    await ensureClaudeSpawnConfig(worktree, target);
+    await ensureClaudeSpawnConfig(projectDirectory, target);
+
+    await new ClaudeAdapter().onWorktreeRemoved(worktree, target);
+
+    const written = JSON.parse(fs.readFileSync(path.join(distroHome, '.claude.json'), 'utf-8')) as { projects: Record<string, unknown> };
+    expect(Object.keys(written.projects)).not.toContain(cliPathForTarget(path.resolve(worktree), target));
+    expect(Object.keys(written.projects)).toContain(cliPathForTarget(path.resolve(projectDirectory), target));
   });
 });
 
