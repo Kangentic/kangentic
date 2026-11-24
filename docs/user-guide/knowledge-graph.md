@@ -258,7 +258,10 @@ agent beside it, so a question finds a task by what it did, not only by what its
 Summaries are written in the background, ten tasks to a call, three calls at a time (at Sonnet,
 about $0.02 per ten tasks, and about three minutes for 700 tasks), and a task that reaches Done
 gets one on the next pass. Every project is asked once each launch, a minute in, whether or not you
-open it, and again when summaries are switched on or the agent is chosen. Caught up, the line shows
+open it, and every project again when summaries are switched on or an agent and model are first
+chosen. A project is also asked when you open it, when its board changes, and, while it is open,
+when a Knowledge Graph setting changes. Choosing another agent, model or effort asks at once even
+after a failed call, since the new choice may be what fixes it. Caught up, the line shows
 the count with a check. Behind with nothing writing, it shows how many are written of how many
 could be, and how many the agent passed over ("670 of 673, 3 skipped"); those are asked about again
 on the next launch, or after **Rebuild**. When a reply answers none of its batch while another batch

@@ -5065,8 +5065,9 @@ export interface AppConfig {
      * `<projectRoot>/.kangentic/logs/ipc-<date>.jsonl`. Includes channel,
      * args (with redaction for known-sensitive channels), result,
      * duration. Useful for "why didn't this action work?" debugging
-     * but generates non-trivial disk I/O. Default false. Always
-     * rendered in product builds.
+     * but generates non-trivial disk I/O. Unset, it is on only for an
+     * ephemeral `/preview` instance in a dev build, and off otherwise
+     * (`defaultDeveloperFlag`). Always rendered in product builds.
      */
     recordIpcTraffic?: boolean;
     /**
@@ -5075,13 +5076,15 @@ export interface AppConfig {
      * the inspection bridge, lockfile writing, and the dev-only MCP
      * tools that hit it. Only meaningful in dev builds; the toggle
      * key persists across builds for type compatibility but the UI
-     * affordance is gated on `__KANGENTIC_DEV__`. Default false.
+     * affordance is gated on `__KANGENTIC_DEV__`. Unset, it is on in any
+     * dev build and off in a product build (`defaultDeveloperFlag`).
      */
     previewInspectionServer?: boolean;
     /**
      * Stricter gate for the inspection bridge: enables `eval`,
      * `inject_session_event`, and the `pty-input.bytes` form. Allows
-     * arbitrary-code surfaces. Off by default; only meaningful when
+     * arbitrary-code surfaces. Unset, it is on in any dev build and off in a
+     * product build (`defaultDeveloperFlag`); only meaningful when
      * `previewInspectionServer` is also on. Dev-only.
      */
     previewEvalEnabled?: boolean;
