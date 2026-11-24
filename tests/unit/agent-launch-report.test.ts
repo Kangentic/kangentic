@@ -1398,6 +1398,12 @@ describe('the session id capture reports', () => {
         expect(sentTags()).toMatchObject({ exit_code: '0', exit_by: 'sweep' });
       });
 
+      // The host can lose the code (a PTY that vanished), and the tag must still say so.
+      it('says the code is unknown when the PTY left none, and that the PTY ended it', async () => {
+        await settleAtCeiling({ exitCode: null });
+        expect(sentTags()).toMatchObject({ exit_code: 'unknown', exit_by: 'pty' });
+      });
+
       it('still sends the report when the read fails', async () => {
         await settleAtCeiling({}, { readOutput: async () => { throw new Error('host gone'); } });
         const tags = sentTags();
