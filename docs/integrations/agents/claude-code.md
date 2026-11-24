@@ -46,8 +46,9 @@ On first use, `ClaudeDetector` locates the Claude CLI:
    a non-zero exit is still cached
 
 At a launch, the agent list and the account cards take an agent nothing has started from what its
-file answered on an earlier launch, with no probe. A spawn still probes for itself, and the lists
-show that answer from then on. See
+file answered on an earlier launch, with no probe, as long as the file is unchanged. A first
+launch, a replaced file and every spawn probe, and the lists show a spawn's answer from then on.
+See
 [Shells and paths](../../platforms/shells-and-paths.md).
 
 Every probe runs `claude --version` with a 5s timeout, and a probe that times out is tried once
