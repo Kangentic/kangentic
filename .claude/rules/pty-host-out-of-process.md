@@ -163,6 +163,20 @@ at the Windows timer floor.
   never read its stop. `spawnCli` spawns locally only when no host is registered.
   Every one of these stops, local, in the host, and by pid, is `src/main/shared/child-tree-stop.ts`,
   which imports only `spawn` so the host can bundle it.
+- **Every other streamed child of main runs the same way, through `spawnOffMain`**
+  (`off-main-spawn.ts`): a project's Post-Worktree and Stop scripts, a run-script automation, a
+  shortcut command, the one-shot `ssh` of the SSH tab and the helper install, the image preview's
+  `git cat-file` and the file search's git. A run asks for what it needs in its `cliSpawn`: no
+  pipes (`stdio: 'ignore'`), a shown window, a file as its stdin (`stdinFile`, since the channel
+  carries text only), and `outlivesApp`. A run that outlives the app is neither stopped nor waited
+  for at the host's shutdown and is not ended by pid when the host or its spawn worker is lost,
+  because main never stopped these at a quit while it started them. Once main asks for such a run
+  to stop, the shutdown waits for it like any other: a host that exits first takes its own
+  `taskkill` down with it. A stop names its mode (`CliStopMode`): the tree with the grace, the tree
+  at once (on POSIX even after the run exited, for what still holds its output), or the one
+  process. Measured on Windows on 2026-11-24: a non-detached shell ends when the process that
+  started it exits and what the shell started keeps running, for a plain Node parent and for the
+  host at a quit alike, so a script's quit is the same from either parent.
 
 ## Enforcement (self-maintaining)
 
@@ -247,7 +261,7 @@ Git on a task's lifecycle runs in the host too (#732): a workflow runs up to eig
 once, and their git spawns stalled main 19 times over 75 ms in a 20-task run. A start, a respawning
 move and a move to Done go through `src/main/git/git-client.ts` (`gitAt`, `runGitCommand`, which
 keep simple-git's method names and results; simple-git has no spawn hook) and
-`spawn-with-abort.ts`, which routes a git command to `spawnOffMainCli`. Measured by
+`spawn-with-abort.ts`, which routes a git command, and a project's script, to `spawnOffMainCli`. Measured by
 `tests/unit/git-lifecycle-off-main.test.ts`: 37 git processes per modeled lifecycle, none on main,
 against 49 with 45 on main before. Three calls off the lifecycle use the git client too, because
 they run repository hooks, filters or merge drivers and `gitAt`'s env drops Crashpad's pipe name

@@ -48,8 +48,11 @@ with a crash policy and stderr capture:
   request; output reaches main only for the sessions a renderer shows or a phone streams. The host
   also runs main's one-shot child processes (`off-main-exec.ts`), the probes' raw PTYs
   (`off-main-pty.ts`), the agent CLIs' headless runs (`off-main-cli.ts`: Ask, task summaries,
-  auto-name, the warm answer session) and the background-shell watcher's process table, because
-  on Windows each spawn's CreateProcess is synchronous on the calling thread. It also scans for
+  auto-name, the warm answer session), every other child main starts with a stream or a stop
+  (`off-main-spawn.ts`: git, a project's scripts, a run-script automation, a shortcut command,
+  one-shot `ssh`) and the background-shell watcher's process table, because
+  on Windows each spawn's CreateProcess is synchronous on the calling thread. Main starts no
+  process on its own thread while the host is up (`.claude/rules/main-starts-no-process.md`). It also scans for
   and stops what a task left running (`reapTaggedProcesses`, `src/main/pty/process-tag/`, loading
   koffi on Windows and macOS), stops one reported process when the user asks, stops a removal's worktree holder by pid and creation time (`SessionManager.stopProcessByCreationTime`, 5 s), and answers which reported processes have ended (`checkReportedProcesses`, by pid and start key, never a scan). It also answers, bounded, once the agent a task's killed or exited shell left running has exited (`awaitAgentExit`, `src/main/pty/host/exited-root-wait.ts`), which a reap, a suspend and `awaitExit` wait on. Forked once at startup, restarted on
   a crash (the lost agent sessions resume), and replaced by the same core running in main after

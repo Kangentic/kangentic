@@ -128,12 +128,19 @@ it through `PtyHostClient`: ordered commands, id-matched requests, ordered event
   terminals ran before the host existed; each renderer's port then ends in main, so only there does
   typing cross main's loop.
 - **Off-main spawns.** One-shot child processes (`off-main-exec.ts`), the probes' raw PTYs
-  (`off-main-pty.ts`), the agent CLIs' headless runs (`off-main-cli.ts`) and the background-shell
+  (`off-main-pty.ts`), the agent CLIs' headless runs (`off-main-cli.ts`), every other child main
+  starts with a stream or a stop (`off-main-spawn.ts`: a project's scripts, a run-script
+  automation, a shortcut command, one-shot `ssh`, git) and the background-shell
   watcher's process table run in the host too, since a Windows spawn's CreateProcess is synchronous
   on the calling thread. A CLI run is a command, so `spawnCli` gets its handle at once; a host crash
   fails a running one (it is never rerun, which would be a second paid answer) and main stops the
   orphaned CLI's tree. At quit both sides stop every run still going: the host in its shutdown, and
-  main by pid, since a host that runs out its exit wait may never read its stop. A spawn used to
+  main by pid, since a host that runs out its exit wait may never read its stop. A run started with
+  `outlivesApp` is the exception to both: a script, a run-script automation and a shortcut command
+  were never stopped at a quit while main started them, so the host's shutdown neither stops nor
+  waits for one, and a host crash does not end one by pid. A host crash still fails the call that
+  was waiting on a script, and that caller ends what the script left by pid, since nothing reads
+  the script any more. A shortcut command is left running. A spawn used to
   hold the host's only thread, the one that flushes every terminal: on the dogfooding machine
   `cli:spawn` held it 105 times in 20 hours, for 16 to 291 ms each (2026-10-24), and under disk load
   one git start held it 454 ms. So every one of them now starts on the host's spawn worker

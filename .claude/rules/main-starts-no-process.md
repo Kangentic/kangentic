@@ -22,9 +22,18 @@ every start on it.
 - **Main-process code never imports `child_process` to start a process.** A one-shot run whose
   output is read at the end uses `execFileAsync` or `execAsync`
   (`src/main/utility-process/off-main-exec.ts`). A run that needs stdin, streamed or binary output,
-  or a tree stop uses `spawnOffMainCli` (`off-main-cli.ts`). Git uses `gitAt`
+  or a stop uses `spawnOffMain` (`off-main-spawn.ts`), which is `spawnOffMainCli`
+  (`off-main-cli.ts`) with its local fallback in one call. Git uses `gitAt`
   (`src/main/git/git-client.ts`). Each runs the child on the pty host's spawn worker, and starts it
   here only when no host is registered: unit tests, and startup before the host.
+- **A move changes where a child starts, never what a quit does to it.** A child main used to start
+  and never stopped at a quit (a project's script, a run-script automation, a shortcut command)
+  starts with `outlivesApp`, so the host leaves it alone at shutdown as main did. A stop is still
+  the caller's: `stop('treeNow')` for a script that timed out or was superseded, `stop('process')`
+  for a program that starts nothing. A caller that reports a run as failed when the host is lost
+  under it ends what the run left by pid (`killChildTreeByPid`), and a shortcut command never does.
+- **Bytes do not cross to the host.** The channel carries text and has no backpressure, so input
+  of any size is a file the child reads for itself (`stdinFile`), as the SSH helper upload is.
 - **Prefer no process at all.** The font list reads Chromium's own
   (`src/preload/local-fonts.ts`). Before adding a command, look for an API that answers the
   question.
@@ -54,11 +63,24 @@ every start on it.
   from main. Runs in CI via `npm run test:unit`.
 - **Test:** `tests/unit/pty-host-boundary.test.ts` fails on `promisify(exec)` or
   `promisify(execFile)` under `src/main` outside the drop-in.
+- **Tests (the drop-in and its runs):** `tests/unit/off-main-spawn.test.ts` pins that both routes
+  hand back the same child, report a failed start as `error` then `close`, and stop the same way.
+  `host-cli-processes.test.ts`, `pty-host-spawn-worker.test.ts` and `remote-cli-process.test.ts`
+  pin `outlivesApp` (not stopped and not waited for at shutdown, waited for once a stop was asked),
+  the stop modes, the ignored stdio and the file as stdin. Each moved caller pins its own options:
+  `spawn-with-abort-off-main.test.ts`, `run-script-adapter-tree-kill.test.ts`,
+  `shell-exec-handler.test.ts`, `remote-ssh-run.test.ts` and `ssh-setup.test.ts`.
 - **Measure:** a dev build times every start (`src/devtools/main/spawn-tracer.ts`).
   `kangentic_devtools_event_loop_lag` lists main's own under labels that start `spawn:`, and the
-  host's under `pty-host:spawn-worker:`.
+  host's under `pty-host:spawn-worker:` (only those of 16 ms or more). After a boot and a Settings
+  open, main's own `syncWorkByLabel` holds no label that starts `spawn:`. Measured in a `/preview`
+  on 2026-11-24 across a boot, the font list, the Changes and Graph reads, the file search, an
+  image preview, `ssh -V`, a Post-Worktree Script, a run-script row and a shortcut command.
 - **Gap:** the scan is per module. A classified file can gain a second start of the same kind
   without failing, so a change to one is review's to read.
+- **Gap:** the Stop script was not driven in the running app. It starts through the same
+  `spawnWithAbort` branch as the Post-Worktree Script, and its own behavior is pinned by
+  `tests/unit/run-stop-script.test.ts` on a real stub.
 
 ## Scope
 

@@ -1,11 +1,12 @@
 /**
- * Stopping a child process and everything it started. The agent CLI runs:
- * `stopCli` in `agent/shared/cli-print.ts` (a local run), the pty host's
- * `host-cli-processes.ts` (a run in the host), and main's backstop by pid when
- * the host died or the app is quitting (`stopAllCliRuns`, `pty-host-client.ts`).
- * And main's own children that time out or are aborted: git through
- * `git/spawn-with-abort.ts` (the init script among them), a run-script
- * automation, and the project search's git.
+ * Stopping a child process and everything it started. Every run main asks
+ * for is stopped in the pty host (`host-cli-processes.ts`): an agent CLI run,
+ * git, a project's script, a run-script automation, the project search's git
+ * and `ssh`. The same stops run here for a child started with no host
+ * registered (`stopCli` in `agent/shared/cli-print.ts`, `off-main-spawn.ts`,
+ * `git/spawn-with-abort.ts`), and by pid as main's backstop when the host died
+ * or the app is quitting (`stopAllCliRuns`, `pty-host-client.ts`, and a caller
+ * whose script lost its host).
  *
  * A `.cmd` shim runs the CLI as a child of cmd.exe, so killing cmd.exe left the
  * CLI running with its working directory and every file it was handed by path,
