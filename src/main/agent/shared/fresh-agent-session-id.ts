@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import type { AgentAdapter } from '../agent-adapter';
-import type { PermissionMode, SessionIdCreation, SessionIdCreationOutcome } from '../../../shared/types';
+import type { AgentAdapter, FreshLaunch } from '../agent-adapter';
+import type { SessionIdCreation, SessionIdCreationOutcome } from '../../../shared/types';
 import type { CliPlace } from './cli-target';
 
 /** A fresh conversation's id, or null, and how the launch got it (the session-id report's `create_chat` tag). */
@@ -26,13 +26,9 @@ export interface FreshAgentSessionId {
  */
 export async function resolveFreshAgentSessionId(
   adapter: Pick<AgentAdapter, 'supportsCallerSessionId' | 'createSessionId' | 'reportsLaunchSessionId'>,
-  input: {
+  input: FreshLaunch & {
     cliPath: string;
     workingDirectory: string;
-    permissionMode: PermissionMode;
-    nonInteractive?: boolean;
-    /** The prompt the launch's command carries: undefined with none, or one typed in after launch. */
-    prompt: string | undefined;
     signal?: AbortSignal;
     /** Where the CLI runs when it is not on this computer (a WSL distro, an SSH host): the chat is made there. */
     place?: CliPlace | null;
