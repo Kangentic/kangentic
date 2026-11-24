@@ -57,7 +57,7 @@ describe('readClaudeCachedUsage', () => {
     const state = loadState();
     const fetchedAtMs = state.cachedUsageUtilization.fetchedAtMs;
     expect(windowsOf(state, fetchedAtMs + TEN_MINUTES_MS)).not.toBeNull();
-    expect(readClaudeCachedUsage(state, fetchedAtMs + TEN_MINUTES_MS + 1)).toEqual({ empty: 'cache-stale' });
+    expect(readClaudeCachedUsage(state, fetchedAtMs + TEN_MINUTES_MS + 1)).toEqual({ empty: 'cache-stale', cacheAge: 'under_1h' });
   });
 
   it('skips a null window, as a plan with no 5h window has', () => {

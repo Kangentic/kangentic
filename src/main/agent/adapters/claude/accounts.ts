@@ -5,11 +5,13 @@ import {
   IdentityReadError,
   UnreadableUsageError,
   unreadableUsageKeysOf,
+  usageCacheAgeOf,
   type AccountIdentity,
   type DeriveContext,
   type EmptyUsageReadReason,
   type FolderAccountSupport,
   type SharedEntry,
+  type UsageCacheAge,
 } from '../../../accounts/account-support';
 import type { RateLimitWindow } from '../../../../shared/types';
 import { execRunFailureOf } from '../../../utility-process/off-main-exec';
@@ -395,7 +397,7 @@ function spentWindowKeys(utilization: Record<string, unknown>): Set<string> {
  * `limits[]` reads 100 (`spentWindowKeys`). Otherwise why it gives no current windows: the state is
  * not a record (`state-not-record`), it holds no cache with a numeric `fetchedAtMs` (`no-cache`,
  * what a home looks like before Claude's first usage fetch, as with an API-key login), the cache is
- * older than `maxAgeMs`, or it holds no window.
+ * older than `maxAgeMs` (`cache-stale`, with its age as a fixed word), or it holds no window.
  *
  * Throws `UnreadableUsageError` with the record's keys when `utilization` names none of the windows
  * this reader knows, and with the cache's keys when `utilization` is missing or neither a record
@@ -407,11 +409,12 @@ export function readClaudeCachedUsage(
   state: unknown,
   nowMs: number,
   maxAgeMs: number = IDLE_USAGE_MAX_AGE_MS,
-): { windows: RateLimitWindow[] } | { empty: EmptyUsageReadReason } {
+): { windows: RateLimitWindow[] } | { empty: EmptyUsageReadReason; cacheAge?: UsageCacheAge } {
   if (!isPlainRecord(state)) return { empty: 'state-not-record' };
   const cache = state.cachedUsageUtilization;
   if (!isPlainRecord(cache) || typeof cache.fetchedAtMs !== 'number') return { empty: 'no-cache' };
-  if (nowMs - cache.fetchedAtMs > maxAgeMs) return { empty: 'cache-stale' };
+  const cacheAgeMs = nowMs - cache.fetchedAtMs;
+  if (cacheAgeMs > maxAgeMs) return { empty: 'cache-stale', cacheAge: usageCacheAgeOf(cacheAgeMs) };
   const utilization = cache.utilization;
   // Null is how Claude marks what does not apply. A missing field or another type is a renamed or
   // reshaped one, and the cache's own keys name what took its place.
@@ -466,7 +469,7 @@ async function readClaudeIdleUsage(cliPath: string, home: string | null): Promis
     throw new EmptyUsageReadError('state-unreadable');
   }
   const reading = readClaudeCachedUsage(state, Date.now());
-  if ('empty' in reading) throw new EmptyUsageReadError(reading.empty);
+  if ('empty' in reading) throw new EmptyUsageReadError(reading.empty, { cacheAge: reading.cacheAge });
   return reading.windows;
 }
 

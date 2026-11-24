@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { LeftoverProcessReports, REPORT_MAX_WAIT_MS, REPORT_QUIET_MS } from '../../src/main/ipc/helpers/leftover-process-reports';
+import { LeftoverProcessReports, REPORT_MAX_WAIT_MS, REPORT_QUIET_MS, RETAINED_PROCESS_IDS } from '../../src/main/ipc/helpers/leftover-process-reports';
 import type { LeftoverProcessEntry } from '../../src/main/pty/process-tag/tagged-reap';
 import type { LeftoverProcessReport } from '../../src/shared/types';
 
@@ -153,16 +153,76 @@ describe('LeftoverProcessReports', () => {
     vi.runAllTimers();
     const [reported] = sent[0].processes;
     expect(reported).not.toHaveProperty('startKey');
-    expect(reports.resolve(reported.id)).toEqual({ pid: 2001, startKey: 'start-2001', taskId: TASK, projectPath: null });
+    expect(reports.resolve(reported.id)).toEqual({ pid: 2001, startKey: 'start-2001', taskId: TASK, projectPath: null, place: 'worktree', outcome: 'stopped' });
     expect(reports.resolve('2001')).toBeNull();
     expect(reports.resolve('made-up')).toBeNull();
   });
 
+  it('names what was left working in one task\'s worktree, once each, and nothing else', () => {
+    const reports = new LeftoverProcessReports();
+    const add = (entries: LeftoverProcessEntry[], projectPath: string) => reports.add(vi.fn(), entries, TITLES, true, projectPath);
+    add([
+      entry(2001, TASK, { outcome: 'kept', reason: 'window' }),
+      entry(2002, TASK, { outcome: 'failed' }),
+      entry(2003),
+      entry(2004, TASK, { outcome: 'kept', place: 'project' }),
+      entry(2005, 'another-task', { outcome: 'kept' }),
+    ], '/mock/project');
+    add([entry(2006, TASK, { outcome: 'kept' })], '/mock/other-project');
+    // A later reap reports the same window again.
+    add([entry(2001, TASK, { outcome: 'kept', reason: 'window' })], '/mock/project');
+
+    expect(reports.leftInWorktree('/mock/project', TASK)).toEqual([
+      { pid: 2001, startKey: 'start-2001' },
+      { pid: 2002, startKey: 'start-2002' },
+    ]);
+    expect(reports.leftInWorktree('/mock/unknown', TASK)).toEqual([]);
+  });
+
+  // What a startup sweep kept was reported when its task ended, and is not reported again.
+  it('remembers what was left in a worktree without reporting it', () => {
+    const reports = new LeftoverProcessReports();
+    const listener = vi.fn();
+    reports.setReportListener(listener);
+
+    reports.rememberLeft([
+      entry(2001, TASK, { outcome: 'kept', reason: 'window' }),
+      entry(2002, TASK, { outcome: 'kept', place: 'project' }),
+      // A stopped process no longer holds the folder, so it is not remembered.
+      entry(2003, TASK, { outcome: 'stopped' }),
+    ], '/mock/project');
+    vi.runAllTimers();
+
+    expect(reports.leftInWorktree('/mock/project', TASK)).toEqual([{ pid: 2001, startKey: 'start-2001' }]);
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  // A user loses the Stop button on a reported process if a long startup sweep pushes it out.
+  it('keeps remembered processes out of the ids the Stop button can reach', () => {
+    const reports = new LeftoverProcessReports();
+    const sent: LeftoverProcessReport[] = [];
+    reports.add((report) => sent.push(report), [entry(1, TASK, { outcome: 'kept' })], TITLES, true, '/mock/project');
+    vi.runAllTimers();
+    const reportedId = sent[0].processes[0].id;
+
+    const remembered = Array.from({ length: RETAINED_PROCESS_IDS + 1 }, (_unused, index) => entry(10_000 + index, TASK, { outcome: 'kept' }));
+    reports.rememberLeft(remembered, '/mock/project');
+
+    expect(reports.resolve(reportedId)).not.toBeNull();
+  });
+
+  it('bounds what it remembers, dropping the oldest first', () => {
+    const reports = new LeftoverProcessReports();
+    const remembered = Array.from({ length: RETAINED_PROCESS_IDS + 1 }, (_unused, index) => entry(10_000 + index, TASK, { outcome: 'kept' }));
+    reports.rememberLeft(remembered, '/mock/project');
+
+    const left = reports.leftInWorktree('/mock/project', TASK);
+    expect(left).toHaveLength(RETAINED_PROCESS_IDS);
+    expect(left).not.toContainEqual({ pid: 10_000, startKey: 'start-10000' });
+    expect(left).toContainEqual({ pid: 10_000 + RETAINED_PROCESS_IDS, startKey: `start-${10_000 + RETAINED_PROCESS_IDS}` });
+  });
+
   it('keeps only the newest ids the Stop button can reach, dropping the oldest first', () => {
-    // Mirrors RETAINED_PROCESS_IDS in leftover-process-reports.ts, which is not
-    // exported. If the source cap changes, change this too: the boundary
-    // assertions below fail until it matches, which is the point.
-    const RETAINED_PROCESS_IDS = 500;
     const reports = new LeftoverProcessReports();
     const sent: LeftoverProcessReport[] = [];
     const firstPid = 10_000;
@@ -177,13 +237,15 @@ describe('LeftoverProcessReports', () => {
     // One over the cap evicts exactly one id, the first minted.
     expect(reports.resolve(ids[0])).toBeNull();
     // The second-oldest is the boundary: still reachable at exactly the cap.
-    expect(reports.resolve(ids[1])).toEqual({ pid: firstPid + 1, startKey: `start-${firstPid + 1}`, taskId: TASK, projectPath: null });
+    expect(reports.resolve(ids[1])).toEqual({ pid: firstPid + 1, startKey: `start-${firstPid + 1}`, taskId: TASK, projectPath: null, place: 'worktree', outcome: 'stopped' });
     // The newest is retained with its full identity.
     expect(reports.resolve(ids[RETAINED_PROCESS_IDS])).toEqual({
       pid: firstPid + RETAINED_PROCESS_IDS,
       startKey: `start-${firstPid + RETAINED_PROCESS_IDS}`,
       taskId: TASK,
       projectPath: null,
+      place: 'worktree',
+      outcome: 'stopped',
     });
   });
 

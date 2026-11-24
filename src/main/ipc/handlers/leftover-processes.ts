@@ -31,6 +31,7 @@ export function leftoverReportCounts(report: LeftoverProcessReport): { stopped: 
  *
  * Once the process is gone, a Done task's worktree it was holding is removed
  * in the background (`retryDoneWorktreeRemoval`), after the answer goes back.
+ * The retry itself asks whether another reported process is still in there.
  *
  * A Stop that runs past main's budget answers `failed`, but the pty host
  * finishes it anyway. When it does, the real outcome goes to the row
@@ -50,7 +51,7 @@ export function registerLeftoverProcessHandlers(context: IpcContext): void {
     const identity = leftoverProcessReports.resolve(processId);
     if (!identity) return 'ended';
     const retryRemovalOnceGone = (outcome: LeftoverStopOutcome): void => {
-      if (outcome !== 'failed') void retryDoneWorktreeRemoval(context, identity.projectPath, identity.taskId);
+      if (outcome !== 'failed') void retryDoneWorktreeRemoval(context, identity.projectPath, identity.taskId, { caller: 'done_retry_stop' });
     };
     const outcome = await context.sessionManager.stopReportedProcess(identity.pid, identity.startKey, (lateOutcome) => {
       const settled: LeftoverStopSettled = { processId, outcome: lateOutcome };
@@ -78,7 +79,7 @@ export function registerLeftoverProcessHandlers(context: IpcContext): void {
       const taskKey = `${identity.projectPath}\u0000${identity.taskId}`;
       if (retriedTasks.has(taskKey)) continue;
       retriedTasks.add(taskKey);
-      void retryDoneWorktreeRemoval(context, identity.projectPath, identity.taskId);
+      void retryDoneWorktreeRemoval(context, identity.projectPath, identity.taskId, { caller: 'done_retry_recheck' });
     }
     return ended.map(({ processId }) => processId);
   });

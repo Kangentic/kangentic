@@ -869,7 +869,7 @@ describe('AccountService.refreshUsage', () => {
     it.each<[string, () => Promise<RateLimitWindow[] | null>, string]>([
       ['null', async () => null, 'no-answer'],
       ['an empty list', async () => [], 'no-windows'],
-      ['a thrown empty read', async () => { throw new EmptyUsageReadError('cache-stale'); }, 'cache-stale'],
+      ['a thrown empty read', async () => { throw new EmptyUsageReadError('state-unreadable'); }, 'state-unreadable'],
     ])('keeps the stored windows and their read time on %s, and reports why', async (_name, readIdleUsage, reason) => {
       const accountService = folderService(folderSupport({ readIdleUsage }));
       const own = accountService.ensureDefaultAccount(AGENT)!;
@@ -898,10 +898,8 @@ describe('AccountService.refreshUsage', () => {
       expect(tags).toEqual({ agent_cli_version: '2.1.319' });
     });
 
-    // Only a no-windows read says which CLI wrote it. The other reasons name their own cause, so
-    // they carry no tags and must not pay for a version probe.
+    // These reasons name their own cause, so they carry no tags and must not pay for a version probe.
     it.each<[string, () => Promise<RateLimitWindow[] | null>]>([
-      ['cache-stale', async () => { throw new EmptyUsageReadError('cache-stale'); }],
       ['state-unreadable', async () => { throw new EmptyUsageReadError('state-unreadable'); }],
       ['state-not-record', async () => { throw new EmptyUsageReadError('state-not-record'); }],
       ['no-answer', async () => null],
@@ -1004,8 +1002,8 @@ describe('AccountService.refreshUsage', () => {
         const own = accountService.ensureDefaultAccount(AGENT)!;
         for (let read = 0; read < 5; read += 1) await accountService.refreshUsage(own.id);
 
-        // Three failed runs, none of them two in a row: only the read that ran and found a stale cache reports.
-        expect(reports.map((entry) => entry[2])).toEqual([{ kind: 'default', reason: 'cache-stale' }]);
+        // Three failed runs and a stale read, none of them two in a row.
+        expect(reports).toEqual([]);
       });
 
       it('starts the count again after a read the CLI answered in a shape it does not know', async () => {
@@ -1079,6 +1077,98 @@ describe('AccountService.refreshUsage', () => {
 
       it('counts failed runs for each account on its own', async () => {
         const accountService = folderService(folderSupport({ readIdleUsage: async () => { throw runFailed(); } }));
+        const accountOne = insertFolderAccount('ok');
+        const accountTwo = insertFolderAccount('ok');
+
+        await accountService.refreshUsage(accountOne.id);
+        await accountService.refreshUsage(accountTwo.id);
+        expect(reports).toEqual([]);
+
+        await accountService.refreshUsage(accountOne.id);
+        expect(reports).toHaveLength(1);
+      });
+    });
+
+    // Sentry DESKTOP-4E on 0.62.0: one stale read was reported at once. A network drop, a refused
+    // fetch and a sign-in that needs renewing all leave one, as a failed run does.
+    describe('whose CLI run left its cache stale', () => {
+      const stale = (cacheAge?: 'under_1h' | '1h_to_1d' | 'over_1d') => async (): Promise<RateLimitWindow[] | null> => {
+        throw new EmptyUsageReadError('cache-stale', { cacheAge });
+      };
+      const runFailed = async (): Promise<RateLimitWindow[] | null> => { throw new EmptyUsageReadError('run-failed'); };
+      const goodRead = async (): Promise<RateLimitWindow[] | null> => [sevenDay(5, NOW + 3600)];
+
+      /** One account's reads in order, each from `reads`. */
+      async function readInOrder(reads: Array<() => Promise<RateLimitWindow[] | null>>): Promise<void> {
+        const accountService = folderService(folderSupport({ readIdleUsage: async () => reads.shift()!() }));
+        const own = accountService.ensureDefaultAccount(AGENT)!;
+        while (reads.length > 0) await accountService.refreshUsage(own.id);
+      }
+
+      it('sends nothing for one, and reports the second in a row with the cache\'s age and the CLI version', async () => {
+        const resolveCliVersion = vi.fn(async () => '2.1.319 (Claude Code)');
+        const accountService = folderService(folderSupport({ readIdleUsage: stale('1h_to_1d') }), { resolveCliVersion });
+        const own = accountService.ensureDefaultAccount(AGENT)!;
+
+        expect(await accountService.refreshUsage(own.id)).toBe(false);
+        expect(reports).toEqual([]);
+        expect(resolveCliVersion).not.toHaveBeenCalled();
+
+        expect(await accountService.refreshUsage(own.id)).toBe(false);
+        expect(reports).toHaveLength(1);
+        const [problem, agent, facts, , tags] = reports[0];
+        expect([problem, agent, facts]).toEqual(['usage-read-empty', AGENT, { kind: 'default', reason: 'cache-stale' }]);
+        expect(tags).toEqual({ cache_age: '1h_to_1d', agent_cli_version: '2.1.319' });
+      });
+
+      // The once-per-run latch is downstream of this service, so each read past the second must report.
+      it('reports each stale read after the second too, not only the second', async () => {
+        await readInOrder([stale('under_1h'), stale('under_1h'), stale('under_1h')]);
+        expect(reports.map((entry) => entry[0])).toEqual(['usage-read-empty', 'usage-read-empty']);
+      });
+
+      // A run that worked ends the streak even when its reading is set aside because the home now
+      // holds another login. Without this, a stale read after it would report as a second in a row.
+      it('starts the count again after a good read whose home holds another login', async () => {
+        const reads = [stale('under_1h'), goodRead, stale('under_1h')];
+        const readIdleUsage = vi.fn(async () => reads.shift()!());
+        const accountService = folderService(folderSupport({
+          readIdleUsage,
+          readHomeIdentity: async () => ({ email: 'other@example.com', orgId: null }),
+        }));
+        const row = insertFolderAccount('ok', 'dev@example.com', 'pro');
+
+        expect(await accountService.refreshUsage(row.id)).toBe(false);
+        // The good read reaches the login mismatch, so its reading is not stored.
+        expect(await accountService.refreshUsage(row.id)).toBe(false);
+        expect(await accountService.refreshUsage(row.id)).toBe(false);
+
+        expect(readIdleUsage).toHaveBeenCalledTimes(3);
+        expect(reports.filter(([problem]) => problem === 'usage-read-empty')).toEqual([]);
+      });
+
+      it('tags the age unknown when the adapter gave none', async () => {
+        await readInOrder([stale(), stale()]);
+        expect(reports.map((entry) => entry[4])).toEqual([{ cache_age: 'unknown', agent_cli_version: 'unknown' }]);
+      });
+
+      it('sends nothing when a good read comes between two', async () => {
+        await readInOrder([stale('under_1h'), goodRead, stale('under_1h')]);
+        expect(reports).toEqual([]);
+      });
+
+      it('counts stale reads and failed runs apart: each restarts the other', async () => {
+        await readInOrder([stale('under_1h'), runFailed, stale('under_1h'), runFailed]);
+        expect(reports).toEqual([]);
+      });
+
+      it('starts the count again after a read the CLI answered in a shape it does not know', async () => {
+        await readInOrder([stale('under_1h'), async () => { throw new UnreadableUsageError('alpha'); }, stale('under_1h')]);
+        expect(reports.map((entry) => entry[0])).toEqual(['usage-read-unreadable']);
+      });
+
+      it('counts stale reads for each account on its own', async () => {
+        const accountService = folderService(folderSupport({ readIdleUsage: stale('under_1h') }));
         const accountOne = insertFolderAccount('ok');
         const accountTwo = insertFolderAccount('ok');
 

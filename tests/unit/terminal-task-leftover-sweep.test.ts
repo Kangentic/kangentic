@@ -61,8 +61,8 @@ function makeRepos() {
   return { taskRepo, swimlaneRepo };
 }
 
-function leftovers(stoppingEnabled = true): LeftoverSweepOptions & { onReport: ReturnType<typeof vi.fn> } {
-  return { stoppingEnabled: () => stoppingEnabled, onReport: vi.fn() };
+function leftovers(stoppingEnabled = true): LeftoverSweepOptions & { onReport: ReturnType<typeof vi.fn>; onKept: ReturnType<typeof vi.fn> } {
+  return { stoppingEnabled: () => stoppingEnabled, onReport: vi.fn(), onKept: vi.fn() };
 }
 
 /**
@@ -158,7 +158,9 @@ describe('sweepTerminalTaskLeftovers', () => {
     const kept: LeftoverProcessEntry = { ...stopped, pid: 4003, startKey: 'k3', label: 'chrome', outcome: 'kept', reason: 'window' };
     deliverLate!([kept]);
     expect(options.onReport).not.toHaveBeenCalled();
+    expect(options.onKept).toHaveBeenLastCalledWith([kept]);
     deliverLate!([stopped, kept]);
+    expect(options.onKept).toHaveBeenLastCalledWith([kept]);
     expect(options.onReport).toHaveBeenCalledTimes(1);
     const [entries, titles, stoppingEnabled] = options.onReport.mock.calls[0] as [LeftoverProcessEntry[], ReadonlyMap<string, string>, boolean];
     expect(entries).toEqual([stopped]);
@@ -183,6 +185,9 @@ describe('sweepTerminalTaskLeftovers', () => {
     expect(titles.get('archived-1')).toBe('Fix login');
     expect(titles.get('todo-1')).toBe('Add search');
     expect(stoppingEnabled).toBe(true);
+    // What it kept is handed on apart from the report, so a later removal retry can ask about it.
+    expect(options.onKept).toHaveBeenCalledTimes(1);
+    expect(options.onKept).toHaveBeenCalledWith([kept]);
   });
 
   it('does not scan, kill or report when stopping is turned off: every launch would repeat the toast', async () => {

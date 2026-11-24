@@ -216,7 +216,10 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   `failed` at the budget, and when the host finishes it the real outcome is pushed to its row
   (`leftoverProcesses:stopSettled`, taken only while the row still reads failed) and the removal is
   retried once the process is gone. Neither adds a notice. A late answer never comes from a host
-  that exited.
+  that exited. Every such retry first asks the host, by identity and inside the task lock, whether
+  another process the reap reported in that worktree still runs (`leftInWorktree`, then
+  `checkReportedProcesses`). If one does, a failed removal is counted and not reported, since the
+  process the retry waited for is gone and the others are not (Sentry DESKTOP-3P on 0.62.0).
 - **A reader names the scan step that failed by type, never by message.** It throws
   `ScanStepError` (`process-scan.ts`) with a fixed code (`process_list`, `window_list`,
   `connection_list`), and the

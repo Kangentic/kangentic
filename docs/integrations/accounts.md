@@ -416,6 +416,13 @@ the error it caught and how the run ended (`EmptyUsageReadError`'s `cause` and `
 `execRunFailureOf`), and the report carries that as tags with the CLI's version, so a timeout,
 an exit and a CLI that would not start no longer read the same.
 
+A stale cache (`cache-stale`) is reported from the second read in a row that gives one, for the same
+reason. The run exited 0 and its own usage fetch refreshed nothing. A network drop, a refused fetch
+and a sign-in that needs renewing all look like that, and the read cannot tell them apart. Failed
+runs and stale caches are counted apart, and any other answer between two starts the count again.
+The report carries the CLI's version and `cache_age`, so a cache that never refreshes reads apart
+from one that missed a pass.
+
 Two calls to `accounts:refreshUsage` that overlap, as a tab that mounts twice sends, share one
 in-flight batch of sign-in and usage reads instead of running each CLI twice.
 
@@ -742,7 +749,7 @@ run, tagged with the agent and the problem, and grouped as one issue per agent a
 | `turn-failed-after-move` | A turn failed within ten minutes of its session being moved to another account. |
 | `conversation-refused` | A turn failed with the adapter's words for a conversation tied to another account (`isConversationRefusal`). |
 | `usage-read-unreadable` | The CLI answered a usage read in a shape the adapter does not know, with the answer's field names (`keys`). For Claude, a fresh cache whose `utilization` names none of the known windows, or is missing or not a record. |
-| `usage-read-empty` | A usage read gave no windows, with the account's kind and a fixed reason (`run-failed`, `state-unreadable`, `state-not-record`, `no-cache`, `cache-stale`, `no-windows`, `no-answer`). `no-cache` is not sent for an account that never stored a reading. `run-failed` is sent from the second failed run in a row, with the tags `run_failure`, `run_exit` and `agent_cli_version`. `no-windows` carries `agent_cli_version`. |
+| `usage-read-empty` | A usage read gave no windows, with the account's kind and a fixed reason (`run-failed`, `state-unreadable`, `state-not-record`, `no-cache`, `cache-stale`, `no-windows`, `no-answer`). `no-cache` is not sent for an account that never stored a reading. `run-failed` is sent from the second failed run in a row, with the tags `run_failure`, `run_exit` and `agent_cli_version`. `cache-stale` is sent from the second stale read in a row, with `cache_age` (`under_1h`, `1h_to_1d`, `over_1d` or `unknown`) and `agent_cli_version`. `no-windows` carries `agent_cli_version`. |
 | `identity-read-failed` | A sign-in read gave no answer, with the account's kind and a fixed reason (`run-failed`, `unreadable`). The account kept its status. |
 | `identity-changed` | A home's login was replaced, with the account's kind, how it was reconciled (`to-listed`, `to-new`, `merged`, `already-listed`, `duplicate`) and `default_home`, or `stage: repoint` when its sessions could not be moved. |
 
@@ -755,8 +762,8 @@ itself. It is one of four words:
 - `login-shell`: one the login shell exports, taken at startup.
 - `inherited-ignored`: one that named a Kangentic account folder and was dropped at boot.
 
-`shape` and `link_target` are fixed words of the same kind. None of the three adds a data class,
-so Settings > Privacy is unchanged.
+`shape`, `link_target` and `cache_age` are fixed words of the same kind. None of the four adds a
+data class, so Settings > Privacy is unchanged.
 
 A provider's own error text is never sent, because its words can name the
 user's organization: a `detail` fact goes as its class (`classifyFailureDetail`: `usage_limit`,

@@ -4,24 +4,29 @@ import { IPC } from '../../../shared/ipc-channels';
 import type { LeftoverProcess, LeftoverProcessReport } from '../../../shared/types';
 import type { LeftoverProcessEntry } from '../../pty/process-tag/tagged-reap';
 import { sendToRenderer } from '../send-to-renderer';
+import { isLeftInWorktree } from './reap-verdict';
 
 /** A report goes out once no reap is running and none has added to it for this long. */
 export const REPORT_QUIET_MS = 400;
 /** ...or this long after its first addition, whichever comes first. */
 export const REPORT_MAX_WAIT_MS = 8000;
-/** How many reported processes the Stop button can still reach. The oldest go first. */
+/** How many reported processes the Stop button can still reach, and how many unreported ones are remembered. The oldest go first. */
 export const RETAINED_PROCESS_IDS = 500;
 const FALLBACK_TASK_TITLE = 'Task';
 
 type ReportSender = (report: LeftoverProcessReport) => void;
 
-/** What a Stop needs about a reported process: who it is, and whose task it was. */
+/** What a Stop needs about a reported process: who it is, whose task it was, and what the reap did with it. */
 export interface ReportedIdentity {
   pid: number;
   startKey: string;
   taskId: string;
   /** The project the reap ran for, so a Stop can retry that task's worktree removal. */
   projectPath: string | null;
+  /** Whether it worked in the task's worktree, where it holds the folder on Windows (`leftInWorktree`). */
+  place: LeftoverProcessEntry['place'];
+  /** What the reap did with it. A later Stop does not change this: ask by identity whether it still runs. */
+  outcome: LeftoverProcessEntry['outcome'];
 }
 
 interface PendingReport {
@@ -34,6 +39,25 @@ interface PendingReport {
 export interface LeftoverProcessReportsOptions {
   quietMs?: number;
   maxWaitMs?: number;
+}
+
+function identityOf(entry: LeftoverProcessEntry, projectPath: string | null): ReportedIdentity {
+  return { pid: entry.pid, startKey: entry.startKey, taskId: entry.taskId, projectPath, place: entry.place, outcome: entry.outcome };
+}
+
+/** One process, however many reaps named it. */
+function processKeyOf(identity: Pick<ReportedIdentity, 'pid' | 'startKey'>): string {
+  return `${identity.pid}:${identity.startKey}`;
+}
+
+/** Keep `identity` under `key`, dropping the oldest past `RETAINED_PROCESS_IDS`. */
+function retainNewest(identities: Map<string, ReportedIdentity>, key: string, identity: ReportedIdentity): void {
+  identities.set(key, identity);
+  while (identities.size > RETAINED_PROCESS_IDS) {
+    const oldest = identities.keys().next().value;
+    if (oldest === undefined) break;
+    identities.delete(oldest);
+  }
 }
 
 /**
@@ -53,6 +77,8 @@ export interface LeftoverProcessReportsOptions {
 export class LeftoverProcessReports {
   private readonly pending = new Map<boolean, PendingReport>();
   private readonly identities = new Map<string, ReportedIdentity>();
+  /** What a startup sweep left, apart from `identities` so it never takes a slot a Stop button needs. */
+  private readonly unreportedLeft = new Map<string, ReportedIdentity>();
   private readonly quietMs: number;
   private readonly maxWaitMs: number;
   private reapsInFlight = 0;
@@ -91,7 +117,7 @@ export class LeftoverProcessReports {
     if (entries.length === 0) return;
     const processes = entries.map((entry): LeftoverProcess => {
       const id = randomUUID();
-      this.remember(id, { pid: entry.pid, startKey: entry.startKey, taskId: entry.taskId, projectPath });
+      retainNewest(this.identities, id, identityOf(entry, projectPath));
       return {
         id,
         taskId: entry.taskId,
@@ -115,6 +141,18 @@ export class LeftoverProcessReports {
     this.armQuietTimer(stoppingEnabled);
   }
 
+  /**
+   * Remember what a reap left in a worktree without reporting it: what a startup
+   * sweep kept, which the user was told of when its task ended. It gets no id, so
+   * no Stop can name it; only `leftInWorktree` reads it.
+   */
+  rememberLeft(entries: readonly LeftoverProcessEntry[], projectPath: string): void {
+    for (const entry of entries) {
+      if (!isLeftInWorktree(entry)) continue;
+      retainNewest(this.unreportedLeft, processKeyOf(entry), identityOf(entry, projectPath));
+    }
+  }
+
   /** (Re)start a report's quiet window. It sends only if no reap is running when it ends; the last release re-arms it. */
   private armQuietTimer(stoppingEnabled: boolean): void {
     const report = this.pending.get(stoppingEnabled);
@@ -136,6 +174,21 @@ export class LeftoverProcessReports {
     return this.identities.get(processId) ?? null;
   }
 
+  /**
+   * Every process reported, or remembered (`rememberLeft`), as left working inside
+   * this task's worktree, once each: two reports can name one process. It may have
+   * ended since, which only `checkReportedProcesses` can say. Empty for a task
+   * nothing was reported or remembered of.
+   */
+  leftInWorktree(projectPath: string, taskId: string): Array<Pick<ReportedIdentity, 'pid' | 'startKey'>> {
+    const left = new Map<string, Pick<ReportedIdentity, 'pid' | 'startKey'>>();
+    for (const identity of [...this.identities.values(), ...this.unreportedLeft.values()]) {
+      if (identity.taskId !== taskId || identity.projectPath !== projectPath || !isLeftInWorktree(identity)) continue;
+      left.set(processKeyOf(identity), { pid: identity.pid, startKey: identity.startKey });
+    }
+    return [...left.values()];
+  }
+
   private flush(stoppingEnabled: boolean): void {
     const report = this.pending.get(stoppingEnabled);
     if (!report) return;
@@ -153,15 +206,6 @@ export class LeftoverProcessReports {
       this.reportListener?.(outgoing);
     } catch {
       // A listener is telemetry; it never breaks the report.
-    }
-  }
-
-  private remember(id: string, identity: ReportedIdentity): void {
-    this.identities.set(id, identity);
-    while (this.identities.size > RETAINED_PROCESS_IDS) {
-      const oldest = this.identities.keys().next().value;
-      if (oldest === undefined) break;
-      this.identities.delete(oldest);
     }
   }
 }

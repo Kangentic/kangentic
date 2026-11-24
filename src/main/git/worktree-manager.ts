@@ -197,8 +197,14 @@ export type WorktreeRemovalProfile = 'thorough' | 'moderate' | 'fast';
 export type WorktreeRemovalCaller =
   /** A Done move's in-place delete after its move aside failed (`deleteTaskWorktree`). */
   | 'done_fallback'
-  /** A later retry of that Done removal: the delayed one, a Stop or a late reap. */
-  | 'done_retry'
+  /** A Done move's one delayed retry of that removal (`scheduleDoneWorktreeRemovalRetry`). */
+  | 'done_retry_delayed'
+  /** A retry after the user stopped a process from the leftover list, a Stop that finished late included. */
+  | 'done_retry_stop'
+  /** A retry after the leftover list's recheck found a process had ended on its own. */
+  | 'done_retry_recheck'
+  /** A retry after a reap main had stopped waiting for stopped a process. */
+  | 'done_retry_late_reap'
   /** A reset to To Do, a Backlog demote or a delete (`cleanupTaskResources`). */
   | 'cleanup'
   /** The leftovers of a worktree creation that failed (the task move's stale cleanup). */
@@ -211,6 +217,9 @@ export type WorktreeRemovalCaller =
   /** A creation clearing a stale folder at its own path. */
   | 'create_clear'
   | 'other';
+
+/** The paths that retry a Done move's removal, each its own word (Sentry DESKTOP-3P sent one word for all four). */
+export type DoneRetryCaller = Extract<WorktreeRemovalCaller, `done_retry_${string}`>;
 
 /** What every removal takes. */
 export interface WorktreeRemovalOptions {
@@ -225,10 +234,11 @@ export interface WorktreeRemovalOptions {
   /** Who asked, for the failure report. `other` when left out. */
   caller?: WorktreeRemovalCaller;
   /**
-   * The task's leftover reap, run just before this removal, left a process
-   * working inside this worktree: kept, not stopped, or stopping is turned off.
-   * Such a process holds the folder on Windows, and the user was told about it,
-   * so a failure is counted and not reported (Sentry DESKTOP-3P).
+   * The task's leftover reap left a process working inside this worktree: kept,
+   * not stopped, or stopping is turned off. A removal right after the reap takes
+   * its verdict, and a Done retry without one asks whether a reported process
+   * still runs. Such a process holds the folder on Windows, and the user was told
+   * about it, so a failure is counted and not reported (Sentry DESKTOP-3P).
    */
   reapLeftRunning?: boolean;
 }

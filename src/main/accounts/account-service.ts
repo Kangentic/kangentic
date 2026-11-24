@@ -20,11 +20,21 @@ import type { AccountProblem, AccountProblemFacts, AccountProblemTags } from './
 import { cliVersionTag } from '../agent/shared/cli-version-tag';
 
 /**
- * How many usage reads in a row an account's CLI run must fail before it is reported. One failed
- * run during a network drop is not a defect. A flag the CLI does not know fails every run, so it
- * still reports, one read later.
+ * How many usage reads in a row must give a `REPORTED_WHEN_REPEATED` reason before it is reported.
+ * One failed run during a network drop is not a defect, and neither is a run that worked while its
+ * own usage fetch did not. A flag the CLI does not know, or a cache that never refreshes, gives it
+ * every time, so it still reports, one read later.
  */
-const REPORTED_RUN_FAILURES = 2;
+const REPORTED_REPEATS = 2;
+
+/** The reasons one moment offline can give, reported only once they repeat. */
+const REPORTED_WHEN_REPEATED: ReadonlySet<EmptyUsageReadReason> = new Set(['run-failed', 'cache-stale']);
+
+/** How many usage reads in a row gave no windows for one reason. Another reason starts a new one. */
+interface EmptyUsageStreak {
+  reason: EmptyUsageReadReason;
+  reads: number;
+}
 
 /** A child's exit code as a tag: the code itself in the range a shell reports, else `other`. */
 function exitCodeTag(exitCode: number | null): string {
@@ -140,10 +150,11 @@ export type AddKeyFileResult =
  * ask; every spawn chokepoint passes the result into `CommandOptions.account`.
  */
 export class AccountService {
-  /** Why each account's last usage read gave no windows, so a repeat is not logged again. */
-  private readonly emptyUsageReasons = new Map<string, EmptyUsageReadReason>();
-  /** How many usage reads in a row each account's CLI run has failed (`REPORTED_RUN_FAILURES`). */
-  private readonly consecutiveRunFailures = new Map<string, number>();
+  /**
+   * Each account's run of usage reads that gave no windows for one reason: a repeat is not logged
+   * again, and some reasons are reported only once they repeat (`REPORTED_WHEN_REPEATED`).
+   */
+  private readonly emptyUsageStreaks = new Map<string, EmptyUsageStreak>();
 
   constructor(private readonly dependencies: AccountServiceDependencies) {}
 
@@ -582,68 +593,68 @@ export class AccountService {
   /**
    * A usage read that gave no windows: the account keeps its last values, and the local log says
    * why each time the reason changes, so a read that keeps failing is one line, not one per pass.
-   * Every reason is reported at once but two. A failed CLI run waits for the next read
-   * (`reportRepeatedRunFailure`). A `no-cache` read on an account that never stored a reading is
+   * Every reason is reported at once but three. A failed CLI run and a stale cache wait for a second
+   * read in a row that gives the same (`REPORTED_WHEN_REPEATED`), each counted apart, since any other
+   * answer starts the count again. A `no-cache` read on an account that never stored a reading is
    * the home before the CLI's first usage fetch (an API-key login, a CLI that has not shown its
    * usage yet), so it is logged and not reported: Sentry DESKTOP-4E took that state for a fault
    * and reported it on every launch. Once the account had a reading, losing the cache is reported.
-   * A `no-windows` read carries the CLI version as a tag: Sentry DESKTOP-4E had none, so a plan
-   * whose windows are all null could not be told from a CLI release that changed what it writes.
    */
   private async noteEmptyUsageRead(account: AgentAccount, reason: EmptyUsageReadReason, failure: EmptyUsageReadError | null = null): Promise<void> {
-    if (this.emptyUsageReasons.get(account.id) !== reason) {
+    const previous = this.emptyUsageStreaks.get(account.id);
+    const reads = previous?.reason === reason ? previous.reads + 1 : 1;
+    this.emptyUsageStreaks.set(account.id, { reason, reads });
+    if (reads === 1) {
       console.warn(`[ACCOUNTS] A usage read for a ${account.kind} account of ${account.agent} gave no windows (${reason}); it keeps its last reading`);
     }
-    this.emptyUsageReasons.set(account.id, reason);
-    if (reason === 'run-failed') {
-      await this.reportRepeatedRunFailure(account, failure);
-      return;
-    }
-    // The run itself worked, so a failed run before it is not one of a row.
-    this.consecutiveRunFailures.delete(account.id);
+    if (REPORTED_WHEN_REPEATED.has(reason) && reads < REPORTED_REPEATS) return;
     if (reason === 'no-cache' && account.lastUsageAt === null) return;
-    const tags: AccountProblemTags = reason === 'no-windows'
-      ? { agent_cli_version: cliVersionTag(await this.cliVersionOf(account.agent)) }
-      : {};
-    this.reportProblem('usage-read-empty', account.agent, { kind: account.kind, reason }, undefined, tags);
+    const tags = await this.emptyUsageTags(account, reason, failure);
+    this.reportProblem('usage-read-empty', account.agent, { kind: account.kind, reason }, failure?.cause, tags);
   }
 
   /**
-   * Counts a usage read whose CLI run failed, and reports it once it has failed
-   * `REPORTED_RUN_FAILURES` reads in a row for this account. The report says how the run ended
-   * and which CLI ran, as tags, and hands on the error the adapter caught: Sentry DESKTOP-4E was
-   * one failed run with none of that, so a timeout, an offline moment and a CLI too old for a
-   * flag all looked the same.
+   * What an empty read's report says beside its reason, as fixed words. Each is here because a
+   * Sentry DESKTOP-4E event had no way to say it: how a failed run ended (a timeout, an offline
+   * moment and a CLI too old for a flag looked the same), how old a stale cache was (one that never
+   * refreshes, or one that missed a pass), and the CLI's version (a plan whose windows are all null
+   * could not be told from a release that changed what it writes). A reason that names its own
+   * cause has no tags, and looks up no version.
    */
-  private async reportRepeatedRunFailure(account: AgentAccount, failure: EmptyUsageReadError | null): Promise<void> {
-    const failedRuns = (this.consecutiveRunFailures.get(account.id) ?? 0) + 1;
-    this.consecutiveRunFailures.set(account.id, failedRuns);
-    if (failedRuns < REPORTED_RUN_FAILURES) return;
+  private async emptyUsageTags(account: AgentAccount, reason: EmptyUsageReadReason, failure: EmptyUsageReadError | null): Promise<AccountProblemTags> {
     const runFailure = failure?.runFailure ?? null;
-    const tags: AccountProblemTags = {
-      run_failure: runFailure?.kind ?? 'unknown',
-      ...(runFailure?.kind === 'exit_code' ? { run_exit: exitCodeTag(runFailure.exitCode) } : {}),
-      agent_cli_version: cliVersionTag(await this.cliVersionOf(account.agent)),
-    };
-    this.reportProblem('usage-read-empty', account.agent, { kind: account.kind, reason: 'run-failed' }, failure?.cause, tags);
+    switch (reason) {
+      case 'run-failed':
+        return {
+          run_failure: runFailure?.kind ?? 'unknown',
+          ...(runFailure?.kind === 'exit_code' ? { run_exit: exitCodeTag(runFailure.exitCode) } : {}),
+          agent_cli_version: await this.cliVersionTagOf(account.agent),
+        };
+      case 'cache-stale':
+        return { cache_age: failure?.cacheAge ?? 'unknown', agent_cli_version: await this.cliVersionTagOf(account.agent) };
+      case 'no-windows':
+        return { agent_cli_version: await this.cliVersionTagOf(account.agent) };
+      default:
+        return {};
+    }
   }
 
-  /** The agent CLI's version as detection read it, or null when nothing can say. */
-  private async cliVersionOf(agent: string): Promise<string | null> {
+  /** The agent CLI's version as detection read it, as a tag: `unknown` when nothing can say. */
+  private async cliVersionTagOf(agent: string): Promise<string> {
     try {
-      return (await this.dependencies.resolveCliVersion?.(agent)) ?? null;
+      return cliVersionTag(await this.dependencies.resolveCliVersion?.(agent));
     } catch {
       // report-ok: the version is one tag on a report that is being sent either way, and it reads
       // `unknown` without it.
-      return null;
+      return cliVersionTag(null);
     }
   }
 
   /**
    * Reads an account's usage with no session running on it (`readIdleUsage`) and stores it. False
    * when the adapter has no such read or it gave no windows; the account then keeps its last
-   * values, and a read that gave none is logged and reported (a failed CLI run from its second
-   * read in a row).
+   * values, and a read that gave none is logged and reported (a failed CLI run and a stale cache
+   * from the second read in a row).
    */
   async refreshUsage(accountId: string): Promise<boolean> {
     const account = this.dependencies.repository.getById(accountId);
@@ -669,7 +680,7 @@ export class AccountService {
       }
       if (!(error instanceof UnreadableUsageError)) throw error;
       // The CLI ran and answered, in a shape the adapter does not know.
-      this.consecutiveRunFailures.delete(accountId);
+      this.emptyUsageStreaks.delete(accountId);
       this.reportProblem('usage-read-unreadable', account.agent, { keys: error.keys });
       return false;
     }
@@ -679,7 +690,7 @@ export class AccountService {
       return false;
     }
     // From here the run worked, whatever becomes of its reading.
-    this.consecutiveRunFailures.delete(accountId);
+    this.emptyUsageStreaks.delete(accountId);
     // The reading is the login the home holds now. When that is not the row's own login (a
     // `/login` replaced it), the reading belongs to another row: the home is reconciled instead.
     if (account.email) {
@@ -689,7 +700,6 @@ export class AccountService {
         return false;
       }
     }
-    this.emptyUsageReasons.delete(accountId);
     // A full window the row holds stays full until its reset (`keepFullWindows`). Read again: a
     // live report may have landed while the CLI ran.
     const stored = this.dependencies.repository.getById(accountId)?.lastUsage ?? [];
