@@ -47,12 +47,7 @@ vi.mock('electron', () => ({
 
 const WORKTREE_PATH = '/project/.kangentic/worktrees/7';
 
-vi.mock('simple-git', () => {
-  const gitFactory = vi.fn((cwd: string) => (cwd === WORKTREE_PATH ? mockWorktreeGit : mockProjectGit));
-  return { simpleGit: gitFactory };
-});
-
-// The worktree's merge runs through gitAt, so its hooks never get Crashpad's
+// Every git call runs through gitAt, so a merge's hooks never get Crashpad's
 // pipe name (child-env.ts).
 vi.mock('../../src/main/git/git-client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/main/git/git-client')>()),
@@ -118,7 +113,6 @@ vi.mock('../../src/main/git/base-ref', async (importOriginal) => ({
 }));
 
 import fs from 'node:fs';
-import { simpleGit } from 'simple-git';
 import { gitAt } from '../../src/main/git/git-client';
 import { registerTaskBranchHandlers } from '../../src/main/ipc/handlers/task-branch';
 import { IPC } from '../../src/shared/ipc-channels';
@@ -330,25 +324,15 @@ describe('TASK_UPDATE_FROM_BASE', () => {
     expect(mockProjectGit.raw).not.toHaveBeenCalled();
   });
 
-  it('opens the worktree through gitAt, never simple-git, so the merge\'s hooks get no Crashpad pipe name', async () => {
-    // Both factories answer with the same per-path mock objects, so the
-    // assertions above cannot tell which one the handler used. A merge started
-    // through simple-git inherits main's environment minus the git keys it
-    // guards, and the hooks and merge drivers it runs would carry Chromium's
-    // handler pipe (child-env.ts);
-    // gitAt gives them an environment without it. This pins the factory.
+  it('opens the worktree through gitAt, so the merge\'s hooks get no Crashpad pipe name', async () => {
+    // gitAt gives the hooks and merge drivers an environment without Chromium's
+    // handler pipe (child-env.ts). This pins that the merge's client is gitAt's.
     const context = makeContext();
     mockWorktreeGit.raw.mockImplementation(async (args: string[]) => (args[0] === 'rev-list' ? '3\t0\n' : ''));
 
     await expect(invoke(context)).resolves.toEqual({ status: 'updated', baseBranch: 'main', commitCount: 3 });
 
     expect(vi.mocked(gitAt).mock.calls.some(([cwd]) => cwd === WORKTREE_PATH)).toBe(true);
-    const simpleGitCwds = vi.mocked(simpleGit).mock.calls.map(([cwd]) => cwd);
-    // Positive control: the simple-git factory was live in this run (the fetch
-    // uses it on the project path), so its never being asked for the worktree
-    // is the handler's doing and not a spy on the wrong function.
-    expect(simpleGitCwds).toContain('/project');
-    expect(simpleGitCwds).not.toContain(WORKTREE_PATH);
   });
 
   it('returns cannot-ff with ahead/behind when the merge refuses', async () => {

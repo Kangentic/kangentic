@@ -15,7 +15,7 @@
  * remove-worktree.test.ts's "a listener that throws does not fail the
  * removal").
  *
- * Import-time safety: task-cleanup.ts also imports simple-git, better-sqlite3,
+ * Import-time safety: task-cleanup.ts also imports better-sqlite3,
  * WorktreeManager, and the db repositories for its other exports
  * (cleanupTaskSession, cleanupTaskResources, deleteTaskWorktree). Mirrors
  * task-cleanup-live-guard.test.ts's defensive mocks so importing the module
@@ -23,7 +23,6 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('simple-git', () => ({ simpleGit: vi.fn(() => ({ revparse: vi.fn() })) }));
 vi.mock('../../src/main/git/worktree-manager', () => ({ WorktreeManager: class {} }));
 vi.mock('better-sqlite3', () => ({ default: vi.fn() }));
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn() }));

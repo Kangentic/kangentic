@@ -2,7 +2,7 @@
  * How a git call reaches a repository on an SSH host (#913). A remote project's repository is on the host and
  * this computer holds an empty stand-in folder for it, so a git command run in that folder here would either
  * fail or, if the folder sits inside some other repository, answer about the wrong one. Everything that reads
- * a project's git (`gitAt`, `openSimpleGit`, `runGitWithTimeout`, `readGitObject`) and everything that reads or
+ * a project's git (`gitAt`, `runGitWithTimeout`, `readGitObject`) and everything that reads or
  * watches its working tree (`DiffService`, `DiffWatcher`) asks the resolver below first: a directory that belongs
  * to a remote project is run on the host, and any other directory goes on to this computer as before.
  *

@@ -9,11 +9,11 @@
  * try/catch and the result is only the branch list, so dropping the flag changes
  * no return value. The assertion has to read the command git received.
  *
- * WorktreeManager takes its SimpleGit as a constructor argument, so a plain
+ * WorktreeManager takes its GitClient as a constructor argument, so a plain
  * double stands in and no module mock is needed.
  */
 import { describe, it, expect, vi } from 'vitest';
-import type { SimpleGit } from 'simple-git';
+import type { GitClient } from '../../src/main/git/git-client';
 import { WorktreeManager } from '../../src/main/git/worktree-manager';
 
 const REMOTE_BRANCH_LISTING = [
@@ -26,7 +26,7 @@ const REMOTE_BRANCH_LISTING = [
 ].join('\n');
 
 function makeManager(raw: ReturnType<typeof vi.fn>): WorktreeManager {
-  return new WorktreeManager('/mock/project', { raw } as unknown as SimpleGit);
+  return new WorktreeManager('/mock/project', { raw } as unknown as GitClient);
 }
 
 describe('WorktreeManager.listRemoteBranches fetch', () => {

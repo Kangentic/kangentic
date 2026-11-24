@@ -24,8 +24,9 @@ const { mockGit } = vi.hoisted(() => {
   return { mockGit: { raw: rawFn } };
 });
 
-vi.mock('simple-git', () => ({
-  simpleGit: vi.fn(() => mockGit),
+vi.mock('../../src/main/git/git-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/git/git-client')>()),
+  gitAt: vi.fn(() => mockGit),
 }));
 
 import { getBlame, parseBlamePorcelain } from '../../src/main/git/blame';
@@ -156,11 +157,11 @@ describe('getBlame', () => {
 
   it('prefers worktreePath over projectPath as the working directory', async () => {
     mockGit.raw.mockResolvedValue('');
-    const { simpleGit } = await import('simple-git');
+    const { gitAt } = await import('../../src/main/git/git-client');
 
     await getBlame({ projectPath: '/project', worktreePath: '/project/.kangentic/worktrees/task', filePath: 'src/a.ts' });
 
-    expect(simpleGit).toHaveBeenCalledWith('/project/.kangentic/worktrees/task', { allowEnvironment: ['GIT_CEILING_DIRECTORIES'] });
+    expect(gitAt).toHaveBeenCalledWith('/project/.kangentic/worktrees/task');
   });
 
   it('fails safe to an empty result on a git error (untracked, binary, deleted file, etc.)', async () => {

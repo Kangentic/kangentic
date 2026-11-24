@@ -22,7 +22,8 @@ import type { Task, Swimlane } from '../../src/shared/types';
 import type { EarlyAgentHandle } from '../../src/main/transition-engine/early-agent';
 
 vi.mock('electron', () => ({ ipcMain: { handle: vi.fn() } }));
-vi.mock('simple-git', () => ({ simpleGit: vi.fn(() => ({ diffSummary: vi.fn(async () => ({ insertions: 0, deletions: 0, changed: 0 })) })) }));
+vi.mock('../../src/main/git/git-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/git/git-client')>()), gitAt: vi.fn(() => ({ diffSummary: vi.fn(async () => ({ insertions: 0, deletions: 0, changed: 0 })) })) }));
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));
 vi.mock('../../src/main/db/repositories/task-repository', () => ({ TaskRepository: class {} }));
 vi.mock('../../src/main/db/repositories/session-repository', () => ({

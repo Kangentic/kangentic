@@ -10,8 +10,8 @@ import * as ts from 'typescript';
  * child process on main's thread.
  *
  * On Windows `child_process.spawn` runs CreateProcess on the calling thread. A
- * start on main during the boot burst held the window for 3,850 ms (#1194), and
- * an ordinary one costs 17 to 71 ms. Every start goes through the drop-ins in
+ * start on main during the boot burst held the window for 3,850 ms, and an
+ * ordinary one costs 17 to 71 ms. Every start goes through the drop-ins in
  * `src/main/utility-process/`, which run it on the pty host's spawn worker.
  *
  * The scan is main's own import graph, bundled the way scripts/build.js bundles
@@ -96,10 +96,6 @@ const CLASSIFIED_STARTS: Record<string, ClassifiedStart> = {
   },
 
   // Still started on main's thread.
-  'src/main/agent/shared/git-exclude.ts': {
-    bindings: ['execFileSync'],
-    reason: 'git ls-files during a Gemini or Qwen command build in a worktree: synchronous, bounded at one second',
-  },
   'src/main/automations/adapters/run-script/index.ts': {
     bindings: ['spawn'],
     reason: 'a run_script automation row starts its shell here, one start per run',
@@ -135,7 +131,6 @@ const CLASSIFIED_PACKAGES: Record<string, string> = {
   '@sentry/electron': 'additionalContext runs PowerShell or system_profiler only with deviceModelManufacturer on, which main never sets (pinned below)',
   '@sentry/node': 'nodeContextIntegration runs /usr/bin/sw_vers once at init, on macOS only',
   'electron-updater': 'the installer launch at quit-and-install, and one PowerShell signature check after an update downloads when the feed names a publisher',
-  'simple-git': 'every git read off a task lifecycle: branch summary, commit graph, blame, file history, the diff watcher and the Done probe',
 };
 
 /**
@@ -164,6 +159,15 @@ const EXTERNAL_PACKAGES: Record<string, { startsProcess: boolean; reason: string
  * by src/main/analytics/machine-id.ts. Never in main's graph, never declared.
  */
 const BANNED_PACKAGES = ['font-list', 'node-machine-id'];
+
+/**
+ * Never in main's graph, though still installed. simple-git starts every git
+ * command on its caller's thread and has no hook for another spawn, so the app
+ * reads git through `gitAt` (src/main/git/git-client.ts). It stays a
+ * devDependency for tests/unit/git-client.test.ts, which checks that client
+ * against it.
+ */
+const BANNED_FROM_MAIN = [...BANNED_PACKAGES, 'simple-git'];
 
 function readEsbuildExternals(): string[] {
   const buildSource = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'build.js'), 'utf-8');
@@ -366,7 +370,7 @@ describe('main starts no process on its own thread', () => {
   });
 
   it('keeps packages that start a process on the calling thread out of main and out of package.json', () => {
-    const inGraph = BANNED_PACKAGES.filter((packageName) => graph.bundledPackages.has(packageName) || graph.externals.has(packageName));
+    const inGraph = BANNED_FROM_MAIN.filter((packageName) => graph.bundledPackages.has(packageName) || graph.externals.has(packageName));
     expect(inGraph, 'These packages start a process from the thread that calls them.').toEqual([]);
     const manifest = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf-8')) as {
       dependencies?: Record<string, string>;

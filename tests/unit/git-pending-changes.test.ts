@@ -9,15 +9,15 @@
 import path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// The probe builds a simple-git instance and calls status() / getRemotes().
+// The probe builds a gitAt client and calls status() / raw(['remote']).
 const mockGit = {
   status: vi.fn<() => Promise<{ files: unknown[] }>>(),
-  getRemotes: vi.fn<() => Promise<unknown[]>>(),
   raw: vi.fn<(args: string[]) => Promise<string>>(),
 };
 
-vi.mock('simple-git', () => ({
-  simpleGit: vi.fn(() => mockGit),
+vi.mock('../../src/main/git/git-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/git/git-client')>()),
+  gitAt: vi.fn(() => mockGit),
 }));
 
 // currentBranch comes from readWorktreeHead; mock it directly so the probe
@@ -51,6 +51,7 @@ import { probePendingChanges } from '../../src/main/ipc/handlers/git-diff';
 import type { PrMergeContext } from '../../src/main/git/local-only-commits';
 import { setRemoteWorktreeResolver } from '../../src/main/git/remote-worktree';
 import type { RemoteWorktreeBackend } from '../../src/main/git/remote-worktree';
+import { setRemoteGitResolver, type RemoteGitRunner } from '../../src/main/git/remote-git';
 
 describe('probePendingChanges for a worktree on an SSH host', () => {
   const projectPath = process.platform === 'win32' ? 'C:\\Users\\dev\\remote-project' : '/home/dev/remote-project';
@@ -98,11 +99,33 @@ describe('probePendingChanges for a worktree on an SSH host', () => {
   });
 });
 
+describe('probePendingChanges for a folder on an SSH host that is no host worktree', () => {
+  afterEach(() => {
+    setRemoteGitResolver(null);
+  });
+
+  it('assumes there are changes and asks no git, on this computer or on the host', async () => {
+    // The folder here is an empty stand-in. A status read from it, or a clean answer
+    // taken from the mock below, would tell a Done move there is nothing to lose.
+    vi.clearAllMocks();
+    const runOnHost = vi.fn<RemoteGitRunner['run']>();
+    setRemoteGitResolver(() => ({ run: runOnHost } as unknown as RemoteGitRunner));
+    mockGit.status.mockResolvedValue({ files: [] });
+    mockGit.raw.mockResolvedValue('');
+
+    const result = await probePendingChanges('/mock/remote-project');
+
+    expect(result).toEqual({ hasPendingChanges: true, uncommittedFileCount: 0, unpushedCommitCount: 0, currentBranch: null });
+    expect(mockGit.status).not.toHaveBeenCalled();
+    expect(runOnHost).not.toHaveBeenCalled();
+  });
+});
+
 describe('probePendingChanges', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGit.status.mockResolvedValue({ files: [] });
-    mockGit.getRemotes.mockResolvedValue([]);
+    mockGit.raw.mockResolvedValue('');
     mockReadWorktreeHead.mockResolvedValue({ branch: 'feat/work', sha: 'abc123' });
     mockFetchAllRemotesIfStale.mockResolvedValue(undefined);
     mockCountLocalOnlyCommits.mockResolvedValue(0);
@@ -134,7 +157,7 @@ describe('probePendingChanges', () => {
   });
 
   it('skips the commit count entirely when the repo has no remotes', async () => {
-    mockGit.getRemotes.mockResolvedValue([]);
+    mockGit.raw.mockResolvedValue('');
 
     const result = await probePendingChanges('/mock/worktree');
 
@@ -146,7 +169,7 @@ describe('probePendingChanges', () => {
   });
 
   it('counts at-risk commits when a remote exists and the branch will be deleted', async () => {
-    mockGit.getRemotes.mockResolvedValue([{ name: 'origin' }]);
+    mockGit.raw.mockResolvedValue('origin\n');
     mockCountLocalOnlyCommits.mockResolvedValue(4);
 
     const result = await probePendingChanges('/mock/worktree', { autoCleanup: true });
@@ -156,7 +179,7 @@ describe('probePendingChanges', () => {
   });
 
   it('defaults to the conservative (branch-deleted) policy when autoCleanup is omitted', async () => {
-    mockGit.getRemotes.mockResolvedValue([{ name: 'origin' }]);
+    mockGit.raw.mockResolvedValue('origin\n');
     mockCountLocalOnlyCommits.mockResolvedValue(2);
 
     const result = await probePendingChanges('/mock/worktree');
@@ -166,7 +189,7 @@ describe('probePendingChanges', () => {
   });
 
   it('does not warn about local-only commits when the branch will be kept (autoCleanup off)', async () => {
-    mockGit.getRemotes.mockResolvedValue([{ name: 'origin' }]);
+    mockGit.raw.mockResolvedValue('origin\n');
     mockCountLocalOnlyCommits.mockResolvedValue(5);
 
     const result = await probePendingChanges('/mock/worktree', { autoCleanup: false });
@@ -178,7 +201,7 @@ describe('probePendingChanges', () => {
 
   it('still warns about uncommitted files even when the branch will be kept', async () => {
     mockGit.status.mockResolvedValue({ files: [{}] });
-    mockGit.getRemotes.mockResolvedValue([{ name: 'origin' }]);
+    mockGit.raw.mockResolvedValue('origin\n');
     mockCountLocalOnlyCommits.mockResolvedValue(3);
 
     const result = await probePendingChanges('/mock/worktree', { autoCleanup: false });
@@ -189,7 +212,7 @@ describe('probePendingChanges', () => {
   });
 
   it('forwards autoCleanup / prNumber / prState into the count', async () => {
-    mockGit.getRemotes.mockResolvedValue([{ name: 'origin' }]);
+    mockGit.raw.mockResolvedValue('origin\n');
 
     await probePendingChanges('/mock/worktree', { autoCleanup: true, prNumber: 7, prState: 'open' });
 
@@ -197,7 +220,7 @@ describe('probePendingChanges', () => {
   });
 
   it('refreshes remote-tracking refs before counting', async () => {
-    mockGit.getRemotes.mockResolvedValue([{ name: 'origin' }]);
+    mockGit.raw.mockResolvedValue('origin\n');
 
     await probePendingChanges('/mock/worktree', { autoCleanup: true });
 
@@ -210,7 +233,7 @@ describe('probePendingChanges', () => {
   });
 
   it('treats a count failure (unborn / detached) as zero', async () => {
-    mockGit.getRemotes.mockResolvedValue([{ name: 'origin' }]);
+    mockGit.raw.mockResolvedValue('origin\n');
     mockCountLocalOnlyCommits.mockRejectedValue(new Error('unknown revision HEAD'));
 
     const result = await probePendingChanges('/mock/worktree', { autoCleanup: true });
@@ -220,7 +243,7 @@ describe('probePendingChanges', () => {
 
   it('reports no pending changes for a clean worktree with no remotes', async () => {
     mockGit.status.mockResolvedValue({ files: [] });
-    mockGit.getRemotes.mockResolvedValue([]);
+    mockGit.raw.mockResolvedValue('');
 
     const result = await probePendingChanges('/mock/worktree');
 
@@ -252,9 +275,9 @@ describe('probePendingChanges', () => {
   // failures, not just for the status() call itself.
   // -------------------------------------------------------------------------
 
-  it('returns a safe default when getRemotes() rejects after status() succeeds', async () => {
+  it('returns a safe default when the remote listing rejects after status() succeeds', async () => {
     mockGit.status.mockResolvedValue({ files: [{}] });
-    mockGit.getRemotes.mockRejectedValue(new Error('could not read git config'));
+    mockGit.raw.mockRejectedValue(new Error('could not read git config'));
 
     const result = await probePendingChanges('/mock/worktree');
 
@@ -271,7 +294,7 @@ describe('probePendingChanges', () => {
     // sits outside the inner count try so that if it ever did, the outer catch
     // (safe default) fires rather than a false 0 count. This locks that
     // placement against future refactors.
-    mockGit.getRemotes.mockResolvedValue([{ name: 'origin' }]);
+    mockGit.raw.mockResolvedValue('origin\n');
     mockFetchAllRemotesIfStale.mockRejectedValue(new Error('unexpected fetch failure'));
 
     const result = await probePendingChanges('/mock/worktree', { autoCleanup: true });

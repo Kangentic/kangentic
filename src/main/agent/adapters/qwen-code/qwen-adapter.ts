@@ -151,6 +151,11 @@ export class QwenAdapter implements AgentAdapter {
     // drag-to-spawn. When disabled (default), this is a no-op. A Qwen in a
     // WSL distro reads both from the distro's Qwen directory.
     await ensureWorktreeTrust(workingDirectory, place ?? null);
+    // The command build that follows merges `.qwen/settings.json` and has to
+    // know whether the folder's copy is the branch's own. That is a git
+    // process, so it is asked here, where the spawn can wait for it. A host's
+    // working folder is its own root, so nothing is chosen there.
+    if (place?.kind !== 'ssh') await this.commandBuilder.refreshSettingsTracking(workingDirectory);
   }
 
   /**

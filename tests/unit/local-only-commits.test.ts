@@ -6,13 +6,14 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// The helper builds a simple-git instance and drives everything through raw().
+// The helper builds a gitAt client and drives everything through raw().
 const mockGit = {
   raw: vi.fn<(args: string[]) => Promise<string>>(),
 };
 
-vi.mock('simple-git', () => ({
-  simpleGit: vi.fn(() => mockGit),
+vi.mock('../../src/main/git/git-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/git/git-client')>()),
+  gitAt: vi.fn(() => mockGit),
 }));
 
 // The squash signal calls the PR connector registry; mock it so no `gh` spawns.

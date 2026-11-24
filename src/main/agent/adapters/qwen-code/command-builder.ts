@@ -5,7 +5,7 @@ import { interpolateTemplate } from '../../shared/template-utils';
 import { resolveBridgeScript } from '../../shared/bridge-utils';
 import { copyBridgeInto } from '../../shared/workspace-bridge-copy';
 import { EVENTS_PATH_FROM_ENVIRONMENT } from '../../shared/hook-utils';
-import { ensureLocalGitExcludes, settingsBaseDirectory } from '../../shared/git-exclude';
+import { ensureLocalGitExcludes, SettingsTrackingLedger } from '../../shared/git-exclude';
 import {
   backgroundShellHintCommandFor,
   offersMarkBackgroundService,
@@ -144,6 +144,16 @@ function kangenticServerEntry(server: KangenticMcpServer): Record<string, unknow
 }
 
 export class QwenCommandBuilder {
+  // Git's answer on whether a folder's `.qwen/settings.json` is the branch's
+  // own, asked ahead of the build: the build is synchronous and the answer
+  // takes a git process (`SettingsTrackingLedger`).
+  private readonly settingsTracking = new SettingsTrackingLedger('.qwen');
+
+  /** Ask git about `cwd`'s settings file ahead of the build that merges it. Never rejects. */
+  refreshSettingsTracking(cwd: string): Promise<void> {
+    return this.settingsTracking.refresh(cwd);
+  }
+
   buildQwenCommand(options: QwenCommandOptions): string {
     const { shell } = options;
     // A Qwen in a WSL distro is started by the path the distro sees; the PTY's
@@ -380,7 +390,7 @@ export class QwenCommandBuilder {
     // On a host only the working folder's files are pulled, so it is the root (`pulledProjectRoot`); the base
     // directory then reads the same folder.
     const projectRoot = pulledProjectRoot(options);
-    const baseSettings = this.readBaseSettings(settingsBaseDirectory(options.cwd, projectRoot, '.qwen'));
+    const baseSettings = this.readBaseSettings(this.settingsTracking.baseDirectory(options.cwd, projectRoot));
 
     const eventsPath = options.eventsOutputPath ? toForwardSlash(options.eventsOutputPath) : null;
     const merged: QwenSettings = { ...baseSettings };

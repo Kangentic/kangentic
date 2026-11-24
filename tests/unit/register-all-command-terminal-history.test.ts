@@ -226,7 +226,6 @@ vi.mock('../../src/main/analytics/analytics', () => ({
 }));
 vi.mock('node-pty', () => ({ spawn: vi.fn() }));
 vi.mock('better-sqlite3', () => ({ default: vi.fn() }));
-vi.mock('simple-git', () => ({ simpleGit: vi.fn(() => ({})) }));
 vi.mock('../../src/main/retrieval/retrieval-service', () => ({
   retrievalService: {
     attach: retrievalAttachMock,

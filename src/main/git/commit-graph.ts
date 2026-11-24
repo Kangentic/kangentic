@@ -1,4 +1,4 @@
-import { openSimpleGit } from './simple-git-client';
+import { gitAt } from './git-client';
 import { readWorktreeHeadUnqueued } from './worktree-head';
 import type { GitCommitGraphCommit, GitCommitGraphInput, GitCommitGraphResult } from '../../shared/types';
 
@@ -68,7 +68,7 @@ export async function getCommitGraph(input: GitCommitGraphInput): Promise<GitCom
   };
 
   try {
-    const git = openSimpleGit(workingDirectory);
+    const git = gitAt(workingDirectory);
     // Unqueued: this interactive panel refresh stays off the global read cap
     // (a queued read would wait behind a BACKGROUND churn capture's slot).
     const { branch: currentBranch, sha: tipHash } = await readWorktreeHeadUnqueued(workingDirectory);

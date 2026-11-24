@@ -56,9 +56,6 @@ vi.mock('node:fs', () => ({
 // TASK_CREATE does not use PQueue directly (only TASK_BULK_DELETE does), so
 // leaving p-queue real has no side effects here.
 
-vi.mock('simple-git', () => ({
-  simpleGit: vi.fn(() => ({})),
-}));
 
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));
 vi.mock('../../src/main/db/repositories/task-repository', () => ({

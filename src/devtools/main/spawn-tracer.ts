@@ -7,9 +7,12 @@
  * process-tree sampler's start). This wraps `ChildProcess.prototype.spawn`,
  * the one place every spawn API ends up, and records each call as a span
  * labelled `spawn:<program>:<callers>`, so the lag report counts them by
- * caller with their maxima. The caller is the one `openSimpleGit` stored for a
- * simple-git call, whose own stack names only simple-git's scheduler, else the
- * stack's (`spawn-caller.ts`). Installed only from `src/devtools/install.ts`.
+ * caller with their maxima. The caller is read off the stack (`spawn-caller.ts`).
+ * Installed only from `src/devtools/install.ts`.
+ *
+ * A span recorded here is a start on main's thread, which
+ * .claude/rules/main-starts-no-process.md forbids: its label names the code to
+ * move behind an off-main drop-in.
  */
 
 import { ChildProcess, type SpawnOptions } from 'node:child_process';

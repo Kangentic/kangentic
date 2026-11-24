@@ -28,7 +28,6 @@ const hoisted = vi.hoisted(() => ({
 }));
 
 vi.mock('electron', () => ({ ipcMain: { handle: hoisted.ipcHandle, on: vi.fn() } }));
-vi.mock('simple-git', () => ({ default: vi.fn(() => ({})) }));
 vi.mock('../../src/main/git/commit-graph', () => ({ getCommitGraph: hoisted.getCommitGraph }));
 vi.mock('../../src/main/pop-out/window-broadcast', () => ({ broadcast: vi.fn() }));
 vi.mock('../../src/main/retrieval/retrieval-client', () => ({ retrievalClient: { call: hoisted.retrievalCall } }));

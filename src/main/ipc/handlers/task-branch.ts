@@ -2,7 +2,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { ipcMain } from 'electron';
-import { openSimpleGit } from '../../git/simple-git-client';
 import { IPC } from '../../../shared/ipc-channels';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { getProjectDb } from '../../db/database';
@@ -195,7 +194,7 @@ export function registerTaskBranchHandlers(context: IpcContext): void {
         // Update git config in the new worktree (best-effort)
         if (input.newBaseBranch) {
           try {
-            const worktreeGit = openSimpleGit(updatedTask.worktree_path);
+            const worktreeGit = gitAt(updatedTask.worktree_path);
             await writeWorktreeBaseBranch(worktreeGit, input.newBaseBranch);
           } catch {
             // Non-fatal
@@ -216,7 +215,7 @@ export function registerTaskBranchHandlers(context: IpcContext): void {
         // Update git config in the worktree (best-effort). This worktree's own
         // config, so the switch cannot change any other task's base.
         try {
-          const worktreeGit = openSimpleGit(task.worktree_path);
+          const worktreeGit = gitAt(task.worktree_path);
           await writeWorktreeBaseBranch(worktreeGit, input.newBaseBranch);
         } catch {
           console.warn(`[TASK_SWITCH_BRANCH] Could not update git config in worktree`);
@@ -272,7 +271,7 @@ export function registerTaskBranchHandlers(context: IpcContext): void {
         // widen a let's control-flow narrowing, while property narrowing
         // resets at the await.
         const fetchFailure: { current: { reason: FetchFailureReason; message: string } | null } = { current: null };
-        const fetched = await fetchIfStale(openSimpleGit(projectPath), projectPath, baseBranch, {
+        const fetched = await fetchIfStale(gitAt(projectPath), projectPath, baseBranch, {
           onOutcome: (outcome) => {
             if (outcome.kind === 'failed') fetchFailure.current = { reason: outcome.reason, message: outcome.message };
           },

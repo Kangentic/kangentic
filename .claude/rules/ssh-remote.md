@@ -83,7 +83,7 @@ process, a path tested against the wrong disk, an environment that overwrites th
   A removal is forced only because the Done move asks the host for the uncommitted count first
   (`probePendingChanges`), and a host that cannot answer reads as "there are changes".
 - **A git read for a project on a host runs on the host, and a host that cannot answer is an error,
-  never an empty answer.** `gitAt`, `openSimpleGit`, `runGitWithTimeout` and `readGitObject` each ask the
+  never an empty answer.** `gitAt`, `runGitWithTimeout` and `readGitObject` each ask the
   resolver in `git/remote-git.ts` first, so a folder under a remote project's shell folder reaches `HostGit`
   (`remote/host-git.ts`) and never this computer's git, which would run in the empty stand-in or in
   whatever repository the stand-in sits inside. The script sets `GIT_OPTIONAL_LOCKS=0` (a read never
@@ -278,7 +278,7 @@ process, a path tested against the wrong disk, an environment that overwrites th
   nested worktree, a branch kept after removal, and a hostile title.
 - **Tests (git reads):** `tests/unit/remote-host-git.test.ts` pins the directory mapping (longest shell
   folder, never a sibling), that git's arguments stay arguments, every shape of an answer that did not come, that
-  `gitAt`, `openSimpleGit` and `runGitWithTimeout` never start this computer's git for a remote folder, and,
+  `gitAt` and `runGitWithTimeout` never start this computer's git for a remote folder, and,
   with a POSIX shell and git, the real scripts: output past a frame byte for byte and every reply under the
   frame cap, binary and multi-byte text, a hostile argument, and no index lock taken.
   `tests/unit/remote-host-git-parity.test.ts` reads one real repository locally and through the host and compares

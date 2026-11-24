@@ -183,7 +183,7 @@ function fetchCacheKey(projectPath: string, branch: string): string {
  * calls.
  *
  * The `_git` parameter is retained on the signature for back-compat with
- * existing callers (a simple-git instance or a `GitClient`) but is unused
+ * existing callers (a `GitClient`) but is unused
  * (prefixed `_` so eslint accepts it). The fetch runs through
  * `runGitWithTimeout` so it can take an `AbortSignal` and a timeout, which
  * neither client exposes; that path starts the child in the pty host.
