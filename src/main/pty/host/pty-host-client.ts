@@ -17,6 +17,7 @@ import type { CliChildProcess, CliStdin, OffMainCliOptions } from '../../utility
 import { killChildTreeByPid } from '../../shared/child-tree-stop';
 import { PtyHostCore } from './pty-host-core';
 import {
+  cliStopMessage,
   fromPtyHostError,
   type CliStopMode,
   type HostExecRequest,
@@ -340,7 +341,7 @@ export class RemoteCliProcess extends EventEmitter implements CliChildProcess {
     // so it is sent until the run closes. Every other stop is for a live run.
     const exited = this.exitCode !== null || this.signalCode !== null;
     if (exited && mode !== 'treeNow') return;
-    this.transport.post(mode === 'tree' ? { type: 'cliStop', processId: this.processId } : { type: 'cliStop', processId: this.processId, mode });
+    this.transport.post(cliStopMessage(this.processId, mode));
   }
 
   deliverSpawned(pid: number | null): void {

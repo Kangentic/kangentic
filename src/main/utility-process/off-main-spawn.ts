@@ -22,7 +22,7 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import { withoutCrashpadPipeName } from '../shared/child-env';
 import { killChildTreeNow, stopChildTree } from '../shared/child-tree-stop';
-import { spawnOffMainCli, type CliChildProcess, type CliOutput, type CliStdin, type CliStopMode } from './off-main-cli';
+import { spawnOffMainCli, stopHostedCli, type CliChildProcess, type CliOutput, type CliStdin, type CliStopMode } from './off-main-cli';
 
 export interface OffMainSpawnOptions {
   cwd: string;
@@ -200,9 +200,6 @@ export function spawnOffMain(command: string, args: readonly string[], options: 
   return {
     child: hosted,
     hosted: true,
-    stop: (mode) => {
-      if (hosted.stopTree) hosted.stopTree(mode);
-      else hosted.kill();
-    },
+    stop: (mode) => stopHostedCli(hosted, mode),
   };
 }

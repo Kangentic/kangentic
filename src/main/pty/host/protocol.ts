@@ -135,6 +135,14 @@ export type PtyHostRawSpawnResult =
 export type CliStopMode = 'tree' | 'treeNow' | 'process';
 
 /**
+ * The `cliStop` message for a mode, as main posts it to the host and the host
+ * posts it to its spawn worker. `tree` is the default and is left off.
+ */
+export function cliStopMessage(processId: number, mode: CliStopMode): { type: 'cliStop'; processId: number; mode?: CliStopMode } {
+  return mode === 'tree' ? { type: 'cliStop', processId } : { type: 'cliStop', processId, mode };
+}
+
+/**
  * A child process the host runs for main with its stdio streamed
  * (`off-main-cli.ts`): an agent CLI's headless run, git, a script, `ssh`.
  */

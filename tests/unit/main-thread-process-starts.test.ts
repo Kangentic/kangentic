@@ -179,9 +179,9 @@ async function bundleMainInputs(devBuild: boolean): Promise<esbuild.Metafile['in
 /** `node_modules/@scope/name/x.js` and `node_modules/a/node_modules/name/x.js` both name their innermost package. */
 function packageOfInput(input: string): string | null {
   const marker = 'node_modules/';
-  const at = input.lastIndexOf(marker);
-  if (at === -1) return null;
-  const segments = input.slice(at + marker.length).split('/');
+  const markerIndex = input.lastIndexOf(marker);
+  if (markerIndex === -1) return null;
+  const segments = input.slice(markerIndex + marker.length).split('/');
   return segments[0].startsWith('@') ? `${segments[0]}/${segments[1]}` : segments[0];
 }
 

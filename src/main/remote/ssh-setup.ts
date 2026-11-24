@@ -18,7 +18,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { childProcessEnv } from '../shared/child-env';
 import { spawnOffMain } from '../utility-process/off-main-spawn';
-import { posixShellCommand } from './link/ssh-run';
+import { collectRun, posixShellCommand } from './link/ssh-run';
 import { assertSafeDestination, defaultSshClientPaths, nativePathFromSsh } from './ssh-client';
 import { RefusalError } from '../../shared/refusal';
 
@@ -52,63 +52,23 @@ const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
  * where the key was added on the host and `ssh` then sat until the 60 s kill (the rig's own helper
  * closed stdin, so it never showed).
  *
- * The timeout stops the child's whole tree, as `ssh-run.ts` does: a signal to `ssh` alone would leave a
- * ProxyCommand or jump-host hop it started running.
+ * The timeout and the output cap stop the child's whole tree, and the output is collected, by the
+ * collector `ssh-run.ts` uses for its own runs (`collectRun`).
  */
-export const runProgram: RunProgram = (file, args, options = {}) => new Promise((resolve, reject) => {
+export const runProgram: RunProgram = async (file, args, options = {}) => {
   const { timeout, env } = options;
   const run = spawnOffMain(file, args, { cwd: process.cwd(), ...(env ? { env } : {}) });
-  const child = run.child;
-  const stdoutChunks: Buffer[] = [];
-  const stderrChunks: Buffer[] = [];
-  // Stopped here, by the timeout or the output cap: the run's own exit status then means nothing.
-  let stoppedEarly = false;
-  let overCap = false;
-  let settled = false;
-  const timer = timeout !== undefined && timeout > 0
-    ? setTimeout(() => {
-      stoppedEarly = true;
-      run.stop('treeNow');
-    }, timeout)
-    : null;
-  // What a program stopped by the timeout still prints is kept: ssh's last words say why it was waiting.
-  const collect = (chunks: Buffer[]): ((chunk: Buffer) => void) => {
-    let streamBytes = 0;
-    return (chunk) => {
-      if (overCap) return;
-      streamBytes += chunk.length;
-      if (streamBytes > MAX_OUTPUT_BYTES) {
-        overCap = true;
-        stoppedEarly = true;
-        run.stop('treeNow');
-        return;
-      }
-      chunks.push(chunk);
-    };
-  };
-  child.stdout.on('data', collect(stdoutChunks));
-  child.stderr.on('data', collect(stderrChunks));
-  child.on('error', (error: Error) => {
-    if (settled) return;
-    settled = true;
-    if (timer) clearTimeout(timer);
-    reject(error);
-  });
-  child.on('close', (code: number | null) => {
-    if (settled) return;
-    settled = true;
-    if (timer) clearTimeout(timer);
-    // Decoded whole, so a character split across two chunks is never broken.
-    resolve({
-      code: stoppedEarly ? null : code,
-      stdout: Buffer.concat(stdoutChunks).toString('utf8'),
-      stderr: Buffer.concat(stderrChunks).toString('utf8'),
-    });
+  const collected = collectRun(run, {
+    ...(timeout !== undefined && timeout > 0 ? { timeoutMs: timeout } : {}),
+    maxOutputBytes: MAX_OUTPUT_BYTES,
   });
   // A child that exits before this runs has already closed its end; the error is the child's, not ours.
-  child.stdin.on('error', () => undefined);
-  child.stdin.end();
-});
+  run.child.stdin.on('error', () => undefined);
+  run.child.stdin.end();
+  const { code, stdout, stderr, stopped } = await collected;
+  // Stopped here, by the timeout or the output cap: the run's own exit status then means nothing.
+  return { code: stopped === null ? code : null, stdout, stderr };
+};
 
 export interface SshSetupDeps {
   sshPath: string;

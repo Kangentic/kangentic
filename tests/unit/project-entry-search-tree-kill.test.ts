@@ -29,6 +29,7 @@ vi.mock('node:child_process', () => ({ spawn: spawnMock }));
 
 import { clearProjectEntrySearchCache, searchProjectEntries } from '../../src/main/ipc/helpers/project-entry-search';
 import { TREE_STOP_GRACE_MS } from '../../src/main/shared/child-tree-stop';
+import { setOffMainCliSpawner, type CliChildProcess, type CliStopMode } from '../../src/main/utility-process/off-main-cli';
 
 const GIT_BUDGET_MS = 20_000;
 
@@ -119,6 +120,74 @@ describe('project entry search: the tree kill of a git call past its budget', ()
     expect(spawnMock).toHaveBeenCalledWith('git', expect.any(Array), expect.objectContaining({ cwd }));
     expect(taskkillCalls()).toEqual([]);
     expect(git.kill).not.toHaveBeenCalled();
+  });
+
+  describe('with a pty host registered', () => {
+    const GIT_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
+
+    interface HostedGit extends EventEmitter {
+      stdout: EventEmitter;
+      stops: Array<CliStopMode | undefined>;
+    }
+
+    // One fake per git call, in start order, so the first call's stops are read apart from later calls.
+    let hostedCalls: HostedGit[] = [];
+
+    beforeEach(() => {
+      hostedCalls = [];
+      setOffMainCliSpawner(() => {
+        const stops: Array<CliStopMode | undefined> = [];
+        const stdout = new EventEmitter();
+        const hosted = Object.assign(new EventEmitter(), {
+          pid: undefined,
+          exitCode: null,
+          signalCode: null,
+          stdout,
+          stderr: Object.assign(new EventEmitter(), { resume: () => undefined }),
+          stdin: Object.assign(new EventEmitter(), { write: () => true, end: () => undefined }),
+          kill: () => true,
+          stopTree: (mode?: CliStopMode) => { stops.push(mode); },
+          stops,
+        });
+        hostedCalls.push(hosted);
+        const child: CliChildProcess = hosted;
+        return child;
+      });
+    });
+
+    afterEach(() => {
+      setOffMainCliSpawner(null);
+    });
+
+    it('stops a git call past its budget in the default tree mode', async () => {
+      const search = startSearch();
+      try {
+        expect(hostedCalls).toHaveLength(1);
+        await vi.advanceTimersByTimeAsync(GIT_BUDGET_MS - 1);
+        expect(hostedCalls[0].stops).toEqual([]);
+
+        await vi.advanceTimersByTimeAsync(1);
+        // Tree mode is the mode left out: a git start can hold a child of its own.
+        expect(hostedCalls[0].stops).toEqual([undefined]);
+        expect(spawnMock).not.toHaveBeenCalled();
+      } finally {
+        await runToEnd(search);
+      }
+    });
+
+    it('stops a git call whose output passes the cap in the default tree mode', async () => {
+      const search = startSearch();
+      try {
+        expect(hostedCalls).toHaveLength(1);
+        hostedCalls[0].stdout.emit('data', Buffer.alloc(GIT_MAX_BUFFER_BYTES + 1));
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(hostedCalls[0].stops).toEqual([undefined]);
+        expect(spawnMock).not.toHaveBeenCalled();
+      } finally {
+        await runToEnd(search);
+      }
+    });
   });
 
   describe('on POSIX', () => {
