@@ -111,6 +111,32 @@ describe('createCachedSingleton', () => {
     expect(builder).toHaveBeenCalledTimes(2);
   });
 
+  it('replace() on an empty cache answers the next get without running the builder', async () => {
+    const builder = vi.fn(async () => 'built');
+    const cache = createCachedSingleton<string>();
+
+    cache.replace('installed');
+
+    expect(await cache.get(builder)).toBe('installed');
+    expect(builder).not.toHaveBeenCalled();
+  });
+
+  it('replace() during a slow build keeps the installed value, and the slow caller still gets its own', async () => {
+    const slow = deferredBuilder('slow-result');
+    const cache = createCachedSingleton<string>();
+
+    const slowCall = cache.get(slow.builder);
+    cache.replace('installed');
+    slow.release();
+
+    // The earlier caller receives what its own build produced...
+    expect(await slowCall).toBe('slow-result');
+    // ...but that build did not publish over the installed value.
+    const laterBuilder = vi.fn(async () => 'later-build');
+    expect(await cache.get(laterBuilder)).toBe('installed');
+    expect(laterBuilder).not.toHaveBeenCalled();
+  });
+
   it('invalidate() during a cold build prevents the build result from being cached', async () => {
     // The CONFIG_SET-during-cold-build path: a cold build (P1) is in-flight when
     // invalidate() fires (e.g. the user saves agent config). When P1 eventually

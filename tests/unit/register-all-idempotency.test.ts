@@ -11,7 +11,7 @@
  * stop, the board config queue drain, the notifier's own-call guard and the
  * Command Terminal reaper's background-session stop.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { KANGENTIC_HOSTED_RELAY_URL } from '../../src/shared/relay';
 import { IPC } from '../../src/shared/ipc-channels';
 import { PTY_HOST_LOST_EXIT_CODE } from '../../src/shared/pty-host';
@@ -47,7 +47,14 @@ vi.mock('node:fs', () => ({
 }));
 
 vi.mock('node:crypto', () => ({ randomUUID: vi.fn(() => 'mock-uuid') }));
-vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn() }));
+// getGlobalDb answers an empty table for every read: the account usage pass and the SSH host
+// connect read it once the startup delay runs out, which the settle-signal tests below reach.
+vi.mock('../../src/main/db/database', () => ({
+  getProjectDb: vi.fn(),
+  getGlobalDb: vi.fn(() => ({
+    prepare: vi.fn(() => ({ all: () => [], get: () => undefined, run: () => ({ changes: 0 }) })),
+  })),
+}));
 vi.mock('../../src/main/db/repositories/project-repository', () => ({
   ProjectRepository: class { list = vi.fn(() => []); getById = vi.fn(() => ({ name: 'Mock Project' })); },
 }));
@@ -1118,6 +1125,105 @@ describe('registerAllIpc idempotency', () => {
       expect(context === getOptionalIpcContext()).toBe(true);
       expect(stoppedTerminal).toBe(ended);
     }, 30000);
+  });
+
+  describe('the launch settle signal hears the session manager', () => {
+    // registerAllIpc counts an agent as starting when its session first runs and when it first
+    // draws, once per session id, and stops listening once the launch settles. The engine is
+    // pinned in boot-settle.test.ts; this is the only place the call site is. Time is read
+    // through the real engine: a start at t=10 s moves the settle point from the 15 s floor to
+    // 20 s (10 s of quiet), so the clock shows which events were counted.
+    // Red-green: drop `noteAgentStarting()` from either listener and its test settles at the floor;
+    // drop the `startedSessions` guard and the repeat test moves the settle point to 28 s; drop
+    // the `off` calls and the listener counts stay put.
+    const QUIET_MS = 10_000;
+    const FLOOR_MS = 15_000;
+
+    afterEach(async () => {
+      const { resetBootSettleForTests } = await import('../../src/main/boot-settle');
+      resetBootSettleForTests();
+      vi.useRealTimers();
+    });
+
+    async function startWiring() {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      // Imported first so register-all resolves the same boot-settle instance.
+      const bootSettle = await import('../../src/main/boot-settle');
+      const { registerAllIpc, getSessionManager } = await import('../../src/main/ipc/register-all');
+      bootSettle.beginBoot();
+      registerAllIpc(makeMockWindow(1));
+      bootSettle.noteWindowLoaded();
+      const sessionManager = getSessionManager();
+      return { bootSettle, sessionManager };
+    }
+
+    function sessionOf(id: string, status: string): Session {
+      return { id, status } as Session;
+    }
+
+    it('counts a session that starts running as an agent starting, and a repeat for the same id as nothing', async () => {
+      const { bootSettle, sessionManager } = await startWiring();
+      await vi.advanceTimersByTimeAsync(10_000);
+      sessionManager.emit('session-changed', 'session-a', sessionOf('session-a', 'running'));
+
+      // The same session reporting running again must not restart the quiet period.
+      await vi.advanceTimersByTimeAsync(8_000);
+      sessionManager.emit('session-changed', 'session-a', sessionOf('session-a', 'running'));
+
+      // The start at 10 s holds the launch past the 15 s floor, to 20 s.
+      await vi.advanceTimersByTimeAsync(1_900);
+      expect(bootSettle.isBootSettled()).toBe(false);
+      await vi.advanceTimersByTimeAsync(600);
+      expect(bootSettle.isBootSettled()).toBe(true);
+    });
+
+    it('counts a second session id as another start', async () => {
+      const { bootSettle, sessionManager } = await startWiring();
+      await vi.advanceTimersByTimeAsync(10_000);
+      sessionManager.emit('session-changed', 'session-a', sessionOf('session-a', 'running'));
+      await vi.advanceTimersByTimeAsync(8_000);
+      sessionManager.emit('session-changed', 'session-b', sessionOf('session-b', 'running'));
+
+      await vi.advanceTimersByTimeAsync(QUIET_MS - 1);
+      expect(bootSettle.isBootSettled()).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(bootSettle.isBootSettled()).toBe(true);
+    });
+
+    it('does not count a session that is not running', async () => {
+      const { bootSettle, sessionManager } = await startWiring();
+      await vi.advanceTimersByTimeAsync(10_000);
+      sessionManager.emit('session-changed', 'session-a', sessionOf('session-a', 'queued'));
+
+      await vi.advanceTimersByTimeAsync(FLOOR_MS - 10_000);
+      expect(bootSettle.isBootSettled()).toBe(true);
+    });
+
+    it('counts a first output as an agent starting, again for every one', async () => {
+      const { bootSettle, sessionManager } = await startWiring();
+      await vi.advanceTimersByTimeAsync(10_000);
+      sessionManager.emit('first-output', 'session-a');
+      await vi.advanceTimersByTimeAsync(8_000);
+      sessionManager.emit('first-output', 'session-b');
+
+      // 18 s + 10 s of quiet: the floor and the first output alone would have settled it by 20 s.
+      await vi.advanceTimersByTimeAsync(QUIET_MS - 1);
+      expect(bootSettle.isBootSettled()).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(bootSettle.isBootSettled()).toBe(true);
+    });
+
+    it('stops listening once the launch has settled', async () => {
+      const { bootSettle, sessionManager } = await startWiring();
+      const changedBefore = sessionManager.listenerCount('session-changed');
+      const outputBefore = sessionManager.listenerCount('first-output');
+
+      await vi.advanceTimersByTimeAsync(FLOOR_MS);
+      expect(bootSettle.isBootSettled()).toBe(true);
+
+      expect(sessionManager.listenerCount('session-changed')).toBe(changedBefore - 1);
+      expect(sessionManager.listenerCount('first-output')).toBe(outputBefore - 1);
+    });
   });
 
   describe('Mute reaches the desktop notice and the icon badge', () => {

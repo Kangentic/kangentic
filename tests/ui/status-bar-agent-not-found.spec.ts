@@ -116,4 +116,37 @@ test.describe('StatusBar agent-not-found warning', () => {
       await browser.close();
     }
   });
+
+  // The list a launch shows is the last launch's. Main pushes agent:listChanged
+  // when its own read of an agent differs, and App.tsx lists again. Red-green:
+  // remove App.tsx's agents.onListChanged subscription and the warning stays up.
+  test('clears the warning when main says the agent list changed and the agent is now found', async () => {
+    const { browser, page } = await launchWithCodexProject({
+      claude: { found: true, path: '/usr/bin/claude', version: '2.1.72' },
+      codex: { found: false, path: null, version: null },
+    });
+    try {
+      await page.locator('[data-testid="task-count"]').waitFor({ state: 'visible', timeout: 15000 });
+      const warning = page.locator('[data-testid="agent-not-found"]');
+      await expect(warning).toBeVisible({ timeout: 5000 });
+
+      // The mock reads the overrides on every agents.list() call, so the push's
+      // re-list sees the agent as installed.
+      await page.evaluate(() => {
+        const testWindow = window as unknown as {
+          __mockAgentListOverrides: Record<string, unknown>;
+          __mockAgentListChanged: () => void;
+        };
+        testWindow.__mockAgentListOverrides = {
+          claude: { found: true, path: '/usr/bin/claude', version: '2.1.72' },
+          codex: { found: true, path: '/usr/bin/codex', version: '1.0.0' },
+        };
+        testWindow.__mockAgentListChanged();
+      });
+
+      await expect(warning).toBeHidden({ timeout: 5000 });
+    } finally {
+      await browser.close();
+    }
+  });
 });

@@ -48,6 +48,9 @@ const setBrowserOffscreenTasksMock = vi.fn();
 // nothing else in this window loads them, so bootstrap and hmrResync call the
 // real config store's loadAgentList, which reads `agents.list`.
 const agentsListMock = vi.fn();
+// Main says when its own read of an agent differs from the list a launch showed,
+// and this window lists again.
+const agentsOnListChangedMock = vi.fn();
 // A queued card's place in line and a hosted detail's line of tasks. This window
 // runs no App.tsx, so bootstrap reads the line and follows the push itself.
 const sessionsOnQueueChangedMock = vi.fn();
@@ -56,7 +59,7 @@ const setQueueSnapshotMock = vi.fn();
 
 (globalThis as Record<string, unknown>).window = {
   electronAPI: {
-    agents: { list: agentsListMock },
+    agents: { list: agentsListMock, onListChanged: agentsOnListChangedMock },
     config: { get: configGetMock, getGlobal: configGetGlobalMock, set: configSetMock },
     monitor: {
       subscribe: monitorSubscribeMock,
@@ -126,6 +129,7 @@ describe('monitorSurface bootstrap: config-store subscription guard', () => {
     onOffscreenSurfacesMock.mockReturnValue(() => {});
     loadBrowserOffscreenTasksMock.mockResolvedValue(undefined);
     agentsListMock.mockResolvedValue([]);
+    agentsOnListChangedMock.mockReturnValue(() => {});
     configSetMock.mockResolvedValue(undefined);
     resetStores();
     controller = new AbortController();
@@ -197,6 +201,7 @@ describe('monitorSurface bootstrap: offscreen-surfaces wiring', () => {
     onOffscreenSurfacesMock.mockReturnValue(() => {});
     loadBrowserOffscreenTasksMock.mockResolvedValue(undefined);
     agentsListMock.mockResolvedValue([]);
+    agentsOnListChangedMock.mockReturnValue(() => {});
     configSetMock.mockResolvedValue(undefined);
     resetStores();
     controller = new AbortController();
@@ -253,6 +258,32 @@ describe('monitorSurface bootstrap: offscreen-surfaces wiring', () => {
     expect(agentsListMock).toHaveBeenCalledTimes(2);
     await Promise.resolve();
   });
+
+  // The list a launch shows is the last launch's. Without this reload the table
+  // keeps an old version, sign-in state or model list until the window reopens.
+  it('lists the agents again when main says the list changed, and stops listening on abort', async () => {
+    let listChanged: (() => void) | undefined;
+    const unsubscribe = vi.fn();
+    agentsOnListChangedMock.mockImplementation((callback: () => void) => {
+      listChanged = callback;
+      return unsubscribe;
+    });
+
+    monitorSurface.bootstrap({}, { signal: controller.signal });
+    expect(agentsListMock).toHaveBeenCalledTimes(1);
+
+    listChanged?.();
+    expect(agentsListMock).toHaveBeenCalledTimes(2);
+    expect(unsubscribe).not.toHaveBeenCalled();
+
+    controller.abort();
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+    await Promise.resolve();
+  });
+
+  it('is sent the list-changed push, which the surface must declare to receive', () => {
+    expect(POP_OUT_SURFACES.monitor.channels).toContain(IPC.AGENT_LIST_CHANGED);
+  });
 });
 
 /**
@@ -279,6 +310,7 @@ describe('monitorSurface bootstrap: first-output wiring', () => {
     onOffscreenSurfacesMock.mockReturnValue(() => {});
     loadBrowserOffscreenTasksMock.mockResolvedValue(undefined);
     agentsListMock.mockResolvedValue([]);
+    agentsOnListChangedMock.mockReturnValue(() => {});
     configSetMock.mockResolvedValue(undefined);
     resetStores();
     controller = new AbortController();
@@ -340,6 +372,7 @@ describe('monitorSurface bootstrap: queue snapshot wiring', () => {
     onOffscreenSurfacesMock.mockReturnValue(() => {});
     loadBrowserOffscreenTasksMock.mockResolvedValue(undefined);
     agentsListMock.mockResolvedValue([]);
+    agentsOnListChangedMock.mockReturnValue(() => {});
     configSetMock.mockResolvedValue(undefined);
     resetStores();
     controller = new AbortController();
