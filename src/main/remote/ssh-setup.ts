@@ -12,13 +12,12 @@
  * certificates) applies exactly as it does in a terminal.
  */
 
-import { execFile, type ExecFileOptions } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { childProcessEnv } from '../shared/child-env';
-import { killChildTreeNow } from '../shared/child-tree-stop';
+import { spawnOffMain } from '../utility-process/off-main-spawn';
 import { posixShellCommand } from './link/ssh-run';
 import { assertSafeDestination, defaultSshClientPaths, nativePathFromSsh } from './ssh-client';
 import { RefusalError } from '../../shared/refusal';
@@ -29,42 +28,86 @@ export interface RunResult {
   stderr: string;
 }
 
-export type RunProgram = (file: string, args: string[], options?: ExecFileOptions & { env?: NodeJS.ProcessEnv; timeout?: number }) => Promise<RunResult>;
+export interface RunProgramOptions {
+  env?: NodeJS.ProcessEnv;
+  timeout?: number;
+}
+
+export type RunProgram = (file: string, args: string[], options?: RunProgramOptions) => Promise<RunResult>;
+
+/** The most of each output a run keeps, as `execFile`'s `maxBuffer` was set to. Past it the program is stopped. */
+const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 
 /**
- * `execFile` that resolves with the exit status instead of rejecting on one, and never opens a window.
+ * Run a program to its end and resolve with its exit status instead of rejecting on one. It never opens
+ * a window. It rejects only when the program could not be started.
  *
- * Stdin is closed at once. Windows' `ssh` forwards its stdin to the remote command, and an `execFile` pipe
- * that stays open leaves it waiting after the command has finished: found by running Add host in the real
- * app, where the key was added on the host and `ssh` then sat until the 60 s kill (the rig's own helper
+ * The program starts in the pty host (`spawnOffMain`), never on main's thread, where a start holds the
+ * window on Windows: `ssh -V` alone was 571 starts in 21 hours of dogfooding, up to 201 ms each. An
+ * environment that carries a password crosses to the host in memory only, as it reached `ssh` before:
+ * never argv, a file or a log.
+ *
+ * Stdin is closed at once. Windows' `ssh` forwards its stdin to the remote command, and a pipe that stays
+ * open leaves it waiting after the command has finished: found by running Add host in the real app,
+ * where the key was added on the host and `ssh` then sat until the 60 s kill (the rig's own helper
  * closed stdin, so it never showed).
  *
- * The timeout stops the child's whole tree, as `ssh-run.ts` does: `execFile`'s own timeout signals only
- * `ssh` itself, and a ProxyCommand or jump-host hop it started would keep running.
+ * The timeout stops the child's whole tree, as `ssh-run.ts` does: a signal to `ssh` alone would leave a
+ * ProxyCommand or jump-host hop it started running.
  */
 export const runProgram: RunProgram = (file, args, options = {}) => new Promise((resolve, reject) => {
-  const { timeout, ...execOptions } = options;
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  let timedOut = false;
-  const child = execFile(file, args, { windowsHide: true, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024, ...execOptions }, (error, stdout, stderr) => {
+  const { timeout, env } = options;
+  const run = spawnOffMain(file, args, { cwd: process.cwd(), ...(env ? { env } : {}) });
+  const child = run.child;
+  const stdoutChunks: Buffer[] = [];
+  const stderrChunks: Buffer[] = [];
+  // Stopped here, by the timeout or the output cap: the run's own exit status then means nothing.
+  let stoppedEarly = false;
+  let overCap = false;
+  let settled = false;
+  const timer = timeout !== undefined && timeout > 0
+    ? setTimeout(() => {
+      stoppedEarly = true;
+      run.stop('treeNow');
+    }, timeout)
+    : null;
+  // What a program stopped by the timeout still prints is kept: ssh's last words say why it was waiting.
+  const collect = (chunks: Buffer[]): ((chunk: Buffer) => void) => {
+    let streamBytes = 0;
+    return (chunk) => {
+      if (overCap) return;
+      streamBytes += chunk.length;
+      if (streamBytes > MAX_OUTPUT_BYTES) {
+        overCap = true;
+        stoppedEarly = true;
+        run.stop('treeNow');
+        return;
+      }
+      chunks.push(chunk);
+    };
+  };
+  child.stdout.on('data', collect(stdoutChunks));
+  child.stderr.on('data', collect(stderrChunks));
+  child.on('error', (error: Error) => {
+    if (settled) return;
+    settled = true;
     if (timer) clearTimeout(timer);
-    const spawnFailure = error as (NodeJS.ErrnoException & { code?: string | number }) | null;
-    if (!timedOut && spawnFailure && typeof spawnFailure.code === 'string' && spawnFailure.code !== 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
-      reject(spawnFailure);
-      return;
-    }
-    const code = timedOut ? null : error ? (typeof spawnFailure?.code === 'number' ? spawnFailure.code : null) : 0;
-    resolve({ code, stdout: String(stdout), stderr: String(stderr) });
+    reject(error);
   });
-  if (timeout !== undefined && timeout > 0) {
-    timer = setTimeout(() => {
-      timedOut = true;
-      killChildTreeNow(child, { leadsGroup: false });
-    }, timeout);
-  }
+  child.on('close', (code: number | null) => {
+    if (settled) return;
+    settled = true;
+    if (timer) clearTimeout(timer);
+    // Decoded whole, so a character split across two chunks is never broken.
+    resolve({
+      code: stoppedEarly ? null : code,
+      stdout: Buffer.concat(stdoutChunks).toString('utf8'),
+      stderr: Buffer.concat(stderrChunks).toString('utf8'),
+    });
+  });
   // A child that exits before this runs has already closed its end; the error is the child's, not ours.
-  child.stdin?.on('error', () => undefined);
-  child.stdin?.end();
+  child.stdin.on('error', () => undefined);
+  child.stdin.end();
 });
 
 export interface SshSetupDeps {

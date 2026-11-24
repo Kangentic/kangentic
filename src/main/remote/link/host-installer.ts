@@ -1,8 +1,10 @@
 /**
  * Puts the helper on a host over the connection the user already made (#913). The host needs
- * nothing from the internet: the app streams its own copy of the host asset, a tarball holding a
+ * nothing from the internet: the app sends its own copy of the host asset, a tarball holding a
  * pinned Node, the helper bundle and node-pty's Linux prebuild, and the host checks its SHA-256
  * before anything is unpacked. The version is the app's, so the helper and Kangentic always agree.
+ * `ssh` reads the archive from the file itself, as its stdin, so none of its bytes pass through
+ * this process, and a read that fails or stops short is caught by the checksum on the host.
  *
  * - Probe first, in one round trip: OS, CPU, glibc and the home directory. A host that is not a
  *   glibc Linux the asset was built for is refused with a sentence saying what it is.
@@ -16,8 +18,6 @@
  * Imports nothing of electron.
  */
 
-import { createReadStream } from 'node:fs';
-import type { Readable } from 'node:stream';
 import { posixShellCommand, type SshRunner } from './ssh-run';
 
 export type HostArch = 'x64' | 'arm64';
@@ -119,14 +119,10 @@ function installScript(version: string, sha256: string): string {
   ].join('; '));
 }
 
-/**
- * Make sure the helper for this app version is on the host, and say how to start its relay.
- * `openAsset` is for tests: it replaces reading the file from disk.
- */
+/** Make sure the helper for this app version is on the host, and say how to start its relay. */
 export async function installHost(
   run: SshRunner,
   assets: HostAsset | readonly HostAsset[],
-  openAsset: (filePath: string) => Readable = (filePath) => createReadStream(filePath),
 ): Promise<InstalledHost> {
   // A build carries one asset per CPU it supports; the host's own CPU, learned below, picks the one to send.
   const candidates: readonly HostAsset[] = Array.isArray(assets) ? assets : [assets as HostAsset];
@@ -163,7 +159,7 @@ export async function installHost(
 
   // Only now, with the host's CPU known and this version missing there, is the archive worth having.
   await asset.prepare?.();
-  const upload = await run(installScript(asset.version, asset.sha256), { stdin: openAsset(asset.filePath), timeoutMs: UPLOAD_TIMEOUT_MS });
+  const upload = await run(installScript(asset.version, asset.sha256), { stdin: { filePath: asset.filePath }, timeoutMs: UPLOAD_TIMEOUT_MS });
   if (upload.code === 65) throw new HostInstallError('checksum', upload.stderr.trim());
   if (upload.code !== 0) {
     throw new HostInstallError('failed', `Installing the helper failed: ${upload.stderr.trim() || `ssh exited with ${upload.code}`}`);
