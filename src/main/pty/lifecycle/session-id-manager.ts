@@ -238,9 +238,16 @@ export class SessionIdManager {
     }
 
     if (strategy.fromFilesystem) {
+      // False only where the result below would be dropped. A resume holds an id
+      // from the start and reported none yet, so its scan still runs. A status
+      // write with no id closed the channel and got none, so its outcome is still
+      // worth knowing.
+      const shouldContinue = (): boolean => this.spawns.get(sessionId) === spawnEntry
+        && this.callbacks.sessionExists(sessionId)
+        && !(this.callbacks.hasAgentSessionId(sessionId) && this.holdsAgentSessionId(sessionId));
       // Each outcome is written to this spawn's own entry, so a scan that
       // settles after a respawn reused the id cannot mark the new session's.
-      strategy.fromFilesystem({ spawnedAt, cwd, cliTarget })
+      strategy.fromFilesystem({ spawnedAt, cwd, cliTarget, shouldContinue })
         .then((capturedId) => {
           if (!capturedId) {
             spawnEntry.filesystemScan = 'empty';
