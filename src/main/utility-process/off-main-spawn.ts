@@ -48,6 +48,10 @@ export interface OffMainChild {
   /** The run. `stdin`, `stdout` and `stderr` are always there: with no pipe
    *  behind one, it never emits and a write to it is dropped. */
   readonly child: CliChildProcess;
+  /** True when the run is in the pty host. An `error` after its start then
+   *  means the host was lost with it running: the run can no longer be
+   *  stopped there, and a run that outlives the app is still going. */
+  readonly hosted: boolean;
   /** Stop the run: its whole tree with the grace when no mode is given (`CliStopMode`). */
   stop(mode?: CliStopMode): void;
 }
@@ -150,7 +154,7 @@ function spawnHere(command: string, args: readonly string[], options: OffMainSpa
     });
   } catch (error) {
     // report-ok: handed to the caller as the run's `error` event, as a hosted run's failed start is.
-    return { child: new FailedChild(error instanceof Error ? error : new Error(String(error))), stop: () => undefined };
+    return { child: new FailedChild(error instanceof Error ? error : new Error(String(error))), hosted: false, stop: () => undefined };
   } finally {
     if (stdinDescriptor !== null) fs.closeSync(stdinDescriptor);
   }
@@ -159,6 +163,7 @@ function spawnHere(command: string, args: readonly string[], options: OffMainSpa
   const treeStop = { leadsGroup: detached };
   return {
     child: new LocalChild(childProcess),
+    hosted: false,
     stop: (mode = 'tree') => {
       if (mode === 'process') {
         try {
@@ -189,6 +194,7 @@ export function spawnOffMain(command: string, args: readonly string[], options: 
   if (!hosted) return spawnHere(command, args, options, env);
   return {
     child: hosted,
+    hosted: true,
     stop: (mode) => {
       if (hosted.stopTree) hosted.stopTree(mode);
       else hosted.kill();

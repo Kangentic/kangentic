@@ -9,6 +9,11 @@
  * (src/main/pty/spawn/shell-launch.ts), which clears the port before exec.
  * Everywhere else the spawn is exactly what it always was.
  *
+ * The command starts in the pty host when one is registered, so the start
+ * never runs on main's thread, as a run nothing stops: the host leaves it alone
+ * at a quit and main never ends it when the host is lost. With no host (most of
+ * this file) it starts in this process with the same options.
+ *
  * Strategy mirrors shell-open-path-handler.test.ts: mock electron's ipcMain to
  * capture registered handlers, then invoke SHELL_EXEC directly and assert
  * against a mocked `child_process.spawn`.
@@ -16,14 +21,32 @@
  * Tier: Unit (vitest, no browser, no Electron).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { EventEmitter } from 'node:events';
 import os from 'node:os';
 import { IPC } from '../../src/shared/ipc-channels';
+import { setOffMainCliSpawner, type CliChildProcess, type OffMainCliOptions } from '../../src/main/utility-process/off-main-cli';
 
 const { capturedHandlers, spawnMock, helperCandidatesMock } = vi.hoisted(() => ({
   capturedHandlers: new Map<string, (...args: unknown[]) => unknown>(),
-  spawnMock: vi.fn(() => ({ pid: 4321, unref: vi.fn() })),
+  spawnMock: vi.fn(),
   helperCandidatesMock: vi.fn((): string[] => []),
 }));
+
+/** A started child as `child_process.spawn` hands it back with stdio ignored: no streams, and `spawn` on a later turn. */
+function startedChild(): EventEmitter {
+  const child = Object.assign(new EventEmitter(), {
+    pid: 4321,
+    exitCode: null,
+    signalCode: null,
+    stdin: null,
+    stdout: null,
+    stderr: null,
+    unref: vi.fn(),
+    kill: vi.fn(() => true),
+  });
+  setImmediate(() => child.emit('spawn'));
+  return child;
+}
 
 vi.mock('electron', () => ({
   app: { getVersion: vi.fn(() => '0.0.0'), getPath: vi.fn(() => '/tmp') },
@@ -112,10 +135,10 @@ function makeContext() {
   };
 }
 
-function invokeShellExec(command: string, cwd: string): { pid: number } {
+function invokeShellExec(command: string, cwd: string): Promise<{ pid: number | undefined }> {
   const handler = capturedHandlers.get(IPC.SHELL_EXEC);
   if (!handler) throw new Error(`Handler not registered for ${IPC.SHELL_EXEC}`);
-  return handler(undefined, command, cwd) as { pid: number };
+  return handler(undefined, command, cwd) as Promise<{ pid: number | undefined }>;
 }
 
 /** The options `spawn` was called with. `env` is the child's whole environment. */
@@ -125,6 +148,7 @@ interface SpawnOptionsSeen {
   shell?: boolean | string;
   detached?: boolean;
   stdio?: unknown;
+  windowsHide?: boolean;
 }
 
 /**
@@ -147,23 +171,26 @@ describe('SHELL_EXEC IPC handler', () => {
 
   beforeEach(() => {
     capturedHandlers.clear();
-    spawnMock.mockClear();
+    spawnMock.mockReset();
+    spawnMock.mockImplementation(startedChild);
     helperCandidatesMock.mockClear();
+    setOffMainCliSpawner(null);
     registerSystemHandlers(makeContext() as Parameters<typeof registerSystemHandlers>[0]);
   });
 
   afterEach(() => {
     Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
     helperCandidatesMock.mockReturnValue([]);
+    setOffMainCliSpawner(null);
   });
 
-  it('runs the shortcut through the spawn-helper on macOS, detached with stdin ignored', () => {
+  it('runs the shortcut through the spawn-helper on macOS, detached with stdin ignored', async () => {
     Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
     // Any file this process can execute stands in for the helper: spawn is
     // mocked, and the lookup only checks that the candidate is executable.
     helperCandidatesMock.mockReturnValue([process.execPath]);
 
-    const result = invokeShellExec('npm run dev', projectDirectory);
+    const result = await invokeShellExec('npm run dev', projectDirectory);
 
     const { file, args, options } = lastSpawnCall();
     expect(file).toBe(process.execPath);
@@ -178,11 +205,11 @@ describe('SHELL_EXEC IPC handler', () => {
     expect(result).toEqual({ pid: 4321 });
   });
 
-  it.each(['win32', 'linux'] as const)('spawns the command string with shell: true on %s, as it always has', (platform) => {
+  it.each(['win32', 'linux'] as const)('spawns the command string with shell: true on %s, as it always has', async (platform) => {
     Object.defineProperty(process, 'platform', { value: platform, configurable: true });
     helperCandidatesMock.mockReturnValue([process.execPath]);
 
-    invokeShellExec('npm run dev', projectDirectory);
+    await invokeShellExec('npm run dev', projectDirectory);
 
     const { file, args, options } = lastSpawnCall();
     expect(file).toBe('npm run dev');
@@ -191,7 +218,112 @@ describe('SHELL_EXEC IPC handler', () => {
     expect(options.shell).toBe(true);
     expect(options.detached).toBe(true);
     expect(options.stdio).toBe('ignore');
+    // A shortcut's console window shows, as it always has.
+    expect(options.windowsHide).toBe(false);
     expect(helperCandidatesMock).not.toHaveBeenCalled();
+  });
+
+  it('lets go of the child it started here, so nothing waits on a dev server', async () => {
+    await invokeShellExec('npm run dev', projectDirectory);
+
+    const child = spawnMock.mock.results.at(-1)?.value as { unref: ReturnType<typeof vi.fn> };
+    expect(child.unref).toHaveBeenCalledTimes(1);
+  });
+
+  it('answers with no pid, and throws nothing, when the command cannot be started', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    spawnMock.mockImplementation(() => {
+      const child = startedChild();
+      child.removeAllListeners();
+      Object.assign(child, { pid: undefined });
+      setImmediate(() => child.emit('error', new Error('spawn ENOENT')));
+      return child;
+    });
+
+    expect(await invokeShellExec('npm run dev', projectDirectory)).toEqual({ pid: undefined });
+  });
+
+  describe('with a pty host registered', () => {
+    interface HostedStart {
+      command: string;
+      args: string[];
+      options: OffMainCliOptions;
+      child: CliChildProcess & { pid: number | undefined; stops: unknown[] };
+    }
+
+    /** Stands in for the host: records the start, and hands back a run the test acknowledges. */
+    function registerHost(): HostedStart[] {
+      const starts: HostedStart[] = [];
+      setOffMainCliSpawner((command, args, options) => {
+        const stops: unknown[] = [];
+        const child = Object.assign(new EventEmitter(), {
+          pid: undefined as number | undefined,
+          exitCode: null,
+          signalCode: null,
+          stdout: Object.assign(new EventEmitter(), { resume: () => undefined }),
+          stderr: Object.assign(new EventEmitter(), { resume: () => undefined }),
+          stdin: Object.assign(new EventEmitter(), { write: () => true, end: () => undefined }),
+          kill: () => true,
+          stopTree: (mode?: unknown) => { stops.push(mode); },
+          stops,
+        });
+        starts.push({ command, args, options, child });
+        return child;
+      });
+      return starts;
+    }
+
+    it('starts the shortcut there, shown and detached, as a run the app never stops, and nothing here', async () => {
+      Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+      const starts = registerHost();
+
+      const pending = invokeShellExec('npm run dev', projectDirectory);
+      expect(starts).toHaveLength(1);
+      // The host acknowledges the start with the pid.
+      starts[0].child.pid = 8642;
+      starts[0].child.emit('spawn');
+
+      expect(await pending).toEqual({ pid: 8642 });
+      expect(starts[0].command).toBe('npm run dev');
+      expect(starts[0].args).toEqual([]);
+      expect(starts[0].options.cwd).toBe(projectDirectory);
+      expect(starts[0].options.shell).toBe(true);
+      expect(starts[0].options.detached).toBe(true);
+      expect(starts[0].options.stdio).toBe('ignore');
+      expect(starts[0].options.windowsHide).toBe(false);
+      expect(starts[0].options.outlivesApp).toBe(true);
+      expect(spawnMock).not.toHaveBeenCalled();
+      // Never stopped, whatever happens next.
+      expect(starts[0].child.stops).toEqual([]);
+    });
+
+    it('answers with no pid when the host could not start it, and stops nothing', async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const starts = registerHost();
+
+      const pending = invokeShellExec('npm run dev', projectDirectory);
+      starts[0].child.emit('error', new Error('The pty host does not launch its own executable'));
+      starts[0].child.emit('close', null, null);
+
+      expect(await pending).toEqual({ pid: undefined });
+      expect(starts[0].child.stops).toEqual([]);
+    });
+
+    it('leaves a started shortcut alone when the host is lost after the start', async () => {
+      const starts = registerHost();
+      const pending = invokeShellExec('npm run dev', projectDirectory);
+      starts[0].child.pid = 8642;
+      starts[0].child.emit('spawn');
+      await pending;
+
+      // What main's handle emits when its host dies: nothing here may throw or stop the run.
+      expect(() => {
+        starts[0].child.emit('exit', null, 'SIGKILL');
+        starts[0].child.emit('close', null, 'SIGKILL');
+      }).not.toThrow();
+      expect(starts[0].child.stops).toEqual([]);
+      expect(spawnMock).not.toHaveBeenCalled();
+    });
   });
 
   describe('the shortcut\'s environment', () => {
@@ -219,10 +351,10 @@ describe('SHELL_EXEC IPC handler', () => {
       savedValues.clear();
     });
 
-    it.each(['win32', 'linux', 'darwin'] as const)('hands the child main\'s environment without the pipe name on %s', (platform) => {
+    it.each(['win32', 'linux', 'darwin'] as const)('hands the child main\'s environment without the pipe name on %s', async (platform) => {
       Object.defineProperty(process, 'platform', { value: platform, configurable: true });
 
-      invokeShellExec('npm run dev', projectDirectory);
+      await invokeShellExec('npm run dev', projectDirectory);
 
       const { env } = lastSpawnCall().options;
       // Positive controls: an environment did reach the spawn and it is main's
@@ -232,11 +364,11 @@ describe('SHELL_EXEC IPC handler', () => {
       expect(PIPE_KEY in env!).toBe(false);
     });
 
-    it('strips the pipe name on the macOS spawn-helper route too', () => {
+    it('strips the pipe name on the macOS spawn-helper route too', async () => {
       Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
       helperCandidatesMock.mockReturnValue([process.execPath]);
 
-      invokeShellExec('npm run dev', projectDirectory);
+      await invokeShellExec('npm run dev', projectDirectory);
 
       const { file, options } = lastSpawnCall();
       // The helper route was taken, so this is the other branch of the handler.
