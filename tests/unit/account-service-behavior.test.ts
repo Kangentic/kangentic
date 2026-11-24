@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { accountsReporter } from '../../src/main/accounts/account-report';
 import { AccountService, type AccountServiceDependencies } from '../../src/main/accounts/account-service';
 import {
   EmptyUsageReadError,
@@ -626,6 +627,184 @@ describe('AccountService.cards', () => {
     expect(resolveCliPath).not.toHaveBeenCalled();
     // Where the CLI runs is read off the path the list already holds, not detected again.
     expect(remoteTargetAsked).toEqual([['in-a-distro', '/usr/bin/distro-cli'], ['second', '/usr/bin/second-cli']]);
+  });
+});
+
+// After a restart, detecting every agent's CLI took 12 s and Settings > Accounts was blank for all
+// of it (task #1202). The tab's list answers at once from what the last checked list held.
+describe('AccountService.listForTab', () => {
+  /** A list-only CLI lookup that answers only when the test says so. */
+  function heldLookup() {
+    const answers: Array<() => void> = [];
+    return {
+      listCliPath: (agent: string) => new Promise<string | null>((resolve) => {
+        answers.push(() => resolve(agent === 'gone' ? null : `/usr/bin/${agent}`));
+      }),
+      land: () => answers.splice(0).forEach((answer) => answer()),
+      asked: () => answers.length,
+    };
+  }
+
+  it('answers at once from the saved list and saved rows, unchecked, while the CLI check runs', async () => {
+    const lookup = heldLookup();
+    const accountService = makeService({ [AGENT]: adapterOf(AGENT, folderSupport()) }, {
+      listCliPath: lookup.listCliPath,
+      readListedAgents: () => [{ agent: AGENT, unsupportedTarget: true }],
+    });
+    const own = accountService.ensureDefaultAccount(AGENT)!;
+    repository.updateUsage(own.id, [sevenDay(40, NOW + 3600)]);
+
+    const answer = await accountService.listForTab();
+
+    expect(answer.checked).toBe(false);
+    expect(answer.cards.map((card) => card.agent)).toEqual([AGENT]);
+    // The saved WSL answer keeps Add account hidden until the check says otherwise.
+    expect(answer.cards[0].unsupportedTarget).toBe(true);
+    expect(answer.cards[0].accounts[0].lastUsage?.[0].usedPercentage).toBe(40);
+    // The check started, and is still waiting on the CLI.
+    expect(lookup.asked()).toBe(1);
+  });
+
+  it('saves the checked list, pushes a change, and answers checked from then on', async () => {
+    const lookup = heldLookup();
+    const saved: unknown[] = [];
+    const accountService = makeService({
+      [AGENT]: adapterOf(AGENT, folderSupport()),
+      gone: adapterOf('gone', folderSupport()),
+    }, {
+      listCliPath: lookup.listCliPath,
+      usesRemoteTarget: async () => false,
+      readListedAgents: () => null,
+      saveListedAgents: (agents) => { saved.push(agents); return true; },
+    });
+
+    const first = await accountService.listForTab();
+    expect(first).toEqual({ cards: [], checked: false });
+    expect(changeCount).toBe(0);
+
+    lookup.land();
+    await vi.waitFor(() => expect(changeCount).toBe(1));
+    expect(saved).toEqual([[{ agent: AGENT, unsupportedTarget: false }]]);
+
+    const next = accountService.listForTab();
+    lookup.land();
+    const answer = await next;
+    expect(answer.checked).toBe(true);
+    expect(answer.cards.map((card) => card.agent)).toEqual([AGENT]);
+    // The same agents again: nothing new to save.
+    expect(saved).toHaveLength(1);
+  });
+
+  it('starts one check however many opens arrive before it lands', async () => {
+    const lookup = heldLookup();
+    const accountService = folderService(folderSupport(), { listCliPath: lookup.listCliPath, readListedAgents: () => null });
+    await Promise.all([accountService.listForTab(), accountService.listForTab(), accountService.listForTab()]);
+    expect(lookup.asked()).toBe(1);
+  });
+
+  it('skips a saved agent with no rows, or whose adapter no longer declares accounts', async () => {
+    const accountService = makeService({
+      [AGENT]: adapterOf(AGENT, folderSupport()),
+      'no-rows': adapterOf('no-rows', folderSupport()),
+      'no-accounts': adapterOf('no-accounts'),
+    }, {
+      listCliPath: heldLookup().listCliPath,
+      readListedAgents: () => [
+        { agent: 'no-rows', unsupportedTarget: false },
+        { agent: 'no-accounts', unsupportedTarget: false },
+        { agent: 'not-registered', unsupportedTarget: false },
+        { agent: AGENT, unsupportedTarget: false },
+      ],
+    });
+    accountService.ensureDefaultAccount(AGENT);
+    repository.insert({ agent: 'no-accounts', kind: 'default' });
+
+    const answer = await accountService.listForTab();
+    expect(answer.cards.map((card) => card.agent)).toEqual([AGENT]);
+    // The saved answer writes no row.
+    expect(repository.listForAgent('no-rows')).toEqual([]);
+  });
+
+  it('keeps the saved answer and checks again on the next open when the check fails', async () => {
+    const accountService = folderService(folderSupport(), {
+      listCliPath: async () => '/usr/bin/test-cli',
+      usesRemoteTarget: async () => false,
+      readListedAgents: () => null,
+    });
+    // `cards()` catches each lookup's own failure, so fail the check itself, once.
+    const cardsSpy = vi.spyOn(accountService, 'cards').mockRejectedValueOnce(new Error('check failed'));
+    const reportSpy = vi.spyOn(accountsReporter, 'report').mockImplementation(() => undefined);
+
+    await accountService.listForTab();
+    await vi.waitFor(() => expect(cardsSpy).toHaveBeenCalledTimes(1));
+    await Promise.resolve();
+    expect(changeCount).toBe(0);
+    // The failure is reported, tagged with the stage, not swallowed.
+    expect(reportSpy).toHaveBeenCalledTimes(1);
+    expect(reportSpy).toHaveBeenCalledWith(expect.objectContaining({ message: 'check failed' }), { tags: { stage: 'tab_list_check' } });
+
+    // The failed check left the run unchecked, so this open starts another, which lands.
+    expect((await accountService.listForTab()).checked).toBe(false);
+    await vi.waitFor(() => expect(changeCount).toBe(1));
+    expect((await accountService.listForTab()).checked).toBe(true);
+  });
+
+  it('saves the list again when the agents or a card unsupportedTarget changed', async () => {
+    const saved: unknown[] = [];
+    let remote = false;
+    const accountService = makeService({
+      [AGENT]: adapterOf(AGENT, folderSupport()),
+      second: adapterOf('second', folderSupport()),
+    }, {
+      listCliPath: async (agent) => (agent === 'second' && !secondInstalled ? null : `/usr/bin/${agent}`),
+      usesRemoteTarget: async () => remote,
+      readListedAgents: () => null,
+      saveListedAgents: (agents) => { saved.push(agents); return true; },
+    });
+    let secondInstalled = false;
+
+    await accountService.cards();
+    expect(saved).toEqual([[{ agent: AGENT, unsupportedTarget: false }]]);
+
+    // A same list is not saved again.
+    await accountService.cards();
+    expect(saved).toHaveLength(1);
+
+    // A new agent.
+    secondInstalled = true;
+    await accountService.cards();
+    expect(saved).toHaveLength(2);
+    expect(saved[1]).toEqual([
+      { agent: AGENT, unsupportedTarget: false },
+      { agent: 'second', unsupportedTarget: false },
+    ]);
+
+    // The same agents, one now on an unsupported target.
+    remote = true;
+    await accountService.cards();
+    expect(saved).toHaveLength(3);
+    expect(saved[2]).toEqual([
+      { agent: AGENT, unsupportedTarget: true },
+      { agent: 'second', unsupportedTarget: true },
+    ]);
+  });
+
+  it('retries a save that failed on the next check, then stops once it lands', async () => {
+    const attempts: unknown[] = [];
+    const results = [false, true];
+    const accountService = folderService(folderSupport(), {
+      listCliPath: async () => '/usr/bin/test-cli',
+      usesRemoteTarget: async () => false,
+      readListedAgents: () => null,
+      saveListedAgents: (agents) => { attempts.push(agents); return results.shift() ?? true; },
+    });
+
+    await accountService.cards();
+    expect(attempts).toHaveLength(1);
+    await accountService.cards();
+    expect(attempts).toHaveLength(2);
+    await accountService.cards();
+    expect(attempts).toHaveLength(2);
   });
 });
 

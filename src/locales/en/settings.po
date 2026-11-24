@@ -238,6 +238,7 @@ msgstr "Account switching"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
+#: src/renderer/components/settings/tabs/AccountsTab.tsx
 msgid "Accounts"
 msgstr "Accounts"
 
@@ -2169,6 +2170,10 @@ msgstr "Reachable"
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "Reachable, {relayLatencyMs} ms"
 msgstr "Reachable, {relayLatencyMs} ms"
+
+#: src/renderer/components/settings/tabs/AccountsTab.tsx
+msgid "Reading usage"
+msgstr "Reading usage"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
 msgid "Reads every source again, in every project."

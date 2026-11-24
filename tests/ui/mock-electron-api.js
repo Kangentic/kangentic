@@ -4330,10 +4330,40 @@
       window.__mockAccountLoginOutput = function (data) {
         if (openLogin) fire('loginOutput', openLogin.loginId, data);
       };
+      // Main's first answer after a launch, before its CLI check lands (task #1202). A test sets
+      // window.__mockAccountsUnchecked to answer as a first launch with nothing saved, then calls
+      // window.__mockFinishAccountsCheck() to land the check, as main's push does.
+      // A test that also sets window.__mockAccountsUncheckedCards answers as a later launch instead:
+      // main has saved cards from the last checked list, so the unchecked answer carries the seeded
+      // cards (with their saved rows and unsupportedTarget) and only `checked` is false.
+      // Read at each list, since a test's init script runs after this mock is built.
+      // A test that sets window.__mockHoldAccountUsage keeps each usage read running until it calls
+      // window.__mockReleaseAccountUsage().
+      var checkFinished = false;
+      var heldUsageReads = [];
+      if (typeof window !== 'undefined') {
+        window.__mockFinishAccountsCheck = function () {
+          checkFinished = true;
+          fire('changed');
+        };
+        window.__mockReleaseAccountUsage = function () {
+          window.__mockHoldAccountUsage = false;
+          heldUsageReads.splice(0).forEach(function (release) { release(); });
+        };
+      }
       return {
-        list: async function () { return snapshot(); },
+        list: async function () {
+          var checked = checkFinished || !window.__mockAccountsUnchecked;
+          if (checked) return { cards: snapshot(), checked: true };
+          return { cards: window.__mockAccountsUncheckedCards ? snapshot() : [], checked: false };
+        },
         startLogin: async function (request) {
           record('startLogin', [request]);
+          // A test that sets window.__mockHoldAccountLoginStart keeps main "starting" the sign-in (as
+          // while it looks for the CLI) until it calls window.__mockReleaseAccountLoginStart().
+          if (window.__mockHoldAccountLoginStart) {
+            await new Promise(function (resolve) { window.__mockReleaseAccountLoginStart = resolve; });
+          }
           if (window.__mockAccountLoginFails) return { ok: false, reason: 'failed' };
           var agent = request.agent || (cardOf(request.accountId) || {}).agent;
           // As main answers for an agent with no accounts: there is no card to add the account to.
@@ -4388,7 +4418,11 @@
           var outcome = window.__mockAccountSwitchOutcome || { moved: 0, pending: 0, failed: 0 };
           return { ok: true, agent: card.agent, accountName: moved.email || null, moved: outcome.moved, pending: outcome.pending || 0, failed: outcome.failed };
         },
-        refreshUsage: async function () { record('refreshUsage', []); },
+        refreshUsage: function () {
+          record('refreshUsage', []);
+          if (!window.__mockHoldAccountUsage) return Promise.resolve();
+          return new Promise(function (resolve) { heldUsageReads.push(resolve); });
+        },
         onChanged: function (callback) { return subscribe('changed', callback); },
         // Main pushes these only when a session reaches its usage limit, so the mock never does
         // on its own. Tests push one via window.__mockFireAccountSwitched(payload) or

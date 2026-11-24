@@ -265,7 +265,8 @@ describe('Claude usage windows', () => {
     if (!isMockObject(accountsApi) || typeof accountsApi.list !== 'function') {
       throw new Error('mock-electron-api-parity: the mock has no accounts.list().');
     }
-    const cards: unknown = await accountsApi.list();
+    const answer: unknown = await accountsApi.list();
+    const cards = isMockObject(answer) ? answer.cards : undefined;
     const claudeCard = Array.isArray(cards)
       ? cards.find((card: unknown) => isMockObject(card) && card.agent === 'claude')
       : undefined;

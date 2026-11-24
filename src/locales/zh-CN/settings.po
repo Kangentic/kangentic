@@ -256,6 +256,7 @@ msgstr "账户切换"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
+#: src/renderer/components/settings/tabs/AccountsTab.tsx
 #, fuzzy
 msgid "Accounts"
 msgstr "账户"
@@ -2260,6 +2261,10 @@ msgstr "可连接"
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "Reachable, {relayLatencyMs} ms"
 msgstr "可连接，{relayLatencyMs} ms"
+
+#: src/renderer/components/settings/tabs/AccountsTab.tsx
+msgid "Reading usage"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
 msgid "Reads every source again, in every project."

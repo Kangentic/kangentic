@@ -83,7 +83,7 @@ test('a second Claude account signs in, takes the next session, and shares the d
 
     const listAccounts = (): Promise<Array<{ id: string; kind: string; status: string; email: string | null; folderPath: string | null }>> =>
       page.evaluate(async () => {
-        const cards = await window.electronAPI.accounts.list();
+        const { cards } = await window.electronAPI.accounts.list();
         return cards.find((card) => card.agent === 'claude')?.accounts ?? [];
       });
 

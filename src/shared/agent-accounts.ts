@@ -207,3 +207,20 @@ export interface AgentAccountsCard {
   /** The CLI runs in WSL, where account folders are not provisioned in this release. */
   unsupportedTarget: boolean;
 }
+
+/**
+ * What Settings > Accounts lists (task #1202). Until the CLI check of this run lands, main answers
+ * from the agents the last checked list held and their saved rows, so the tab paints at once, and
+ * `checked` is false. Main pushes `accounts:changed` when the check lands.
+ */
+export interface AgentAccountsList {
+  cards: AgentAccountsCard[];
+  /** The cards come from this run's CLI check, so an empty list means no agent has accounts. */
+  checked: boolean;
+}
+
+/** One agent the last checked list held, saved between launches for the next launch's first answer. */
+export interface ListedAgent {
+  agent: string;
+  unsupportedTarget: boolean;
+}
