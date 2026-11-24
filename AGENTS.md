@@ -280,6 +280,7 @@ indexes it and Cursor gets no copy.
 - `central-embedding-engine.md` - only `embed-engine.ts` embeds; call sites index and `markDirty()`, never embed inline.
 - `retrieval-out-of-process.md` - the index and agent transcript reads run in the `kangentic-retrieval` worker; main schedules and relays.
 - `pty-host-out-of-process.md` - every PTY and its per-chunk work run in the `kangentic-pty-host` utility process; main holds mirrors and async reads; keystrokes and echo ride each renderer's own port; the host's I/O thread starts no process.
+- `main-starts-no-process.md` - main starts no child process on its own thread; a start goes through an off-main drop-in, or is classified with its reason.
 - `dictation-out-of-process.md` - `sherpa-onnx-node` is imported only inside the `kangentic-dictation` utilityProcess worker.
 - `pop-out-surface-registry.md` - every `BrowserWindow` comes from `createWindow` or the pop-out manager, through the registries.
 - `spawn-entry-point-parity.md` - every agent spawn routes through `spawnAgent` / `prepareAgentSpawn` and `runSpawnPreamble`.
