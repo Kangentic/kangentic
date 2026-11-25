@@ -8,6 +8,7 @@ import {
   type SessionUsage,
   type SessionEvent,
   type SessionIdStoreEvidence,
+  type SessionIdStoreEvidenceOptions,
   type StoredCliTarget,
 } from '../../../../shared/types';
 import { NO_ACTIVITY_HOLD_FLAG } from '../../../../shared/background-shell-hold';
@@ -130,26 +131,39 @@ export class CodexSessionHistoryParser {
    * about one session: it holds every run of the day, so any earlier Codex run
    * made it `present` (Sentry DESKTOP-36 and DESKTOP-4C on 0.62.0). The match
    * has no upper bound, because a Codex that waits for its first turn may make
-   * its conversation minutes after the spawn. A sibling started later in the
-   * same cwd can read as this session's, which only moves the answer toward
-   * `present`, the side that reports. Without `spawnedAt` it is the folder check.
+   * its conversation minutes after the spawn. Without `spawnedAt` it is the
+   * folder check.
+   *
+   * Two kinds of rollout are someone else's and never count. One is a rollout
+   * whose id is in `claimedSessionIds`, an id another session of this run
+   * captured: Sentry DESKTOP-36 on 0.63.0 was an untouched Command Terminal that
+   * read `present` from the rollout of a Codex started 13 s later in the same
+   * folder. The other is a subagent's rollout, whose parent keeps its own
+   * rollout in the same cwd. A sibling whose id nobody captured still reads as
+   * this session's, which only moves the answer toward `present`, the side that
+   * reports. The match is not cut off at the next sibling's spawn instead: a
+   * session typed into stamps its `session_meta` a few seconds after its own
+   * spawn, so a sibling spawned inside that lag would hide this session's own
+   * rollout and drop a real miss.
    *
    * Measured on 0.171.0 (Windows): `session_meta.payload.cwd` is the spawn's
    * cwd as given, backslashes and case kept, for a project root and a
    * worktree. A Command Terminal with no prompt writes no rollout and fires no
-   * SessionStart, however long it waits. Typed into a minute later, it writes
+   * SessionStart, however long it waits, and writes none when it is closed
+   * either (closed 32 s in). Typed into a minute later, it writes
    * the file at the prompt but stamps `session_meta` with its launch time, a few
-   * seconds after the spawn: at or after this session's spawn, and before a
-   * sibling's started later, so a sibling never reads it as its own.
+   * seconds after the spawn: at or after this session's spawn, and before the
+   * spawn of a sibling started after that stamp, so such a sibling never reads
+   * it as its own.
    */
-  static async storeEvidence(options: { cwd: string; cliTarget?: StoredCliTarget | null; spawnedAt?: Date }): Promise<SessionIdStoreEvidence> {
+  static async storeEvidence(options: SessionIdStoreEvidenceOptions): Promise<SessionIdStoreEvidence> {
     const place = placeFromStored(options.cliTarget ?? null);
     if (place?.kind === 'ssh') return 'unknown';
     const directories = Array.from(new Set([codexSessionsDirForToday(place), codexSessionsDirForYesterday(place)]));
     const answers = await Promise.all(directories.map((directory) => pathStoreEvidence(directory, 'directory')));
     if (options.spawnedAt && answers.includes('present')) {
       const normalizedCwd = normalizeCwdForCompare(cliPathForTarget(options.cwd, place));
-      if (hasRolloutCreatedSince(directories, normalizedCwd, options.spawnedAt.getTime())) return 'present';
+      if (hasRolloutCreatedSince(directories, normalizedCwd, options.spawnedAt.getTime(), options.claimedSessionIds)) return 'present';
       // A folder that could not be read may hold it, so only a clean miss is `absent`.
       return answers.includes('unknown') ? 'unknown' : 'absent';
     }
@@ -632,16 +646,26 @@ function safeReaddirWithStats(directory: string): Array<{ name: string; mtimeMs:
  * `captureSessionIdFromFilesystem` allows). `storeEvidence`'s question, so it
  * has no upper bound and reads no cheap mtime away: a rollout this session made
  * has an mtime at or after the spawn, and the 30 s floor only spares reading
- * every historical file.
+ * every historical file. A rollout another session claimed (`claimedSessionIds`)
+ * is skipped by its file name, before it is read, and a subagent's rollout once
+ * its `session_meta` says so.
  */
-function hasRolloutCreatedSince(directories: string[], normalizedCwd: string, spawnedAtMs: number): boolean {
+function hasRolloutCreatedSince(
+  directories: string[],
+  normalizedCwd: string,
+  spawnedAtMs: number,
+  claimedSessionIds?: ReadonlySet<string>,
+): boolean {
   const pattern = /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/;
   for (const directory of directories) {
     const entries = safeReaddirWithStats(directory)
       .filter((entry) => pattern.test(entry.name) && entry.mtimeMs >= spawnedAtMs - 30_000);
     for (const entry of entries) {
+      const fileSessionId = entry.name.match(pattern)![1];
+      if (claimedSessionIds?.has(fileSessionId)) continue;
       const meta = readSessionMeta(path.join(directory, entry.name));
-      if (!meta || meta.id !== entry.name.match(pattern)![1]) continue;
+      if (!meta || meta.id !== fileSessionId) continue;
+      if (meta.isSubagent) continue;
       if (normalizeCwdForCompare(meta.cwd) !== normalizedCwd) continue;
       if (meta.createdAtMs >= spawnedAtMs - 1000) return true;
     }

@@ -716,8 +716,21 @@ in one Sentry org, one triage surface.
     conversation file until its first turn is Codex's source (a new session's file is created at
     its first persist), not yet a measurement on a signed-in run. Were it written at launch, an
     untouched terminal would read `present` and still report: the rule then does nothing, and
-    never drops a real miss. A second Codex started later in the same folder can read as this
-    session's, which only moves the answer toward `present`.
+    never drops a real miss. A rollout that is someone else's never counts. That covers a
+    rollout whose id another session of this run captured, kept after that session's row is
+    gone, and a subagent's rollout, whose parent keeps its own. DESKTOP-36 came back on 0.63.0 as
+    the same terminal, removed about 30 s in, reading `present` from the rollout of a Codex
+    started 13 s later in the same folder that had already exited. A second Codex whose id
+    nobody captured can still read as this session's, which only moves the answer toward
+    `present`. In that exact case, the same agent in the same folder with spawns under 60 s
+    apart, the filesystem scan drops the second Codex's match as ambiguous, so its id can only
+    come from its hook or its output. The match is not cut off at the next spawn in the folder.
+    A session typed into stamps its `session_meta` a few seconds after its own spawn, so a
+    sibling spawned inside that lag would hide the session's own rollout and drop a real miss.
+    `hook_seen` plays no part in the rule. That event read `yes` by the window, which is
+    unexplained: it ran Codex 0.170.0, which has not been measured. On 0.171.0 a Command Terminal
+    with no prompt, closed 32 s in, wrote no rollout at all, at launch or on exit, and its report
+    settled at the removal before its PTY exited.
     The DESKTOP-36 events after the signed-out drop were one install's Codex 0.163.0 that ran
     with a command-line prompt, exited seconds in and wrote no rollout, on three days. As a
     missed id it hid among the real misses, and dropping it would lose the only sign that a
@@ -745,7 +758,8 @@ in one Sentry org, one triage surface.
     `found`, `empty`, `dropped` for a match another session could own, `failed`), `id_store`
     (`present`, `absent`, `unknown`: whether the agent's own store holds this session, from the
     adapter's `sessionId.storeEvidence`: for Codex a rollout in today's or yesterday's UTC folder
-    made since the spawn in the session's cwd, and for OpenCode a `session` or `session_v2` row
+    made since the spawn in the session's cwd, whose id no other session of this run captured and
+    that is no subagent's, and for OpenCode a `session` or `session_v2` row
     of `opencode.db` made since the spawn in the session's cwd, which until DESKTOP-3A was only
     whether the file existed), `node_on_path` (`yes`, `no`, `unknown`: whether a bare `node` resolves on
     main's PATH, the one a local session's shell starts from, asked at the window. The command

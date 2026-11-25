@@ -237,6 +237,7 @@ describe('a session whose id the capture window did not see', () => {
       cwd: tmpDir,
       cliTarget: null,
       spawnedAt: new Date(registryRowOf(manager, sessionId).startedAt),
+      claimedSessionIds: new Set(),
     });
     expect(reportsNamed('AgentSessionIdCapturedLateError')[0].tags.id_store).toBe('present');
   });
@@ -254,6 +255,146 @@ describe('a session whose id the capture window did not see', () => {
       cwd: tmpDir,
       cliTarget: wslTarget,
       spawnedAt: new Date(registryRowOf(manager, sessionId).startedAt),
+      claimedSessionIds: new Set(),
+    });
+  });
+
+  // Sentry DESKTOP-36 on 0.63.0: an untouched Command Terminal read `present` from the rollout of
+  // a Codex started 13 s later in the same folder, which exited before the terminal was removed.
+  it('names the id a removed sibling captured to the store check, at the window and at the settle', async () => {
+    const manager = makeManager();
+    const untouchedId = await spawnAgentSession(manager, 'none');
+    await vi.advanceTimersByTimeAsync(13_000);
+
+    const siblingParser = makeAgentParser();
+    (siblingParser.runtime!.sessionId as { fromHook?: (hookContext: string) => string | null }).fromHook = (hookContext) =>
+      (JSON.parse(hookContext) as { session_id?: string }).session_id ?? null;
+    const sibling = await manager.spawn({
+      taskId: 'task-2', projectId: 'project-1', command: 'agent', cwd: tmpDir, agentParser: siblingParser, agentName: 'codex',
+    });
+    const { statusFileReader } = manager as unknown as {
+      statusFileReader: { callbacks: { onEventsParsed(sessionId: string, rawLines: string[], events: unknown[]): void } };
+    };
+    const hookLine = JSON.stringify({ ts: Date.now(), type: 'session_start', hookContext: JSON.stringify({ session_id: 'sibling-rollout-0001' }) });
+    statusFileReader.callbacks.onEventsParsed(sibling.id, [hookLine], []);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(registryRowOf(manager, sibling.id).agentSessionId).toBe('sibling-rollout-0001');
+    manager.remove(sibling.id);
+
+    await vi.advanceTimersByTimeAsync(WINDOW_MS - 13_000);
+    manager.remove(untouchedId);
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(storeEvidence).toHaveBeenCalledTimes(2);
+    for (const [options] of storeEvidence.mock.calls) {
+      expect((options as { claimedSessionIds?: ReadonlySet<string> }).claimedSessionIds).toEqual(new Set(['sibling-rollout-0001']));
+    }
+  });
+
+  it('never names a session\'s own id among the ids other sessions claimed', async () => {
+    const manager = makeManager();
+    const sessionId = await spawnAgentSession(manager);
+    reportAgentSessionId(manager, sessionId, 'own-rollout-0001');
+    const otherId = (await manager.spawn({
+      taskId: 'task-2', projectId: 'project-1', command: 'agent', cwd: tmpDir, agentParser: makeAgentParser(), agentName: 'codex',
+    })).id;
+    const { claimedSessionIdsBesides } = manager as unknown as { claimedSessionIdsBesides(session: ManagedSession): ReadonlySet<string> };
+
+    expect(claimedSessionIdsBesides.call(manager, registryRowOf(manager, sessionId))).toEqual(new Set());
+    expect(claimedSessionIdsBesides.call(manager, registryRowOf(manager, otherId))).toEqual(new Set(['own-rollout-0001']));
+  });
+
+  describe('the ids other sessions claimed', () => {
+    type ClaimInternals = {
+      claimedSessionIdsBesides(session: ManagedSession): ReadonlySet<string>;
+      rememberClaimedAgentSessionId(agentSessionId: string, sessionId: string): void;
+      claimedAgentSessionIds: Map<string, string>;
+    };
+
+    async function spawnOther(manager: SessionManager, cwd = tmpDir): Promise<string> {
+      return (await manager.spawn({
+        taskId: 'task-2', projectId: 'project-1', command: 'agent', cwd, agentParser: makeAgentParser(), agentName: 'codex',
+      })).id;
+    }
+
+    it('reads the claimed set at each store check, so a sibling that captures after the window is named at the settle', async () => {
+      const manager = makeManager();
+      const siblingFolder = fs.mkdtempSync(path.join(tmpDir, 'sibling-'));
+      const untouchedId = await spawnAgentSession(manager, 'none');
+      const siblingId = await spawnOther(manager, siblingFolder);
+
+      await passTheWindow();
+      reportAgentSessionId(manager, siblingId, 'late-sibling-rollout-0001');
+      await vi.advanceTimersByTimeAsync(OUTPUT_SETTLE_MS + 10);
+      manager.remove(untouchedId);
+      await vi.advanceTimersByTimeAsync(10);
+
+      // The sibling runs in its own folder, so these are the untouched session's checks only.
+      const untouchedChecks = storeEvidence.mock.calls
+        .map(([options]) => options as { cwd: string; claimedSessionIds?: ReadonlySet<string> })
+        .filter((options) => options.cwd === tmpDir);
+      expect(untouchedChecks).toHaveLength(2);
+      expect(untouchedChecks[0].claimedSessionIds).toEqual(new Set());
+      expect(untouchedChecks[1].claimedSessionIds).toEqual(new Set(['late-sibling-rollout-0001']));
+    });
+
+    it('names the id a live other row holds, though no capture callback ran for it', async () => {
+      const manager = makeManager();
+      const sessionId = await spawnAgentSession(manager);
+      const otherId = await spawnOther(manager);
+      registryRowOf(manager, otherId).agentSessionId = 'resume-spawn-time-id-0001';
+      const internals = manager as unknown as ClaimInternals;
+
+      expect(internals.claimedSessionIdsBesides.call(manager, registryRowOf(manager, sessionId))).toEqual(new Set(['resume-spawn-time-id-0001']));
+      expect(internals.claimedSessionIdsBesides.call(manager, registryRowOf(manager, otherId))).toEqual(new Set());
+    });
+
+    it('leaves a session its own captured id even when another live row holds the same id', async () => {
+      const manager = makeManager();
+      const capturerId = await spawnAgentSession(manager);
+      reportAgentSessionId(manager, capturerId, 'shared-rollout-0001');
+      const otherId = await spawnOther(manager);
+      registryRowOf(manager, otherId).agentSessionId = 'shared-rollout-0001';
+      const internals = manager as unknown as ClaimInternals;
+
+      expect(internals.claimedSessionIdsBesides.call(manager, registryRowOf(manager, capturerId)).has('shared-rollout-0001')).toBe(false);
+      // The other row holds the id on its own row, which is also its own: it is left out there too.
+      expect(internals.claimedSessionIdsBesides.call(manager, registryRowOf(manager, otherId)).has('shared-rollout-0001')).toBe(false);
+      // A third session, holding neither, is told the id is claimed.
+      const bystanderId = await spawnOther(manager);
+      expect(internals.claimedSessionIdsBesides.call(manager, registryRowOf(manager, bystanderId)).has('shared-rollout-0001')).toBe(true);
+    });
+
+    it('keeps at most 512 captured ids and evicts the oldest first', () => {
+      const manager = makeManager();
+      const internals = manager as unknown as ClaimInternals;
+      for (let index = 0; index <= 512; index += 1) {
+        internals.rememberClaimedAgentSessionId(`claimed-id-${index}`, 'session-a');
+      }
+
+      expect(internals.claimedAgentSessionIds.size).toBe(512);
+      expect(internals.claimedAgentSessionIds.has('claimed-id-0')).toBe(false);
+      expect(internals.claimedAgentSessionIds.has('claimed-id-1')).toBe(true);
+      expect(internals.claimedAgentSessionIds.has('claimed-id-512')).toBe(true);
+    });
+
+    it('moves a re-captured id to the newest end, so it outlives the next-oldest', () => {
+      const manager = makeManager();
+      const internals = manager as unknown as ClaimInternals;
+      internals.rememberClaimedAgentSessionId('claimed-first', 'session-a');
+      for (let index = 1; index < 512; index += 1) {
+        internals.rememberClaimedAgentSessionId(`claimed-id-${index}`, 'session-a');
+      }
+      expect(internals.claimedAgentSessionIds.size).toBe(512);
+
+      internals.rememberClaimedAgentSessionId('claimed-first', 'session-b');
+      internals.rememberClaimedAgentSessionId('claimed-extra', 'session-a');
+
+      expect(internals.claimedAgentSessionIds.size).toBe(512);
+      expect(internals.claimedAgentSessionIds.has('claimed-first')).toBe(true);
+      expect(internals.claimedAgentSessionIds.get('claimed-first')).toBe('session-b');
+      expect(internals.claimedAgentSessionIds.has('claimed-id-1')).toBe(false);
+      expect(internals.claimedAgentSessionIds.has('claimed-id-2')).toBe(true);
     });
   });
 

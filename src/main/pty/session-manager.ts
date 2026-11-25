@@ -123,6 +123,9 @@ import {
 import { agentProcessPresenceOf, type AgentProcessPresence } from './host/agent-process-presence';
 import { leftoverLogLine, type LeftoverProcessEntry, type StopProcessOutcome, type StopProcessRequest, type StopProcessResult, type TaggedReapResult, type TaskProbeEntry } from './process-tag/tagged-reap';
 
+/** How many captured agent session ids the run keeps for the store checks (`claimedAgentSessionIds`). */
+const CLAIMED_AGENT_SESSION_ID_LIMIT = 512;
+
 /** How long one reap batch, or one Stop, may run in the host: two scans, the
  *  1 s grace between them, the kills and a survivor check. Counted from when
  *  the batch starts, not from the send: the host runs them one at a time, and
@@ -705,6 +708,14 @@ export class SessionManager extends EventEmitter {
    * has yet to land (see transcriptReadLanded).
    */
   private idleTranscriptAnchors = new Map<string, TranscriptPositionSample>();
+  /**
+   * Every agent session id a session of this run captured, by the session that
+   * captured it. Kept past the row's removal, since a sibling that exited before
+   * a session settles still owns its rollout (Sentry DESKTOP-36 on 0.63.0). The
+   * store check excludes other sessions' ids (`claimedSessionIdsBesides`).
+   * Bounded, oldest out first.
+   */
+  private claimedAgentSessionIds = new Map<string, string>();
   /** The tasks the board has stopped, and how long each stop lasts (`setTaskStopped`). */
   private stoppedTasks = new Map<string, TaskStop>();
   /** The anchor of each session's current turn (see noteTurnStarted). */
@@ -860,9 +871,13 @@ export class SessionManager extends EventEmitter {
         // never-captured session settles, so a conversation made after the window is still found.
         const startedAtMs = Date.parse(session.startedAt);
         const spawnedAt = Number.isFinite(startedAtMs) ? new Date(startedAtMs) : undefined;
+        // The ids other sessions claimed are read at each call: the check runs again at the settle,
+        // and a sibling's id can arrive between the two.
         noteSessionIdCaptureWindowPassed(
           session,
-          storeEvidence ? () => storeEvidence({ cwd: session.commandCwd, cliTarget, spawnedAt }) : null,
+          storeEvidence
+            ? () => storeEvidence({ cwd: session.commandCwd, cliTarget, spawnedAt, claimedSessionIds: this.claimedSessionIdsBesides(session) })
+            : null,
           loginEvidence ? () => loginEvidence({ cliPath, cliTarget, accountHome: accountHome ?? null }) : null,
         );
       },
@@ -1020,6 +1035,7 @@ export class SessionManager extends EventEmitter {
         // A session past the capture window was waiting on this: a late capture, not a miss.
         // Below the drop above, so an id the row never takes stays a miss.
         this.sessionIdManager.noteCaptured(sessionId, options.source);
+        this.rememberClaimedAgentSessionId(agentReportedId, sessionId);
         // The host can stop scanning this session's output for an id, unless this one was only worked
         // out, when the agent's own report is still wanted to confirm it.
         if (!options.inferred) this.host.post({ type: 'setAgentSessionIdKnown', sessionId });
@@ -3490,6 +3506,36 @@ export class SessionManager extends EventEmitter {
    */
   setAccountHomeResolver(resolver: (accountId: string) => string | null | undefined): void {
     this.accountHomeResolver = resolver;
+  }
+
+  /** Note that `sessionId` captured `agentSessionId`, for the store checks of the other sessions. */
+  private rememberClaimedAgentSessionId(agentSessionId: string, sessionId: string): void {
+    this.claimedAgentSessionIds.delete(agentSessionId);
+    this.claimedAgentSessionIds.set(agentSessionId, sessionId);
+    while (this.claimedAgentSessionIds.size > CLAIMED_AGENT_SESSION_ID_LIMIT) {
+      const oldest = this.claimedAgentSessionIds.keys().next().value;
+      if (oldest === undefined) break;
+      this.claimedAgentSessionIds.delete(oldest);
+    }
+  }
+
+  /**
+   * The agent session ids other sessions of this run hold or captured, for a store check about
+   * `session`: a conversation with one of them is someone else's. Never this session's own: the
+   * ids it captured and the one its row holds are left out, whoever else claims them.
+   */
+  private claimedSessionIdsBesides(session: ManagedSession): ReadonlySet<string> {
+    const ownIds = new Set<string>();
+    const othersIds: string[] = [];
+    for (const [agentSessionId, claimingSessionId] of this.claimedAgentSessionIds) {
+      if (claimingSessionId === session.id) ownIds.add(agentSessionId);
+      else othersIds.push(agentSessionId);
+    }
+    if (session.agentSessionId) ownIds.add(session.agentSessionId);
+    for (const other of this.registry.values()) {
+      if (other.id !== session.id && other.agentSessionId) othersIds.push(other.agentSessionId);
+    }
+    return new Set(othersIds.filter((agentSessionId) => !ownIds.has(agentSessionId)));
   }
 
   /**

@@ -1722,6 +1722,85 @@ describe('the session id capture reports', () => {
       expect(reportHandledError.mock.calls[0][1]).toMatchObject({ id_store: 'absent' });
     });
 
+    // Sentry DESKTOP-36 on 0.63.0: the same terminal, removed about 30 s in, read `present` from
+    // the rollout of a Codex started 13 s later in the same folder, whose id that sibling captured.
+    // The real Codex check runs over a sandboxed CODEX_HOME holding that rollout.
+    describe('beside a later sibling\'s rollout in the same folder', () => {
+      const siblingId = '88888888-8888-4888-8888-888888888888';
+      const removedAt30s = { kind: 'never', settledBy: 'removed', settledAt: STARTED_AT_MS + 32_000, filesystemScan: 'empty' } as const;
+      const event063 = {
+        ...untouched,
+        agentCliVersion: '0.170.0 (Codex CLI)',
+        // A line the hooks wrote by the window, as the event's `hook_seen=yes` says. The rule reads no hook.
+        agentHookLineAt: STARTED_AT_MS + 29_000,
+        agentRanAt: STARTED_AT_MS + 1_000,
+      } as const satisfies Partial<ManagedSession>;
+      const originalCodexHome = process.env.CODEX_HOME;
+      let codexHome: string;
+      let projectFolder: string;
+      let storeCheck: () => Promise<SessionIdStoreEvidence>;
+
+      beforeEach(async () => {
+        codexHome = realFs.mkdtempSync(path.join(os.tmpdir(), 'launch-report-codex-home-'));
+        projectFolder = realFs.mkdtempSync(path.join(os.tmpdir(), 'launch-report-codex-project-'));
+        process.env.CODEX_HOME = codexHome;
+        const { CodexAdapter } = await import('../../src/main/agent/adapters/codex/codex-adapter');
+        const { codexSessionsDirForToday } = await import('../../src/main/agent/adapters/codex/session-history-parser');
+        const spawnedAt = new Date(Date.now() - 32_000);
+        const rolloutFolder = codexSessionsDirForToday();
+        realFs.mkdirSync(rolloutFolder, { recursive: true });
+        const createdAt = new Date(spawnedAt.getTime() + 13_000).toISOString();
+        const meta = { type: 'session_meta', payload: { id: siblingId, cwd: projectFolder.replace(/\\/g, '/'), timestamp: createdAt } };
+        realFs.writeFileSync(path.join(rolloutFolder, `rollout-${createdAt.replace(/[:.]/g, '-')}-${siblingId}.jsonl`), `${JSON.stringify(meta)}\n`);
+        const check = new CodexAdapter().runtime.sessionId?.storeEvidence;
+        if (!check) throw new Error('Codex declares no store evidence');
+        storeCheck = () => check({ cwd: projectFolder, spawnedAt, claimedSessionIds: new Set([siblingId]) });
+      });
+
+      afterEach(() => {
+        if (originalCodexHome === undefined) delete process.env.CODEX_HOME;
+        else process.env.CODEX_HOME = originalCodexHome;
+        realFs.rmSync(codexHome, { recursive: true, force: true });
+        realFs.rmSync(projectFolder, { recursive: true, force: true });
+      });
+
+      it('sends nothing for the terminal nobody typed into', async () => {
+        const removed = session({ resuming: false, ...event063 });
+        // Hold each store check's promise, so the test waits on the real fs check itself
+        // rather than a fixed sleep that a slow disk could outlast.
+        const storeChecks: Array<Promise<SessionIdStoreEvidence>> = [];
+        const watchedStoreCheck = (): Promise<SessionIdStoreEvidence> => {
+          const answer = storeCheck();
+          storeChecks.push(answer);
+          return answer;
+        };
+        noteSessionIdCaptureWindowPassed(removed, watchedStoreCheck, async () => 'signed_in');
+        reportSessionIdCaptureOutcome(removed.id, removedAt30s, 'running');
+        // Both the window's check and the settle's start on a microtask: wait until each has begun.
+        await vi.waitFor(() => expect(storeChecks.length).toBeGreaterThanOrEqual(2));
+        await Promise.all(storeChecks);
+        await flushReportChain();
+        expect(reportHandledError).not.toHaveBeenCalled();
+      });
+
+      it('still reports the same terminal once a prompt reached it', async () => {
+        const typedInto = session({ resuming: false, ...event063, promptObservedAt: STARTED_AT_MS + 10_000 });
+        noteSessionIdCaptureWindowPassed(typedInto, storeCheck, async () => 'signed_in');
+        reportSessionIdCaptureOutcome(typedInto.id, removedAt30s, 'running');
+        await vi.waitFor(() => expect(reportHandledError).toHaveBeenCalledTimes(1));
+        expect(reportHandledError.mock.calls[0][1]).toMatchObject({
+          start_path: 'command_terminal',
+          opening_prompt: 'none',
+          prompt_seen: 'yes',
+          hook_seen: 'yes',
+          login: 'signed_in',
+          id_store: 'absent',
+          settled_by: 'removed',
+          agent_ran_for_s: '30-60',
+        });
+      });
+    });
+
     it('leaves a late id to the late rule, which reads no store at the settle', async () => {
       const noRollout = vi.fn(async (): Promise<SessionIdStoreEvidence> => 'absent');
       const pastWindow = session({ resuming: false, ...untouched });
