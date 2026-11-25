@@ -1672,7 +1672,7 @@ describe('workflow operations', () => {
     const [takenIn, created] = service.readWorkflow(context, 'home', workflow.id).tasks;
 
     // The plan still holds the take-in, so the read names it though the board task cannot be read.
-    expect(takenIn).toMatchObject({ taskId: existing.id, column: 'no column, gone from its board (taken in at Start)', displayId: null });
+    expect(takenIn).toMatchObject({ taskId: existing.id, column: 'an unknown column (taken in at Start)', displayId: null });
     expect(created).toMatchObject({ taskId: null, column: 'To Do (created at Start)', displayId: null });
   });
 

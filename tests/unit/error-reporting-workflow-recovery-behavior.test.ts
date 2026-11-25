@@ -769,7 +769,7 @@ describe('workflow failures that used to be only logged', () => {
 
       const view = service.readWorkflow(context, 'home', workflow.id);
 
-      expect(view.tasks[0].column).toBe('To Do (taken in at Start)');
+      expect(view.tasks[0].column).toBe('an unknown column (taken in at Start)');
       expectOneReport('take_in_read');
     });
 

@@ -59,7 +59,8 @@ the default, in `kangentic_save_workflow`'s own names (`project "API", baseBranc
 useWorktree false, profile "Heavy"`), so a plan read and sent back keeps them. A planned task
 reads `In To Do (created at Start)`, or, when it takes in a board task with `existingTask`, names
 that task and the column it is in: `In Code Review (#921, taken in at Start)`. A taken-in task whose
-row is gone reads `In no column, gone from its board (taken in at Start)`, and Start refuses it.
+row is gone, or whose board cannot be read, reads `In an unknown column (taken in at Start)`, and
+Start refuses a gone one.
 The task's settings name it as `existingTask "<id>"`, so a plan read and sent back takes in the
 same task rather than planning a new one, and a started task's route must include the column it
 is in. A started task on

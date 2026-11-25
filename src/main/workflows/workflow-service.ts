@@ -109,8 +109,8 @@ export interface WorkflowTaskView {
   /**
    * Where it is: a column name, or for a planned task "To Do (created at Start)",
    * or "Code Review (#921, taken in at Start)" when it takes in a board task (the
-   * column that task is in now), or "no column, gone from its board (taken in at
-   * Start)" when that task's row is gone.
+   * column that task is in now), or "an unknown column (taken in at Start)" when
+   * that task's row is gone or its board cannot be read.
    */
   column: string;
   place: 'planned' | 'todo' | 'working' | 'done';
@@ -258,7 +258,7 @@ export function readWorkflow(context: IpcContext, homeProjectId: string, workflo
       if (takenIn) {
         const takenInColumn = lanes.find((lane) => lane.id === takenIn.swimlane_id)?.name ?? 'its column';
         column = `${takenInColumn} (#${takenIn.display_id}, taken in at Start)`;
-      } else if (planned.existing_task_id) column = 'no column, gone from its board (taken in at Start)';
+      } else if (planned.existing_task_id) column = 'an unknown column (taken in at Start)';
       return {
         key: planned.key,
         taskId: planned.existing_task_id,
