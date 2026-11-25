@@ -14,7 +14,7 @@ vi.mock('electron', () => ({
   BrowserWindow: { fromWebContents: vi.fn(() => null) },
 }));
 
-import type { WebContents } from 'electron';
+import { BrowserWindow, type WebContents } from 'electron';
 // The bound is imported, not restated: a test that hardcoded it would stop
 // reaching the real timeout the moment the constant moved, and then hang on a
 // never-settling race until vitest's own timeout instead of failing clearly.
@@ -25,8 +25,35 @@ function fakeGuest(sendCommand: (method: string) => Promise<unknown>): WebConten
   return { debugger: { sendCommand } } as unknown as WebContents;
 }
 
+/**
+ * A guest inside a host window in the given state, whose capture never settles.
+ * The hold's own `capturePage` calls answer, so a visible or minimized host arms it.
+ */
+function guestInHost(hostWindowState: { minimized: boolean; visible: boolean }): WebContents {
+  vi.mocked(BrowserWindow.fromWebContents).mockReturnValue({
+    isMinimized: () => hostWindowState.minimized,
+    isVisible: () => hostWindowState.visible,
+  } as unknown as BrowserWindow);
+  return {
+    hostWebContents: { isDestroyed: () => false, capturePage: async () => ({}) },
+    isDestroyed: () => false,
+    capturePage: async () => ({}),
+    debugger: { sendCommand: () => new Promise<never>(() => {}) },
+  } as unknown as WebContents;
+}
+
+/** Time a capture out and hand back what it rejected with. */
+async function timedOutError(guest: WebContents): Promise<unknown> {
+  vi.useFakeTimers();
+  const settledError = captureScreenshot(guest).catch((error: unknown) => error);
+  await vi.advanceTimersByTimeAsync(SCREENSHOT_TIMEOUT_MS);
+  return settledError;
+}
+
 afterEach(() => {
   vi.useRealTimers();
+  // The fakeGuest cases below rely on no host window, so a guestInHost case must not leak one.
+  vi.mocked(BrowserWindow.fromWebContents).mockReturnValue(null);
 });
 
 describe('captureScreenshot timeout', () => {
@@ -49,6 +76,31 @@ describe('captureScreenshot timeout', () => {
     const assertion = expect(pending).rejects.toThrow(/not being composited/);
     await vi.advanceTimersByTimeAsync(SCREENSHOT_TIMEOUT_MS);
     await assertion;
+  });
+
+  it('does not tell the agent Kangentic is out of sight when its window is visible (DESKTOP-46)', async () => {
+    // Every Windows event of DESKTOP-46 had the host visible, and the agent told
+    // the user to bring back a window that was already in front of them.
+    const error = await timedOutError(guestInHost({ minimized: false, visible: true }));
+
+    expect(error).toMatchObject({ name: 'ScreenshotNotComposited', hostState: 'visible' });
+    const message = (error as Error).message;
+    expect(message).not.toMatch(/not showing|is showing again|not being composited/);
+    expect(message).toContain(`within ${SCREENSHOT_TIMEOUT_MS / 1000}s`);
+    expect(message).toMatch(/query_dom, query_all and click/);
+  });
+
+  it.each([
+    { label: 'minimized', hostWindowState: { minimized: true, visible: false } },
+    { label: 'hidden', hostWindowState: { minimized: false, visible: false } },
+  ])('still says Kangentic is not showing when its window is $label', async ({ label, hostWindowState }) => {
+    const error = await timedOutError(guestInHost(hostWindowState));
+
+    expect(error).toMatchObject({ name: 'ScreenshotNotComposited', hostState: label });
+    const message = (error as Error).message;
+    expect(message).toMatch(/not being composited/);
+    expect(message).toMatch(/Kangentic is showing again/);
+    expect(message).toMatch(/query_dom, query_all and click/);
   });
 
   it('returns the image untouched when a frame arrives in time', async () => {

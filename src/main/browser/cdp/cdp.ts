@@ -751,8 +751,16 @@ export class ScreenshotNotComposited extends Error {
   constructor(diagnostics: CaptureHoldDiagnostics) {
     // The bound is interpolated, never restated: the agent-facing message, the
     // race below, and the test all have to move together when it changes.
+    const seconds = SCREENSHOT_TIMEOUT_MS / 1000;
+    const nonPixelTools = 'Tools that do not need pixels, such as query_dom, query_all and click, still work, so verify through them instead.';
+    // On a visible host the message makes no claim about the window. Every
+    // Windows event of DESKTOP-46 timed out with the host on screen, and the agent
+    // told the user to bring back a window already in front of them. Whether a
+    // retry helps there is unknown, so the message promises nothing about one.
     super(
-      `The Browser pane produced no frame within ${SCREENSHOT_TIMEOUT_MS / 1000}s, which means its window is not being composited. Retrying will not help until Kangentic is showing again. Tools that do not need pixels, such as query_dom, query_all and click, still work, so verify through them instead.`,
+      diagnostics.hostState === 'visible'
+        ? `The Browser pane drew no frame within ${seconds}s. ${nonPixelTools}`
+        : `The Browser pane produced no frame within ${seconds}s, which means its window is not being composited. Retrying will not help until Kangentic is showing again. ${nonPixelTools}`,
     );
     this.name = 'ScreenshotNotComposited';
     this.hold = diagnostics.hold;
