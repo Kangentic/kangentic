@@ -400,6 +400,17 @@ describe('worktree removal failure report', () => {
         error: () => busyError('unlink', path.join(worktreePathFor('moderate'), 'node_modules', '.bin', 'vite')),
         tags: { path_class: 'node_modules' },
       },
+      {
+        // Only the folder's own rmdir is counted: a held file elsewhere in it names a part to look at.
+        name: 'another file in the folder',
+        error: () => busyError('unlink', path.join(worktreePathFor('moderate'), 'src', 'index.ts')),
+        tags: { path_class: 'other' },
+      },
+      {
+        name: 'an EBUSY that names no path',
+        error: () => Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' }),
+        tags: { errno: 'EBUSY', path_class: 'none' },
+      },
       { name: 'the startup retry', caller: 'startup_retry' },
       { name: 'a cleanup', caller: 'cleanup' },
       { name: 'no caller named', caller: 'other' },
