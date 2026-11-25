@@ -292,6 +292,9 @@ export function removalPathClassOf(worktreePath: string, failedPath: unknown): R
 /** One report per removal failure shape per run: a held folder repeats at every retry. */
 const worktreeRemovalReporter = createChokepointReporter('worktree_removal');
 
+/** The Done move's own removal and its one delayed retry: DESKTOP-3P's 0.63.0 callers. */
+const NO_HOLDER_SEEN_CALLERS: ReadonlySet<WorktreeRemovalCaller> = new Set<WorktreeRemovalCaller>(['done_fallback', 'done_retry_delayed']);
+
 /**
  * A worktree that could not be removed: the folder stays on disk, retried at the
  * next startup, which can repeat indefinitely. Fixed facts only: the profile,
@@ -299,12 +302,26 @@ const worktreeRemovalReporter = createChokepointReporter('worktree_removal');
  * a link refused it, the caller, and where and in which syscall the manual
  * removal last failed. Never a holder's command line or the folder's path.
  *
- * A folder the task's own reap left a process working in is counted and not
- * reported: the process holds it, the leftover-processes toast told the user,
- * and the removal is retried once the process ends (Sentry DESKTOP-3P, 15
- * events, every one `EBUSY` on Windows). `holders: none` is no evidence against
- * that: the holder scan reads command lines, and a process holding the folder
- * only as its working directory cannot be seen on Windows.
+ * Two shapes are counted and not reported (Sentry DESKTOP-3P):
+ *
+ * - A folder the task's own reap left a process working in. The process holds
+ *   it, the leftover-processes toast told the user, and the removal is retried
+ *   once the process ends (15 events, every one `EBUSY` on Windows).
+ * - A Done move's own removal or its delayed retry, on Windows, refused `EBUSY`
+ *   on the folder itself with no holder seen, no timeout and no refusal. Every
+ *   probe came back empty: the reap left nothing of the task there, and the
+ *   holder scan found nothing. The one holder of Kangentic's ever measured, the
+ *   Changes panel's folder watch, is released before every attempt. So the
+ *   event reads the same for an editor, Explorer, an indexer or antivirus as for
+ *   a handle of ours, and another one cannot point at anything new. The folder
+ *   stays and the startup retry removes it, so no user sees it (0.63.0: one
+ *   install, `done_fallback` then `done_retry_delayed`). The cost, accepted by
+ *   the owner: a future Kangentic handle leak in a worktree shows only as an
+ *   Aptabase count. Every other shape still reports.
+ *
+ * `holders: none` is no evidence against a kept process: the holder scan reads
+ * command lines, and a process holding the folder only as its working directory
+ * cannot be seen on Windows.
  */
 function reportWorktreeRemovalFailure(input: {
   profile: WorktreeRemovalProfile;
@@ -321,6 +338,27 @@ function reportWorktreeRemovalFailure(input: {
       source: 'worktree_removal',
       message: 'A worktree the reap left a process in could not be removed',
       reason: 'reap_left_running',
+      caller: input.caller,
+      profile: input.profile,
+      errno,
+      platform: process.platform,
+    });
+    return;
+  }
+  if (
+    process.platform === 'win32'
+    && input.attempt.errno === 'EBUSY'
+    && input.attempt.pathClass === 'root'
+    && !input.holders
+    && !input.timedOut
+    && input.attempt.refused !== true
+    && NO_HOLDER_SEEN_CALLERS.has(input.caller)
+  ) {
+    console.log(`[WORKTREE] Counting but not reporting a held folder no probe explains: caller=${input.caller} errno=${errno}`);
+    trackEvent('app_error', {
+      source: 'worktree_removal',
+      message: 'A worktree no probe saw a holder of could not be removed',
+      reason: 'no_holder_seen',
       caller: input.caller,
       profile: input.profile,
       errno,

@@ -27,6 +27,8 @@ const hoisted = vi.hoisted(() => ({
   reportHandledError: vi.fn(),
   trackEvent: vi.fn(),
   removeWithRetry: vi.fn(async (_target: string, _options?: unknown): Promise<void> => {}),
+  /** Whether the node_modules link was left in place, which refuses the removal. */
+  removeNodeModulesPath: vi.fn(async (_target: string, _options?: unknown): Promise<boolean> => false),
   describeWorktreeHolders: vi.fn(
     async (): Promise<Array<{ pid: number; image: string; commandLine: string }>> => [],
   ),
@@ -77,7 +79,7 @@ vi.mock('../../src/main/git/git-checks', () => ({
 }));
 vi.mock('../../src/main/git/node-modules-link', () => ({
   linkNodeModules: vi.fn(),
-  removeNodeModulesPath: vi.fn(),
+  removeNodeModulesPath: (target: string, options?: unknown) => hoisted.removeNodeModulesPath(target, options),
 }));
 vi.mock('../../src/main/git/rm-with-retry', () => ({
   removeWithRetry: (target: string, options?: unknown) => hoisted.removeWithRetry(target, options),
@@ -122,6 +124,8 @@ beforeEach(() => {
   hoisted.reportHandledError.mockClear();
   hoisted.trackEvent.mockClear();
   hoisted.removeWithRetry.mockReset();
+  hoisted.removeNodeModulesPath.mockReset();
+  hoisted.removeNodeModulesPath.mockResolvedValue(false);
   hoisted.describeWorktreeHolders.mockReset();
   hoisted.describeWorktreeHolders.mockResolvedValue([]);
   hoisted.ipcHandlers.clear();
@@ -299,6 +303,117 @@ describe('worktree removal failure report', () => {
 
     expect(removed).toBe(true);
     expect(hoisted.reportHandledError).not.toHaveBeenCalled();
+  });
+
+  // Sentry DESKTOP-3P on 0.63.0: a Done move's own removal and its delayed retry, 18 s
+  // apart, both EBUSY on the folder's own rmdir with no holder seen, no timeout, no
+  // refusal, and nothing the reap left there. No probe can say who held it, so another
+  // event of that shape cannot point at anything new. Every neighbor still reports.
+  describe('a Done removal no probe can explain', () => {
+    const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
+
+    function stubPlatform(platform: NodeJS.Platform): void {
+      Object.defineProperty(process, 'platform', { ...platformDescriptor, value: platform });
+    }
+
+    afterEach(() => {
+      Object.defineProperty(process, 'platform', platformDescriptor);
+    });
+
+    /** The `worktree_removal` counts sent to Aptabase in place of a report. */
+    function removalCounts(): unknown[] {
+      return hoisted.trackEvent.mock.calls
+        .filter((call) => call[0] === 'app_error' && (call[1] as Record<string, string>).source === 'worktree_removal')
+        .map((call) => call[1]);
+    }
+
+    /** The folder's own rmdir refused while something holds it, as on Windows. */
+    function rootBusy(): Error {
+      return busyError('rmdir', worktreePathFor('moderate'));
+    }
+
+    it.each(['done_fallback', 'done_retry_delayed'] as const)('counts %s and reports nothing', async (caller) => {
+      stubPlatform('win32');
+
+      const removed = await removeFailingWorktree('moderate', rootBusy(), { caller, reapLeftRunning: false });
+
+      expect(removed).toBe(false);
+      expect(hoisted.reportHandledError).not.toHaveBeenCalled();
+      expect(removalCounts()).toEqual([expect.objectContaining({
+        reason: 'no_holder_seen',
+        caller,
+        profile: 'moderate',
+        errno: 'EBUSY',
+        platform: 'win32',
+      })]);
+    });
+
+    type Neighbor = {
+      name: string;
+      platform?: NodeJS.Platform;
+      caller?: import('../../src/main/git/worktree-manager').WorktreeRemovalCaller;
+      error?: () => Error;
+      arrange?: () => void;
+      /** The report's tag that shows this neighbor's one condition really differed. */
+      tags?: Record<string, string>;
+    };
+
+    const neighbors: Neighbor[] = [
+      {
+        name: 'another errno',
+        error: () => Object.assign(new Error('EPERM'), { code: 'EPERM', syscall: 'rmdir', path: worktreePathFor('moderate') }),
+        tags: { errno: 'EPERM', path_class: 'root' },
+      },
+      {
+        name: 'a holder seen',
+        arrange: () => {
+          // The holder scan is skipped under NODE_ENV=test, so run as production.
+          vi.stubEnv('NODE_ENV', 'production');
+          hoisted.describeWorktreeHolders.mockResolvedValue([{ pid: 4242, image: 'node', commandLine: 'node x' }]);
+        },
+        tags: { holders: 'some' },
+      },
+      {
+        name: 'a timeout',
+        error: () => Object.assign(new Error('ran out of time', { cause: rootBusy() }), { name: 'WorktreeRemovalTimeoutError' }),
+        tags: { timed_out: 'true', errno: 'EBUSY', path_class: 'root' },
+      },
+      {
+        name: 'the .git path class',
+        error: () => busyError('unlink', path.join(worktreePathFor('moderate'), '.git', 'index.lock')),
+        tags: { path_class: '.git' },
+      },
+      {
+        name: 'the node_modules path class',
+        error: () => busyError('unlink', path.join(worktreePathFor('moderate'), 'node_modules', '.bin', 'vite')),
+        tags: { path_class: 'node_modules' },
+      },
+      { name: 'the startup retry', caller: 'startup_retry' },
+      { name: 'a cleanup', caller: 'cleanup' },
+      { name: 'a retry after a Stop', caller: 'done_retry_stop' },
+      { name: 'a retry after a recheck', caller: 'done_retry_recheck' },
+      { name: 'a retry after a late reap', caller: 'done_retry_late_reap' },
+      { name: 'macOS', platform: 'darwin', tags: { platform: 'darwin' } },
+      { name: 'Linux', platform: 'linux', tags: { platform: 'linux' } },
+      {
+        // A refused attempt never reaches the delete, so it carries no errno either.
+        name: 'a refusal (which has no errno)',
+        arrange: () => hoisted.removeNodeModulesPath.mockResolvedValue(true),
+        tags: { refused: 'true' },
+      },
+    ];
+
+    it.each(neighbors)('still reports $name', async ({ platform = 'win32', caller = 'done_fallback', error = rootBusy, arrange, tags = {} }) => {
+      stubPlatform(platform);
+      arrange?.();
+
+      const removed = await removeFailingWorktree('moderate', error(), { caller, reapLeftRunning: false });
+
+      expect(removed).toBe(false);
+      expect(removalCounts()).toEqual([]);
+      expect(hoisted.reportHandledError).toHaveBeenCalledTimes(1);
+      expect(hoisted.reportHandledError.mock.calls[0][1]).toMatchObject({ source: 'worktree_removal', caller, ...tags });
+    });
   });
 });
 
