@@ -1726,9 +1726,8 @@ this".
   config write instead). The Add project flow turns the sentinel into a toast, and nothing is
   registered, so `project_create` does not fire either.
 - **A worktree the task's reap left a process in, or that no probe can explain, is counted, not
-  reported.** Every terminal
-  transition runs `reapTaskLeftovers` (`src/main/ipc/helpers/task-cleanup.ts`) before it removes the
-  task's worktree. The reap keeps some processes on purpose (shared, outside, a visible app, under
+  reported.** Every terminal transition runs `reapTaskLeftovers`
+  (`src/main/ipc/helpers/task-cleanup.ts`) before it removes the task's worktree. The reap keeps some processes on purpose (shared, outside, a visible app, under
   tmux or a live PTY), cannot stop some, and with "Stop leftover processes" off stops none. A kept
   process working inside the worktree holds the folder on Windows, so the removal fails with `EBUSY`.
   The user was told through the leftover-processes toast, and the removal is retried once the
@@ -1763,7 +1762,8 @@ this".
 
   A Done move's own removal (`done_fallback`) and its delayed retry (`done_retry_delayed`) are also
   counted when no probe saw anything: on Windows, `EBUSY` on the folder itself (`path_class:
-  root`), no holder seen, no timeout, no refusal, and nothing the reap left there. These send
+  root`), no holder seen, no timeout, no refusal, and nothing the reap left there. A holder scan
+  that failed or timed out names no one, so it counts as no holder seen. These send
   `app_error` with `reason: no_holder_seen`. DESKTOP-3P came back on 0.63.0 as exactly this pair,
   18 seconds apart on one install. Whatever held the folder carried no task tag, so the tagged reap
   cannot see it, and the command-line holder scan cannot see a process that holds the folder only
@@ -1771,7 +1771,7 @@ this".
   recursive folder watch, is released by `notifyWorktreeRemoving` before every attempt. So the
   report reads the same for an editor, Explorer, an indexer or antivirus as for a handle of ours,
   and another event cannot point at anything new. No user sees it: the folder stays and the
-  startup retry removes it. The cost, which the owner accepted on 2026-11-25: a future Kangentic
+  startup retry removes it. The owner accepted one cost on 2026-11-25. A future Kangentic
   folder-handle leak inside a worktree would show only as an Aptabase count, not as a Sentry
   issue. Every other shape still reports: another errno, a holder seen, a timeout, a refusal,
   another path class, any other caller (the other three Done retries, `startup_retry`, `cleanup`

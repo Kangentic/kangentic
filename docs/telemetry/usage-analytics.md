@@ -192,8 +192,7 @@ the fixed message `A remote host link refused the spawn`, because its text names
 `worktree_removal` (a worktree the task's leftover reap had left a process in could not be removed,
 or a Done move's removal on Windows failed `EBUSY` on the folder itself with no holder any probe
 could see, which is counted here and never sent to Sentry; extras: `reason` (`reap_left_running`
-or `no_holder_seen`), `caller`,
-`profile`, `errno`, `platform`, each a fixed word, never a path),
+or `no_holder_seen`), `caller`, `profile`, `errno`, `platform`, each a fixed word, never a path),
 `secondInstanceNoWindow`, `duplicateCreateWindow`, `createWindowBeforeMcpSettled`,
 `globalDbUnreadable`, and `startupFailure`.
 
