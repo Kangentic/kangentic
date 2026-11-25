@@ -63,6 +63,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { buildAnswerMcpServer, buildConfiguredMcpServer, buildWorkflowAgentMcpServer, parseMcpRequestPath } from '../../src/main/agent/mcp-http-server';
 import { appendAnswerCaller, appendWorkflowAgentCaller, isAnswerCaller, workflowIdOfCaller } from '../../src/main/agent/mcp-http/caller-url';
 import { buildServerInstructions } from '../../src/main/agent/mcp-http/server-instructions';
+import { PROJECT_TARGETING_PHRASES } from '../../src/main/agent/mcp-http/project-mention';
 import { PROJECT_SELECTOR_DESCRIPTION, type TaskCounter } from '../../src/main/agent/mcp-http/handler-helpers';
 import type { RequestResolver } from '../../src/main/agent/mcp-http/project-resolver';
 import type { ResolvedBrowserAutomationConfig } from '../../src/main/browser/browser-automation-config';
@@ -165,6 +166,16 @@ describe('project-selector description dedup', () => {
     const instructions = buildServerInstructions(makeResolver());
     expect(instructions).toContain('PROJECT ROUTING RULE');
     expect(instructions).toContain("X's backlog");
+  });
+});
+
+describe('server instructions: project targeting phrases', () => {
+  it('prints every phrase the matcher rates strong, and names the move tool that fixes a wrong guess', () => {
+    const instructions = buildServerInstructions(makeResolver());
+    for (const phrase of PROJECT_TARGETING_PHRASES) {
+      expect(instructions, phrase).toContain(`"${phrase}"`);
+    }
+    expect(instructions).toContain('kangentic_move_task_to_project');
   });
 });
 

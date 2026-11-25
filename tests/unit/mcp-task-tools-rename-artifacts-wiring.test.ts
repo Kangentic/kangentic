@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { z } from 'zod/v4';
+import type { ProjectMention } from '../../src/main/agent/mcp-http/project-mention';
 
 /**
  * MCP task tools: `renameArtifacts` on kangentic_update_task
@@ -35,7 +36,7 @@ vi.mock('../../src/main/agent/mcp-http/handler-helpers', () => ({
   callHandler: mockCallHandler,
   runHandler: vi.fn(),
   withProject: mockWithProject,
-  detectCrossProjectMention: vi.fn((): string[] => []),
+  detectCrossProjectMention: vi.fn((): ProjectMention[] => []),
   sanitizeProjectName: (name: string) => name,
   PROJECT_SELECTOR_DESCRIPTION: 'optional project selector',
 }));
