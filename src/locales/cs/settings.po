@@ -3865,6 +3865,11 @@ msgstr "Při nečinnosti"
 msgid "When Kangentic pauses agents that are waiting on you."
 msgstr "Kdy Kangentic pozastaví agenty, kteří čekají na vás."
 
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
+msgid "When the app holds many file handles, a range for how many it held and how long it had been running"
+msgstr "Když aplikace drží mnoho popisovačů souborů, rozsah toho, kolik jich držela, a jak dlouho běžela"
+
 #: src/renderer/components/settings/tabs/GitTab.tsx
 #, fuzzy
 msgid "Where new work starts, and how current it stays."

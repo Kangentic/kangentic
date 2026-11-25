@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { ErrorEvent } from '@sentry/electron/main';
 import type { PreviousRun } from '../../src/main/analytics/run-uptime';
+import { DESCRIPTOR_BUCKETS, UPTIME_BUCKET_LABELS } from '../../src/main/diagnostics/descriptor-table';
 import { createRequire } from 'node:module';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -214,6 +215,57 @@ describe('error reporting runtime behavior (module-state gated)', () => {
         exitCode: 1,
         stderrTail: "Error: Cannot find module 'sharp'",
       });
+    });
+
+    it('adds a descriptor_table context of fixed buckets to an EMFILE report (Sentry DESKTOP-59)', async () => {
+      const errorReporting = await importFreshErrorReporting();
+      errorReporting.initErrorReporting();
+
+      errorReporting.reportHandledError(new Error('EMFILE: open failed'), { source: 'config', errno: 'EMFILE', syscall: 'open' });
+
+      const descriptorCall = mocks.setContextSpy.mock.calls.find(([name]) => name === 'descriptor_table');
+      expect(descriptorCall).toBeDefined();
+      const context = descriptorCall?.[1] as Record<string, string>;
+      expect(Object.keys(context).sort()).toEqual(['at_report', 'descriptor_latest', 'descriptor_peak', 'pty_host_in_main', 'uptime']);
+      expect(DESCRIPTOR_BUCKETS).toContain(context.at_report);
+      // No probe has started in this test, so its own readings are unknown.
+      expect(context.descriptor_latest).toBe('unknown');
+      expect(context.descriptor_peak).toBe('unknown');
+      expect(UPTIME_BUCKET_LABELS).toContain(context.uptime);
+      expect(context.pty_host_in_main).toBe('false');
+    });
+
+    it('sends the descriptor table high mark as one fixed info message, grouped by its own fingerprint, with bucket tags only', async () => {
+      const errorReporting = await importFreshErrorReporting();
+      errorReporting.initErrorReporting();
+
+      errorReporting.reportDescriptorTableHigh({
+        descriptor_latest: '2048-4095',
+        descriptor_peak: '2048-4095',
+        uptime: '4-12h',
+        pty_host_in_main: 'true',
+      });
+
+      expect(mocks.sentryMock.captureMessage).toHaveBeenCalledTimes(1);
+      expect(mocks.sentryMock.captureMessage).toHaveBeenCalledWith('Main process descriptor table high');
+      expect(mocks.setLevelSpy).toHaveBeenCalledWith('info');
+      expect(mocks.setFingerprintSpy).toHaveBeenCalledWith(['descriptor-table-high']);
+      expect(mocks.setTagSpy.mock.calls).toEqual([
+        ['descriptor_latest', '2048-4095'],
+        ['descriptor_peak', '2048-4095'],
+        ['uptime', '4-12h'],
+        ['pty_host_in_main', 'true'],
+      ]);
+      expect(mocks.setContextSpy).not.toHaveBeenCalled();
+    });
+
+    it('adds no descriptor_table context to a report with another errno', async () => {
+      const errorReporting = await importFreshErrorReporting();
+      errorReporting.initErrorReporting();
+
+      errorReporting.reportHandledError(new Error('ENOSPC: write failed'), { source: 'config', errno: 'ENOSPC' });
+
+      expect(mocks.setContextSpy).not.toHaveBeenCalled();
     });
 
     it('makes ZERO Sentry calls when the module was never initialized (the opt-out promise gate)', async () => {

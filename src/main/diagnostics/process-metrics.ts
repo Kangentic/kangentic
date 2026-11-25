@@ -1,5 +1,6 @@
 import { app } from 'electron';
 import type { ProcessMetrics } from '../../shared/types';
+import { getDescriptorTableReading, readLowestFreeDescriptor } from './descriptor-table';
 
 /**
  * Snapshot of per-process resource usage. Wraps `app.getAppMetrics()` and
@@ -17,6 +18,7 @@ import type { ProcessMetrics } from '../../shared/types';
 export function getProcessMetrics(): ProcessMetrics {
   const metrics = app.getAppMetrics();
   const mainUsage = process.memoryUsage();
+  const probeReading = getDescriptorTableReading();
   return {
     ts: new Date().toISOString(),
     uptimeSec: process.uptime(),
@@ -34,6 +36,11 @@ export function getProcessMetrics(): ProcessMetrics {
       heapUsedBytes: mainUsage.heapUsed,
       externalBytes: mainUsage.external,
       arrayBuffersBytes: mainUsage.arrayBuffers,
+      descriptorTable: {
+        now: readLowestFreeDescriptor(),
+        latest: probeReading?.latest ?? null,
+        peak: probeReading?.peak ?? null,
+      },
     },
     processes: metrics.map((entry) => ({
       pid: entry.pid,

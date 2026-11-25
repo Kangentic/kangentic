@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as https from 'node:https';
 import * as http from 'node:http';
+import { pipeline } from 'node:stream';
 import type { IncomingMessage } from 'node:http';
 import type { ModelFileSpec } from './model-registry';
 
@@ -18,6 +19,15 @@ const REQUEST_TIMEOUT_MS = 60_000;
 export interface DownloadProgress {
   downloadedBytes: number;
   totalBytes: number;
+}
+
+/** Calls `callback` once `stream` has released its descriptor. */
+function whenClosed(stream: fs.WriteStream, callback: () => void): void {
+  if (stream.closed) {
+    callback();
+    return;
+  }
+  stream.once('close', callback);
 }
 
 /**
@@ -44,6 +54,17 @@ function isUnavailableStatus(status: number): boolean {
  * Download one URL to `destPath`, following redirects (HuggingFace 302s to a
  * CDN). Streams to a `.part` file and atomically renames on success. Calls
  * `onChunk` with the byte delta of each received chunk.
+ *
+ * The body goes through `pipeline`, which destroys both streams when either
+ * fails. `response.pipe` did not: a response that errored or was cut off
+ * mid-body (a dropped connection, or the timeout below after the headers)
+ * left the `.part` file's descriptor open for the life of the process (Sentry
+ * DESKTOP-59), and the promise never settled, since a socket failure after the
+ * headers reaches the response and not the request.
+ *
+ * Settles once. A failure removes the `.part` file only after its descriptor
+ * is closed, and a success renames only then, because Windows refuses to
+ * rename a file that is still open.
  */
 function downloadFileTo(
   url: string,
@@ -54,13 +75,25 @@ function downloadFileTo(
   return new Promise<void>((resolve, reject) => {
     const protocol = url.startsWith('http://') ? http : https;
     const partPath = `${destPath}.part`;
+    let settled = false;
+    let fileStream: fs.WriteStream | null = null;
+
+    const fail = (error: unknown): void => {
+      if (settled) return;
+      settled = true;
+      const removePart = (): void => fs.rm(partPath, { force: true }, () => reject(error));
+      if (fileStream) whenClosed(fileStream, removePart);
+      else removePart();
+    };
 
     const request = protocol.get(url, { timeout: REQUEST_TIMEOUT_MS }, (response: IncomingMessage) => {
       const status = response.statusCode ?? 0;
 
-      // Follow redirects.
+      // Follow redirects. The next request owns the outcome from here, so a
+      // late error on this one must not settle it or remove the next one's part.
       if (status >= 300 && status < 400 && response.headers.location) {
         response.resume();
+        settled = true;
         if (redirectsLeft <= 0) {
           reject(new Error(`Too many redirects downloading ${url}`));
           return;
@@ -72,42 +105,40 @@ function downloadFileTo(
 
       if (status !== 200) {
         response.resume();
+        settled = true;
         const message = `Download failed (${status}) for ${url}`;
         reject(isUnavailableStatus(status) ? new ModelDownloadUnavailableError(message) : new Error(message));
         return;
       }
 
-      const fileStream = fs.createWriteStream(partPath);
+      const partStream = fs.createWriteStream(partPath);
+      fileStream = partStream;
       response.on('data', (chunk: Buffer) => onChunk(chunk.length));
-      response.pipe(fileStream);
-      fileStream.on('finish', () => {
-        fileStream.close((closeError) => {
-          if (closeError) {
-            reject(closeError);
-            return;
-          }
+      pipeline(response, partStream, (pipelineError) => {
+        if (pipelineError) {
+          fail(pipelineError);
+          return;
+        }
+        whenClosed(partStream, () => {
+          if (settled) return;
           try {
             fs.renameSync(partPath, destPath);
+            settled = true;
             resolve();
           } catch (renameError) {
             // Windows can briefly lock a just-closed file (AV scan), failing the
             // rename with EPERM/EBUSY. Clean up the partial like the stream- and
             // request-error paths so a stale `.part` is not left behind.
-            fs.rm(partPath, { force: true }, () => reject(renameError));
+            fail(renameError);
           }
         });
-      });
-      fileStream.on('error', (streamError) => {
-        fs.rm(partPath, { force: true }, () => reject(streamError));
       });
     });
 
     request.on('timeout', () => {
       request.destroy(new ModelDownloadUnavailableError(`Timed out downloading ${url}`));
     });
-    request.on('error', (requestError) => {
-      fs.rm(partPath, { force: true }, () => reject(requestError));
-    });
+    request.on('error', fail);
   });
 }
 

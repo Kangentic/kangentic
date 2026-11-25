@@ -3865,6 +3865,11 @@ msgstr "Tétlenség esetén"
 msgid "When Kangentic pauses agents that are waiting on you."
 msgstr "Mikor szüneteltesse a Kangentic az Önre váró ügynököket."
 
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
+msgid "When the app holds many file handles, a range for how many it held and how long it had been running"
+msgstr "Ha az alkalmazás sok fájlleírót tart nyitva, egy tartomány arról, hányat tartott nyitva, és mióta futott"
+
 #: src/renderer/components/settings/tabs/GitTab.tsx
 #, fuzzy
 msgid "Where new work starts, and how current it stays."

@@ -12274,6 +12274,13 @@ export interface CrashRecord {
 }
 
 /**
+ * One reading of main's file descriptor table (`src/main/diagnostics/descriptor-table.ts`):
+ * the lowest free descriptor number, `'full'` when the open itself ran out of
+ * slots, or null when unknown.
+ */
+export type DescriptorReading = number | 'full' | null;
+
+/**
  * Per-process resource usage snapshot. Returned by
  * `kangentic_get_process_metrics`. Wraps `app.getMetrics()` and adds platform
  * + uptime context.
@@ -12295,6 +12302,16 @@ export interface ProcessMetrics {
     heapUsedBytes: number;
     externalBytes: number;
     arrayBuffersBytes: number;
+    /** The lowest free slot in main's file descriptor table, a floor on how
+     *  many it holds (`src/main/diagnostics/descriptor-table.ts`, Sentry
+     *  DESKTOP-59): `now`, read for this snapshot, and the probe's latest
+     *  reading and the run's peak, which are null before its first reading.
+     *  `'full'` means the open found no free slot; null is unknown. */
+    descriptorTable: {
+      now: DescriptorReading;
+      latest: DescriptorReading;
+      peak: DescriptorReading;
+    };
   };
   processes: {
     pid: number;

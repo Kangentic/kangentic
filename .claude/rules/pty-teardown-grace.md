@@ -129,6 +129,12 @@ grace and the close still matter for SessionEnd hooks and the transcript, and fo
   another process by then. The pseudoconsole itself stays open until the host exits (#965): one
   console host per natural exit, and 1,500 of them in one process measured no failure. Restarting
   the host to close them was the alternative, rejected because it ends every terminal it holds.
+  The release also closes the console's input pipe (`releaseConsoleInput`), and so does the exit
+  of a PTY main killed (`releaseKilledPty`). node-pty opens that pipe with `fs.openSync`, a C
+  runtime descriptor, and on its default ConPTY path destroys it neither in `kill()` nor after the
+  exit (microsoft/node-pty#947): 20 PTYs left 20 descriptors held, and main's table grew by about
+  one per agent launch once the host had fallen back into it (Sentry DESKTOP-59, EMFILE). Never
+  before the orphan cleanup is done, which writes through that pipe.
   Background: `docs/architecture/sessions/suspend-and-cleanup.md` (the kill and the young-session
   grace). Measurements of each way Claude Code exits: `docs/architecture/sessions/agent-absence-sweep.md`.
 - **A reap, a suspend and `awaitExit` wait for the agent a closed shell left running.** A PTY's

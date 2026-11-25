@@ -18,6 +18,8 @@ sources:
     title: ownOutputStartIndex
   - resource: src/main/ipc/helpers/resume-miss.ts
   - resource: src/main/pty/host/dead-root-orphans.ts
+  - resource: src/main/pty/spawn/exited-console-input.ts
+    title: writeToExitedConsole and releaseConsoleInput
   - resource: scripts/probe-claude-exit-paths.js
   - resource: scripts/probe-claude-exit-paths-linux.py
   - resource: scripts/probe-conpty-exit-race.js
@@ -356,6 +358,18 @@ worker process grew from 36 MB to 688 MB over 100 exits on node-pty 1.1.0, and t
 Windows. With that kill the same 100 exits ended at 62 MB. The kill frees the worker and nothing
 else, since node-pty's native side forgot the PTY at the exit and the console-list shortcut
 returns no pid once the exit code is set.
+
+The console's input pipe was a third leftover, and the one that runs out. node-pty opens it with
+`fs.openSync`, which takes a C runtime descriptor, and on its default ConPTY path destroys the
+socket over it neither in `kill()` nor after the exit (microsoft/node-pty#947). So every PTY,
+killed or exited, kept one descriptor in the process that spawned it, out of the 8192 the C
+runtime allows. Measured on node-pty 1.2.0-beta.18: 20 PTYs moved the lowest free descriptor from
+3 to 23. With the input destroyed after each kill, it stayed at 3. In a preview whose pty host had
+fallen back into main, main's table grew by about one per agent launch, and running out of it is
+Sentry DESKTOP-59's EMFILE. The host now closes the input (`releaseConsoleInput`, from
+`spawn/exited-console-input.ts`): in `releaseExitedPty` after its kill, and at the exit of a PTY
+main killed (`releaseKilledPty`). Never before the orphan cleanup is done, since that cleanup asks
+the agent to leave through this same pipe.
 
 ## WSL
 

@@ -3303,6 +3303,11 @@ msgstr "閒置時"
 msgid "When Kangentic pauses agents that are waiting on you."
 msgstr "Kangentic 何時暫停正在等候你的代理。"
 
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
+msgid "When the app holds many file handles, a range for how many it held and how long it had been running"
+msgstr "應用程式持有大量檔案控制代碼時，其持有數量的範圍及已執行時間"
+
 #: src/renderer/components/settings/tabs/GitTab.tsx
 msgid "Where new work starts, and how current it stays."
 msgstr "新工作的起點，以及保持最新的方式。"

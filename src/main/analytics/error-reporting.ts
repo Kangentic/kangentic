@@ -27,6 +27,7 @@ import { rendererNameForReporting } from './renderer-classification';
 import type { PreviousRun } from './run-uptime';
 import { runStateTags } from './run-state-tags';
 import { isShuttingDown } from '../shutdown-state';
+import { getDescriptorTableContext, type DescriptorTableTags } from '../diagnostics/descriptor-table';
 
 /**
  * Sentry DSN for the Kangentic desktop project (kangentic.sentry.io, project
@@ -121,6 +122,20 @@ export function setErrorReportingUser(clientId: string): void {
 export type ErrorReportContexts = Record<string, Record<string, unknown>>;
 
 /**
+ * A report of a failure that ran out of file descriptors also says how full
+ * main's table was and had been (Sentry DESKTOP-59): the probe's latest and
+ * peak readings, a fresh one, the uptime and whether the pty host runs in main,
+ * all as buckets (`src/main/diagnostics/descriptor-table.ts`). Keyed on the
+ * `errno` tag, which `sendHandledFailure` and `reportSyncWriteFailure` both set,
+ * so every handled route gets it. Only these reports: on every event it would
+ * also need pruning from a crash a later run uploads.
+ */
+function withDescriptorTableContext(tags: Record<string, string>, contexts: ErrorReportContexts): ErrorReportContexts {
+  if (tags.errno !== 'EMFILE') return contexts;
+  return { ...contexts, descriptor_table: getDescriptorTableContext() };
+}
+
+/**
  * Returns true when the report was handed to Sentry, false when it was skipped
  * (error reporting off, a user-configuration error, or a throw inside the SDK
  * call). A failure toast says it was reported only on true
@@ -135,9 +150,10 @@ export function reportHandledError(
   if (!active) return false;
   if (isUserConfigurationError(error)) return false;
   try {
+    const allContexts = withDescriptorTableContext(tags, contexts);
     Sentry.withScope((scope) => {
       for (const [tagKey, tagValue] of Object.entries(tags)) scope.setTag(tagKey, tagValue);
-      for (const [contextName, contextValue] of Object.entries(contexts)) {
+      for (const [contextName, contextValue] of Object.entries(allContexts)) {
         scope.setContext(contextName, contextValue);
       }
       // Sentry groups by type and in-app frames, so one cause reported from two
@@ -174,6 +190,16 @@ export function reportHandledMessage(
   } catch {
     // Reporting must never cascade into the path that called it
   }
+}
+
+/**
+ * The one report a run sends when main's descriptor table crosses the probe's
+ * high mark (Sentry DESKTOP-59, `src/main/diagnostics/descriptor-table.ts`): a
+ * fixed `info` message grouped by its own fingerprint, tagged with the probe's
+ * buckets only. The probe calls it at most once per run.
+ */
+export function reportDescriptorTableHigh(tags: DescriptorTableTags): void {
+  reportHandledMessage('Main process descriptor table high', tags, ['descriptor-table-high']);
 }
 
 /**

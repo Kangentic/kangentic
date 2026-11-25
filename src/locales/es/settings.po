@@ -3865,6 +3865,11 @@ msgstr "En inactividad"
 msgid "When Kangentic pauses agents that are waiting on you."
 msgstr "Cuándo Kangentic pausa los agentes que esperan una respuesta."
 
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
+msgid "When the app holds many file handles, a range for how many it held and how long it had been running"
+msgstr "Cuando la aplicación tiene muchos identificadores de archivo abiertos, un rango de cuántos tenía y cuánto tiempo llevaba en ejecución"
+
 #: src/renderer/components/settings/tabs/GitTab.tsx
 #, fuzzy
 msgid "Where new work starts, and how current it stays."
