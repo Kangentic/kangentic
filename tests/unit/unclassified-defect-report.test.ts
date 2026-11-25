@@ -102,6 +102,28 @@ describe('a provider CLI read that fails for a reason the CLI never gave', () =>
     expect(JSON.stringify(reportHandledError.mock.calls)).not.toMatch(/acme/i);
   });
 
+  // These two reads return raw text, so there is no output to fail parsing. What
+  // reaches the empty branch is a throw of the client's own, shaped here as a TypeError.
+  it('names the gh job log read when the client throws a defect of its own', async () => {
+    state.failure = new TypeError('Cannot read properties of undefined (reading "Fix Acme billing")');
+
+    await expect(new GitHubImporter().viewJobFailedLog(projectFolder, '4821')).resolves.toBeNull();
+
+    expect(reportedTags()).toMatchObject({ provider: 'github', stage: 'job_log', error_name: 'TypeError' });
+    expect(JSON.stringify(reportHandledError.mock.calls)).not.toMatch(/acme/i);
+  });
+
+  it('names the az build read when the client throws a defect of its own', async () => {
+    // az sorts a TypeError as unavailable itself, so the defect that reaches the empty branch is another class.
+    state.failure = new ReferenceError('Fix Acme billing is not defined');
+    const projectGuid = '11111111-2222-3333-4444-555555555555';
+
+    await expect(new AzureDevOpsImporter().fetchBuildLog('organization', projectGuid, 7, 3)).resolves.toBeNull();
+
+    expect(reportedTags()).toMatchObject({ provider: 'azure_devops', stage: 'build_read', error_name: 'ReferenceError' });
+    expect(JSON.stringify(reportHandledError.mock.calls)).not.toMatch(/acme/i);
+  });
+
   // az sorts an unreadable response itself, as unavailable, which keeps the
   // link. So on that client the empty branch only ever sees a throw of the
   // client's own code, and an unreadable response must not be sent twice.
