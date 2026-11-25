@@ -32,9 +32,14 @@ interface WorkflowsBridge {
   addCardBlocker(projectId: string, workflowId: string, blockedKey: string, cardProjectId: string, cardTaskId: string): Promise<void>;
 }
 
-function lane(state: MockSeedState, templateIndex: number, id: string, name: string, role: 'todo' | 'done' | null, position: number): MockObject {
+const OTHER_BOARD = 'board-b';
+
+function lane(
+  state: MockSeedState, templateIndex: number, id: string, name: string, role: 'todo' | 'done' | null, position: number,
+  projectId: string = BOARD,
+): MockObject {
   return Object.assign({}, state.DEFAULT_SWIMLANES[templateIndex], {
-    id, name, role, position, projectId: BOARD, auto_spawn: false, is_ghost: false, created_at: SEEDED_AT,
+    id, name, role, position, projectId, auto_spawn: false, is_ghost: false, created_at: SEEDED_AT,
   });
 }
 
@@ -58,8 +63,11 @@ function plannedTask(key: string, title: string, existingTaskId: string | null):
   };
 }
 
-/** The mock with one board (To Do, Executing, Done), a workflow in the given state, and the given task rows. */
-function scenario(state: 'draft' | 'running', draftTasks: MockObject[], rows: MockObject[], links: MockObject[] = []) {
+/**
+ * The mock with one board (To Do, Executing, Done), a workflow in the given state, and the given
+ * task rows. `withOtherBoard` adds a second board with its own To Do and Done.
+ */
+function scenario(state: 'draft' | 'running', draftTasks: MockObject[], rows: MockObject[], links: MockObject[] = [], withOtherBoard = false) {
   const { electronApi, preConfigure } = loadMockElectronApi<{ workflows: WorkflowsBridge }>({
     __mockWorkflows: [{
       projectId: BOARD,
@@ -81,6 +89,12 @@ function scenario(state: 'draft' | 'running', draftTasks: MockObject[], rows: Mo
       lane(seed, 2, 'a-exec', 'Executing', null, 1),
       lane(seed, 6, 'a-done', 'Done', 'done', 2),
     );
+    if (withOtherBoard) {
+      seed.swimlanes.push(
+        lane(seed, 0, 'b-todo', 'To Do', 'todo', 0, OTHER_BOARD),
+        lane(seed, 6, 'b-done', 'Done', 'done', 1, OTHER_BOARD),
+      );
+    }
     seed.tasks.length = 0;
     seed.tasks.push(...rows);
     liveRows.push(...seed.tasks);
@@ -130,6 +144,19 @@ describe('the mock bridge joining a board task where it is', () => {
     const candidates = plain(await workflows.listJoinCandidates(BOARD, WORKFLOW_ID, BOARD));
 
     expect(candidates.map((candidate) => [candidate.taskId, candidate.place])).toEqual([['flying', 'working'], ['todo', 'todo']]);
+  });
+
+  it('offers a task only on its own board: one on another board is left out here and listed there', async () => {
+    const { workflows } = scenario('running', [], [
+      taskRow('here', 1, 'a-todo'),
+      taskRow('there', 2, 'b-todo', { projectId: OTHER_BOARD }),
+    ], [], true);
+
+    const onThisBoard = plain(await workflows.listJoinCandidates(BOARD, WORKFLOW_ID, BOARD));
+    const onOtherBoard = plain(await workflows.listJoinCandidates(BOARD, WORKFLOW_ID, OTHER_BOARD));
+
+    expect(onThisBoard.map((candidate) => candidate.taskId)).toEqual(['here']);
+    expect(onOtherBoard.map((candidate) => candidate.taskId)).toEqual(['there']);
   });
 
   it('adds the same card as a blocker once before Start, and refuses it the second time', async () => {
