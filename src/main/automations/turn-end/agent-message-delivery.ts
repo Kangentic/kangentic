@@ -112,13 +112,24 @@ export async function deliverAgentMessageAndWait(
     const launched = await context.sessionManager.awaitAgentLaunched(input.sessionId, PASTE_TURN_WAIT_MS, input.signal);
     if (!launched) throw new RefusalError(launchWaitFailure(context, input.sessionId, input.signal, abortReason));
     if (input.turnWait === 'always' || input.mode === 'deferred') {
-      const settled = await waitForTurnCompletion(context.sessionManager, input.sessionId, {
-        signal: input.signal,
-        timeoutMs: PASTE_TURN_WAIT_MS,
-        acceptHeld: input.acceptHeld,
-        idleWithoutQuietMs: input.idleWithoutQuietMs,
-      });
-      if (settled !== 'completed') throw new RefusalError(turnWaitFailure(settled, abortReason));
+      // The turn has to end AND the scheduler has to be done with this task, as
+      // for the background paste. A deferred keystroke burst (a column's
+      // one-line enter row on a busy agent) waits for this same turn end, and
+      // its leading Ctrl+U would clear the paste before its Enter. A slash
+      // command in it starts no turn, which leaves the paste no sign of a
+      // submit. The burst's typing breaks the quiet the next wait needs, so
+      // the loop lands the paste after it.
+      const deadline = Date.now() + PASTE_TURN_WAIT_MS;
+      for (;;) {
+        const settled = await waitForTurnCompletion(context.sessionManager, input.sessionId, {
+          signal: input.signal,
+          timeoutMs: Math.max(0, deadline - Date.now()),
+          acceptHeld: input.acceptHeld,
+          idleWithoutQuietMs: input.idleWithoutQuietMs,
+        });
+        if (settled !== 'completed') throw new RefusalError(turnWaitFailure(settled, abortReason));
+        if (!context.terminalSubmitScheduler.hasPending(input.taskId)) break;
+      }
     }
     if (input.signal.aborted) throw new RefusalError(abortReason);
     try {

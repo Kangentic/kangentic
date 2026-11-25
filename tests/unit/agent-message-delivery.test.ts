@@ -624,6 +624,61 @@ describe('deliverAgentMessageAndWait', () => {
     expect(context.terminalSubmit.submitContent).not.toHaveBeenCalled();
   });
 
+  // A deferred keystroke burst (a column's one-line enter row on a busy agent)
+  // waits for the same turn end as this paste, and its leading Ctrl+U clears
+  // whatever is in the prompt. A slash command in it starts no turn, so the
+  // paste then shows no sign of a submit (Sentry DESKTOP-52's shape).
+  it('at a turn end, pastes only after the scheduler is done with the task', async () => {
+    const context = makeContext();
+    context.terminalSubmitScheduler.hasPending.mockReturnValueOnce(true).mockReturnValue(false);
+    const delivery = deliverAgentMessageAndWait(context as never, {
+      taskId: TASK_ID,
+      sessionId: SESSION_ID,
+      message: MULTI_LINE,
+      mode: 'immediate',
+      verifier: null,
+      signal: new AbortController().signal,
+      turnWait: 'always',
+      idleWithoutQuietMs: PAINT_GIVE_UP_MS,
+    });
+
+    await settle();
+    expect(turnWaits).toHaveLength(1);
+    turnWaits[0].resolve('completed');
+    await settle();
+    // Red: without the scheduler check the paste lands here, beside the burst.
+    expect(context.terminalSubmit.submitContent).not.toHaveBeenCalled();
+    expect(turnWaits).toHaveLength(2);
+    expect(turnWaits[1].idleWithoutQuietMs).toBe(PAINT_GIVE_UP_MS);
+
+    turnWaits[1].resolve('completed');
+    await delivery;
+    expect(context.terminalSubmit.submitContent).toHaveBeenCalledTimes(1);
+  });
+
+  it('at a turn end, refuses with the turn wait\'s reason when the agent exits while a burst is pending', async () => {
+    const context = makeContext();
+    context.terminalSubmitScheduler.hasPending.mockReturnValue(true);
+    const delivery = deliverAgentMessageAndWait(context as never, {
+      taskId: TASK_ID,
+      sessionId: SESSION_ID,
+      message: MULTI_LINE,
+      mode: 'immediate',
+      verifier: null,
+      signal: new AbortController().signal,
+      turnWait: 'always',
+    });
+    const rejection = delivery.then(() => null, (error: unknown) => error);
+
+    await settle();
+    turnWaits[0].resolve('completed');
+    await settle();
+    turnWaits[1].resolve('exited');
+
+    expect(await rejection).toMatchObject({ message: 'The agent exited before the message could be delivered.' });
+    expect(context.terminalSubmit.submitContent).not.toHaveBeenCalled();
+  });
+
   // The runner turns the paste's error into the run's sentence and reports it
   // (automation-runner-report-behavior.test.ts), so it must arrive as itself.
   // A RefusalError around it would skip the report.
