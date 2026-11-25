@@ -103,7 +103,8 @@ the pointer says what a release would do, or why it cannot. In the inspector, th
 starts at To Do and ends at Done, both locked on, and its switches turn each column between them on
 or off for that task; the X on a link row removes the link, and Add blocker makes the task wait for
 another. Its menu lists the workflow's tasks first, then, under a divider, the tasks on the same
-board that are in no workflow and not in Done, and Find narrows both by title or number. Picking one
+board that are in no workflow and not in Done or the archive, and Find narrows both by title or
+number. When both lists are empty, the menu says "No task it can wait for." Picking one
 of those takes it into the workflow where it is, in To Do or already started, so a task can wait on
 work already in flight; from then on the workflow drives it like any of its tasks. An agent can do
 the same for a task on any board over MCP. A control that would break a rule stays in place,
