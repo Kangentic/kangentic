@@ -7903,8 +7903,14 @@ export interface AdapterRuntimeStrategy {
      * since the spawn (Codex's rollout folder holds all of the day's runs, and
      * OpenCode's database every run on the machine, so neither alone said
      * anything about one session).
+     *
+     * `claimedSessionIds` holds the agent session ids that other sessions of
+     * this run hold or held, never this session's own. A conversation with one
+     * of those ids is someone else's, so it is no evidence for this session
+     * (Sentry DESKTOP-36 on 0.63.0: a sibling started later in the same folder
+     * made an untouched terminal read `present`). Codex reads it; OpenCode does not.
      */
-    storeEvidence?(options: { cwd: string; cliTarget?: StoredCliTarget | null; spawnedAt?: Date }): Promise<SessionIdStoreEvidence>;
+    storeEvidence?(options: SessionIdStoreEvidenceOptions): Promise<SessionIdStoreEvidence>;
     /**
      * Whether the CLI holds a login, for a session whose id the capture window
      * did not see. A CLI that is signed out can open on its own sign-in screen:
@@ -8642,6 +8648,14 @@ export type SessionIdCreation =
 
 /** Whether an agent's session store exists (`sessionId.storeEvidence`). */
 export type SessionIdStoreEvidence = 'present' | 'absent' | 'unknown';
+
+/** What `sessionId.storeEvidence` is asked about: the session's cwd and spawn, and the ids other sessions claimed. */
+export interface SessionIdStoreEvidenceOptions {
+  cwd: string;
+  cliTarget?: StoredCliTarget | null;
+  spawnedAt?: Date;
+  claimedSessionIds?: ReadonlySet<string>;
+}
 
 /** Whether an agent's CLI holds a login (`sessionId.loginEvidence`). */
 export type SessionIdLoginEvidence = 'signed_in' | 'signed_out' | 'unknown';

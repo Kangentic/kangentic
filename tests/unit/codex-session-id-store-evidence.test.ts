@@ -145,18 +145,91 @@ describe('Codex storeEvidence about one session (spawnedAt)', () => {
   });
 
   /** A rollout Codex wrote, with the `session_meta` its first line carries. */
-  function writeRollout(options: { id: string; cwd: string; createdAtMs: number }): void {
+  function writeRollout(options: { id: string; cwd: string; createdAtMs: number; parentThreadId?: string }): void {
     const createdAt = new Date(options.createdAtMs).toISOString();
-    const meta = { type: 'session_meta', payload: { id: options.id, cwd: options.cwd.replace(/\\/g, '/'), timestamp: createdAt } };
+    const meta = {
+      type: 'session_meta',
+      payload: {
+        id: options.id,
+        cwd: options.cwd.replace(/\\/g, '/'),
+        timestamp: createdAt,
+        ...(options.parentThreadId ? { parent_thread_id: options.parentThreadId } : {}),
+      },
+    };
     const fileName = `rollout-${createdAt.replace(/[:.]/g, '-')}-${options.id}.jsonl`;
     fs.writeFileSync(path.join(codexSessionsDirForToday(), fileName), `${JSON.stringify(meta)}\n`);
   }
 
-  const storeEvidence = () => {
+  const storeEvidence = (claimedSessionIds?: ReadonlySet<string>) => {
     const check = new CodexAdapter().runtime.sessionId?.storeEvidence;
     if (!check) throw new Error('Codex declares no store evidence');
-    return check({ cwd: projectFolder, spawnedAt });
+    return check({ cwd: projectFolder, spawnedAt, ...(claimedSessionIds ? { claimedSessionIds } : {}) });
   };
+
+  // Sentry DESKTOP-36 on 0.63.0: an untouched Command Terminal read `present` from the rollout of
+  // a Codex started 13 s later in the same folder. That id was another session's.
+  it('reads absent for a later same-folder rollout whose id another session of this run holds', async () => {
+    const siblingId = '88888888-8888-4888-8888-888888888888';
+    writeRollout({ id: siblingId, cwd: projectFolder, createdAtMs: spawnedAt.getTime() + 13_000 });
+    await expect(storeEvidence(new Set([siblingId]))).resolves.toBe('absent');
+  });
+
+  it('still reads present for this session\'s own rollout beside a claimed sibling\'s', async () => {
+    const siblingId = '88888888-8888-4888-8888-888888888888';
+    writeRollout({ id: siblingId, cwd: projectFolder, createdAtMs: spawnedAt.getTime() + 13_000 });
+    writeRollout({ id: '99999999-9999-4999-8999-999999999999', cwd: projectFolder, createdAtMs: spawnedAt.getTime() + 3_000 });
+    await expect(storeEvidence(new Set([siblingId]))).resolves.toBe('present');
+  });
+
+  it('reads absent for a subagent\'s rollout, which is some parent\'s child and no conversation of this session', async () => {
+    writeRollout({
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      cwd: projectFolder,
+      createdAtMs: spawnedAt.getTime() + 20_000,
+      parentThreadId: '88888888-8888-4888-8888-888888888888',
+    });
+    await expect(storeEvidence()).resolves.toBe('absent');
+  });
+
+  // The real shape Codex 0.171.0 wrote for a spawn_agent child: parent_thread_id and
+  // source.subagent both present. Only the cwd, the timestamps and the folder are rewritten.
+  describe('a rollout built from the real 0.171.0 subagent session_meta', () => {
+    const fixtureLines = fs
+      .readFileSync(path.join(__dirname, '..', 'fixtures', 'codex-0.171.0-subagent-session-meta.jsonl'), 'utf-8')
+      .split('\n')
+      .filter((line) => line.trim().length > 0);
+
+    function writeFixtureRollout(mutatePayload: (payload: Record<string, unknown>) => void): void {
+      const subagentLine = fixtureLines.map((line) => JSON.parse(line) as { payload: Record<string, unknown> })
+        .find((parsed) => typeof parsed.payload.parent_thread_id === 'string');
+      if (!subagentLine) throw new Error('the fixture holds no subagent session_meta');
+      const createdAt = new Date(spawnedAt.getTime() + 20_000).toISOString();
+      subagentLine.payload.cwd = projectFolder.replace(/\\/g, '/');
+      subagentLine.payload.timestamp = createdAt;
+      mutatePayload(subagentLine.payload);
+      const id = subagentLine.payload.id as string;
+      const fileName = `rollout-${createdAt.replace(/[:.]/g, '-')}-${id}.jsonl`;
+      fs.writeFileSync(path.join(codexSessionsDirForToday(), fileName), `${JSON.stringify(subagentLine)}\n`);
+    }
+
+    it('reads absent with both subagent markers in place', async () => {
+      writeFixtureRollout(() => undefined);
+      await expect(storeEvidence()).resolves.toBe('absent');
+    });
+
+    it('reads absent on source.subagent alone, with parent_thread_id removed', async () => {
+      writeFixtureRollout((payload) => { delete payload.parent_thread_id; });
+      await expect(storeEvidence()).resolves.toBe('absent');
+    });
+
+    it('reads present once both markers are stripped, so the cases above read absent for the subagent reason', async () => {
+      writeFixtureRollout((payload) => {
+        delete payload.parent_thread_id;
+        delete payload.source;
+      });
+      await expect(storeEvidence()).resolves.toBe('present');
+    });
+  });
 
   it('reads absent when the folder holds only runs from before this spawn', async () => {
     writeRollout({ id: '11111111-1111-4111-8111-111111111111', cwd: projectFolder, createdAtMs: spawnedAt.getTime() - 600_000 });
