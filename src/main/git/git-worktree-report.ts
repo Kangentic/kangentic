@@ -8,9 +8,10 @@
  * is the work around them that a caller never sees fail: writing a worktree's
  * base branch, renaming its branch, linking shared folders into it, the
  * background deleter of removed worktrees, a spare worktree's upkeep, the
- * process walk behind a removal's reap, a listener of worktree events. Each
- * leaves a worktree that works worse and says nothing: a merge-back onto the
- * wrong base, a build with no `node_modules`, a disk that fills.
+ * process walk behind a removal's reap, a listener of worktree events, the line
+ * count of an untracked file. Each leaves a worktree that works worse and says
+ * nothing: a merge-back onto the wrong base, a build with no `node_modules`, a
+ * disk that fills, a Changes panel that lists a file as empty.
  *
  * Every site names its step in `stage`, a fixed word. A failed git command
  * carries what git refused on as `git_cause`, and a failed child process its

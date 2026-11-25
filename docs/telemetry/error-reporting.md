@@ -798,15 +798,21 @@ in one Sentry org, one triage surface.
     `removed_deleter` (the background deleter stopped, so `removed-worktrees/` grows without
     bound) and `removed_delete`. Spares: `spare_discard` and `spare_check`. `reap_walk` (the
     removal-failure reap's own walk threw). The Changes panel: `diff_watch`,
-    `changes_commits_in_clone`, `changes_branch_log` and `changes_commit_files`. PR reads:
+    `changes_commits_in_clone`, `changes_branch_log` and `changes_commit_files`, plus
+    `untracked_count` and `untracked_count_worker`: an untracked file whose lines could not be
+    counted, in main and in the line-count worker. The file still lists, with no lines. The
+    worker cannot report, so it relays the failure's class, errno and syscall and main sends the
+    report, once per class and errno. PR reads:
     `head_read` and `refs_read`. `fetch_outcome_listener` and `auto_fetch_config`. Each carries
     the shared `git_cause`, `exit_code` and `timed_out` when git failed. What is skipped, each
     with its own test: a rename onto a branch that exists or from one that is gone, and a remove
     of a branch that is gone or checked out (git's own refusals, read from its English text as
     `gitFailureCause` does, so a git in another language reports them once a run), a job the
-    project's close cleared from the queue, a missing folder, and a watch the OS refused for
+    project's close cleared from the queue, a missing folder, a watch the OS refused for
     want of watches or handles (`ENOSPC`, `EMFILE`, `ENFILE`: Linux answers `ENOSPC` once the
-    user's inotify limit is spent). `zombie-reaper.ts` takes its reporter as an argument, since
+    user's inotify limit is spent), and an untracked path that is not a file any more (`ENOENT`,
+    `ENOTDIR`, `EISDIR`: deleted since git listed it, or a nested repository, which git lists as
+    one folder). `zombie-reaper.ts` takes its reporter as an argument, since
     the E2E janitor imports that file in the Playwright process.
 
   - `handler_step` (tags `area` and `step`, `src/main/ipc/helpers/handler-step-report.ts`): a

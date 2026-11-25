@@ -3,10 +3,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { GitDiffFilesInput, GitDiffFilesResult, GitDiffFileEntry, GitDiffRange, GitDiffScope, GitDiffStatus, GitFileContentInput, GitFileContentResult, GitFileImageInput, GitImageContentResult, GitImageSide } from '../../shared/types';
 import { IMAGE_PREVIEW_MAX_BYTES, isGitLfsPointer } from '../../shared/image-preview';
-import { countFileLines } from './line-count/count-lines';
+import { countLinesInFiles, firstOfEachFailure, isMissingPathError, LINE_COUNT_CONCURRENCY } from './line-count/count-lines';
 import { readGitObject } from './git-object-reader';
+import { gitWorktreeReporter } from './git-worktree-report';
 import { lineCountClient } from './line-count/line-count-client';
 import { remoteGitRunnerFor, RemoteGitUnavailableError, type RemoteGitRunner } from './remote-git';
+import { mapWithConcurrency } from '../shared/map-with-concurrency';
 
 /** The most of a working-tree file read from a host as text. Past it the side reads empty, as an unreadable file does. */
 const REMOTE_TEXT_MAX_BYTES = 64 * 1024 * 1024;
@@ -378,8 +380,14 @@ export class DiffService {
 
     const untrackedEntries = await this.countUntrackedEntries(untrackedPaths);
 
-    files.push(...untrackedEntries);
-    const untrackedInsertions = untrackedEntries.reduce((sum, entry) => sum + entry.insertions, 0);
+    // One push per entry. Spread as call arguments, the list throws RangeError once it
+    // passes the stack, at about 125,000 entries, and one folder missing from .gitignore
+    // lists that many (Sentry DESKTOP-5A).
+    let untrackedInsertions = 0;
+    for (const entry of untrackedEntries) {
+      files.push(entry);
+      untrackedInsertions += entry.insertions;
+    }
 
     return {
       files,
@@ -395,6 +403,7 @@ export class DiffService {
    * aggregate size crosses UNTRACKED_OFFLOAD_THRESHOLD_BYTES, the batch is
    * delegated to the line-count worker so the scan never runs on the main
    * event loop. Falls back to inline counting if the worker is unavailable.
+   * Every pass over the paths holds at most LINE_COUNT_CONCURRENCY files at once.
    */
   private async countUntrackedEntries(untrackedPaths: string[]): Promise<GitDiffFileEntry[]> {
     if (untrackedPaths.length === 0) return [];
@@ -408,18 +417,16 @@ export class DiffService {
     }
 
     const absolutePaths = untrackedPaths.map((filePath) => path.join(this.gitDirectory, filePath));
-    const sizes = await Promise.all(
-      absolutePaths.map(async (absolutePath) => {
-        try {
-          const stats = await fs.promises.stat(absolutePath);
-          return stats.size;
-        } catch {
-          // report-ok: the file was deleted between git status and this stat, and its size
-          // only steers the choice between inline and worker counting.
-          return 0;
-        }
-      }),
-    );
+    const sizes = await mapWithConcurrency(absolutePaths, LINE_COUNT_CONCURRENCY, async (absolutePath) => {
+      try {
+        const stats = await fs.promises.stat(absolutePath);
+        return stats.size;
+      } catch {
+        // report-ok: a size only steers the choice between inline and worker counting. The
+        // count that follows meets the same file and reports what is not a missing path.
+        return 0;
+      }
+    });
     const aggregateBytes = sizes.reduce((sum, size) => sum + size, 0);
 
     if (aggregateBytes > UNTRACKED_OFFLOAD_THRESHOLD_BYTES) {
@@ -437,18 +444,14 @@ export class DiffService {
       // to inline counting so the diff still resolves.
     }
 
-    return Promise.all(
-      untrackedPaths.map(async (filePath, index): Promise<GitDiffFileEntry> => {
-        try {
-          const result = await countFileLines(absolutePaths[index]);
-          return { path: filePath, status: 'U', insertions: result.insertions, deletions: 0, binary: result.binary };
-        } catch {
-          // report-ok: the file may have been deleted between status and read, and it then
-          // lists with no lines.
-          return { path: filePath, status: 'U', insertions: 0, deletions: 0, binary: false };
-        }
-      }),
-    );
+    const counts = await countLinesInFiles(absolutePaths, firstOfEachFailure(reportUncountedFile));
+    return counts.map((count, index) => ({
+      path: untrackedPaths[index],
+      status: 'U' as const,
+      insertions: count.insertions,
+      deletions: 0,
+      binary: count.binary,
+    }));
   }
 
   /**
@@ -668,6 +671,7 @@ async function readSideAsImage(
       : await readWorkingTreeImage(source.absolutePath, knownFingerprint);
   } catch (error) {
     if (error instanceof RemoteGitUnavailableError) throw error;
+    // readGitObject's rejections carry no `code`, so git failing to start is logged.
     if (!isMissingPathError(error)) console.warn('[DIFF] Could not read an image side:', error);
     return { kind: 'unreadable' };
   }
@@ -721,15 +725,13 @@ function imageSideFromBytes(bytes: Buffer, fingerprint: string): GitImageSide {
 }
 
 /**
- * A working-tree path that is not a file any more: deleted, or turned into a
- * directory or into a path through a file under the open panel. Every refresh
- * meets it again, so it is not logged. Only the disk reads carry a `code`:
- * readGitObject's rejections never do, so git failing to start is logged.
+ * An untracked file main could not count for a reason other than being gone: a
+ * full descriptor table, a file another program holds, a read the disk failed.
+ * It still lists, with no lines. Unreported, it reads as an empty file and
+ * nothing says the count failed.
  */
-const MISSING_PATH_CODES: ReadonlySet<string> = new Set(['ENOENT', 'ENOTDIR', 'EISDIR']);
-
-function isMissingPathError(error: unknown): boolean {
-  return error instanceof Error && 'code' in error && typeof error.code === 'string' && MISSING_PATH_CODES.has(error.code);
+function reportUncountedFile(error: unknown): void {
+  gitWorktreeReporter.report(error, { tags: { stage: 'untracked_count' } });
 }
 
 /** Branch churn against its base, as `getChurnSummary` counts it. */
