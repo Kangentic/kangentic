@@ -17,6 +17,7 @@ import { resolveTask } from '../commands/task-resolver';
 import type { InspectedToolName, ToolArgumentNotices } from './tool-call-logging';
 import type { CommandContext } from '../commands';
 import type { PlanApproval } from '../../../shared/types';
+import type { ProjectMention } from './project-mention';
 import { LABEL_ENTRY_GUIDE, LABEL_ENTRY_SCHEMA, PRIORITY_GUIDE, PRIORITY_SCHEMA } from './label-priority-schema';
 
 /** A plan-mode column's tag in kangentic_list_columns, one per stored value. */
@@ -126,19 +127,111 @@ const AUTOMATIONS_DISABLED_DESCRIPTION =
   + 'skipped. Adding the task to a workflow resumes automations. Moving it out of Done keeps them paused. Board tasks only.';
 
 /**
- * Build the create_task routing-check refusal shown when the call
- * defaulted to the active project but the task text named one or more
- * other registered projects. Names a concrete re-run for each option:
- * file into a mentioned project, or confirm the active project. Names
- * are sanitized for safe single-line display.
+ * Where a default-project create lands, as far as the routing check cares:
+ * To Do, where kangentic_move_task_to_project fixes a wrong guess in one call;
+ * another board column, which may have spawned an agent and which that move
+ * refuses; or the backlog, whose items no tool moves across projects.
  */
-function buildRoutingCheckMessage(activeName: string, mentioned: string[]): string {
-  const safeActive = sanitizeProjectName(activeName);
-  const safeMentioned = mentioned.map((name) => `"${sanitizeProjectName(name)}"`);
-  if (safeMentioned.length === 1) {
-    return `Routing check: this task was about to be created in the active project "${safeActive}", but its text mentions the registered project ${safeMentioned[0]}. No task was created. Re-run kangentic_create_task with project: ${safeMentioned[0]} to file it there, or with project: "${safeActive}" to confirm the active project.`;
+type RoutingDestination =
+  | { kind: 'todo' }
+  | { kind: 'column'; columnName: string }
+  | { kind: 'backlog' };
+
+/**
+ * Classify the create's destination. An unresolvable column counts as To Do:
+ * the handler refuses it with its own error, so the check has nothing to add.
+ */
+function routingDestination(context: CommandContext, columnName: string | undefined): RoutingDestination {
+  if (isBacklogColumn(columnName)) return { kind: 'backlog' };
+  if (!columnName) return { kind: 'todo' };
+  try {
+    const resolution = resolveColumn(context.getProjectDb(), columnName);
+    if ('error' in resolution || resolution.swimlane.role === 'todo') return { kind: 'todo' };
+    return { kind: 'column', columnName: resolution.swimlane.name };
+  } catch { // report-ok: the create handler resolves the same column and reports its own failure; a miss here only softens a refusal to a notice
+    return { kind: 'todo' };
   }
-  return `Routing check: this task was about to be created in the active project "${safeActive}", but its text mentions these other registered projects: ${safeMentioned.join(', ')}. No task was created. Re-run kangentic_create_task with project set to the intended one (e.g. project: ${safeMentioned[0]}), or with project: "${safeActive}" to confirm the active project.`;
+}
+
+/** Strong mentions first, each in the order it was found. */
+function orderMentions(mentions: readonly ProjectMention[]): ProjectMention[] {
+  return [...mentions.filter((mention) => mention.strength === 'strong'), ...mentions.filter((mention) => mention.strength === 'weak')];
+}
+
+/** "the title names "X", the description mentions "Y"" for one or more mentions. */
+function describeMentions(mentions: readonly ProjectMention[]): string {
+  const parts = mentions.map((mention) => {
+    const name = `"${sanitizeProjectName(mention.name)}"`;
+    if (mention.where === 'title') return `the title names ${name}`;
+    if (mention.where === 'phrase') return `the description targets ${name}`;
+    return `the description mentions ${name}`;
+  });
+  if (parts.length === 1) return parts[0];
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+}
+
+/**
+ * A project name as a quoted argument the caller can paste back: the full name
+ * as registered, escaped, never truncated. `sanitizeProjectName` shortens a long
+ * name for display, which would leave a selector that resolves to nothing.
+ */
+function selectorArgument(registeredName: string): string {
+  return JSON.stringify(registeredName);
+}
+
+/**
+ * The create_task routing-check refusal: a strong mention of another project
+ * on a create headed for the backlog or a column other than To Do, where a
+ * wrong guess cannot be fixed with one cheap move. Names a concrete re-run for
+ * each option. Display names are sanitized for safe single-line display.
+ */
+function buildRoutingRefusal(
+  activeName: string,
+  mentions: readonly ProjectMention[],
+  destination: Exclude<RoutingDestination, { kind: 'todo' }>,
+): string {
+  const safeActive = sanitizeProjectName(activeName);
+  const ordered = orderMentions(mentions);
+  let placement: string;
+  let reason: string;
+  switch (destination.kind) {
+    case 'backlog':
+      placement = 'in the backlog';
+      reason = 'a backlog item cannot be moved to another project afterwards';
+      break;
+    case 'column':
+      placement = `in the "${sanitizeProjectName(destination.columnName)}" column`;
+      reason = 'a task outside To Do cannot be moved to another project afterwards, and the column may start an agent';
+      break;
+  }
+  return `Routing check: this task was about to be created ${placement} of the active project "${safeActive}", but ${describeMentions(ordered)}. No task was created, because ${reason}. Re-run kangentic_create_task with project: ${selectorArgument(ordered[0].registeredName)} to file it there, or with project: ${selectorArgument(activeName)} to confirm the active project.`;
+}
+
+/**
+ * The line appended to a default-project create whose text names another
+ * project. The task WAS created; the line says which project the text named
+ * and gives the one call that relocates it, so a wrong guess costs one small
+ * call rather than a resend of the whole create.
+ */
+function buildRoutingNotice(activeName: string, mentions: readonly ProjectMention[], destination: RoutingDestination): string {
+  const safeActive = sanitizeProjectName(activeName);
+  const ordered = orderMentions(mentions);
+  const target = selectorArgument(ordered[0].registeredName);
+  const tag = ordered[0].strength === 'strong' ? '[Routing check]' : '[Routing note]';
+  const targetPhrase = ordered.length === 1 ? `"${sanitizeProjectName(ordered[0].name)}"` : 'one of them';
+  let fix: string;
+  switch (destination.kind) {
+    case 'backlog':
+      fix = `delete this item with kangentic_delete_backlog_item and create it again with project: ${target}`;
+      break;
+    case 'column':
+      fix = `move it to To Do with kangentic_move_task, then call kangentic_move_task_to_project with the task id shown above and targetProject: ${target}`;
+      break;
+    case 'todo':
+      fix = `call kangentic_move_task_to_project with the task id shown above and targetProject: ${target}`;
+      break;
+  }
+  return `${tag} Created in the active project "${safeActive}", but ${describeMentions(ordered)}. If ${targetPhrase} was the target, ${fix}. If "${safeActive}" was right, ignore this line.`;
 }
 
 /**
@@ -263,7 +356,7 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_create_task',
     {
-      description: 'Create a task on the Kangentic board (default: the To Do column on the active board) or in the backlog. This is the only task-creation tool - use it whenever the user asks to "create a task", "add a todo", "add to backlog", or similar. ATTACHMENTS RULE: When the user\'s prompt references local files by absolute path (design handoffs, mockups, screenshots, specs, READMEs, transcripts), pass those paths in `attachments` on this same call. Default to attaching, not omitting. Do not require a second user request to add them. The only exception is files the user explicitly named as "for context only, don\'t attach." With no `column` argument, the task always lands in the active board\'s To Do column - never the backlog. Pass `column: "Backlog"` (case-insensitive) to create a backlog item instead. Pass any other column name (e.g. "Planning", "Code Review") to land directly in that board column. Board tasks are ready to work on immediately; with worktrees on (the project default) each gets its own worktree and branch, and with `useWorktree: false` the agent works in the project directory on the branch already checked out. If the user\'s prompt names a different Kangentic project, pass that name as `project` to route the task to that project instead of the active default - do not rely on the active default when the user clearly targeted another project. The name counts however it is phrased, not just the explicit "create a task in X" form: "create a task in X to fix ...", "the X to do board", "add a bug to the X board", "in X", and "X\'s backlog" all target project X. Use kangentic_list_projects to find valid selectors. LABELS WITH A LONG DESCRIPTION: due to a known large-payload limitation, when this call carries both a long description (roughly 1KB or more) and labels, the labels can be dropped before they reach the server. In that case create the task here without labels, then set labels with a separate labels-only kangentic_update_task call right after. When the task should have no labels, pass `labels: []`. The server then knows nothing was dropped and adds no note.',
+      description: 'Create a task on the Kangentic board (default: the To Do column on the active board) or in the backlog. This is the only task-creation tool - use it whenever the user asks to "create a task", "add a todo", "add to backlog", or similar. ATTACHMENTS RULE: When the user\'s prompt references local files by absolute path (design handoffs, mockups, screenshots, specs, READMEs, transcripts), pass those paths in `attachments` on this same call. Default to attaching, not omitting. Do not require a second user request to add them. The only exception is files the user explicitly named as "for context only, don\'t attach." With no `column` argument, the task always lands in the active board\'s To Do column - never the backlog. Pass `column: "Backlog"` (case-insensitive) to create a backlog item instead. Pass any other column name (e.g. "Planning", "Code Review") to land directly in that board column. Board tasks are ready to work on immediately; with worktrees on (the project default) each gets its own worktree and branch, and with `useWorktree: false` the agent works in the project directory on the branch already checked out. If the user\'s prompt names a different Kangentic project, pass that name as `project` to route the task to that project instead of the active default - do not rely on the active default when the user clearly targeted another project. The name counts however it is phrased, not just the explicit "create a task in X" form: "create a task in X to fix ...", "the X to do board", "add a bug to the X board", "in X", and "X\'s backlog" all target project X. Use kangentic_list_projects to find valid selectors. When `project` is omitted and the title or description names another registered project, the task is still created in the active project and the response flags it with the kangentic_move_task_to_project call that relocates it; a mention that only names a source ("ported from X") can be ignored. A create into the Backlog or a column other than To Do is refused instead when a targeting phrase ("on X\'s board", "add it to X") or the title names another project, because neither can be moved to another project afterwards. A title counts only when it names an identifier-like project ("orbit-api") or uses a targeting phrase; an ordinary-word name ("Garden") alone in the title only flags the create. LABELS WITH A LONG DESCRIPTION: due to a known large-payload limitation, when this call carries both a long description (roughly 1KB or more) and labels, the labels can be dropped before they reach the server. In that case create the task here without labels, then set labels with a separate labels-only kangentic_update_task call right after. When the task should have no labels, pass `labels: []`. The server then knows nothing was dropped and adds no note.',
       inputSchema: z.object({
         title: z.string().max(200).describe('Task title (max 200 characters)'),
         description: z.string().max(TASK_DESCRIPTION_MAX_LENGTH, { error: descriptionOverLimit }).optional().describe(`Task description. Supports markdown. At most ${TASK_DESCRIPTION_MAX_LENGTH} characters: it rides the agent's command line. Attach longer material as a file.`),
@@ -316,30 +409,39 @@ export function registerTaskTools(
           isError: true,
         });
       }
-      // Routing guardrail: when the caller defaulted to the active
-      // project (no explicit selector) but the task text names a
-      // DIFFERENT registered project, refuse instead of silently filing
-      // into the active project. Runs BEFORE tryReserve so a tripped
-      // guardrail doesn't burn a quota slot (same reasoning as the
-      // resolution-failure path). Only fires on the default path; an
-      // explicit `project` selector is a deliberate choice we honor.
-      // The raw `project` check is load-bearing, not redundant with
-      // resolved.isDefault: resolveProject also returns isDefault=true for
-      // an explicit selector that names the active project (makeResolved
-      // short-circuits to the default context), so without this clause an
-      // explicit self-targeting create would wrongly trip the guardrail.
+      // Routing check: when the caller defaulted to the active project (no
+      // explicit selector) but the task text names a DIFFERENT registered
+      // project, the task is created and the response says so, with the one
+      // call that relocates it. A refusal would cost the caller a resend of
+      // the whole create, often a long description, for what is usually a
+      // source reference. It refuses only a STRONG mention (title, or a
+      // targeting phrase) headed for the backlog or a column other than To
+      // Do, where no cheap move undoes a wrong guess. That refusal runs
+      // BEFORE tryReserve so it doesn't burn a quota slot. Only fires on the
+      // default path; an explicit `project` selector is a deliberate choice
+      // we honor. The raw `project` check is load-bearing, not redundant
+      // with resolved.isDefault: resolveProject also returns isDefault=true
+      // for an explicit selector that names the active project
+      // (makeResolved short-circuits to the default context), so without
+      // this clause an explicit self-targeting create would be flagged.
+      let routingMentions: ProjectMention[] = [];
+      let destination: RoutingDestination = { kind: 'todo' };
       if (resolved.isDefault && (project === undefined || project.trim() === '')) {
-        const mentioned = detectCrossProjectMention(resolver, `${title} ${description ?? ''}`);
-        if (mentioned.length > 0) {
-          return Promise.resolve({
-            content: [{ type: 'text' as const, text: buildRoutingCheckMessage(resolved.projectName, mentioned) }],
-            isError: true,
-          });
+        routingMentions = detectCrossProjectMention(resolver, title, description ?? '');
+        if (routingMentions.length > 0) {
+          destination = routingDestination(ctx, column);
+          const hasStrongMention = routingMentions.some((mention) => mention.strength === 'strong');
+          if (hasStrongMention && destination.kind !== 'todo') {
+            return Promise.resolve({
+              content: [{ type: 'text' as const, text: buildRoutingRefusal(resolved.projectName, routingMentions, destination) }],
+              isError: true,
+            });
+          }
         }
       }
       // Validate the agent/model/effort pins against the live agent capability
-      // surface BEFORE reserving quota, for the same reason as the guardrail
-      // above: a rejected call must not burn a slot. Skipped for the backlog,
+      // surface BEFORE reserving quota, for the same reason as the routing
+      // refusal above: a rejected call must not burn a slot. Skipped for the backlog,
       // whose items never spawn and carry no pins.
       // A friendly versioned name ("Opus 4.8") has a space, so it can never be a
       // raw id: it converts here, where the check below can validate it. A single
@@ -405,7 +507,7 @@ export function registerTaskTools(
       // only against the tasks table, so handing it a backlog id answers
       // `Task "<uuid>" not found` and the advisory would send the agent in a
       // circle.
-      return withLabelsAbsentNotice(
+      const labelled = withLabelsAbsentNotice(
         result,
         'kangentic_create_task',
         toolArgumentNotices,
@@ -413,6 +515,11 @@ export function registerTaskTools(
           ? 'send a labels-only kangentic_update_backlog_item for the backlog id shown above'
           : 'send a labels-only kangentic_update_task for the task id shown above',
       );
+      // appendNoticeLine leaves an isError result alone, so a create that
+      // failed never carries a routing line about a task that does not exist.
+      return routingMentions.length > 0
+        ? appendNoticeLine(labelled, buildRoutingNotice(resolved.projectName, routingMentions, destination))
+        : labelled;
     }, { alwaysAnnotate: true }),
   );
 

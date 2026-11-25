@@ -2,6 +2,7 @@ import { commandHandlers } from '../commands';
 import type { CommandContext, CommandResponse } from '../commands';
 import type { RequestResolver, ResolvedProject } from './project-resolver';
 import { mcpCommandReporter } from './tool-reporting';
+import { findProjectMentions, type ProjectMention } from './project-mention';
 
 /**
  * Shape of an MCP tool result: JSON-serialisable content blocks plus an
@@ -25,7 +26,8 @@ export interface McpToolResult {
 // how project mentions are phrased) lives once in the server `instructions`
 // string (server-instructions.ts, "PROJECT ROUTING RULE"), which is in every
 // agent's system prompt, and create_task carries its own routing guidance plus
-// a runtime guardrail. Repeating the full paragraph on all ~28 project-aware
+// a runtime routing check (a notice, or a refusal for a destination a move
+// cannot fix). Repeating the full paragraph on all ~28 project-aware
 // tools added ~4.5k tokens of duplicated context to every spawned agent; this
 // pointer keeps the behavioral trigger while shedding the duplication.
 export const PROJECT_SELECTOR_DESCRIPTION =
@@ -194,57 +196,22 @@ export function sanitizeProjectName(name: string): string {
 }
 
 /**
- * Project names shorter than this are skipped by the cross-project
- * mention scan. A one or two character name (e.g. "QA") is too likely
- * to collide with ordinary prose and trip the routing guardrail on a
- * task that has nothing to do with that project.
- */
-const MIN_PROJECT_NAME_MATCH_LENGTH = 3;
-
-/**
- * Build a case-insensitive regex that matches `name` as a whole token,
- * not as a substring. Boundaries are lookarounds on `[a-z0-9]` rather
- * than `\b` so that hyphenated and dotted names count as single tokens:
- * "kangentic" does not match inside "kangentics", and a bare
- * "kangentic" does not match "kangentic.com" (the trailing ".com"
- * differs). Multi-word names match the exact phrase because the internal
- * space is matched literally. Regex metacharacters in the name are
- * escaped so a literal dot in "kangentic.com" is not treated as a
- * wildcard.
- */
-function buildWholePhraseRegex(name: string): RegExp {
-  const escaped = name
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
-    .replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`, 'i');
-}
-
-/**
- * Return the names of registered projects, other than the active one,
- * whose name appears as a whole token in `haystack` (a task's title plus
- * description). Used by the create_task routing guardrail to catch a
- * silent default-to-active create whose text actually names a different
- * project. Returns a de-duplicated list in registration order.
+ * Return the registered projects, other than the active one, that a task's
+ * title or description names, each with how strongly it reads as the task's
+ * destination (`project-mention.ts` holds the matching rules). Used by the
+ * create_task routing check on a create that defaulted to the active project.
  *
  * This only catches the subset where the other project's name leaks into
  * the task content. The primary defense against misrouting is the
  * server `instructions` and the `project` selector guidance, which the
  * agent reads against the full user prompt.
  */
-export function detectCrossProjectMention(resolver: RequestResolver, haystack: string): string[] {
-  const text = haystack.toLowerCase().replace(/\s+/g, ' ');
-  const hits: string[] = [];
-  for (const project of resolver.listProjects()) {
-    if (project.isActive) continue;
-    const name = project.name.trim();
-    if (name.length < MIN_PROJECT_NAME_MATCH_LENGTH) continue;
-    // Push the trimmed `name` (what the regex matched on), not the raw
-    // `project.name`, so a whitespace-padded DB name is reported and
-    // embedded consistently with what was actually matched.
-    if (buildWholePhraseRegex(name).test(text)) hits.push(name);
-  }
-  return [...new Set(hits)];
+export function detectCrossProjectMention(
+  resolver: RequestResolver,
+  title: string,
+  description: string,
+): ProjectMention[] {
+  return findProjectMentions(resolver.listProjects(), title, description);
 }
 
 /**

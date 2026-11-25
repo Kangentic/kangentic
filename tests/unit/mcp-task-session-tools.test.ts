@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { ProjectMention } from '../../src/main/agent/mcp-http/project-mention';
 
 /**
  * Tests for cross-cutting concerns in mcp-http/task-tools.ts and
@@ -26,17 +27,17 @@ const { mockHandleMoveTaskToProject } = vi.hoisted(() => ({
   mockHandleMoveTaskToProject: vi.fn(() => ({ success: true, message: 'moved', data: {} })),
 }));
 
-const { mockCallHandler, mockRunHandler, mockWithProject, mockDetectCrossProjectMention } = vi.hoisted(() => {
+const { mockCallHandler, mockRunHandler, mockWithProject, mockDetectCrossProjectMention, mockAppendNoticeLine } = vi.hoisted(() => {
   const mockCallHandler = vi.fn(() =>
     Promise.resolve({ content: [{ type: 'text' as const, text: 'ok' }] }),
   );
   const mockRunHandler = vi.fn(() =>
     Promise.resolve({ success: true, data: [], message: 'ok' }),
   );
-  // create_task's routing guardrail calls this; default to "no other
+  // create_task's routing check calls this; default to "no other
   // project mentioned" so existing wiring tests are unaffected. Tests
-  // that exercise the guardrail override the return value.
-  const mockDetectCrossProjectMention = vi.fn((): string[] => []);
+  // that exercise the check override the return value.
+  const mockDetectCrossProjectMention = vi.fn((): ProjectMention[] => []);
   const mockWithProject = vi.fn(
     async (
       _resolver: unknown,
@@ -63,7 +64,12 @@ const { mockCallHandler, mockRunHandler, mockWithProject, mockDetectCrossProject
       return run(resolved.context, resolved);
     },
   );
-  return { mockCallHandler, mockRunHandler, mockWithProject, mockDetectCrossProjectMention };
+  // Identity on purpose: it must not copy the real helper's logic. The real
+  // contract (the notice goes below the first text block, an isError result is
+  // returned untouched) is pinned in mcp-labels-absent-notice.test.ts. Here
+  // the spy only records what task-tools hands it.
+  const mockAppendNoticeLine = vi.fn((result: unknown, _notice: string) => result);
+  return { mockCallHandler, mockRunHandler, mockWithProject, mockDetectCrossProjectMention, mockAppendNoticeLine };
 });
 
 // Mock handler-helpers BEFORE importing task-tools/session-tools, which
@@ -77,6 +83,7 @@ vi.mock('../../src/main/agent/mcp-http/handler-helpers', () => ({
   // Identity stub: the real sanitizer is unit-tested elsewhere; here we
   // only need the routing-check message to embed names verbatim.
   sanitizeProjectName: (name: string) => name,
+  appendNoticeLine: mockAppendNoticeLine,
   makeTaskCounter: () => {
     let count = 0;
     // Arbitrary high ceiling so the routing tests' creations are never throttled.
@@ -326,10 +333,30 @@ describe('create_task rate-limit wiring', () => {
 });
 
 // ---------------------------------------------------------------------------
-// create_task - cross-project routing guardrail
+// create_task - cross-project routing check
 // ---------------------------------------------------------------------------
 
-describe('create_task routing guardrail', () => {
+/** The notice create_task handed appendNoticeLine; fails unless it was called exactly once. */
+function appendedRoutingNotice(): string {
+  expect(mockAppendNoticeLine).toHaveBeenCalledOnce();
+  return mockAppendNoticeLine.mock.calls[0][1];
+}
+
+/**
+ * Make the next create_task resolve against a context that can answer
+ * getProjectDb, so routingDestination really reaches resolveColumn (the default
+ * mocked context has none, which lands on the To Do fallback by accident).
+ */
+function armColumnContext(): void {
+  mockWithProject.mockImplementationOnce(
+    async (_resolver: unknown, _selector: unknown, run: (context: unknown, resolved: unknown) => Promise<unknown>) => {
+      const context = { getProjectPath: () => '/projects/default', getProjectDb: () => ({}) };
+      return run(context, { context, projectId: '11111111-1111-4111-8111-111111111111', projectName: 'Active', isDefault: true });
+    },
+  );
+}
+
+describe('create_task routing check', () => {
   let server: ReturnType<typeof makeFakeServer>;
   let taskCounter: TaskCounter;
 
@@ -338,34 +365,125 @@ describe('create_task routing guardrail', () => {
     // clearAllMocks does not reset return values; re-pin the default so a
     // prior test's mockReturnValue cannot leak into the next one.
     mockDetectCrossProjectMention.mockReturnValue([]);
+    mockAppendNoticeLine.mockImplementation((result: unknown) => result);
     server = makeFakeServer();
     const resolver = makeResolver();
     taskCounter = { tryReserve: vi.fn(() => true), limit: () => 50 };
     registerTaskTools(server as never, resolver, taskCounter);
   });
 
-  it('blocks and creates nothing when defaulting to active but the text names another project', async () => {
-    mockDetectCrossProjectMention.mockReturnValue(['Kangentic']);
+  it('creates the task and appends a note for a source mention in a long description (no resend)', async () => {
+    mockDetectCrossProjectMention.mockReturnValue([{ name: 'Lumen', registeredName: 'Lumen', strength: 'weak', where: 'mention' }]);
+    const created = { content: [{ type: 'text' as const, text: 'created' }] };
+    mockCallHandler.mockResolvedValueOnce(created);
 
     const result = await server.getHandler('kangentic_create_task')({
-      title: 'Fix the cross-project routing bug',
-      description: 'Filed about kangentic from another board.',
+      title: 'Port the lint rules',
+      description: `Ported from Lumen. ${'More detail. '.repeat(500)}`,
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(taskCounter.tryReserve).toHaveBeenCalledOnce();
+    expect(mockCallHandler).toHaveBeenCalledOnce();
+    // The check reads the title and the description separately.
+    expect(mockDetectCrossProjectMention).toHaveBeenCalledWith(expect.anything(), 'Port the lint rules', expect.stringContaining('Ported from Lumen.'));
+    // The create's own result is what the notice is appended to.
+    expect(mockAppendNoticeLine.mock.calls[0][0]).toBe(created);
+    const notice = appendedRoutingNotice();
+    expect(notice.startsWith('[Routing note]')).toBe(true);
+    expect(notice).toContain('the description mentions "Lumen"');
+    expect(notice).toContain('kangentic_move_task_to_project');
+    expect(notice).toContain('targetProject: "Lumen"');
+  });
+
+  it('creates the task and appends a routing check for a strong hit headed to To Do', async () => {
+    mockDetectCrossProjectMention.mockReturnValue([{ name: 'Lumen', registeredName: 'Lumen', strength: 'strong', where: 'title' }]);
+
+    const result = await server.getHandler('kangentic_create_task')({ title: 'Fix the Lumen footer' });
+
+    expect(result.isError).toBeUndefined();
+    expect(mockCallHandler).toHaveBeenCalledOnce();
+    const notice = appendedRoutingNotice();
+    expect(notice).toContain('[Routing check] Created in the active project "Active", but the title names "Lumen".');
+    expect(notice).toContain('call kangentic_move_task_to_project with the task id shown above and targetProject: "Lumen"');
+  });
+
+  it('refuses a strong hit on a Backlog create, and creates nothing', async () => {
+    mockDetectCrossProjectMention.mockReturnValue([{ name: 'acme.io', registeredName: 'acme.io', strength: 'strong', where: 'title' }]);
+
+    const result = await server.getHandler('kangentic_create_task')({
+      title: 'Add foo to acme.io',
+      column: 'Backlog',
     });
 
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain('Routing check');
+    const text = result.content[0].text;
+    expect(text).toContain('Routing check');
+    expect(text).toContain('in the backlog');
     // Names a concrete re-run for both the target and the active project.
-    expect(result.content[0].text).toContain('project: "Kangentic"');
-    expect(result.content[0].text).toContain('project: "Active"');
+    expect(text).toContain('project: "acme.io"');
+    expect(text).toContain('project: "Active"');
     // No quota slot burned and no task created.
     expect(taskCounter.tryReserve).not.toHaveBeenCalled();
     expect(mockCallHandler).not.toHaveBeenCalled();
   });
 
-  it('does NOT run the guardrail when an explicit project selector is passed', async () => {
+  it('refuses a strong hit headed for a column other than To Do', async () => {
+    mockDetectCrossProjectMention.mockReturnValue([{ name: 'Lumen', registeredName: 'Lumen', strength: 'strong', where: 'phrase' }]);
+    armColumnContext();
+    mockResolveColumn.mockReturnValueOnce({ swimlane: { name: 'Planning', role: null, agent_override: null }, allSwimlanes: [] });
+
+    const result = await server.getHandler('kangentic_create_task')({
+      title: 'Port the linter',
+      description: "This belongs on Lumen's board.",
+      column: 'planning',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('in the "Planning" column');
+    expect(result.content[0].text).toContain('the description targets "Lumen"');
+    expect(mockCallHandler).not.toHaveBeenCalled();
+  });
+
+  it('creates a weak hit headed for the backlog, with a note that names the backlog fix', async () => {
+    mockDetectCrossProjectMention.mockReturnValue([{ name: 'Lumen', registeredName: 'Lumen', strength: 'weak', where: 'mention' }]);
+
+    const result = await server.getHandler('kangentic_create_task')({
+      title: 'Port the linter',
+      description: 'Ported from Lumen.',
+      column: 'Backlog',
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(mockCallHandler).toHaveBeenCalledOnce();
+    expect(appendedRoutingNotice()).toContain('kangentic_delete_backlog_item');
+  });
+
+  it('hands a failed create result to appendNoticeLine and returns what it returns', async () => {
+    // That an isError result gets no line is appendNoticeLine's contract, pinned
+    // in mcp-labels-absent-notice.test.ts. What task-tools itself guarantees is
+    // that the error result from callHandler is the one it passes through, so
+    // the helper can leave it alone, and that it adds no text of its own.
+    mockDetectCrossProjectMention.mockReturnValue([{ name: 'Lumen', registeredName: 'Lumen', strength: 'weak', where: 'mention' }]);
+    const failed = { content: [{ type: 'text' as const, text: 'Failed to create task' }], isError: true };
+    mockCallHandler.mockResolvedValueOnce(failed);
+
+    const result = await server.getHandler('kangentic_create_task')({ title: 'Port', description: 'Ported from Lumen.' });
+
+    expect(mockAppendNoticeLine.mock.calls[0][0]).toBe(failed);
+    expect(result).toBe(failed);
+  });
+
+  it('does not touch appendNoticeLine when nothing is mentioned and no labels notice applies', async () => {
+    await server.getHandler('kangentic_create_task')({ title: 'Plain task' });
+
+    expect(mockAppendNoticeLine).not.toHaveBeenCalled();
+  });
+
+  it('does NOT run the check when an explicit project selector is passed', async () => {
     // Even if a name would match, an explicit selector is a deliberate
     // choice (isDefault false) and must be honored without a routing check.
-    mockDetectCrossProjectMention.mockReturnValue(['Kangentic']);
+    mockDetectCrossProjectMention.mockReturnValue([{ name: 'Kangentic', registeredName: 'Kangentic', strength: 'strong', where: 'title' }]);
 
     const result = await server.getHandler('kangentic_create_task')({
       title: 'Fix the kangentic bug',
@@ -388,45 +506,129 @@ describe('create_task routing guardrail', () => {
     expect(mockCallHandler).toHaveBeenCalledOnce();
   });
 
-  it('uses the plural branch of the routing-check message when multiple projects are mentioned', async () => {
-    // Simulates: title/description names two separate registered projects.
-    // buildRoutingCheckMessage is not exported; exercise it through the handler.
-    mockDetectCrossProjectMention.mockReturnValue(['Kangentic', 'Acme-Website']);
+  it('names every mentioned project on one line, strong ones first', async () => {
+    mockDetectCrossProjectMention.mockReturnValue([
+      { name: 'Lumen', registeredName: 'Lumen', strength: 'weak', where: 'mention' },
+      { name: 'orbit-api', registeredName: 'orbit-api', strength: 'strong', where: 'phrase' },
+    ]);
 
     const result = await server.getHandler('kangentic_create_task')({
-      title: 'Update the kangentic and Acme-Website landing pages',
+      title: 'Port the linter',
+      description: 'Ported from Lumen. Add it to orbit-api.',
     });
 
-    expect(result.isError).toBe(true);
-    const text = result.content[0].text;
-    // Plural branch: "these other registered projects" (not the singular form).
-    expect(text).toContain('these other registered projects');
-    // Both names embedded joined by ", ".
-    expect(text).toContain('"Kangentic", "Acme-Website"');
-    // Re-run hint names the first mentioned project.
-    expect(text).toContain('e.g. project: "Kangentic"');
-    // Re-run hint also names the active project so the agent can confirm it.
-    expect(text).toContain('project: "Active"');
-    // Guardrail fires before quota - no slot burned, no task created.
-    expect(taskCounter.tryReserve).not.toHaveBeenCalled();
-    expect(mockCallHandler).not.toHaveBeenCalled();
+    expect(result.isError).toBeUndefined();
+    const notice = appendedRoutingNotice();
+    expect(notice).toContain('[Routing check]');
+    expect(notice).toContain('the description targets "orbit-api" and the description mentions "Lumen"');
+    expect(notice).toContain('If one of them was the target');
+    expect(notice).toContain('targetProject: "orbit-api"');
+    expect(notice).not.toContain('\n');
   });
 
-  it('fires the guardrail for Backlog creates (no column carve-out)', async () => {
-    // Guards against a future regression that might add a `column === 'Backlog'`
-    // carve-out exempting Backlog creates from the routing check.
-    mockDetectCrossProjectMention.mockReturnValue(['kangentic.com']);
+  it('joins three mentions as "A, B and C" on one line, tagged by the strongest', async () => {
+    mockDetectCrossProjectMention.mockReturnValue([
+      { name: 'Lumen', registeredName: 'Lumen', strength: 'weak', where: 'mention' },
+      { name: 'Garden', registeredName: 'Garden', strength: 'strong', where: 'title' },
+      { name: 'orbit-api', registeredName: 'orbit-api', strength: 'weak', where: 'mention' },
+    ]);
+
+    await server.getHandler('kangentic_create_task')({ title: 'Garden cleanup', description: 'Ported from Lumen and orbit-api.' });
+
+    const notice = appendedRoutingNotice();
+    expect(notice).toContain('the title names "Garden", the description mentions "Lumen" and the description mentions "orbit-api"');
+    expect(notice.startsWith('[Routing check]')).toBe(true);
+    // The selector is the strongest mention's, not the first one found.
+    expect(notice).toContain('targetProject: "Garden"');
+    expect(notice).not.toContain('\n');
+  });
+
+  it('tags a notice of only weak mentions as a note', async () => {
+    mockDetectCrossProjectMention.mockReturnValue([
+      { name: 'Lumen', registeredName: 'Lumen', strength: 'weak', where: 'mention' },
+      { name: 'orbit-api', registeredName: 'orbit-api', strength: 'weak', where: 'mention' },
+    ]);
+
+    await server.getHandler('kangentic_create_task')({ title: 'Port', description: 'Ported from Lumen and orbit-api.' });
+
+    expect(appendedRoutingNotice().startsWith('[Routing note]')).toBe(true);
+  });
+
+  describe('a strong mention whose column cannot be told apart from To Do', () => {
+    // routingDestination counts To Do, an unresolvable column and a throwing
+    // lookup alike as "To Do": the create is made and a notice names the
+    // one-call move, never a refusal.
+    const cases: Array<{ label: string; arm: () => void }> = [
+      {
+        label: 'resolves to the To Do role',
+        arm: () => mockResolveColumn.mockReturnValueOnce({ swimlane: { name: 'To Do', role: 'todo', agent_override: null }, allSwimlanes: [] }),
+      },
+      {
+        label: 'resolves to an error',
+        arm: () => mockResolveColumn.mockReturnValueOnce({ error: 'Column not found.' }),
+      },
+      {
+        label: 'throws',
+        arm: () => mockResolveColumn.mockImplementationOnce(() => { throw new Error('database is closed'); }),
+      },
+    ];
+
+    for (const { label, arm } of cases) {
+      it(`creates the task and names the move when the column ${label}`, async () => {
+        mockDetectCrossProjectMention.mockReturnValue([{ name: 'Lumen', registeredName: 'Lumen', strength: 'strong', where: 'title' }]);
+        armColumnContext();
+        arm();
+
+        const result = await server.getHandler('kangentic_create_task')({ title: 'Fix the Lumen footer', column: 'Triage' });
+
+        expect(mockResolveColumn).toHaveBeenCalledOnce();
+        expect(result.isError).toBeUndefined();
+        expect(mockCallHandler).toHaveBeenCalledOnce();
+        expect(appendedRoutingNotice()).toContain('call kangentic_move_task_to_project with the task id shown above and targetProject: "Lumen"');
+      });
+    }
+  });
+
+  it('creates a weak mention headed for a non-To-Do column, with a note that moves it to To Do first', async () => {
+    mockDetectCrossProjectMention.mockReturnValue([{ name: 'Lumen', registeredName: 'Lumen', strength: 'weak', where: 'mention' }]);
+    armColumnContext();
+    mockResolveColumn.mockReturnValueOnce({ swimlane: { name: 'Planning', role: null, agent_override: null }, allSwimlanes: [] });
 
     const result = await server.getHandler('kangentic_create_task')({
-      title: 'Add foo to kangentic.com',
-      column: 'Backlog',
+      title: 'Port the linter',
+      description: 'Ported from Lumen.',
+      column: 'planning',
     });
 
-    expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain('Routing check');
-    // No quota slot burned and no task created even for a Backlog column.
-    expect(taskCounter.tryReserve).not.toHaveBeenCalled();
-    expect(mockCallHandler).not.toHaveBeenCalled();
+    expect(result.isError).toBeUndefined();
+    expect(mockCallHandler).toHaveBeenCalledOnce();
+    expect(appendedRoutingNotice()).toContain('move it to To Do with kangentic_move_task, then call kangentic_move_task_to_project');
+  });
+
+  describe('the project selector it hands back', () => {
+    // A name longer than 60 characters, with a quote and stray spaces: display
+    // text may be shortened, but the selector must be the whole registered name,
+    // escaped, so pasting it back resolves to the project.
+    const registeredName = `  Lumen "Beta" ${'x'.repeat(70)} `;
+    const selector = JSON.stringify(registeredName);
+
+    it('quotes the full registered name in a notice, never a shortened or unescaped one', async () => {
+      mockDetectCrossProjectMention.mockReturnValue([{ name: registeredName.trim(), registeredName, strength: 'strong', where: 'title' }]);
+
+      await server.getHandler('kangentic_create_task')({ title: 'Fix the footer' });
+
+      expect(appendedRoutingNotice()).toContain(`targetProject: ${selector}`);
+    });
+
+    it('quotes the full registered name in a refusal, with the active project as its own selector', async () => {
+      mockDetectCrossProjectMention.mockReturnValue([{ name: registeredName.trim(), registeredName, strength: 'strong', where: 'title' }]);
+
+      const result = await server.getHandler('kangentic_create_task')({ title: 'Fix the footer', column: 'Backlog' });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain(`project: ${selector}`);
+      expect(result.content[0].text).toContain(`project: ${JSON.stringify('Active')}`);
+    });
   });
 });
 
@@ -450,10 +652,10 @@ describe('kangentic_create_task agent/model/effort/permissionMode/autoCommand ov
   beforeEach(() => {
     vi.clearAllMocks();
     // clearAllMocks clears call history but NOT a prior .mockReturnValue() -
-    // re-pin the routing-guardrail default so a previous describe block's
-    // mockReturnValue(['...']) (a sibling project name) cannot leak in and
-    // trip the guardrail, which would block callHandler and self-mask every
-    // assertion below as "not called" instead of testing the override wiring.
+    // re-pin the routing-check default so a previous describe block's
+    // mockReturnValue([...]) (a sibling project mention) cannot leak in and
+    // add a routing line, or refuse a Backlog create, under the override
+    // wiring these tests mean to check.
     mockDetectCrossProjectMention.mockReturnValue([]);
     server = makeFakeServer();
     resolver = makeResolver();
@@ -484,7 +686,7 @@ describe('kangentic_create_task agent/model/effort/permissionMode/autoCommand ov
     expect(result.content[0].text).toContain('is not valid for agent "claude"');
     expect(result.content[0].text).toContain('No task was created.');
     expect(mockCallHandler).not.toHaveBeenCalled();
-    // Ordered before tryReserve for the same reason as the routing guardrail.
+    // Ordered before tryReserve for the same reason as the routing refusal.
     expect(taskCounter.tryReserve).not.toHaveBeenCalled();
   });
 

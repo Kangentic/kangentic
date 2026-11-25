@@ -18,6 +18,7 @@
  * when truncated we point to kangentic_list_projects for the full set.
  */
 import { sanitizeProjectName } from './handler-helpers';
+import { PROJECT_TARGETING_PHRASES } from './project-mention';
 import { browserPaneRegistry } from '../../browser/browser-pane-registry';
 import type { RequestResolver } from './project-resolver';
 
@@ -106,7 +107,7 @@ export function buildServerInstructions(
     activeLine,
     '',
     'PROJECT ROUTING RULE (important):',
-    'Tools that accept an optional `project` argument default to the active project above. Set `project` to the target project name whenever the user names a different registered project, however they phrase it. This includes phrase-embedded references, not just the explicit "create a task in X" form. Treat all of these as targeting project X: "in X", "in the X board", "on X\'s board", "the X to do", "X\'s backlog", "add it to X". When the target is any registered project other than the active one, pass its name as `project` rather than relying on the active default. Do not file a task into the active project when the user clearly targeted another one.',
+    `Tools that accept an optional \`project\` argument default to the active project above. Set \`project\` to the target project name whenever the user names a different registered project, however they phrase it. This includes phrase-embedded references, not just the explicit "create a task in X" form. Treat all of these as targeting project X: ${PROJECT_TARGETING_PHRASES.map((phrase) => `"${phrase}"`).join(', ')}. When the target is any registered project other than the active one, pass its name as \`project\` rather than relying on the active default. Do not file a task into the active project when the user clearly targeted another one. A kangentic_create_task without \`project\` whose text names another project is still created here, flagged with the kangentic_move_task_to_project call that relocates it; one into the Backlog or a non-To-Do column is refused instead when a targeting phrase or its title names that project (an ordinary-word name such as "Garden" counts in the title only inside a targeting phrase).`,
     '',
     'LABELS WITH A LONG DESCRIPTION (known limitation):',
     'When a kangentic_create_task or kangentic_update_task call carries both a long description (roughly 1KB or more) and labels, the labels can be dropped before they reach the server. Set them in a separate labels-only kangentic_update_task call afterwards. When a drop happens the tool response says so and names the task. Pass `labels: []` when the task should have no labels. The server then knows nothing was dropped and adds no note.',
