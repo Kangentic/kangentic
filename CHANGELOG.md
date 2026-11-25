@@ -6,6 +6,70 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 <!-- releases -->
 
+## [v0.64.0] - 2026-11-25
+
+### Features
+- Let a workflow task wait on a task already on a board (c5637e6d)
+- Report silent catch sites and make first events diagnosable (b9b34b0d)
+- Create the task and flag a cross-project mention instead of refusing (07a1291e)
+- Treat labels: [] as an explicit "no labels" signal on create/update_task (5dd344bd)
+
+### Fixes
+- Count a Done removal no probe can explain instead of reporting it (7049a392)
+- Stop telling the agent Kangentic is out of sight when its window is visible (cfc575ab)
+- Cut repeated work from the untracked line count (2c9d0d42)
+- Count every changed file when the status listing is long (dd6c0860)
+- Load the Changes panel on a very large untracked set (d39e86d3)
+- Keep the OpenCode 2 plugin copy and report whether it loaded (dd9b1777)
+- Name an unreadable take-in's column as unknown (b44db189)
+- Close each Windows PTY's console input, and measure main's descriptor table (86836e4c)
+- Name the missing path and the shim's shape in launch reports (1fb46763)
+- Keep first-arm watch reports beside the re-arm path (c7d58781)
+- Catch Changes panel file watch errors and keep the watch live (6ad079ed)
+- Word a retry-Enter hold and a stopped paste by what happened (9a189ca6)
+- Word a held or timed-out paste and a moved task's failed paste by what happened (9cf31aa4)
+- Wait for a keystroke burst on the same turn end before an awaited paste (4617bfee)
+- Say in plain words why an automation paste failed, and tag which case it was (6d1e2754)
+- Start a never-run fresh launch fresh instead of resuming it (8b5468d9)
+- Ignore a sibling's rollout when judging an untouched Codex terminal (1bf2766c)
+- Keep the server instructions under their character cap (e94f5a88)
+
+### Other
+- Pin that only the folder's own rmdir is counted as no_holder_seen (11bb95ce)
+- Name the no_holder_seen count where a removal used to always report (538b1d3b)
+- Pin removal-count precedence and name the counted callers (99f9103a)
+- Add /release-workflow to queue a release behind cards in flight (b95c3b08)
+- Say when a line-count timeout stops the worker (e6c84c66)
+- Say a line-count timeout stop is not a worker crash (91d9c034)
+- Say only a host's plugin copy is held per session (5ec57e13)
+- Pin that a WSL OpenCode 2 session keeps its plugin copy (5a48772b)
+- Pin hook_load through a session removal and the SSH-only plugin hold (5fac08e4)
+- Count the two join channels and describe Add blocker's empty menu (5ae41718)
+- Pin the join IPC handlers and the waitsFor schema (a9a42329)
+- Pin the mock offering a task only on its own board (5839a516)
+- Pin joining a workflow where a task is (5c83d6c0)
+- Pin the console input release order, its guards and the fallback mark (c9c93b67)
+- Say a shim refusal is reported, unlike a command too long (6ebb1bfa)
+- Pin the shim shape reaching the refusal through performSpawn (e133dfeb)
+- Add scoop's .cmd shim for a PowerShell script as a real-shape fixture (b957c144)
+- Pin the dev pairing watch error and the diff watcher's catch allowance (2b14d082)
+- Say what refuses a worktree removal and list what Privacy lists (b3710daa)
+- Load the rig clients now that main modules import a reporter (4ada84fd)
+- Pin the gh job log and az build read reports (47fd7ebc)
+- Draft the Privacy line for run-state tags in every shipped language (b7e2c94a)
+- Pin the phone workflow read report and share the reported-failures helper (f7856cff)
+- Cover a held paste's tags, malformed facts and the unwrapped detail reader (c58d20a6)
+- Say what a held or stopped paste leaves in the prompt (7b65127a)
+- Draft the Privacy line for automation paste facts in every shipped language (a2fc8cdc)
+- Pin what the crash recovery orphan sweeps do to the never-ran mark (8ef06344)
+- Share the never-ran project database fixture (3c40f27c)
+- Pin the routing check's escaping, Done refusal and linear-time guards (1c818a36)
+- Pin the routing phrase list in the server instructions (52559c23)
+- Give the task-delete detail dialog waits a 10s budget (58bef162)
+- Link a direct push's commit in the release notes (e833ef05)
+- Tighten the v0.63.0 audit follow-up prose (80e08862)
+- Apply the v0.63.0 release audit follow-ups (8b396cf3)
+
 ## [v0.63.0] - 2026-11-24
 
 ### Features
