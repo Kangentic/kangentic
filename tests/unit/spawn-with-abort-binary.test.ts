@@ -207,6 +207,53 @@ describe('spawnWithAbort kill mechanism per spawn shape', () => {
 
       expect((await pending).stdout).toHaveLength(2_000_000);
     });
+
+    describe('when the end of the output is kept', () => {
+      // The tail branch keeps everything until the text passes TWICE the cap, then
+      // cuts to the last `cap` characters. So it is not "at most cap" at every moment.
+      it('still applies the default cap, and keeps the end, so a hook that fails shows why', async () => {
+        const child = fakeChild(4242);
+        spawnMock.mockReturnValue(child);
+
+        const pending = spawnWithAbort(BINARY_TARGET,{ timeoutMs: 1_000, keepOutput: 'tail' });
+        // Eight chunks reach exactly twice the cap, which is not past it. The ninth is
+        // distinguishable and pushes it over, so the cut keeps it.
+        emitTwoMillionCharacters(child);
+        child.stdout.emit('data', Buffer.from('y'.repeat(250_000)));
+        child.emit('close', 0, null);
+
+        const { stdout } = await pending;
+        expect(stdout).toHaveLength(1_000_000);
+        expect(stdout.endsWith('y'.repeat(250_000))).toBe(true);
+        expect(stdout.startsWith('x')).toBe(true);
+      });
+
+      it('keeps output the default cap would have cut when the caller raises the cap', async () => {
+        const child = fakeChild(4242);
+        spawnMock.mockReturnValue(child);
+
+        const pending = spawnWithAbort(BINARY_TARGET,{ timeoutMs: 1_000, keepOutput: 'tail', maxOutputChars: 4_000_000 });
+        emitTwoMillionCharacters(child);
+        child.stdout.emit('data', Buffer.from('y'.repeat(250_000)));
+        child.emit('close', 0, null);
+
+        expect((await pending).stdout).toHaveLength(2_250_000);
+      });
+
+      it('cuts to the end of the output once it passes twice a small cap', async () => {
+        const child = fakeChild(4242);
+        spawnMock.mockReturnValue(child);
+
+        const pending = spawnWithAbort(BINARY_TARGET,{ timeoutMs: 1_000, keepOutput: 'tail', maxOutputChars: 10 });
+        // 8 and 16 characters are not past 20. The third makes 24, so the last 10 stay.
+        child.stdout.emit('data', Buffer.from('a'.repeat(8)));
+        child.stdout.emit('data', Buffer.from('b'.repeat(8)));
+        child.stdout.emit('data', Buffer.from('c'.repeat(8)));
+        child.emit('close', 0, null);
+
+        expect((await pending).stdout).toBe('bbcccccccc');
+      });
+    });
   });
 
   it('contrast: a shell command gets no `signal`, leads its own group on POSIX, and loses its tree on abort', async () => {

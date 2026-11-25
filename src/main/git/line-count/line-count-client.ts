@@ -4,12 +4,13 @@ import { UtilityRestartPolicy } from '../../utility-process/restart-policy';
 import { StderrTail, UTILITY_PROCESS_STDIO, captureWorkerStderr } from '../../utility-process/stderr-tail';
 import { unpacked } from '../../utility-process/paths';
 import { gitWorktreeReporter } from '../git-worktree-report';
-import type { LineCountEntry } from './line-count-worker';
+import type { LineCountEntry, LineCountHandledError } from './line-count-worker';
 
 /** Per-request timeout. The worker bounds each file's read to
  *  LARGE_FILE_CAP_BYTES (count-lines.ts), so no one file can hold a batch, but
  *  a batch's time still grows with its file count: 150,000 small files took
- *  about 5 s from a warm disk cache. Past the timeout main counts inline. */
+ *  about 5 s from a warm disk cache. Past the timeout main counts inline, and
+ *  the worker is stopped so its batch does not go on beside main's. */
 const DEFAULT_TIMEOUT_MS = 15_000;
 /** Kill the worker after this long idle. Unlike the embedding worker, this
  *  process holds no expensive warm state (no loaded model) - a short idle
@@ -35,8 +36,9 @@ interface PendingRequest {
  * demand, shuts the worker down when idle, and restarts it (with a crash cap)
  * after an unexpected exit. Every failure path - not spawned, crashed, timed
  * out - resolves `null` so callers degrade to inline (main-thread, bounded)
- * counting rather than throwing. `dispose()` is synchronous for the shutdown
- * path (mirrors EmbedClient).
+ * counting rather than throwing. A request that times out also stops the
+ * worker, which a later request forks again. `dispose()` is synchronous for
+ * the shutdown path (mirrors EmbedClient).
  */
 export class LineCountClient {
   private child: UtilityProcess | null = null;
@@ -111,6 +113,11 @@ export class LineCountClient {
       const timer = setTimeout(() => {
         this.pending.delete(requestId);
         resolve(null);
+        // The worker is still counting a batch nobody will read, while main counts the
+        // same files inline, and the next refresh would send it another beside that one.
+        // So it is stopped, unless another request still waits on it. killChild() makes
+        // its exit a stale one, so the restart policy does not count a crash.
+        if (child === this.child && this.pending.size === 0) this.killChild();
       }, timeoutMs);
       timer.unref();
       this.pending.set(requestId, { resolve, timer });
@@ -123,7 +130,7 @@ export class LineCountClient {
     const record = message as { type?: string; id?: number; entries?: LineCountEntry[] };
     if (record.type === 'handledError') {
       // Not an answer: the request it came from still resolves on its own result.
-      reportWorkerCountFailure(message);
+      reportWorkerCountFailure(message as RelayedCountFailure);
       return;
     }
     if ((record.type === 'result' || record.type === 'error') && typeof record.id === 'number') {
@@ -196,16 +203,19 @@ export class LineCountClient {
   }
 }
 
+/** The worker's relay as it arrives: its fields are the interface's, and no value is trusted to be its type. */
+type RelayedCountFailure = Partial<Record<keyof LineCountHandledError, unknown>>;
+
 /**
- * A file the worker could not count, which it relayed by a fixed code because
- * a worker cannot report (`LineCountHandledError`). The file still lists, with
- * no lines. Only the failure's class, errno and syscall crossed, and a type
- * does not survive the wire, so each is put on the error as it arrived and the
- * shared send takes it only in its fixed shape: a class name, an errno
- * constant, a syscall word. Anything else never becomes a tag.
+ * A file the worker could not count, which it relayed because a worker cannot
+ * report (`LineCountHandledError`). The file still lists, with no lines. Only
+ * the failure's class, errno and syscall crossed, and a type does not survive
+ * the wire, so each is put on the error as it arrived and the shared send takes
+ * it only in its fixed shape: a class name, an errno constant, a syscall word.
+ * Anything else never becomes a tag.
  */
-function reportWorkerCountFailure(relay: object): void {
-  const { errorName, errorCode, syscall } = relay as { errorName?: unknown; errorCode?: unknown; syscall?: unknown };
+function reportWorkerCountFailure(relay: RelayedCountFailure): void {
+  const { errorName, errorCode, syscall } = relay;
   const error = new Error('The line-count worker could not count a file') as NodeJS.ErrnoException;
   if (typeof errorName === 'string') error.name = errorName;
   if (typeof errorCode === 'string') error.code = errorCode;

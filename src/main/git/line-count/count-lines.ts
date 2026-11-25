@@ -121,8 +121,8 @@ export function firstOfEachFailure(sink: (error: unknown) => void): (error: unkn
  * that is not a file any more counts as no lines. So does a file that failed
  * any other way (a full descriptor table, a file another program holds, a read
  * the disk failed), after `onUncounted` is handed the error: main reports it
- * there, and the worker, which cannot report, relays a fixed code for main to
- * report.
+ * there, and the worker, which cannot report, relays its class, errno and
+ * syscall for main to report.
  */
 export function countLinesInFiles(
   absolutePaths: readonly string[],
@@ -133,7 +133,7 @@ export function countLinesInFiles(
       return await countFileLines(absolutePath);
     } catch (error) {
       // report-ok: a path that is not a file any more counts as no lines. Any other failure
-      // goes to the caller, which reports it in main and relays a fixed code from the worker.
+      // goes to the caller, which reports it in main and relays it to main from the worker.
       if (!isMissingPathError(error)) onUncounted(error);
       return { insertions: 0, binary: false, truncated: false };
     }

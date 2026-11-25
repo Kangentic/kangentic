@@ -31,7 +31,10 @@ state into decisions, so the badge, the tooltip, the line and the menus cannot d
 **The status listing is read whole.** `runGitWithTimeout` keeps 1,000,000 characters of a child's
 output unless the caller raises `maxOutputChars`, and a listing cut there parses as a shorter one.
 The status read raises it, so the uncommitted count matches the files the Changes panel lists: a
-folder of 150,000 untracked files once counted as 32,367.
+folder of 150,000 untracked files once counted as 32,367. That cap is this computer's. A project on
+an SSH host reads the listing through the host, which sends it whole and rejects a run that printed
+more than 64 MiB (`MAX_OUTPUT_BYTES` in `src/main/remote/host-git.ts`), so a cut listing is never
+parsed there either.
 
 **Not pushed is commits on no remote-tracking branch** (`rev-list --count HEAD --not --remotes`), not
 `@{upstream}..HEAD`. A task branch is cut from `origin/<base>` and tracks it, and an agent often

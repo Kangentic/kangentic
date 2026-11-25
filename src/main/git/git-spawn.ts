@@ -19,7 +19,11 @@ export interface GitSpawnOptions {
   signal?: AbortSignal;
   /** The child's environment; omitted is main's, without Crashpad's pipe name (see spawn-with-abort.ts). */
   env?: NodeJS.ProcessEnv;
-  /** The most of each stream that is kept; omitted is 1,000,000 characters. Raise it to parse a whole listing (see spawn-with-abort.ts). */
+  /**
+   * The most of each stream that is kept from a run on this computer; omitted is 1,000,000 characters. Raise it
+   * to parse a whole listing (see spawn-with-abort.ts). A run on an SSH host does not read it: the host's output
+   * comes back whole, and a run that printed more than `MAX_OUTPUT_BYTES` (remote/host-git.ts) rejects.
+   */
   maxOutputChars?: number;
 }
 

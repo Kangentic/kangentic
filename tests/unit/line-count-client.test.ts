@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 
 /**
@@ -83,8 +83,8 @@ describe('LineCountClient', () => {
     );
 
     const entries = [
-      { path: '/mock/a.txt', insertions: 3, binary: false },
-      { path: '/mock/b.txt', insertions: 0, binary: true },
+      { insertions: 3, binary: false },
+      { insertions: 0, binary: true },
     ];
     child.emit('message', { type: 'result', id: 1, entries });
 
@@ -285,7 +285,7 @@ describe('LineCountClient', () => {
       // The stale exit must not have nulled the live child (C2) or resolved
       // C2's pending request - C2's own 'result' message must still resolve
       // it normally.
-      const entries = [{ path: '/mock/b.txt', insertions: 5, binary: false }];
+      const entries = [{ insertions: 5, binary: false }];
       secondChild.emit('message', { type: 'result', id: 2, entries });
       await expect(secondPromise).resolves.toBe(entries);
       expect(client.crashed).toBe(false);
@@ -428,14 +428,14 @@ describe('LineCountClient', () => {
       gitWorktreeReporter.reset();
     });
 
-    it('is reported from the fixed code the worker relayed, and the request still resolves on its result', async () => {
+    it('is reported from the class, errno and syscall the worker relayed, and the request still resolves on its result', async () => {
       // The worker cannot report. Before the relay a full descriptor table in
       // the worker read as files with no lines, and nothing reached main.
       const client = new LineCountClient();
       const promise = client.countFiles(['/mock/a.txt']);
       const child = lastChild();
 
-      child.emit('message', { type: 'handledError', code: 'count_file', errorName: 'Error', errorCode: 'EMFILE', syscall: 'open' });
+      child.emit('message', { type: 'handledError', errorName: 'Error', errorCode: 'EMFILE', syscall: 'open' });
 
       const reports = workerCountReports();
       expect(reports).toHaveLength(1);
@@ -443,7 +443,7 @@ describe('LineCountClient', () => {
       expect(sent.message).toBe('Handled git_worktree failure: Error');
       expect(tags).toMatchObject({ source: 'git_worktree', stage: 'untracked_count_worker', errno: 'EMFILE', syscall: 'open' });
 
-      const entries = [{ path: '/mock/a.txt', insertions: 0, binary: false }];
+      const entries = [{ insertions: 0, binary: false }];
       child.emit('message', { type: 'result', id: 1, entries });
       await expect(promise).resolves.toBe(entries);
       client.dispose();
@@ -458,7 +458,6 @@ describe('LineCountClient', () => {
 
       child.emit('message', {
         type: 'handledError',
-        code: 'count_file',
         errorName: 'not a class name',
         errorCode: "EMFILE: too many open files, open '/mock/payroll.txt'",
         syscall: '/mock/payroll.txt',
@@ -475,6 +474,104 @@ describe('LineCountClient', () => {
 
       child.emit('message', { type: 'result', id: 1, entries: [] });
       await promise;
+      client.dispose();
+    });
+
+    it('sends only the class name when the relay fields arrive as a number, an object and an array', async () => {
+      // The guards are on the type, apart from the shared patterns: a number or an
+      // object put on the error as a name or errno would be coerced into a tag.
+      const client = new LineCountClient();
+      const promise = client.countFiles(['/mock/a.txt']);
+      const child = lastChild();
+
+      expect(() => child.emit('message', {
+        type: 'handledError',
+        errorName: 42,
+        errorCode: { toString: () => 'EMFILE' },
+        syscall: ['open'],
+      })).not.toThrow();
+
+      const reports = workerCountReports();
+      expect(reports).toHaveLength(1);
+      const [sent, tags] = reports[0];
+      expect(tags.stage).toBe('untracked_count_worker');
+      expect(tags.error_name).toBe('Error');
+      expect(sent.message).toBe('Handled git_worktree failure: Error');
+      expect(tags).not.toHaveProperty('errno');
+      expect(tags).not.toHaveProperty('syscall');
+
+      child.emit('message', { type: 'result', id: 1, entries: [] });
+      await promise;
+      client.dispose();
+    });
+  });
+
+  describe('a request that times out', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('resolves null and stops the worker, without counting it as a crash, even when the killed worker exits afterwards', async () => {
+      // A worker left running keeps counting a batch nobody reads, beside the inline
+      // count main falls back to, and the next refresh would add another batch to it.
+      vi.useFakeTimers();
+      const policy = new UtilityRestartPolicy({ service: 'kangentic-line-count', maxCrashes: 3 });
+      const recordCrashSpy = vi.spyOn(policy, 'recordCrash');
+      const client = new LineCountClient(policy);
+
+      const promise = client.countFiles(['/mock/a.txt'], 1_000);
+      const child = lastChild();
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      await expect(promise).resolves.toBeNull();
+      expect(child.postMessage).toHaveBeenCalledWith({ type: 'shutdown' });
+      expect(child.kill).toHaveBeenCalledTimes(1);
+
+      // The OS reaps the killed worker later and its exit event arrives then.
+      child.emit('exit', 1);
+      expect(recordCrashSpy).not.toHaveBeenCalled();
+      expect(client.crashed).toBe(false);
+      client.dispose();
+    });
+
+    it('forks a new worker for the next request, which resolves on its own result', async () => {
+      vi.useFakeTimers();
+      const client = new LineCountClient();
+
+      const first = client.countFiles(['/mock/a.txt'], 1_000);
+      const firstChild = lastChild();
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(first).resolves.toBeNull();
+
+      const second = client.countFiles(['/mock/b.txt']);
+      expect(mockFork).toHaveBeenCalledTimes(2);
+      const secondChild = lastChild();
+      expect(secondChild).not.toBe(firstChild);
+      const entries = [{ insertions: 7, binary: false }];
+      secondChild.emit('message', { type: 'result', id: 2, entries });
+
+      await expect(second).resolves.toBe(entries);
+      expect(secondChild.kill).not.toHaveBeenCalled();
+      client.dispose();
+    });
+
+    it('leaves the worker running while another request still waits on it, and that request resolves on its result', async () => {
+      vi.useFakeTimers();
+      const client = new LineCountClient();
+
+      const timesOut = client.countFiles(['/mock/a.txt'], 1_000);
+      const stillWaiting = client.countFiles(['/mock/b.txt'], 60_000);
+      const child = lastChild();
+      expect(mockFork).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(timesOut).resolves.toBeNull();
+      expect(child.kill).not.toHaveBeenCalled();
+
+      const entries = [{ insertions: 3, binary: false }];
+      child.emit('message', { type: 'result', id: 2, entries });
+      await expect(stillWaiting).resolves.toBe(entries);
+      expect(child.kill).not.toHaveBeenCalled();
       client.dispose();
     });
   });

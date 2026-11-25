@@ -58,6 +58,7 @@ import { gitWorktreeReporter } from '../../src/main/git/git-worktree-report';
 import { LINE_COUNT_CONCURRENCY } from '../../src/main/git/line-count/count-lines';
 import type { GitObjectRead, GitObjectReadOptions } from '../../src/main/git/git-object-reader';
 import { IMAGE_PREVIEW_MAX_BYTES } from '../../src/shared/image-preview';
+import { nextEventLoopTurn, trackCallsInFlight, trackOpenFileHandles } from './helpers/file-call-trackers';
 
 /** Backs the countFileLines bounded stat+open read path (see
  *  src/main/git/line-count/count-lines.ts) with a single in-memory buffer, so
@@ -521,11 +522,6 @@ describe('DiffService', () => {
     // Sentry DESKTOP-5A. One folder missing from .gitignore lists every file
     // under it, and the Changes panel then failed to load at all.
     describe('a very large untracked set', () => {
-      /** Resolves on a later turn of the event loop, the way a real file call does. */
-      function nextTurn(): Promise<void> {
-        return new Promise((resolve) => setImmediate(resolve));
-      }
-
       it('returns every entry for 200,000 untracked paths', async () => {
         // Spreading the list as call arguments threw RangeError past about
         // 125,000 entries, so the handler rejected and the panel showed an error.
@@ -538,7 +534,7 @@ describe('DiffService', () => {
         // worker client's mock and the test reads no file.
         vi.mocked(fs.promises.stat).mockResolvedValue({ size: 1024 } as never);
         mockCountFiles.mockImplementation(async (absolutePaths: string[]) =>
-          absolutePaths.map((absolutePath) => ({ path: absolutePath, insertions: 2, binary: false })));
+          absolutePaths.map(() => ({ insertions: 2, binary: false })));
 
         const result = await service.getDiffFiles({ projectPath: '/project', baseBranch: 'main' });
 
@@ -559,24 +555,8 @@ describe('DiffService', () => {
         mockGit.status.mockResolvedValue({ not_added: untrackedPaths });
         const content = Buffer.from('line1\nline2\n');
         vi.mocked(fs.promises.stat).mockResolvedValue({ size: content.length } as never);
-        let openHandles = 0;
-        let peakOpenHandles = 0;
-        vi.mocked(fs.promises.open).mockImplementation((async () => {
-          openHandles += 1;
-          peakOpenHandles = Math.max(peakOpenHandles, openHandles);
-          await nextTurn();
-          return {
-            read: async (buffer: Buffer, offset: number, length: number, position: number) => {
-              await nextTurn();
-              content.copy(buffer, offset, position, position + length);
-              return { bytesRead: length, buffer };
-            },
-            close: async () => {
-              await nextTurn();
-              openHandles -= 1;
-            },
-          };
-        }) as never);
+        const handles = trackOpenFileHandles(content);
+        vi.mocked(fs.promises.open).mockImplementation(handles.open as never);
 
         const result = await service.getDiffFiles({ projectPath: '/project', baseBranch: 'main' });
 
@@ -585,9 +565,73 @@ describe('DiffService', () => {
         expect(result.files).toHaveLength(200);
         expect(result.totalInsertions).toBe(400);
         // Above 1, so a count that went serial does not pass as bounded.
-        expect(peakOpenHandles).toBeGreaterThan(1);
-        expect(peakOpenHandles).toBeLessThanOrEqual(LINE_COUNT_CONCURRENCY);
-        expect(openHandles).toBe(0);
+        expect(handles.peakOpenHandles).toBeGreaterThan(1);
+        expect(handles.peakOpenHandles).toBeLessThanOrEqual(LINE_COUNT_CONCURRENCY);
+        expect(handles.openHandles).toBe(0);
+      });
+
+      it('keeps each untracked path with its own count when inline counts finish out of order', async () => {
+        // A count matched to the wrong path shows one file's lines on another in the Changes panel.
+        const untrackedPaths = Array.from({ length: 6 }, (_unused, index) => `notes/file-${index}.txt`);
+        mockGit.diffSummary.mockResolvedValue(makeDiffSummary([]));
+        mockGit.diff.mockResolvedValue('');
+        mockGit.status.mockResolvedValue({ not_added: untrackedPaths });
+        const fileIndexOf = (filePath: unknown): number => untrackedPaths.findIndex((candidate) => String(filePath).replace(/\\/g, '/').endsWith(candidate));
+        const contentOf = (fileIndex: number): Buffer => Buffer.from('x\n'.repeat(fileIndex + 1));
+        vi.mocked(fs.promises.stat).mockImplementation((async (filePath: unknown) => (
+          { size: contentOf(fileIndexOf(filePath)).length }
+        )) as never);
+        vi.mocked(fs.promises.open).mockImplementation((async (filePath: unknown) => {
+          const fileIndex = fileIndexOf(filePath);
+          const content = contentOf(fileIndex);
+          return {
+            read: async (buffer: Buffer, offset: number, length: number, position: number) => {
+              // The first file waits the most turns, so the last finishes first.
+              for (let turn = 0; turn < (untrackedPaths.length - fileIndex) * 3; turn += 1) await nextEventLoopTurn();
+              content.copy(buffer, offset, position, position + length);
+              return { bytesRead: length, buffer };
+            },
+            close: async () => undefined,
+          };
+        }) as never);
+
+        const result = await service.getDiffFiles({ projectPath: '/project', baseBranch: 'main' });
+
+        expect(mockCountFiles).not.toHaveBeenCalled();
+        expect(result.files.map((file) => [file.path, file.insertions])).toEqual(
+          untrackedPaths.map((untrackedPath, index) => [untrackedPath, index + 1]),
+        );
+      });
+
+      it('stats a bounded number of paths, and stops once the total is past the offload threshold', async () => {
+        // Two failures this catches: a pass that stats every path at once (a descriptor
+        // or libuv queue for each of 150,000 files), and one that goes on statting after
+        // the answer is known.
+        const pathCount = 3_000;
+        const untrackedPaths = Array.from({ length: pathCount }, (_unused, index) => `vendor/file-${index}.txt`);
+        mockGit.diffSummary.mockResolvedValue(makeDiffSummary([]));
+        mockGit.diff.mockResolvedValue('');
+        mockGit.status.mockResolvedValue({ not_added: untrackedPaths });
+        // 512 KiB each: the threshold (2 MiB) is passed by the fifth file counted.
+        const stats = trackCallsInFlight(() => ({ size: 512 * 1024 }));
+        vi.mocked(fs.promises.stat).mockImplementation(stats.call as never);
+        mockCountFiles.mockImplementation(async (absolutePaths: string[]) =>
+          absolutePaths.map(() => ({ insertions: 1, binary: false })));
+
+        await service.getDiffFiles({ projectPath: '/project', baseBranch: 'main' });
+
+        expect(stats.peakInFlight).toBeGreaterThan(1);
+        expect(stats.peakInFlight).toBeLessThanOrEqual(LINE_COUNT_CONCURRENCY);
+        // A stat starts only while the finished ones total at most the threshold (4 files),
+        // and at most LINE_COUNT_CONCURRENCY are unfinished, so twice the pool is a safe ceiling.
+        expect(stats.totalCalls).toBeLessThanOrEqual(2 * LINE_COUNT_CONCURRENCY);
+        expect(stats.totalCalls).toBeLessThan(pathCount / 10);
+        // The worker still got every path.
+        expect(mockCountFiles).toHaveBeenCalledTimes(1);
+        const handedPaths = mockCountFiles.mock.calls[0][0] as string[];
+        expect(handedPaths).toHaveLength(pathCount);
+        expect(handedPaths[0]).toBe(path.join('/project', 'vendor/file-0.txt'));
+        expect(handedPaths[pathCount - 1]).toBe(path.join('/project', `vendor/file-${pathCount - 1}.txt`));
       });
 
       it('reports a count that failed on a full descriptor table, and still lists the file', async () => {
@@ -640,7 +684,7 @@ describe('DiffService', () => {
         // A single 3MB untracked file - aggregate (3MB) > the 2MB threshold.
         vi.mocked(fs.promises.stat).mockResolvedValue({ size: 3 * 1024 * 1024 } as never);
         const absolutePath = path.join('/project', 'big-file.bin');
-        mockCountFiles.mockResolvedValue([{ path: absolutePath, insertions: 42, binary: false }]);
+        mockCountFiles.mockResolvedValue([{ insertions: 42, binary: false }]);
 
         await service.getDiffFiles({ projectPath: '/project', baseBranch: 'main' });
 
@@ -694,18 +738,16 @@ describe('DiffService', () => {
         });
       });
 
-      it('maps worker results back to the original relative untracked paths by index, not by the entry.path field', async () => {
+      it('maps worker results back to the original relative untracked paths by index', async () => {
         mockGit.diffSummary.mockResolvedValue(makeDiffSummary([]));
         mockGit.diff.mockResolvedValue('');
         mockGit.status.mockResolvedValue({ not_added: ['src/big-one.bin', 'assets/big-two.bin'] });
         // 2 files * 1.5MB = 3MB aggregate, over the 2MB threshold.
         vi.mocked(fs.promises.stat).mockResolvedValue({ size: 1.5 * 1024 * 1024 } as never);
-        // Deliberately mismatched `path` fields on the worker's entries, so a
-        // regression that zips by entry.path (instead of untrackedPaths[index])
-        // would surface as a wrong path in the result.
+        // The worker's entries carry no path, so each file takes the entry at its own index.
         mockCountFiles.mockResolvedValue([
-          { path: 'garbage-value-should-be-ignored-0', insertions: 10, binary: false },
-          { path: 'garbage-value-should-be-ignored-1', insertions: 0, binary: true },
+          { insertions: 10, binary: false },
+          { insertions: 0, binary: true },
         ]);
 
         const result = await service.getDiffFiles({ projectPath: '/project', baseBranch: 'main' });
