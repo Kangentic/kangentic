@@ -155,13 +155,26 @@ export class DevQuickPair {
   private startWatching(): void {
     if (this.watcher) return;
     try {
-      this.watcher = fs.watch(devPairingDir(), (eventType, filename) => {
+      const watcher = fs.watch(devPairingDir(), (eventType, filename) => {
         if (filename === PHONE_FILE) {
           // A fresh rig run may rewrite the same key; force re-evaluation.
           this.lastAdoptedKeyHex = null;
           this.adoptPhoneFile();
         }
       });
+      // Node emits 'error' after closing the handle itself, and an emit with
+      // no listener throws in main (Sentry DESKTOP-58, from the diff watcher).
+      // Release the dead watcher so the next startWatching() can arm again.
+      watcher.on('error', (error: NodeJS.ErrnoException) => {
+        console.warn(`[mobile-bridge/dev-quick-pair] the pairing directory watch failed (${error.code ?? 'no code'})`);
+        try {
+          watcher.close();
+        } catch {
+          // report-ok: Node released the handle before emitting; a dev-only watch.
+        }
+        if (this.watcher === watcher) this.watcher = null;
+      });
+      this.watcher = watcher;
     } catch (error) {
       // report-ok: dev builds only. With no watch, a phone.json written later is adopted on the
       // next bridge reconcile, which reads the file again.
