@@ -44,6 +44,7 @@ const sessionRepoGetResumable = vi.fn(() => [] as SessionRecord[]);
 const sessionRepoGetOrphaned = vi.fn(() => [] as SessionRecord[]);
 const sessionRepoGetInterruptedExited = vi.fn(() => [] as SessionRecord[]);
 const sessionRepoInsertMock = vi.fn();
+const sessionRepoMarkAgentNeverRanMock = vi.fn(() => true);
 const taskRepoList = vi.fn(() => [] as Task[]);
 const taskRepoUpdateMock = vi.fn();
 const swimlaneRepoList = vi.fn(() => [] as Swimlane[]);
@@ -80,6 +81,7 @@ vi.mock('../../src/main/db/repositories/session-repository', () => {
         .find((record) => record.id === recordId)
     );
     insert = (...args: unknown[]) => sessionRepoInsertMock(...args);
+    markAgentNeverRan = (...args: unknown[]) => sessionRepoMarkAgentNeverRanMock(...args);
     updateAppliedSettings = vi.fn();
   }
   return { SessionRepository: FakeSessionRepository };
@@ -401,6 +403,57 @@ describe('resumeSuspendedSessions: a recovered session that did not expire', () 
     expect(sessionRepoInsertMock).toHaveBeenCalledWith(expect.objectContaining({ id: 'prepared-session', prompt: null }));
     expect(onConversationExpired).not.toHaveBeenCalled();
     expect(isRecapTurn('prepared-session', 1)).toBe(false);
+  });
+});
+
+// Sentry DESKTOP-2M (the Fedora event): a recovery that waited for a slot was
+// written `running`, so a quit suspended it with its minted id instead of
+// settling a queued record, and the next launch resumed a conversation no CLI wrote.
+describe('resumeSuspendedSessions: a recovered spawn that waits for a slot', () => {
+  function queuedSessionManager() {
+    const sessionManager = makeSessionManager();
+    sessionManager.spawn.mockResolvedValue({ id: 'prepared-session', status: 'queued' });
+    return sessionManager;
+  }
+
+  it('writes its record queued, and marks a fresh start that minted its id as not run yet', async () => {
+    prepareAgentSpawnMock.mockResolvedValue(preparedSpawn({ startOver: 'never-started', mintedAgentSessionId: true }));
+    const sessionManager = queuedSessionManager();
+
+    await runRecovery(sessionManager);
+
+    expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ mintedAgentSessionId: true }));
+    expect(sessionRepoInsertMock).toHaveBeenCalledWith(expect.objectContaining({ id: 'prepared-session', status: 'queued' }));
+    expect(sessionRepoMarkAgentNeverRanMock).toHaveBeenCalledWith('prepared-session');
+  });
+
+  it('writes a queued resume queued, and marks nothing: its conversation is an earlier launch\'s', async () => {
+    prepareAgentSpawnMock.mockResolvedValue(preparedSpawn({ resumed: true, mintedAgentSessionId: false }));
+
+    await runRecovery(queuedSessionManager());
+
+    expect(sessionRepoInsertMock).toHaveBeenCalledWith(expect.objectContaining({ status: 'queued' }));
+    expect(sessionRepoMarkAgentNeverRanMock).not.toHaveBeenCalled();
+  });
+
+  it('marks nothing on a fresh start that is running, whose exit decides', async () => {
+    prepareAgentSpawnMock.mockResolvedValue(preparedSpawn({ startOver: 'never-started', mintedAgentSessionId: true }));
+
+    await runRecovery(makeSessionManager());
+
+    expect(sessionRepoInsertMock).toHaveBeenCalledWith(expect.objectContaining({ status: 'running' }));
+    expect(sessionRepoMarkAgentNeverRanMock).not.toHaveBeenCalled();
+  });
+
+  it('writes a fresh start whose terminal failed to start running, and marks it as not run', async () => {
+    prepareAgentSpawnMock.mockResolvedValue(preparedSpawn({ startOver: 'never-started', mintedAgentSessionId: true }));
+    const sessionManager = makeSessionManager();
+    sessionManager.spawn.mockResolvedValue({ id: 'prepared-session', status: 'exited' });
+
+    await runRecovery(sessionManager);
+
+    expect(sessionRepoInsertMock).toHaveBeenCalledWith(expect.objectContaining({ id: 'prepared-session', status: 'running' }));
+    expect(sessionRepoMarkAgentNeverRanMock).toHaveBeenCalledWith('prepared-session');
   });
 });
 

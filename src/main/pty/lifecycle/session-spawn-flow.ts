@@ -719,6 +719,9 @@ export async function performSpawn(
     startPath: input.startPath,
     ...(input.openingPrompt ? { openingPrompt: input.openingPrompt } : {}),
     ...(input.sessionIdCreation ? { sessionIdCreation: input.sessionIdCreation } : {}),
+    // Kept only with the id it describes. The never-ran test reads both, and a
+    // flag with no id would say a launch minted an id it never had.
+    ...(input.mintedAgentSessionId && input.agentSessionId ? { mintedAgentSessionId: true } : {}),
     agentCliVersion: input.agentCliVersion ?? null,
     agentCliPath: input.agentCliPath ?? null,
     resumeEvidence: input.resumeEvidence ?? null,

@@ -48,6 +48,12 @@ export interface PreparedSpawn {
   agentSessionId: string | null;
   /** How a fresh start got `agentSessionId` before launch; `not_asked` for a resume. Read only by the session-id report. */
   sessionIdCreation: SessionIdCreationOutcome;
+  /**
+   * A fresh start minted `agentSessionId` for this launch: true only when it is
+   * set and this is not a resume. Its record names no conversation until the
+   * CLI runs (`SessionRecord.agent_never_ran_at`).
+   */
+  mintedAgentSessionId: boolean;
   /** Effective permission mode after lane override + global fallback. */
   permissionMode: PermissionMode;
   statusOutputPath: string;
@@ -483,6 +489,7 @@ async function prepareSpawnWithPull(hostFilePull: HostFilePull, input: {
       sessionRecordId,
       agentSessionId,
       sessionIdCreation,
+      mintedAgentSessionId: !canResume && agentSessionId !== null,
       permissionMode,
       statusOutputPath,
       eventsOutputPath,

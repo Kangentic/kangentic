@@ -141,8 +141,9 @@ modes and their failure handling: [Worktree creation](../worktrees/worktree-crea
    for this launch (Claude's does on its fullscreen renderer), with a free concurrency slot and no
    session row for the task: `ensureTrust` for the worktree, the command built with no prompt
    (`resolveLaunch`, the same options a spawn builds), and `sessionManager.spawn` with
-   `hiddenUntilAdopted`, `seedIdle` and `inputInAlternateScreen`. Nothing is written to the
-   database. Every spawn the engine makes carries that last flag when the adapter answers true, so
+   `hiddenUntilAdopted`, `seedIdle`, `inputInAlternateScreen` and `mintedAgentSessionId` (it is a
+   fresh launch, so the id it was given is minted for it and its record, once adopted, is marked
+   when it ends before its CLI ran). Nothing is written to the database. Every spawn the engine makes carries that last flag when the adapter answers true, so
    a later background paste waits for the alternate screen too (`awaitInputReady`).
 2. **Hidden.** `SessionManager.emit` keeps every event of a hidden session from listeners except
    the raw output signals; its `exit` reaches `awaitExit` alone. It is left out of

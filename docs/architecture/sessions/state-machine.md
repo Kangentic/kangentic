@@ -72,10 +72,11 @@ The in-memory `SessionStatus` does not include `orphaned` (that is a DB-only con
 | `suspended` | `running` | Task moved to active column, resumed via `--resume` |
 | `suspended` | `exited` | Replaced by a new session on resume (`retireRecord`) |
 | `orphaned` | `running` | Session recovery on project open |
+| `orphaned` | `queued` | Session recovery on project open, when the resumed spawn queues at the concurrency limit. `resume-suspended.ts` and `auto-spawn.ts` write the record `queued`, as the board path does, so a quit settles it as a queued record |
 | `orphaned` | `exited` | Recovery dedup, or failed recovery (`retireRecord`) |
 | `exited` | `exited` | A resume replaces a record that had already ended on its own (`retireRecord`'s fallback CAS). Confirms the row is out of the way without restamping `exited_at`, so the CLI's real end time survives a later restart; only the `suspended` and `orphaned` rows above get a fresh stamp |
 | `orphaned` | `suspended` | Pause-on-restart setting upgrades a crashed session (`markRecordSuspended`) |
-| `exited` | `running` | OS-killed (abnormal `exit_code`) session resumed by recovery on project open (`getInterruptedExited`) |
+| `exited` | `running` | OS-killed (abnormal `exit_code`) session resumed by recovery on project open (`getInterruptedExited`); the new record is written `queued` instead when its spawn queues, as in the `orphaned` row above |
 | `exited` | `suspended` | Interrupted-exited record CAS-upgraded by recovery (non-target / non-auto-spawn / auto-resume-off), a PTY exit during app shutdown (onExit hardening), or a launch whose shell died before its typed line ran, parked with `system` by the `exit` listener ahead of its one retry (`parkExitedLaunch`; the registry row turns `suspended` in place through `parkFailedLaunch`) |
 | `running` | `suspended` | App shutdown race: PTY exits while `isShuttingDown()` (onExit hardening keeps it resumable) |
 

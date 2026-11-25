@@ -29,6 +29,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   assessResumeConversation,
+  assessResumeConversationWithEvidence,
   folderOnlyRecord,
   lineageHadTurns,
   owedPromptOf,
@@ -687,5 +688,83 @@ describe('a launch the check marked as failed', () => {
       projectPath,
     });
     expect(verdict).toBe('unknown');
+  });
+});
+
+// Sentry DESKTOP-2M on 0.63.0: a fresh launch Kangentic ended before its typed
+// line ran (or a quit suspended, or a crash left queued) kept its minted
+// `--session-id` and no path, so the resume printed "No conversation found".
+describe('a fresh launch whose agent never ran', () => {
+  const NEVER_RAN_AT = '2026-11-24T23:40:19.000Z';
+  const OTHER_AGENT_SESSION_ID = '0d0f6a5e-3c1c-4d0e-9d6f-5a7b2e1c9f00';
+
+  function mintingRecord(overrides: Partial<ResumeLineageRecord> = {}): ResumeLineageRecord {
+    return { ...folderRecord('fresh-launch'), agent_session_id: AGENT_SESSION_ID, ...overrides };
+  }
+
+  function resumeRecord(overrides: Partial<ResumeLineageRecord> = {}): ResumeLineageRecord {
+    return { ...folderRecord('failed-resume'), agent_session_id: AGENT_SESSION_ID, ...overrides };
+  }
+
+  function assessWithEvidence(records: ReadonlyArray<ResumeLineageRecord | null>) {
+    return assessResumeConversationWithEvidence({
+      adapter: claudeShapedAdapter(),
+      agentSessionId: AGENT_SESSION_ID,
+      records,
+      cwd,
+      projectPath,
+    });
+  }
+
+  // Red before the mark: no path on any row and no folder, so this read unknown.
+  it('starts fresh and owes its prompt when the record that minted the id never ran', async () => {
+    const assessment = await assessWithEvidence([mintingRecord({ agent_never_ran_at: NEVER_RAN_AT })]);
+    expect(assessment.verdict).toBe('never-started');
+    expect(assessment.promptOwed).toBe(true);
+    expect(assessment.evidence?.transcript).toBe('not_reported');
+  });
+
+  it('reads the mark on the oldest record, past a resume of it that failed since', async () => {
+    const assessment = await assessWithEvidence([resumeRecord(), mintingRecord({ agent_never_ran_at: NEVER_RAN_AT })]);
+    expect(assessment.verdict).toBe('never-started');
+    expect(assessment.promptOwed).toBe(true);
+  });
+
+  // resolveResumeLineage puts the retiring record first wherever it sits in time, so the
+  // minting record is the matching one with the earliest start, not the last in the list.
+  it('reads the mark on the older minting record when it is not last in the lineage', async () => {
+    const assessment = await assessWithEvidence([
+      mintingRecord({ agent_never_ran_at: NEVER_RAN_AT, started_at: '2026-11-24T23:40:00.000Z' }),
+      resumeRecord({ started_at: '2026-11-24T23:45:00.000Z' }),
+    ]);
+    expect(assessment.verdict).toBe('never-started');
+    expect(assessment.promptOwed).toBe(true);
+  });
+
+  it('decides nothing from a mark on a newer record when the fresh launch is unmarked', async () => {
+    const assessment = await assessWithEvidence([resumeRecord({ agent_never_ran_at: NEVER_RAN_AT }), mintingRecord()]);
+    expect(assessment.verdict).toBe('unknown');
+  });
+
+  it('decides nothing from a mark on a record of another conversation', async () => {
+    const assessment = await assessWithEvidence([
+      resumeRecord(),
+      mintingRecord({ agent_session_id: OTHER_AGENT_SESSION_ID, agent_never_ran_at: NEVER_RAN_AT }),
+    ]);
+    expect(assessment.verdict).toBe('unknown');
+  });
+
+  it('never discards a conversation that had turns', async () => {
+    const assessment = await assessWithEvidence([
+      resumeRecord({ total_output_tokens: 40 }),
+      mintingRecord({ agent_never_ran_at: NEVER_RAN_AT }),
+    ]);
+    expect(assessment.verdict).toBe('unknown');
+  });
+
+  it('still resumes a lineage with no path and no mark', async () => {
+    const assessment = await assessWithEvidence([resumeRecord(), mintingRecord()]);
+    expect(assessment.verdict).toBe('unknown');
+    expect(assessment.evidence?.transcript).toBe('not_reported');
   });
 });

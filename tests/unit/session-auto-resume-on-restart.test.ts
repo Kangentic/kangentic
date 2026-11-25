@@ -41,6 +41,7 @@ const sessionRecordStatusRef = { current: 'running' as 'running' | 'queued' };
 // Where the record's agent ran: null for this computer, or the stored target of an SSH host (#913).
 const sessionRecordTargetRef = { current: null as string | null };
 const updateMetricsMock = vi.fn();
+const markAgentNeverRanMock = vi.fn(() => true);
 vi.mock('../../src/main/db/repositories/session-repository', () => {
   class FakeSessionRepository {
     findByAnyId = vi.fn(() => ({
@@ -49,6 +50,7 @@ vi.mock('../../src/main/db/repositories/session-repository', () => {
       cli_target: sessionRecordTargetRef.current,
     }));
     updateMetrics = (...args: unknown[]) => updateMetricsMock(...args);
+    markAgentNeverRan = (...args: unknown[]) => markAgentNeverRanMock(...args);
   }
   return { SessionRepository: FakeSessionRepository };
 });
@@ -63,12 +65,13 @@ vi.mock('../../src/main/db/repositories/task-repository', () => {
 
 import { syncShutdownCleanup } from '../../src/main/shutdown';
 
-function makeDeps(options: { sessionStatus?: 'running' | 'queued' } = {}) {
+function makeDeps(options: { sessionStatus?: 'running' | 'queued'; agentNeverRan?: boolean } = {}) {
   const sessionStatus = options.sessionStatus ?? 'running';
   const sessionManager = {
     listSessions: vi.fn(() => [
-      { taskId: 'task-A', projectId: 'proj-1', status: sessionStatus },
+      { id: 'pty-1', taskId: 'task-A', projectId: 'proj-1', status: sessionStatus },
     ]),
+    agentNeverRan: vi.fn((sessionId: string) => sessionId === 'pty-1' && options.agentNeverRan === true),
     killAll: vi.fn(() => [] as number[]),
     dispose: vi.fn(),
     getUsageCache: () => ({}),
@@ -99,8 +102,34 @@ describe('syncShutdownCleanup: session + task bookkeeping', () => {
     settleQueuedRecordMock.mockClear();
     taskRepoUpdateMock.mockClear();
     updateMetricsMock.mockClear();
+    markAgentNeverRanMock.mockClear();
     sessionRecordStatusRef.current = 'running';
     sessionRecordTargetRef.current = null;
+  });
+
+  // Sentry DESKTOP-2M: a fresh launch quit before its CLI ran was suspended with
+  // its minted id, and startup recovery resumed it into "No conversation found".
+  it('marks the record of a fresh launch quit before its CLI ran, as well as suspending it', () => {
+    syncShutdownCleanup(makeDeps({ agentNeverRan: true }));
+
+    expect(markRecordSuspendedMock).toHaveBeenCalledTimes(1);
+    expect(markAgentNeverRanMock).toHaveBeenCalledWith('record-1');
+    expect(taskRepoUpdateMock).toHaveBeenCalledWith({ id: 'task-A', session_id: null });
+  });
+
+  it('leaves the record of a launch whose CLI ran unmarked', () => {
+    syncShutdownCleanup(makeDeps({ agentNeverRan: false }));
+
+    expect(markRecordSuspendedMock).toHaveBeenCalledTimes(1);
+    expect(markAgentNeverRanMock).not.toHaveBeenCalled();
+  });
+
+  it('marks nothing on a remote host\'s record, which stays running', () => {
+    sessionRecordTargetRef.current = JSON.stringify({ kind: 'ssh', hostId: 'host-1', home: '/home/dev', shellName: 'zsh', roots: [] });
+
+    syncShutdownCleanup(makeDeps({ agentNeverRan: true }));
+
+    expect(markAgentNeverRanMock).not.toHaveBeenCalled();
   });
 
   // A quit leaves an agent on a host running (#913). Its record stays `running` and its task keeps pointing at it,

@@ -1879,6 +1879,43 @@ export class SessionManager extends EventEmitter {
     return launchNeverStarted(session) || (session.shellDiedBeforeLaunch === true && !hasAgentRunEvidence(session));
   }
 
+  /**
+   * Whether this task session is a fresh launch that minted its agent session
+   * id and whose CLI never ran, by Kangentic's own observation of the launch:
+   * no sign the agent started, and either the terminal never printed a byte, or
+   * the adapter reports its start and the shell never ran the typed line. Its
+   * record then names no conversation (`SessionRecord.agent_never_ran_at`).
+   *
+   * Either test alone is not enough. A shell whose clear the handoff test does
+   * not know never shows the typed line run (`AgentOutputTracker`), so for an
+   * adapter with no start report that silence proves nothing. A terminal that
+   * printed nothing at all held no CLI, whatever the adapter.
+   *
+   * A resume never answers true. Its conversation was written by an earlier
+   * launch, whether or not this one ran.
+   *
+   * Neither does an agent on an SSH host. Its output crosses the link late, so
+   * a terminal silent here may hold a CLI that already ran there, and only the
+   * host proves a conversation absent (`ssh-remote.md`).
+   *
+   * Synchronous, for the quit path. False for an unknown id, a Command
+   * Terminal, a workflow's agent, an agent hidden until adopted and an agent
+   * on an SSH host.
+   */
+  agentNeverRan(sessionId: string): boolean {
+    const session = this.registry.get(sessionId);
+    return session !== undefined && this.agentNeverRanIn(session);
+  }
+
+  private agentNeverRanIn(session: ManagedSession): boolean {
+    if (session.mintedAgentSessionId !== true || !session.agentSessionId) return false;
+    if (session.transient || session.workflowId || this.isHiddenUntilAdopted(session.id)) return false;
+    if (isOnSshHost(session)) return false;
+    if (hasAgentRunEvidence(session)) return false;
+    if (typeof session.firstOutputAt !== 'number') return true;
+    return session.reportsAgentStart === true && typeof session.agentOutputAt !== 'number';
+  }
+
   /** True for a task's session whose shell exited on its own before its typed line ran (`noteLaunchEnded`). */
   shellDiedBeforeLaunch(sessionId: string): boolean {
     return this.registry.get(sessionId)?.shellDiedBeforeLaunch === true;
@@ -2032,6 +2069,12 @@ export class SessionManager extends EventEmitter {
     if (!session.agentParser) return;
     if (isShuttingDown() || exit.exitCode === PTY_HOST_LOST_EXIT_CODE) return;
     if (this.isHiddenUntilAdopted(session.id) || hasAgentRunEvidence(session)) return;
+    // Whoever ended it, and whether or not a pause or park lands after: a
+    // record whose CLI never ran must not be resumed (Sentry DESKTOP-2M). The
+    // ids come off the session itself, since its row may already be gone.
+    if (this.agentNeverRanIn(session)) {
+      this.emit('launch-ended-before-agent-ran', session.id, session.projectId, session.taskId);
+    }
     const typedLineNeverRan = typeof session.agentOutputAt !== 'number';
     // Only a task's session: a Command Terminal and a workflow agent are both
     // transient, and neither has a task to park or retry.

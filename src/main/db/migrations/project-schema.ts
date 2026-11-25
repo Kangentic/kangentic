@@ -2259,6 +2259,14 @@ export function runProjectMigrations(db: Database.Database): void {
     db.exec('ALTER TABLE sessions ADD COLUMN carried_owner_turn TEXT DEFAULT NULL');
   }
 
+  // Migration: when the fresh launch that minted a session's agent id ended
+  // with its CLI never run (Sentry DESKTOP-2M). No conversation exists under
+  // that id, so a resume of it starts fresh. NULL on every existing row, which
+  // resumes as before.
+  if (!sessionTurnColumns.has('agent_never_ran_at')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN agent_never_ran_at TEXT DEFAULT NULL');
+  }
+
   stripLegacyTextMatchNot(db);
 }
 

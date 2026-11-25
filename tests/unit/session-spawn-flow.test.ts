@@ -683,6 +683,29 @@ describe('performSpawn - the opening prompt delivery on the session row', () => 
 
     expect(context.registry.get('session-idcreate-none-00000-00000')?.sessionIdCreation).toBeUndefined();
   });
+
+  // Sentry DESKTOP-2M: the row says the launch minted its id, which is what
+  // lets an end before its CLI ran mark the record (`agent_never_ran_at`).
+  it('copies a minted agent session id onto the registry row', async () => {
+    const context = makeContext();
+    await performSpawn(makeInput({
+      id: 'session-minted-0000-0000-000000000',
+      agentSessionId: '935a5611-0f79-4f34-a5ea-62f2a4bd7894',
+      mintedAgentSessionId: true,
+    }), context);
+
+    expect(context.registry.get('session-minted-0000-0000-000000000')?.mintedAgentSessionId).toBe(true);
+  });
+
+  it.each([
+    { label: 'a resume', input: { agentSessionId: '935a5611-0f79-4f34-a5ea-62f2a4bd7894', mintedAgentSessionId: false } },
+    { label: 'a spawn that claims a mint with no id', input: { mintedAgentSessionId: true } },
+  ])('leaves the row unminted for $label', async ({ input }) => {
+    const context = makeContext();
+    await performSpawn(makeInput({ id: 'session-unminted-000-0000-000000000', ...input }), context);
+
+    expect(context.registry.get('session-unminted-000-0000-000000000')?.mintedAgentSessionId).toBeUndefined();
+  });
 });
 
 describe('performSpawn - the resume evidence on the session row', () => {

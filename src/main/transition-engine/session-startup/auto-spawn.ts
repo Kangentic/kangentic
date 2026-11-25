@@ -487,6 +487,7 @@ export async function autoSpawnTasks(
           // A prompt, when preparation kept one, was built into the command.
           openingPrompt: input.prompt ? 'command_line' : 'none',
           sessionIdCreation: input.sessionIdCreation,
+          mintedAgentSessionId: input.mintedAgentSessionId,
           agentCliVersion: input.agentCliVersion,
           agentCliPath: input.agentCliPath,
           resumeEvidence: input.resumeEvidence,
@@ -522,7 +523,9 @@ export async function autoSpawnTasks(
           cwd: input.cwd,
           permission_mode: input.permissionMode,
           prompt: null,
-          status: 'running',
+          // A spawn that waits for a slot is queued, as the board path writes
+          // it, so a quit settles it as a queued record and its promotion finds it.
+          status: newSession.status === 'queued' ? 'queued' : 'running',
           exit_code: null,
           started_at: now,
           suspended_at: null,
@@ -531,6 +534,9 @@ export async function autoSpawnTasks(
           cli_target: serializeCliTarget(input.cliTarget),
           account_id: input.accountId ?? null,
         });
+        // A fresh start whose CLI has not run yet (queued, or its terminal
+        // failed to start) names no conversation (Sentry DESKTOP-2M).
+        if (input.mintedAgentSessionId && newSession.status !== 'running') sessionRepo.markAgentNeverRan(newSession.id);
         // Record what this fresh spawn applied so a later column move diffs
         // against the session's true value, not the leaving column's config.
         sessionRepo.updateAppliedSettings(newSession.id, {
