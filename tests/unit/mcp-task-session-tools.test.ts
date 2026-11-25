@@ -445,6 +445,20 @@ describe('create_task routing check', () => {
     expect(mockCallHandler).not.toHaveBeenCalled();
   });
 
+  it('refuses a strong hit headed for the Done column (the only other column role)', async () => {
+    mockDetectCrossProjectMention.mockReturnValue([{ name: 'Lumen', registeredName: 'Lumen', strength: 'strong', where: 'title' }]);
+    armColumnContext();
+    mockResolveColumn.mockReturnValueOnce({ swimlane: { name: 'Done', role: 'done', agent_override: null }, allSwimlanes: [] });
+
+    const result = await server.getHandler('kangentic_create_task')({ title: 'Fix the Lumen footer', column: 'done' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('in the "Done" column');
+    expect(result.content[0].text).toContain('project: "Lumen"');
+    expect(taskCounter.tryReserve).not.toHaveBeenCalled();
+    expect(mockCallHandler).not.toHaveBeenCalled();
+  });
+
   it('creates a weak hit headed for the backlog, with a note that names the backlog fix', async () => {
     mockDetectCrossProjectMention.mockReturnValue([{ name: 'Lumen', registeredName: 'Lumen', strength: 'weak', where: 'mention' }]);
 
@@ -628,6 +642,31 @@ describe('create_task routing check', () => {
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain(`project: ${selector}`);
       expect(result.content[0].text).toContain(`project: ${JSON.stringify('Active')}`);
+    });
+
+    it('escapes a quote and a backslash in a registered name so the argument stays one valid string', async () => {
+      // The expected text is spelled out, not built with JSON.stringify, so the
+      // test does not restate the implementation: acme\io "v2" as the caller pastes it.
+      mockDetectCrossProjectMention.mockReturnValue([{ name: 'acme\\io "v2"', registeredName: 'acme\\io "v2"', strength: 'strong', where: 'title' }]);
+
+      await server.getHandler('kangentic_create_task')({ title: 'Fix the footer' });
+
+      expect(appendedRoutingNotice()).toContain('targetProject: "acme\\\\io \\"v2\\""');
+    });
+
+    it('escapes the active project name in a refusal the same way', async () => {
+      mockDetectCrossProjectMention.mockReturnValue([{ name: 'Lumen', registeredName: 'Lumen', strength: 'strong', where: 'title' }]);
+      mockWithProject.mockImplementationOnce(
+        async (_resolver: unknown, _selector: unknown, run: (context: unknown, resolved: unknown) => Promise<unknown>) => {
+          const context = { getProjectPath: () => '/projects/default' };
+          return run(context, { context, projectId: '11111111-1111-4111-8111-111111111111', projectName: 'Say "Hi" \\ now', isDefault: true });
+        },
+      );
+
+      const result = await server.getHandler('kangentic_create_task')({ title: 'Fix the Lumen footer', column: 'Backlog' });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('with project: "Say \\"Hi\\" \\\\ now" to confirm the active project');
     });
   });
 });
