@@ -159,31 +159,33 @@ async function searchEventsFile(
     console.warn(`[search:everything] events.jsonl stream error for ${filePath}:`, streamError);
   });
   const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
-  let stopped = false;
   try {
     for await (const line of rl) {
       if (!line) continue;
-      let event: SessionEvent;
+      let parsed: unknown;
       try {
-        event = JSON.parse(line) as SessionEvent;
+        parsed = JSON.parse(line);
       } catch {
         continue;
       }
+      // A line of `null`, a number or an array parses fine and is no event. Read
+      // as one, `event.tool` threw and failed the whole project's scan.
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
+      const event = parsed as SessionEvent;
       const tool = typeof event.tool === 'string' ? event.tool : '';
       const detail = typeof event.detail === 'string' ? event.detail : '';
       const haystack = tool && detail ? `${tool}: ${detail}` : tool || detail;
       if (!haystack) continue;
       const match = findFirstMatch(haystack, needleLower);
       if (!match) continue;
-      const keepGoing = emit(event, match.start, match.end, haystack);
-      if (!keepGoing) {
-        stopped = true;
-        break;
-      }
+      if (!emit(event, match.start, match.end, haystack)) break;
     }
   } finally {
     rl.close();
-    if (stopped && !stream.destroyed) stream.destroy();
+    // On every exit: a throw from `emit` leaves the loop here too, and a
+    // raw-descriptor stream is never closed by garbage collection (Sentry
+    // DESKTOP-59). A stream that reached the end is already destroyed.
+    if (!stream.destroyed) stream.destroy();
   }
 }
 

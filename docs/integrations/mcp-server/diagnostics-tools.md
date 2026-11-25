@@ -10,6 +10,8 @@ sources:
   - resource: src/main/agent/commands/inspect-commands.ts
   - resource: src/main/git/worktree-list.ts
     title: kangentic_list_worktrees enumeration
+  - resource: src/main/diagnostics/process-metrics.ts
+    title: kangentic_get_process_metrics snapshot
 ---
 # Diagnostics tools
 
@@ -59,7 +61,7 @@ List recent crash records from `<projectRoot>/.kangentic/logs/crashes/` (falling
 
 ## kangentic_get_process_metrics
 
-Live snapshot of memory + CPU usage per Electron process (main, renderer, GPU, utility) plus version + uptime info. Useful when investigating "why is kangentic slow / heavy" or filing a bug report. Reads `app.getMetrics()` on demand; not project-scoped. No parameters. The per-process `privateBytes` is the Windows commit figure (in KB, like the rest of the table); the two model workers appear by service name (`kangentic-dictation`, `kangentic-embeddings`). `main` carries the main process's own `process.memoryUsage()` in bytes (`rssBytes`, `heapTotalBytes`, `heapUsedBytes`, `externalBytes`, `arrayBuffersBytes`), which is the only way to tell V8 heap from Node external allocations from Chromium's own footprint without attaching an inspector to the live process.
+Live snapshot of memory + CPU usage per Electron process (main, renderer, GPU, utility) plus version + uptime info. Useful when investigating "why is kangentic slow / heavy" or filing a bug report. Reads `app.getMetrics()` on demand; not project-scoped. No parameters. The per-process `privateBytes` is the Windows commit figure (in KB, like the rest of the table); the two model workers appear by service name (`kangentic-dictation`, `kangentic-embeddings`). `main` carries the main process's own `process.memoryUsage()` in bytes (`rssBytes`, `heapTotalBytes`, `heapUsedBytes`, `externalBytes`, `arrayBuffersBytes`), which is the only way to tell V8 heap from Node external allocations from Chromium's own footprint without attaching an inspector to the live process. `main.descriptorTable` is the lowest free slot in main's file descriptor table, a floor on how many descriptors main holds: `now`, read for this snapshot, and the probe's `latest` reading and the run's `peak`. A reading is `full` when the open found no free slot, and `latest` and `peak` are null before the probe's first reading. The probe reads every 5 minutes (`src/main/diagnostics/descriptor-table.ts`), so a number that climbs over a session points at a descriptor leak (Sentry DESKTOP-59).
 
 ## kangentic_get_ipc_log
 

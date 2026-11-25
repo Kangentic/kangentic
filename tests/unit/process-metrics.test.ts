@@ -19,6 +19,7 @@ vi.mock('electron', () => ({
 }));
 
 import { getProcessMetrics } from '../../src/main/diagnostics/process-metrics';
+import { startDescriptorTableProbe } from '../../src/main/diagnostics/descriptor-table';
 
 describe('getProcessMetrics', () => {
   let memoryUsageSpy: ReturnType<typeof vi.spyOn>;
@@ -47,13 +48,31 @@ describe('getProcessMetrics', () => {
 
     const result = getProcessMetrics();
 
-    expect(result.main).toEqual({
+    expect(result.main).toMatchObject({
       rssBytes: 2_000_003,
       heapTotalBytes: 3_000_017,
       heapUsedBytes: 5_000_009,
       externalBytes: 7_000_003,
       arrayBuffersBytes: 11_000_003,
     });
+  });
+
+  it('reads the descriptor table now, and leaves the probe readings null before the probe starts (Sentry DESKTOP-59)', () => {
+    const { descriptorTable } = getProcessMetrics().main;
+    expect(typeof descriptorTable.now).toBe('number');
+    expect(descriptorTable.latest).toBeNull();
+    expect(descriptorTable.peak).toBeNull();
+  });
+
+  it('carries the probe latest reading and peak once the probe has started', () => {
+    const stop = startDescriptorTableProbe({ onHigh: () => undefined });
+    try {
+      const { descriptorTable } = getProcessMetrics().main;
+      expect(typeof descriptorTable.latest).toBe('number');
+      expect(descriptorTable.peak).toBe(descriptorTable.latest);
+    } finally {
+      stop();
+    }
   });
 
   it('reads uptime and version info straight from process/app, and stamps a real ISO timestamp', () => {

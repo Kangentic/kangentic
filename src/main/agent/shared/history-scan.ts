@@ -446,7 +446,11 @@ export async function streamJsonlRecords(
     readFailed = true;
   } finally {
     lineReader.close();
-    if (stopped && !stream.destroyed) stream.destroy();
+    // On every exit, not only an early stop. A throw from `onRecord` lands in the
+    // catch above, and a raw-descriptor stream is never closed by garbage
+    // collection, so it would hold its descriptor for the life of the process
+    // (Sentry DESKTOP-59). A stream that reached the end is already destroyed.
+    if (!stream.destroyed) stream.destroy();
   }
   // An early stop is a caller's own decision, not a failure - but it did not
   // reach the end either, so it is not a complete read.

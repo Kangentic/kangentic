@@ -56,7 +56,7 @@ import {
   retryWindowMs,
   type RootPidOutcome,
 } from './root-pid-gate';
-import { writeToExitedConsole } from '../spawn/exited-console-input';
+import { releaseConsoleInput, writeToExitedConsole } from '../spawn/exited-console-input';
 import { traceTerminal } from '../terminal-trace';
 import { launchesOwnBinary } from './host-exec';
 import { LocalSpawnService, type HostSpawnService, type SpawnServiceHooks } from './host-spawn-service';
@@ -1360,7 +1360,8 @@ export class PtyHostCore {
         this.unpinRoot(raw);
         this.rawPtys.delete(ptyId);
         this.deps.emit({ type: 'rawExit', ptyId, exitCode, signal: signal ?? null });
-        if (!raw.killed) this.releaseExitedPty(rawPty);
+        if (raw.killed) this.releaseKilledPty(rawPty);
+        else this.releaseExitedPty(rawPty);
       },
     );
     if (!pidGate) {
@@ -1672,11 +1673,15 @@ export class PtyHostCore {
     // only on a normal exit, so a signal death reads as code 0 without this.
     this.deps.emit({ type: 'exit', ptyId: entry.ptyId, sessionId: entry.sessionId, exitCode, signal: signal || null });
     // The orphan cleanup writes through the exited PTY, so it releases it
-    // when it is done; otherwise release it now. A PTY main killed is released.
+    // when it is done; otherwise release it now. A PTY main killed was killed
+    // already, and only its console input is left to close.
     // The root is recorded in this same turn, so a reap main starts on hearing
     // of the exit always finds it.
     const orphanCleanup = this.endOrphansOf(entry);
-    if (!orphanCleanup && !entry.killed) this.releaseExitedPty(entry.pty);
+    if (!orphanCleanup) {
+      if (entry.killed) this.releaseKilledPty(entry.pty);
+      else this.releaseExitedPty(entry.pty);
+    }
     if (orphanCleanup) this.recordOrphanedRoot(entry, orphanCleanup);
   }
 
@@ -1716,6 +1721,10 @@ export class PtyHostCore {
    * `_exitCode` is set, so nothing is killed by pid (`conpty-console-list.ts`).
    * Never on POSIX, where a kill after the exit signals a pid that may name
    * another process by then.
+   *
+   * The kill leaves the console's input pipe open, and with it one C runtime
+   * descriptor (microsoft/node-pty#947, Sentry DESKTOP-59), so the release
+   * closes that too (`releaseConsoleInput`).
    */
   private releaseExitedPty(pty: nodePty.IPty): void {
     if (!this.onWindows) return;
@@ -1725,6 +1734,19 @@ export class PtyHostCore {
       // report-ok: the PTY already exited and this kill only frees its conout worker.
       // A throw means there was nothing left to free.
     }
+    releaseConsoleInput(pty);
+  }
+
+  /**
+   * Close the console input of a PTY main killed, once its exit has landed
+   * (Windows). node-pty's kill leaves it open (microsoft/node-pty#947), and
+   * nothing writes to a killed console: the orphan cleanup never runs after a
+   * kill. Without this each killed PTY kept one C runtime descriptor in this
+   * process for its whole life (Sentry DESKTOP-59).
+   */
+  private releaseKilledPty(pty: nodePty.IPty): void {
+    if (!this.onWindows) return;
+    releaseConsoleInput(pty);
   }
 
   /**

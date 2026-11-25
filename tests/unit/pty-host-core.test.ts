@@ -57,6 +57,8 @@ interface FakePty {
   disposeData: ReturnType<typeof vi.fn>;
   /** Called when the host disposes its onExit subscription. */
   disposeExit: ReturnType<typeof vi.fn>;
+  /** node-pty's private console input socket (`_agent.inSocket`) and its destroy. */
+  consoleInput: { destroyed: boolean; destroy: ReturnType<typeof vi.fn> };
 }
 
 function createFakePty(pid = 4242): FakePty {
@@ -66,6 +68,10 @@ function createFakePty(pid = 4242): FakePty {
   const kill = vi.fn();
   const disposeData = vi.fn();
   const disposeExit = vi.fn();
+  const consoleInput = { writable: true, destroyed: false, write: vi.fn(() => true), destroy: vi.fn() };
+  consoleInput.destroy.mockImplementation(() => {
+    consoleInput.destroyed = true;
+  });
   const pty = {
     pid,
     cols: 120,
@@ -83,6 +89,7 @@ function createFakePty(pid = 4242): FakePty {
     kill,
     pause: vi.fn(),
     resume: vi.fn(),
+    _agent: { inSocket: consoleInput },
   } as unknown as nodePty.IPty;
   return {
     pty,
@@ -92,6 +99,7 @@ function createFakePty(pid = 4242): FakePty {
     kill,
     disposeData,
     disposeExit,
+    consoleInput,
   };
 }
 
@@ -2453,6 +2461,48 @@ describe('PtyHostCore', () => {
       killed.core.handleCommand({ type: 'kill', ptyId: 9 });
       killed.fake.exit(1);
       expect(killed.fake.kill).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('a released PTY closes its console input (node-pty keeps one C runtime descriptor per PTY, microsoft/node-pty#947, Sentry DESKTOP-59)', () => {
+    it('closes the console input of a session PTY that exited on its own, after the kill that frees its worker', () => {
+      const { core, fake } = makeCore({ platform: 'win32' });
+      core.spawn(spawnParams());
+
+      fake.exit(0);
+      expect(fake.consoleInput.destroy).toHaveBeenCalledTimes(1);
+      expect(fake.kill.mock.invocationCallOrder[0]).toBeLessThan(fake.consoleInput.destroy.mock.invocationCallOrder[0]);
+    });
+
+    it('closes the console input of a session PTY main killed once its exit lands, not at the kill', () => {
+      const { core, fake } = makeCore({ platform: 'win32' });
+      core.spawn(spawnParams());
+      core.handleCommand({ type: 'kill', ptyId: 1 });
+      expect(fake.consoleInput.destroy).not.toHaveBeenCalled();
+
+      fake.exit(1);
+      expect(fake.consoleInput.destroy).toHaveBeenCalledTimes(1);
+    });
+
+    it('closes the console input of a raw PTY, exited on its own or killed', () => {
+      const natural = makeCore({ platform: 'win32' });
+      natural.core.spawnRaw(rawSpawnParams());
+      natural.fake.exit(0);
+      expect(natural.fake.consoleInput.destroy).toHaveBeenCalledTimes(1);
+
+      const killed = makeCore({ platform: 'win32' });
+      killed.core.spawnRaw(rawSpawnParams());
+      killed.core.handleCommand({ type: 'kill', ptyId: 9 });
+      killed.fake.exit(1);
+      expect(killed.fake.consoleInput.destroy).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves the console input alone on POSIX, where there is none to close', () => {
+      const { core, fake } = makeCore({ platform: 'linux' });
+      core.spawn(spawnParams());
+
+      fake.exit(0);
+      expect(fake.consoleInput.destroy).not.toHaveBeenCalled();
     });
   });
 

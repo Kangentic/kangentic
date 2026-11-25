@@ -32,6 +32,7 @@
 import path from 'node:path';
 import { app, utilityProcess, type MessagePortMain, type UtilityProcess } from 'electron';
 import { recordRelayedSyncSpan, relayLagRecord } from '../../diagnostics/event-loop-lag';
+import { markPtyHostRunningInMain } from '../../diagnostics/descriptor-table';
 import { unpacked } from '../../utility-process/paths';
 import { STDERR_DRAIN_BOUND_MS, UtilityRestartPolicy } from '../../utility-process/restart-policy';
 import { killChildTreeByPid } from '../../shared/child-tree-stop';
@@ -502,6 +503,8 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
       return;
     }
     console.error('[pty-host] gave up restarting after repeated crashes; running terminals in the main process for the rest of this run');
+    // Every terminal's pipes and files are main's from here, so a descriptor report says so.
+    markPtyHostRunningInMain();
     const fallback = this.fallbackFactory();
     if (this.listener) fallback.setEventListener(this.listener);
     this.fallback = fallback;

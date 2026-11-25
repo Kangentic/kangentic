@@ -3865,6 +3865,11 @@ msgstr "Quando ocioso"
 msgid "When Kangentic pauses agents that are waiting on you."
 msgstr "Quando o Kangentic pausa agentes que aguardam sua ação."
 
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
+msgid "When the app holds many file handles, a range for how many it held and how long it had been running"
+msgstr "Quando o app mantém muitos identificadores de arquivo, uma faixa de quantos ele mantinha e há quanto tempo estava em execução"
+
 #: src/renderer/components/settings/tabs/GitTab.tsx
 #, fuzzy
 msgid "Where new work starts, and how current it stays."

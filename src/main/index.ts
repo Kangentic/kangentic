@@ -17,6 +17,7 @@ import { drainQueuedAppendsSync } from './diagnostics/async-file-queue';
 import { startEventLoopLagMonitor } from './diagnostics/event-loop-lag';
 import { skipConsoleListHelper } from './pty/spawn/conpty-console-list';
 import { startHostMemorySampler, getLastHostMemorySample, sampleAsRead, setSimulatedLowMemory } from './diagnostics/host-memory';
+import { startDescriptorTableProbe } from './diagnostics/descriptor-table';
 import { tickHeldOffStops } from './stop-script/parked-stop-service';
 import { workflowMemoryGate } from './workflows/workflow-memory-gate';
 import { createRendererReloadGate, isRecoverableRendererDeath, formatHostMemoryDetailLine, RENDERER_RELOAD_MAX, RENDERER_RELOAD_WINDOW_MS } from './diagnostics/renderer-recovery';
@@ -51,7 +52,7 @@ import { beginBoot, disposeBootSettle, noteWindowLoaded, trackBootWork } from '.
 import { isBenignStreamWriteError } from './diagnostics/benign-stream-error';
 const windowConfigManager = new ConfigManager();
 import { initAnalytics, trackEvent, sanitizeErrorMessage, shouldEmitHeartbeat, setAnalyticsClientId, HEARTBEAT_INTERVAL_MS } from './analytics/analytics';
-import { initErrorReporting, isErrorReportingActive, reportHandledError, setErrorReportingUser, setHostMemoryContext } from './analytics/error-reporting';
+import { initErrorReporting, isErrorReportingActive, reportDescriptorTableHigh, reportHandledError, setErrorReportingUser, setHostMemoryContext } from './analytics/error-reporting';
 import { crashNoticeHolder } from './analytics/crash-notice';
 import { initUsageAnalytics, trackUpdateOutcome } from './analytics/usage';
 import { initRunUptimeTracking, checkpointRunUptime, recordRunExit, previousRunLaunchProps, previousRunLastAliveAt, previousRunLogLine, peekPreviousRun, RUN_UPTIME_CHECKPOINT_INTERVAL_MS } from './analytics/run-uptime';
@@ -1141,6 +1142,7 @@ let previousRunLogged = false;
 // live boards (docs/architecture/sessions/crash-recovery.md, step 8).
 let backgroundActivationScheduled = false;
 let stopHostMemorySampler: (() => void) | null = null;
+let stopDescriptorTableProbe: (() => void) | null = null;
 // DESKTOP-16 bounded-reload guard for the main window's render-process-gone
 // handler below. See renderer-recovery.ts for why the decision logic lives
 // in its own testable module rather than inline here.
@@ -2229,6 +2231,12 @@ app.whenReady().then(async () => {
     },
   });
 
+  // How full main's file descriptor table is (Sentry DESKTOP-59): one reading
+  // now and one every five minutes. A run that crosses the high mark reports
+  // once, with buckets only, so a leak is heard before the table fills
+  // (`src/main/diagnostics/descriptor-table.ts`).
+  stopDescriptorTableProbe = startDescriptorTableProbe({ onHigh: reportDescriptorTableHigh });
+
   // This span MUST stay one unbroken synchronous block. createWindow() calls
   // mainWindow.loadURL() internally, so the renderer starts loading before
   // initUpdater/initAnnouncements have registered their channels; only the
@@ -2712,6 +2720,10 @@ function getShutdownDependencies() {
       if (stopHostMemorySampler) {
         stopHostMemorySampler();
         stopHostMemorySampler = null;
+      }
+      if (stopDescriptorTableProbe) {
+        stopDescriptorTableProbe();
+        stopDescriptorTableProbe = null;
       }
       // Stop the background PR-refresh, remote-fetch and sign-in keep-alive
       // timers (all .unref()'d, but clear them explicitly so no tick fires

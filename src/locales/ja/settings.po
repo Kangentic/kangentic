@@ -3865,6 +3865,11 @@ msgstr "アイドル時"
 msgid "When Kangentic pauses agents that are waiting on you."
 msgstr "Kangentic が入力待ちのエージェントを一時停止するタイミング。"
 
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
+msgid "When the app holds many file handles, a range for how many it held and how long it had been running"
+msgstr "アプリが多数のファイルハンドルを保持しているとき、保持していた数の範囲と、それまでの稼働時間"
+
 #: src/renderer/components/settings/tabs/GitTab.tsx
 #, fuzzy
 msgid "Where new work starts, and how current it stays."

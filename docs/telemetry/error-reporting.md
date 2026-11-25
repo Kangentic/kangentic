@@ -16,6 +16,7 @@ sources:
   - resource: src/main/config/data-dir-failure.ts
   - resource: src/main/analytics/native-crash-event.ts
   - resource: src/main/diagnostics/host-memory.ts
+  - resource: src/main/diagnostics/descriptor-table.ts
   - resource: src/main/analytics/reportable-module-name.ts
   - resource: src/main/analytics/renderer-classification.ts
   - resource: src/main/utility-process/stderr-tail.ts
@@ -1604,6 +1605,40 @@ in one Sentry org, one triage surface.
   diagnosing a crash. There is no toast, analytics event or automatic pause. A low reading was a
   short spell of reservations on a limit that grows, and the load came from working agents that a
   pause of waiting agents never touched.
+- **An EMFILE report says how full main's descriptor table was** (`src/main/diagnostics/descriptor-table.ts`,
+  Sentry DESKTOP-59). DESKTOP-59 was a config write that failed with `EMFILE` on Windows: main held
+  all 8192 slots of the C runtime's descriptor table, and nothing said whether the table had filled
+  over hours or in a burst. libuv opens a file with `CreateFileW` and then takes a CRT descriptor
+  with `_open_osfhandle`, which fails when no slot is free. SQLite, `fs.watch`, node-pty's pipes and
+  child stdio hold Win32 handles instead, and each worker process has its own table.
+  - Main opens the null device with `fs.openSync`, keeps the descriptor number and closes it, once
+    at launch and then every 5 minutes. The CRT hands out the lowest free slot. Measured on Windows
+    with Node 24 and with Electron 45.4.1, the DESKTOP-59 release: after 20 opens, closing
+    descriptors 8 and 15 made the next two opens return 8 and 15. So the number is a floor on how
+    many slots are held, and a floor that climbs is a leak. On macOS and Linux the same number also
+    counts sockets and pipes, so the table it reads is wider there.
+  - The first reading of a run that reaches 2048, or that finds the table full, sends one `info`
+    report, `Main process descriptor table high` (fingerprint `descriptor-table-high`). The 2048
+    mark is set for Windows' 8192. On macOS and Linux the table's size is the soft open-file limit,
+    and where that is under 2048 the first report a leak sends is the `full` one. Its tags
+    are `descriptor_latest`, `descriptor_peak`, `uptime` and `pty_host_in_main`. `pty_host_in_main`
+    turns true once the pty host gave up restarting and its core moved into main
+    (`markPtyHostRunningInMain`), since every terminal's pipes are main's from then on.
+  - Every handled report whose `errno` tag is `EMFILE` carries a `descriptor_table` context in
+    `reportHandledError`. The context holds the same four values plus `at_report`, a fresh reading
+    taken as the report goes out. `reportSyncWriteFailure` and `sendHandledFailure` both set the tag,
+    so the `safeWriteJson` path and every chokepoint reporter carry it. Only those reports carry it:
+    on every event it would also need pruning from a crash a later run uploads, as `host_memory`
+    does.
+  - Each value is a bucket. Counts read `<64`, `64-255`, `256-1023`, `1024-2047`, `2048-4095`,
+    `4096-8191`, `8192+`, `full` or `unknown`. Uptime reads `<10m`, `10m-1h`, `1-4h`, `4-12h`,
+    `12-24h`, `1-3d` or `3d+`. No raw count, path or message is sent. Settings > Privacy lists it
+    under what is collected.
+  - An uncaught EMFILE does not pass through `reportHandledError`, so it carries no context.
+  - The leak found behind it: node-pty kept one descriptor per Windows PTY, its console input
+    pipe (microsoft/node-pty#947). That leak lands in whichever process spawned the PTY, so it
+    reaches main once the pty host has fallen back into it. The pty host core now closes the pipe
+    when it releases a PTY (`docs/architecture/sessions/agent-absence-sweep.md`).
 - **A worker crash is logged after its stderr pipe ends.** Electron 44.5.0 drains a utility
   process's stderr after `exit`, so `UtilityRestartPolicy.recordCrash` holds the crash's log line
   and latch report until the pipe ends, bounded at 500 ms (`STDERR_DRAIN_BOUND_MS`). Measured on
@@ -1853,7 +1888,8 @@ this".
   is global, grows every event, and widens what `redact-event-paths.ts` walks.
   `tests/unit/gpu-health.test.ts` runs the builder's output through the real `@sentry/core`
   `normalize`. The other contexts were audited for the same flattening and hold only flat values:
-  `host_memory`, `native_crash`, `task_reap`, `call_site` (a list of strings) and `diff_viewer_N`.
+  `host_memory`, `native_crash`, `task_reap`, `descriptor_table`, `call_site` (a list of strings) and
+  `diff_viewer_N`.
 - **A GPU failure that killed the last run also downgrades this one, once.** When
   `killedTheLastRun` (`gpuEndedPreviousRun`, above) holds, `src/main/index.ts` has already started Chromium with
   `app.disableHardwareAcceleration()` and `--in-process-gpu` (decided at module scope, because
