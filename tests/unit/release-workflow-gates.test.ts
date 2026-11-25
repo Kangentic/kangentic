@@ -1163,6 +1163,34 @@ describe.runIf(HAS_JQ)('deploy-demo.yml README stills release choice, executed',
   });
 });
 
+// The /release-workflow release brief ends Step 7's wait at three jobs instead of the whole run:
+// the ones kangentic.com's release gate reads (the published release, npm, and the deployed demo
+// whose scenes.json follows the poster zip). poster-gate runs on after them and only ever becomes a
+// follow-up. Two edits would break that without a word. A renamed job leaves the brief's wait
+// matching nothing, so the release card holds for the whole run again. A job that starts waiting
+// for poster-gate makes skipping it unsafe.
+const RELEASE_WORKFLOW_SKILL_PATH = path.join(REPO_ROOT, '.claude', 'skills', 'release-workflow', 'SKILL.md');
+
+describe('the /release-workflow brief waits only for jobs release.yml still has', () => {
+  const brief = fs.readFileSync(RELEASE_WORKFLOW_SKILL_PATH, 'utf8');
+
+  it('names publish-release, publish-npm and deploy-demo\'s deploy job, and each exists', () => {
+    expect(brief).toContain("@('publish-release', 'publish-npm', 'deploy-demo / deploy')");
+    for (const name of ['publish-release', 'publish-npm', 'deploy-demo']) {
+      expect(jobs.find((job) => job.name === name), `release.yml has no job named ${name}`).toBeDefined();
+    }
+    // GitHub names a reusable workflow's job "<caller job> / <called job>", so the brief's
+    // "deploy-demo / deploy" is release.yml's deploy-demo calling deploy-demo.yml's deploy.
+    expect(deployDemoJobs.find((job) => job.name === 'deploy')).toBeDefined();
+  });
+
+  it('leaves poster-gate with nothing waiting for it, which is what lets the brief skip it', () => {
+    expect(jobs.find((job) => job.name === 'poster-gate')?.needs).toEqual(['demo-posters']);
+    expect(jobs.filter((job) => job.needs.includes('poster-gate')).map((job) => job.name)).toEqual([]);
+    expect(deployDemoJobs.filter((job) => job.needs.includes('poster-gate')).map((job) => job.name)).toEqual([]);
+  });
+});
+
 // package-smoke.yml packages the app on the runners the release legs use, so a packaged build is
 // launched before a tag exists. A runner the release gains and this workflow lacks is a platform
 // whose first packaged launch happens after the tag, which is the gap the workflow was added to

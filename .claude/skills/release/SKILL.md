@@ -238,7 +238,10 @@ v0.41.0 run surfaced a real latent flake here that all 11 green UI shards had ne
 Run these checks sequentially.
 
 1. Run `npm run typecheck`. If it fails, report type errors and stop.
-2. Run `npx playwright test --project=ui`.
+2. Run `npx playwright test --project=ui`. It takes about thirty minutes (v0.64.0: 3,548 tests in
+   31 minutes), past the 10-minute cap on one tool call, so start it in the background with its
+   output written to a file. A pipe into another stage, such as `Select-Object -Last 40`, keeps
+   that file empty until the run ends.
 
 **Triaging a Step 1.2 failure.** A failure is either the machine's or yours, and the two want
 opposite responses. Sort it before reacting.
@@ -279,7 +282,7 @@ examples, not the rule:
   reload or re-optimization shows there.
 
 Re-running the full suite a third time to chase a clean local exit is not diligence. It is a
-ten-minute coin flip that cannot tell you anything the four checks above have not already answered.
+thirty-minute coin flip that cannot tell you anything the four checks above have not already answered.
 
 ## Step 1.5 -- Documentation Audit
 
@@ -287,8 +290,8 @@ Full anchor point verification before release. The audit is read-only; this step
 what it finds. There is no skip and no confirmation prompt here.
 
 Spawn the three agents when Step 1 STARTS, not when it finishes. The audit reads source and docs, so it
-does not depend on the test results, and it runs about as long as the UI suite does. Waiting for
-Step 1 first adds roughly ten minutes of wall clock to every release for nothing.
+does not depend on the test results. Waiting for Step 1 first puts the whole audit behind a UI suite
+of about thirty minutes, on every release, for nothing.
 
 Spawn early, apply late. Hold the findings until Step 1 has PASSED, then work through the numbered
 steps below. Applying them while Step 1 is still running means a Step 1 failure stops the release
