@@ -13,7 +13,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const reportHandledError = vi.fn();
 vi.mock('../../src/main/analytics/error-reporting', () => ({ reportHandledError }));
 
-const { withToolReporting, mcpToolReporter } = await import('../../src/main/agent/mcp-http/tool-reporting');
+const { withToolReporting, mcpToolCallerOf, mcpToolReporter } = await import('../../src/main/agent/mcp-http/tool-reporting');
 const { CapabilityRouter, mobileVerbReporter } = await import('../../src/main/mobile-bridge/capability-router');
 const { RefusalError } = await import('../../src/shared/refusal');
 
@@ -34,6 +34,29 @@ describe('the MCP registerTool proxy', () => {
     await expect(server.callbacks.get('kangentic_move_task')?.({ taskId: 't' }, {})).rejects.toThrow('x is undefined');
     expect(reportHandledError).toHaveBeenCalledTimes(1);
     expect(reportHandledError.mock.calls[0][1]).toMatchObject({ source: 'mcp_tool', tool: 'kangentic_move_task' });
+  });
+
+  // One tool behaves differently for a task's agent, a Command Terminal and a
+  // workflow's agent, so the report names who asked. Who asked and how long the
+  // tool ran describe one occurrence and stay out of the latch key.
+  it('says who asked and how long the tool ran, and reports one defect once however it was reached', async () => {
+    const taskServer = fakeServer();
+    const terminalServer = fakeServer();
+    const throwSite = (): never => { throw new TypeError('x is undefined'); };
+    withToolReporting(taskServer as never, 'task').registerTool('kangentic_move_task', {} as never, throwSite as never);
+    withToolReporting(terminalServer as never, 'command_terminal').registerTool('kangentic_move_task', {} as never, throwSite as never);
+
+    await expect(taskServer.callbacks.get('kangentic_move_task')?.({}, {})).rejects.toThrow('x is undefined');
+    await expect(terminalServer.callbacks.get('kangentic_move_task')?.({}, {})).rejects.toThrow('x is undefined');
+
+    expect(reportHandledError).toHaveBeenCalledTimes(1);
+    expect(reportHandledError.mock.calls[0][1]).toMatchObject({ tool: 'kangentic_move_task', caller: 'task', ran_for: '<1s' });
+  });
+
+  it('reads a server built with no caller as an outside client, and each resolved caller as its kind', () => {
+    expect(mcpToolCallerOf({})).toBe('external');
+    expect(mcpToolCallerOf({ taskId: 'task-1' })).toBe('task');
+    expect(mcpToolCallerOf({ commandTerminalSlot: 'slot-2' })).toBe('command_terminal');
   });
 
   it('skips a refusal and a workflow refusal, and passes a result through', async () => {

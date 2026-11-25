@@ -123,7 +123,8 @@ export function useCommandBar() {
       if (!sessionState.commandBarVisible) reconcileCommandTerminalWindows({ skipWhenEmpty: true });
       sessionState.setCommandBarVisible(true);
     };
-    // A wait that failed only means main cannot say: the panel still opens.
+    // report-ok: main's IPC wrap reports a handler's rejection. A wait that failed only means
+    // main cannot say, and the panel still opens.
     window.electronAPI.sessions.waitForCommandTerminalRestore(projectId).then(showPanel, showPanel);
   }, [dropWaitingOpen, endOpenWait]);
 

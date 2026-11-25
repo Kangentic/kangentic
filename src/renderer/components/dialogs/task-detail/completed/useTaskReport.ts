@@ -18,6 +18,7 @@ export function useTaskReport(projectId: string, taskId: string): { report: Task
     window.electronAPI.sessions.getTaskReport(projectId, taskId)
       .then((report) => { if (!cancelled) setState({ key, report }); })
       .catch((error: unknown) => {
+        // report-ok: main's IPC wrap reports a handler's rejection, and the task shows with no report.
         console.warn('[completed-task] report read failed:', error);
         if (!cancelled) setState({ key, report: null });
       });
@@ -50,6 +51,8 @@ export function useTaskChanges(projectId: string, taskId: string): {
     window.electronAPI.git.taskChanges({ projectId, taskId })
       .then((changes) => { if (!cancelled) setState({ key, changes, error: null }); })
       .catch((error: unknown) => {
+        // report-ok: main's IPC wrap reports a handler's rejection, and the reason shows
+        // inline beside Retry.
         console.warn('[completed-task] changes read failed:', error);
         if (!cancelled) setState({ key, changes: null, error: asSentence(describeIpcError(error, ''), i18n._(msg`The task's changes could not be read.`)) });
       });
@@ -75,6 +78,8 @@ export function useTaskLastMessage(projectId: string, taskId: string, enabled: b
     window.electronAPI.sessions.getTaskLastMessage(projectId, taskId)
       .then((lastMessage) => { if (!cancelled) setState({ key, lastMessage }); })
       .catch((error: unknown) => {
+        // report-ok: main's IPC wrap reports a handler's rejection, and the view shows no
+        // last message.
         console.warn('[completed-task] last message read failed:', error);
         if (!cancelled) setState({ key, lastMessage: null });
       });

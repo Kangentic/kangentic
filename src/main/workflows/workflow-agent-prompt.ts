@@ -12,7 +12,9 @@ import { interpolateTaskTemplate } from '../agent/shared/template-utils';
 import { resolveProjectDefaultBaseBranch } from '../ipc/helpers/default-base-branch';
 import { resolveProjectRoot } from '../../shared/git-utils';
 import { doneColumn, routeCandidates } from '../../shared/workflow-route';
+import { isExpectedFailure } from '../analytics/handled-report';
 import { formatWorkflow } from './workflow-format';
+import { workflowEngineReporter } from './workflow-report';
 import { columnExitRows, isSendBackOnly } from './workflow-step-condition';
 
 /**
@@ -58,7 +60,10 @@ export function describeColumnsForPlanning(projectId: string): string {
   let lanes: Swimlane[];
   try {
     lanes = new SwimlaneRepository(getProjectDb(projectId)).list();
-  } catch {
+  } catch (error) {
+    // The workflow agent's first message then lists no columns, so it plans routes
+    // against a board it was told nothing about.
+    workflowEngineReporter.report(error, { tags: { stage: 'columns_read' } });
     return '';
   }
   // The route's own helpers: Done is the board's archive lane (`is_archived`),
@@ -84,8 +89,10 @@ export function describeColumnsForPlanning(projectId: string): string {
       if (isSendBackOnly(lane, columnExitRows(turnEndRows, lanes, lane, null))) personGates.add(lane.id);
     }
   } catch (error) {
-    // A database that cannot be read leaves the lines without counts or
-    // automations; said, since the agent then plans without the board's history.
+    // A database that cannot be read leaves the lines without counts, automations or
+    // person gates, so the agent can plan a route through a column only a person moves
+    // a card out of. Logged too, since the agent then plans without the board's history.
+    workflowEngineReporter.report(error, { tags: { stage: 'columns_history_read' } });
     console.warn('[WORKFLOW-AGENT] Could not read the board history for {{columns}}:', error);
   }
   return routeLanes.map((lane, index) => {
@@ -117,8 +124,10 @@ export function briefXmlOf(homeProjectId: string, workflow: Workflow): string {
   if (workflow.source_task_id) {
     try {
       sourceTaskNumber = new TaskRepository(getProjectDb(homeProjectId)).getById(workflow.source_task_id)?.display_id ?? null;
-    } catch {
-      // The number is a nicety; the brief stands without it.
+    } catch (error) {
+      // The number is a nicety the brief stands without: the agent is told what the
+      // workflow was made from, but not which task number it was.
+      workflowEngineReporter.report(error, { tags: { stage: 'brief_source_read' } });
     }
   }
   return buildBriefXml({ sourceTaskNumber, title, description });
@@ -184,7 +193,8 @@ const CONTINUE_ORIGINS: Record<WorkflowAgentContinueReason, string> = {
  *
  * Null when nothing is saved yet: there is nothing to continue, and the caller
  * sends the first message as for a new workflow. Not a template variable, so a
- * customized template gets it too.
+ * customized template gets it too. A plan that could not be read is not "nothing
+ * saved": the agent is told to read it with its own tool before it saves.
  */
 export async function buildWorkflowAgentContinueMessage(
   context: IpcContext,
@@ -202,8 +212,19 @@ export async function buildWorkflowAgentContinueMessage(
     if (view.tasks.length === 0) return null;
     savedPlan = escapeXml(formatWorkflow(view));
   } catch (error) {
+    workflowEngineReporter.report(error, { tags: { stage: 'plan_read' } });
     console.warn('[WORKFLOW-AGENT] Could not read the saved plan for a new conversation:', error);
-    return null;
+    // A workflow that is gone has no plan to protect, and its start is refused elsewhere.
+    if (isExpectedFailure(error)) return null;
+    // The read failed, so whether a plan is saved is not known. Answering "none" gave the
+    // agent the first message of a new workflow: it planned from the brief again, and its
+    // save replaced every task the user had shaped. So it is told to read the plan itself
+    // before it saves anything.
+    return [
+      buildWorkflowAgentFirstMessage(context, homeProjectId, workflow, template),
+      '',
+      `This workflow may already have a saved plan, ${CONTINUE_ORIGINS[reason]}, and it could not be read for this message. Read it first with kangentic_get_workflow, and save nothing until you have: saving replaces the whole plan, so keep every task you are not changing. If it cannot be read, tell the user and stop.`,
+    ].join('\n');
   }
   const firstMessage = buildWorkflowAgentFirstMessage(context, homeProjectId, workflow, template);
   const origin = CONTINUE_ORIGINS[reason];

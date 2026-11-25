@@ -127,6 +127,7 @@ export function BranchPicker({
       try {
         result = await fetchGitBranches(projectId);
       } catch {
+        // report-ok: main's IPC wrap reports a handler's rejection, and the menu lists no branches.
         result = [];
       }
       const listed = variant === 'subtitle' ? result.filter((branch) => !branch.local) : result;
@@ -218,6 +219,8 @@ export function BranchPicker({
       }
       failure = { query: typed, status: 'error', reason: result.reason, error: result.error };
     } catch (caught) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the menu shows the reason
+      // under the typed ref.
       if (generation !== checkGenerationRef.current) return;
       failure = { query: typed, status: 'error', reason: 'git', error: rejectionMessage(caught) };
     }

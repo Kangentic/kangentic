@@ -65,6 +65,7 @@ import { killCommandTerminalInSlot } from './stop-command-terminal';
 import { startCommandTerminalSwapDrag } from './swap-drag';
 import { PanelErrorBoundary } from '../PanelErrorBoundary';
 import { ipcFailureToastFields } from '../../lib/ipc-error';
+import { reportRendererFailure } from '../../utils/renderer-failure';
 import { useTaskSplitResize } from '../../hooks/useTaskSplitResize';
 import { useAgentDriveVeil } from '../../hooks/useAgentDriveVeil';
 import { useIsAgentDrivingSession } from '../../stores/agent-drive-store';
@@ -423,6 +424,9 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
         }
       })
       .catch((error) => {
+        // The window closes below and the user has no terminal. The reporter drops a refusal
+        // main's wrap saw, so what it sends is a failure in this window's own start.
+        reportRendererFailure('command_terminal', 'spawn', error);
         // Main's refusals (the cap, a taken slot, a shell that did not start)
         // are sentences written for the user; drop Electron's IPC decoration.
         useToastStore.getState().addToast({
@@ -558,6 +562,9 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
         useToastStore.getState().addToast({ title: i18n._(msg`Couldn't check out branch`), message: result.checkoutError, variant: 'warning' });
       }
     } catch (error) {
+      // The old terminal is already stopped, so a failed respawn leaves the slot with none.
+      // Main's refusals (the cap, a taken slot) are dropped by the reporter and shown below.
+      reportRendererFailure('command_terminal', 'branch_switch', error);
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't switch branch`),
         ...ipcFailureToastFields(error, String(error)),
@@ -581,6 +588,9 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
       setStartingResume(true);
       await spawnInSlot(grid, undefined, agentSessionId);
     } catch (error) {
+      // The conversation did not resume. A conversation main refuses is dropped by the
+      // reporter and shown below, so what it sends is a failure in this window's own resume.
+      reportRendererFailure('command_terminal', 'resume_in_place', error);
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't resume conversation`),
         ...ipcFailureToastFields(error, String(error)),
@@ -593,7 +603,10 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
       setStartingResume(false);
       try {
         await spawnInSlot(grid, branch);
-      } catch {
+      } catch (startError) {
+        // The fresh start failed too, so the window goes with only the resume's toast above
+        // to explain it.
+        reportRendererFailure('command_terminal', 'start_after_refused_resume', startError);
         changeLayout(() => closeWindow(windowId));
       }
     }

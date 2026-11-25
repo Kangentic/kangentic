@@ -66,7 +66,8 @@ export function resolveRelayChromiumFallback(relayUrl: string): RelayWebSocketFa
       };
     }
   } catch {
-    // Not the Electron main process.
+    // report-ok: not the Electron main process (a unit test's electron mock, or
+    // plain Node), so there is no fallback stack and the client dials with undici.
   }
   return undefined;
 }
@@ -112,6 +113,8 @@ function isProxyConfiguredForRelay(relayUrl: string): boolean {
     url.protocol = url.protocol === 'ws:' ? 'http:' : 'https:';
     lookupUrl = url.origin;
   } catch {
+    // report-ok: a relay URL that does not parse has no proxy to ask about. The
+    // client's dial parses the same URL first and rejects on it before this runs.
     return false;
   }
   const decision = proxyDecisionsByOrigin.get(lookupUrl) ?? { proxied: false, checkedAtMs: 0, inFlight: false };
@@ -121,8 +124,10 @@ function isProxyConfiguredForRelay(relayUrl: string): boolean {
     try {
       pendingProxyList = session.defaultSession.resolveProxy(lookupUrl);
     } catch {
-      // This runs inside the client's dial, so a synchronous throw must not
-      // escape it. It reads as no proxy and is asked again after the TTL.
+      // report-ok: a proxy lookup that throws reads as no proxy and is asked again
+      // after the TTL. The dial goes out on undici, and two failures there still
+      // reach Chromium's stack through the client's fallback. This runs inside
+      // the client's dial, so a synchronous throw must not escape it.
       decision.proxied = false;
       decision.checkedAtMs = Date.now();
       return false;
@@ -133,6 +138,9 @@ function isProxyConfiguredForRelay(relayUrl: string): boolean {
         decision.proxied = proxyListLeadsWithProxy(proxyList);
       })
       .catch(() => {
+        // report-ok: a proxy lookup that rejects reads as no proxy and is asked
+        // again after the TTL. The dial goes out on undici, and two failures there
+        // still reach Chromium's stack through the client's fallback.
         decision.proxied = false;
       })
       .finally(() => {

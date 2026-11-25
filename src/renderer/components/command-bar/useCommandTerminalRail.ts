@@ -147,7 +147,8 @@ export function useCommandTerminalRail(
         useConfigStore.getState().adoptCommandTerminalRail({ width: savedRailWidth(fresh.width), collapsed: fresh.collapsed === true });
       })
       .catch(() => {
-        // The rail keeps the state this window already has.
+        // report-ok: main's IPC wrap reports a handler's rejection, and the rail keeps the
+        // state this window already has.
       });
     return () => { cancelled = true; };
   }, []);

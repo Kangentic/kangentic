@@ -184,7 +184,8 @@ export function killAllSessions<S extends ShutdownSession>(
         try {
           disposable.dispose();
         } catch {
-          // Best-effort - node-pty may have already torn down the emitter.
+          // report-ok: detaching a listener at quit from a PTY that was just killed. An
+          // emitter already torn down has nothing left to deliver.
         }
       }
       session.ptyDisposables = undefined;

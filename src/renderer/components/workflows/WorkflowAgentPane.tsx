@@ -140,8 +140,9 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
         // leaves the width alone: letting go then would show its own width.
         widthSaveSerialRef.current += 1;
         const saveSerial = widthSaveSerialRef.current;
-        // A failed save puts the stored width back, which is all a user can see of it.
         void updateConfig({ workflows: { agentPaneWidth: latest } })
+          // report-ok: main's IPC wrap reports a handler's rejection. A failed save puts the
+          // stored width back, which is all a user can see of it.
           .catch((error: unknown) => console.warn('[WORKFLOW-AGENT-PANE] Could not save the pane width:', error))
           .finally(() => {
             if (widthSaveSerialRef.current === saveSerial) setDragWidth(null);

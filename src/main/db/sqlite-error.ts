@@ -33,6 +33,17 @@ export function isSqliteError(error: unknown): error is SqliteErrorLike {
 }
 
 /**
+ * True for the error `better-sqlite3` throws when a statement runs on a connection
+ * that was closed. Outside a quit, main closes a project's connection only when the
+ * project is removed (`closeProjectDb`), so a caller that raced a delete can tell
+ * that from a database that will not read. It is a `TypeError` with no code, so only
+ * its fixed text names it.
+ */
+export function isClosedConnectionError(error: unknown): boolean {
+  return error instanceof TypeError && error.message === 'The database connection is not open';
+}
+
+/**
  * The one-line technical cause shown under the file path in the unreadable-database
  * dialog, e.g. `disk I/O error (SQLITE_IOERR)`.
  *

@@ -45,7 +45,8 @@ export function useCommandTerminalHistory(projectId: string | null): {
             return { projectId, entries, hidden };
           });
         })
-        // A failed read keeps the last list; the next push reads again.
+        // report-ok: main's IPC wrap reports a handler's rejection. A failed read keeps the
+        // last list, and the next push reads again.
         .catch(() => undefined);
     };
     load();

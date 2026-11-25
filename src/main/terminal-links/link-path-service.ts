@@ -30,6 +30,8 @@ export function withStatTimeout(stat: Promise<boolean>, timeoutMs: number): Prom
         resolve(present);
       },
       () => {
+        // report-ok: a path that is not there, or cannot be read, is the answer. A hover shows
+        // no link, and a reveal tells the user the file could not be shown.
         clearTimeout(timer);
         resolve(false);
       },

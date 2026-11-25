@@ -154,7 +154,8 @@ export function KeyCaptureInput({ combo, onCommit }: KeyCaptureInputProps) {
       const result = await window.electronAPI.keybindings.probeGlobal([captured]);
       status = result[captured] ?? 'available';
     } catch {
-      // Probe is best-effort; on failure, fall through and allow the binding.
+      // report-ok: main's IPC wrap reports a handler's rejection, and the binding is allowed
+      // without the availability check.
     }
     setChecking(false);
 

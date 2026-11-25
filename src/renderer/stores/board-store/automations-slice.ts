@@ -47,8 +47,9 @@ export const createAutomationsSlice: StateCreator<BoardStore, [], [], Automation
       // column headers' automation glyphs do not re-render each time.
       set((state) => ({ automations: keepIfSameJson(state.automations, automations), automationsLoaded: true }));
     } catch (error) {
-      // Keep the last known list rather than blanking the board's counts on a
-      // transient failure, the same call the board profiles loader makes.
+      // report-ok: main's IPC wrap reports a handler's rejection, and the last known list
+      // stays rather than blanking the board's counts on a transient failure, the same call
+      // the board profiles loader makes.
       console.warn('[automations] load failed; keeping the last known list', error);
     }
   },

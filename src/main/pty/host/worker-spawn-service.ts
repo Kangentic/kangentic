@@ -195,7 +195,7 @@ export class WorkerSpawnService implements HostSpawnService {
       try {
         worker.terminate();
       } catch {
-        // Already gone.
+        // report-ok: the worker is already gone, which is what the dispose wanted.
       }
     }
   }
@@ -224,7 +224,8 @@ export class WorkerSpawnService implements HostSpawnService {
         relaySlowSpans: this.options.onSlowSpan !== undefined,
       });
     } catch (error) {
-      // A missing bundle does not come back on a retry.
+      // report-ok: reportFallback below relays the fixed code spawn_worker_fallback,
+      // which main reports. A missing bundle does not come back on a retry.
       this.crashes = MAX_WORKER_CRASHES;
       console.warn('[pty-host] the spawn worker could not start; child processes start on the terminal thread:', error instanceof Error ? error.message : String(error));
       this.reportFallback(error);
@@ -257,7 +258,8 @@ export class WorkerSpawnService implements HostSpawnService {
     try {
       worker.postMessage(message);
     } catch {
-      // The worker is exiting; its exit fails what it held.
+      // report-ok: the worker is exiting, and onWorkerExit fails every request and
+      // run it held.
     }
   }
 
@@ -374,7 +376,8 @@ export class WorkerSpawnService implements HostSpawnService {
     try {
       pin.release();
     } catch {
-      // The handle is the host's own; nothing else holds it.
+      // report-ok: the handle is the host's own, and a close that fails leaves at most
+      // that one handle open until the host exits.
     }
   }
 

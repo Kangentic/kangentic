@@ -731,6 +731,8 @@ async function readCheckedOutBranch(git: GitClient): Promise<string> {
   try {
     return (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
   } catch {
+    // report-ok: git cannot name a branch in a folder that is no repository or has no commit
+    // yet, and "unknown" is the answer the terminal's branch pill shows.
     return 'unknown';
   }
 }
@@ -817,13 +819,15 @@ async function checkOutStartBranch(
       try {
         await git.merge([startPoint, '--ff-only']);
       } catch {
-        // ff-only failed (dirty tree, diverged history) - use local state
+        // report-ok: git refuses a fast-forward over a dirty tree or a diverged history, and
+        // the terminal starts on the local state.
       }
     }
     return { branch: targetBranch };
   } catch (error) {
-    // Checkout may fail (dirty working tree, branch doesn't exist locally)
-    // Fall back to whatever branch is currently checked out
+    // report-ok: git refuses a checkout over a dirty working tree or of a branch that does
+    // not exist locally. The terminal starts on whatever is checked out, and checkoutError
+    // below tells the user so in a toast.
     const branch = await readCurrentBranch();
     // Git's own text is multi-line and names paths, so it goes to the log and
     // the toast body stays one sentence, shaped like the refusals above.

@@ -61,7 +61,8 @@ function runDaemon(): void {
       fs.writeFileSync(path.join(directory, LAST_EXIT), JSON.stringify({ reason, detail, pid: process.pid, at: new Date().toISOString(), startedAt }));
       log(`exit: ${reason} ${detail ?? ''}`);
     } catch {
-      // The folder is gone. Nothing else can record this.
+      // report-ok: runs on the host, which cannot report; the folder is gone, so nothing else can
+      // record this exit, and the daemon ends either way.
     }
   };
   for (const signal of Object.keys(SIGNAL_NUMBERS)) {
@@ -157,6 +158,8 @@ const command = process.argv[2];
 if (command === 'daemon') {
   runDaemon();
 } else if (command === 'relay') {
+  // report-ok: runs on the host, which cannot report; the message goes to stderr, which ssh carries
+  // to the link as the reason the connection ended.
   runRelay().catch((error: unknown) => {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exit(1);

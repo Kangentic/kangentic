@@ -18,11 +18,13 @@ vi.mock('electron', () => ({ app: { getPath: () => '/tmp', isPackaged: false } }
 const harness = vi.hoisted(() => ({
   view: null as unknown,
   readFails: false,
+  /** What the failed read throws. By default a plain failure of the read itself. */
+  readFailure: null as Error | null,
 }));
 
 vi.mock('../../src/main/workflows/workflow-service', () => ({
   readWorkflow: () => {
-    if (harness.readFails) throw new Error('database closing');
+    if (harness.readFails) throw harness.readFailure ?? new Error('database closing');
     return harness.view;
   },
 }));
@@ -58,6 +60,7 @@ function plannedTask(title: string) {
 
 beforeEach(() => {
   harness.readFails = false;
+  harness.readFailure = null;
   harness.view = { workflow, tasks: [plannedTask('Token table'), plannedTask('Budget alerts')], hiddenBoards: [] };
 });
 
@@ -78,9 +81,26 @@ describe('buildWorkflowAgentContinueMessage', () => {
     expect(await buildWorkflowAgentContinueMessage(context, 'home', workflow, 'FIRST MESSAGE', 'not-resumed')).toBeNull();
   });
 
-  it('is null when the plan cannot be read', async () => {
+  // A plan that could not be read is not "nothing saved". Null here sent the agent a
+  // new workflow's first message: it planned from the brief again, and its save
+  // replaced every task the user had shaped.
+  it('tells the agent to read the plan itself when it cannot be read, and never answers that none is saved', async () => {
     harness.readFails = true;
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    const message = await buildWorkflowAgentContinueMessage(context, 'home', workflow, 'FIRST MESSAGE', 'not-resumed');
+
+    expect(message!.startsWith('FIRST MESSAGE')).toBe(true);
+    expect(message).not.toContain('<saved_plan>');
+    expect(message).toContain('Read it first with kangentic_get_workflow');
+    expect(message).toContain('save nothing until you have');
+  });
+
+  it('is null when the workflow is gone, which leaves no plan to protect', async () => {
+    harness.readFails = true;
+    harness.readFailure = Object.assign(new Error('Workflow wf-1 not found'), { name: 'WorkflowRequestError' });
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
     expect(await buildWorkflowAgentContinueMessage(context, 'home', workflow, 'FIRST MESSAGE', 'not-resumed')).toBeNull();
   });
 

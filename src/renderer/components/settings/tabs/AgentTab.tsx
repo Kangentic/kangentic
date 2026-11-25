@@ -57,7 +57,10 @@ export function AgentTab({ config, globalConfig, agentList }: {
       .then((agents) => {
         if (!cancelled) setEditedProjectAgentList({ projectPath: editedProjectPath, agents });
       })
-      .catch(() => { /* keep showing the open project's list */ });
+      .catch(() => {
+        // report-ok: main's IPC wrap reports a handler's rejection, and the tab keeps showing
+        // the open project's list.
+      });
     return () => { cancelled = true; };
     // editedCliPaths and agentListRefreshCount are refetch triggers, not read in the body.
   }, [editingOtherProject, editedProjectPath, editedCliPaths, agentListRefreshCount]);
@@ -70,7 +73,10 @@ export function AgentTab({ config, globalConfig, agentList }: {
   }, []);
 
   const handleCopyLoginCommand = (agentName: string, command: string) => {
-    navigator.clipboard.writeText(command).catch(() => { /* leave copied state alone; user can retry */ });
+    navigator.clipboard.writeText(command).catch(() => {
+      // report-ok: the OS denied the clipboard write. The copied state is left alone, and the
+      // user can retry.
+    });
     setCopiedAgent(agentName);
     if (copyTimeout.current) clearTimeout(copyTimeout.current);
     copyTimeout.current = setTimeout(

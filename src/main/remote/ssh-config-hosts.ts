@@ -74,6 +74,8 @@ async function includedFiles(argument: string, state: ReadState): Promise<string
   if (!/[*?]/.test(baseName)) return [absolute];
   const directory = path.dirname(absolute);
   const pattern = fileNamePattern(baseName);
+  // report-ok: an Include whose folder is not there, or cannot be listed, names no files, and the
+  // suggestions go on without it.
   const names = await fs.readdir(directory).catch(() => [] as string[]);
   return names.filter((name) => pattern.test(name)).sort().map((name) => path.join(directory, name));
 }
@@ -82,6 +84,8 @@ async function readConfigFile(file: string, depth: number, state: ReadState): Pr
   const key = path.resolve(file);
   if (state.seen.has(key) || state.filesRead >= MAX_FILES_READ) return;
   state.seen.add(key);
+  // report-ok: a config or included file that is not there, or cannot be read, is skipped. A
+  // missing file is no hosts, and these are only suggestions for the address field.
   const text = await fs.readFile(file, 'utf8').catch(() => null);
   if (text === null) return;
   state.filesRead += 1;

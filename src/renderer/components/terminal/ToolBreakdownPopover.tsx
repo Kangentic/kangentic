@@ -85,7 +85,8 @@ export function ToolBreakdownPopover({
         const result = await window.electronAPI.sessions.getToolBreakdown(sessionId);
         if (!cancelled) setRows(result);
       } catch {
-        // Session may have exited between open and fetch; keep last-known rows.
+        // report-ok: main's IPC wrap reports a handler's rejection. The session may have
+        // exited between open and fetch, and the last-known rows stay.
       }
     })();
     return () => { cancelled = true; };
@@ -100,7 +101,8 @@ export function ToolBreakdownPopover({
         // Null means no readable transcript: keep the last-known estimates.
         if (!cancelled && result) setResultTokens({ sessionId, byTool: result });
       } catch {
-        // Best-effort: the table renders without the Tokens column.
+        // report-ok: main's IPC wrap reports a handler's rejection, and the table renders
+        // without the Tokens column.
       }
     })();
     return () => { cancelled = true; };

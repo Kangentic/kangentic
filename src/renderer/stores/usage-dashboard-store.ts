@@ -322,6 +322,8 @@ const usageDashboardStoreInitializer: StateCreator<UsageDashboardStore> = (set, 
             : {}),
         }));
       } catch (error) {
+        // report-ok: main's IPC wrap reports a handler's rejection, and the dashboard shows the
+        // reason in its error banner.
         const message = rejectionMessage(error);
         set((current) =>
           current.activeKey === key

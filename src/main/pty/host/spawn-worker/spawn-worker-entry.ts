@@ -34,7 +34,8 @@ for (const level of ['log', 'info', 'warn', 'error'] as const) {
     try {
       post({ type: 'log', level, text: format(...args) });
     } catch {
-      // The port is closed: the host is exiting.
+      // report-ok: the port is closed because the host is exiting, so a log line has
+      // nowhere to go.
     }
   };
 }

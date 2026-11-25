@@ -85,6 +85,7 @@ const createSshStore = () => create<SshStore>((set, get) => ({
       if (requestId !== latestHostsRequestId) return;
       set({ hosts, hostsLoaded: true, hostsError: null });
     } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the SSH tab shows the reason.
       if (requestId !== latestHostsRequestId) return;
       set({ hostsError: describeIpcError(error) });
     }
@@ -94,6 +95,8 @@ const createSshStore = () => create<SshStore>((set, get) => ({
     try {
       set({ client: await window.electronAPI.ssh.detectClient(options) });
     } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the SSH tab shows the
+      // reason on its ssh program row.
       set({ client: { found: false, version: null, error: describeIpcError(error) } });
     }
   },

@@ -250,7 +250,8 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
       const result = await startPairing();
       setQrUri(result.qrUri);
     } catch (error) {
-      // Main's own words, without Electron's channel and class prefix.
+      // report-ok: main's IPC wrap reports a handler's rejection, and the tab shows main's
+      // own words, without Electron's channel and class prefix.
       setPairingEnded(describeIpcError(error, t`Could not start pairing.`));
     }
   };

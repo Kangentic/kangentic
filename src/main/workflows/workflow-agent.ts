@@ -13,6 +13,7 @@ import { awaitsFirstAgent } from '../../shared/workflow-agent-first-open';
 import { WORKFLOW_REFUSALS } from '../../shared/workflow-refusals';
 import { isActive } from '../../shared/activity-state';
 import { getExistingProjectDb, getProjectDb } from '../db/database';
+import { isClosedConnectionError } from '../db/sqlite-error';
 import { WorkflowRepository } from '../db/repositories/workflow-repository';
 import { UsageHistoryRepository } from '../db/repositories/usage-history-repository';
 import { captureWorkflowAgentUsage } from '../ipc/handlers/session-metrics';
@@ -35,6 +36,7 @@ import { reportPreflightFailure } from '../pty/agent-launch-report';
 import { buildWorkflowAgentContinueMessage, buildWorkflowAgentFirstMessage } from './workflow-agent-prompt';
 import { workflowTasks } from './workflow-tasks';
 import { notifyWorkflowChanged } from './workflow-changed';
+import { workflowEngineReporter } from './workflow-report';
 import { forgetWorkflowAgentEffort, recordWorkflowAgentEffort } from './workflow-agent-effort';
 import { RefusalError } from '../../shared/refusal';
 
@@ -312,8 +314,10 @@ async function restartWithAccess(context: IpcContext, workflowId: string): Promi
   let missing: ReadableProject[] | null;
   try {
     missing = missingCheckouts(context, pending.homeProjectId, workflowId);
-  } catch {
-    // Its project's database is closing under a delete.
+  } catch (error) {
+    // Its project's database closed under a delete: there is nothing to restart. Any
+    // other failed read leaves the agent without the checkouts it was granted.
+    if (!isClosedConnectionError(error)) workflowEngineReporter.report(error, { tags: { stage: 'agent_db_read' } });
     return;
   }
   if (!missing?.length) return;
@@ -340,6 +344,9 @@ async function restartWithAccess(context: IpcContext, workflowId: string): Promi
       console.warn(`[WORKFLOW-AGENT] Stopped to read new project access, but could not start again: ${reason}`);
     }
   } catch (error) {
+    // The agent was told it may read more checkouts and cannot: it keeps running
+    // without them, or stays suspended until the pane's Resume.
+    workflowEngineReporter.report(error, { tags: { stage: 'agent_access_restart' } });
     console.error('[WORKFLOW-AGENT] Could not restart with the new project access:', error);
     // A suspend that failed leaves the agent running without the access it was
     // promised. Owe it again, so its next idle edge retries. Once the suspend
@@ -471,8 +478,10 @@ function captureSpend(context: IpcContext, session: Session): void {
   const tracked = withConversationId(session);
   try {
     captureWorkflowAgentUsage(context.sessionManager, new UsageHistoryRepository(getProjectDb(tracked.projectId)), tracked);
-  } catch {
-    // Best-effort: a project database closing under a quit or a delete.
+  } catch (error) {
+    // A database closed under a project delete has no ledger left to write, and the
+    // reporter skips a quit. Any other failure drops the agent's spend from Stats.
+    if (!isClosedConnectionError(error)) workflowEngineReporter.report(error, { tags: { stage: 'agent_db_write' } });
   }
   recordTurnTokens(context, tracked);
 }
@@ -489,8 +498,11 @@ function withConversationId(session: Session): Session {
   try {
     const recorded = recordedConversationId(session.projectId, session.workflowId);
     return recorded ? { ...session, agentSessionId: recorded } : session;
-  } catch {
-    // A project database closing under a quit or a delete.
+  } catch (error) {
+    // A database closed under a project delete has no conversation to name, and the
+    // reporter skips a quit. Any other failed read files a resumed agent's spend and
+    // turns under no conversation, so they go unrecorded.
+    if (!isClosedConnectionError(error)) workflowEngineReporter.report(error, { tags: { stage: 'agent_db_read' } });
     return session;
   }
 }
@@ -526,8 +538,18 @@ function recordTurnTokens(context: IpcContext, session: Session): void {
       cliTarget: context.sessionManager.getSessionCliTarget(session.id),
       transcriptPath: context.sessionManager.getReportedTranscriptPath(session.id),
       remoteTargets: collectRemoteTargets(agentRegistry),
-    }).catch(warn);
+    }).catch((error: unknown) => {
+      // A write of the agent's turns that keeps failing leaves them out of Stats. The
+      // retrieval client reports a worker's runtime defect or SQLite failure itself,
+      // which this then skips, and a worker that is down is an expected failure: the
+      // next stop writes what this one missed.
+      workflowEngineReporter.report(error, { tags: { stage: 'agent_turn_index' } });
+      warn(error);
+    });
   } catch (error) {
+    // Nothing above is expected to throw before the call is made: a throw here is a
+    // defect that leaves the agent's turns out of Stats on every stop.
+    workflowEngineReporter.report(error, { tags: { stage: 'agent_turn_index' } });
     warn(error);
   }
 }
@@ -542,6 +564,8 @@ export async function endWorkflowAgent(context: IpcContext, workflowId: string):
   // An open still on its way (detection, trust, the shim) spawns after this
   // call would have looked, so wait for it and end what it started.
   const inFlight = opening.get(workflowId);
+  // report-ok: startOnce reports a failed start through reportPreflightFailure, and this
+  // only waits for that start to settle.
   if (inFlight) await inFlight.catch(() => undefined);
   const sessions = context.sessionManager.listSessions().filter((session) => session.workflowId === workflowId);
   userPaused.delete(workflowId);
@@ -567,7 +591,8 @@ export async function endWorkflowAgent(context: IpcContext, workflowId: string):
       const localFolder = project ? agentPathsForProject(project).fromAgent(session.cwd) : session.cwd;
       fs.rmSync(path.join(localFolder, '.kangentic', 'sessions', workflowId), { recursive: true, force: true });
     } catch {
-      // Best-effort cleanup.
+      // report-ok: a session folder this cannot remove is left for pruneOrphanedDirectories,
+      // which clears unreferenced session folders at a cold open.
     }
   }
 }
@@ -686,6 +711,7 @@ async function startWorkflowAgentWithPull(
   try {
     spawnCli = await resolveSpawnCli({ projectPath: project.path, cwd: projectRoot, adapter, cliPathOverride: config.agent.cliPaths[agentName] ?? null });
   } catch (error) {
+    // report-ok: a host or distro that cannot be read is an answer, and the pane shows its message.
     return unavailable(error instanceof Error ? error.message : String(error));
   }
   if (!spawnCli) return unavailable(`Kangentic cannot find ${adapter.displayName} on this machine.`);
@@ -969,6 +995,9 @@ async function honorPausePressedDuringSpawn(context: IpcContext, workflowId: str
     captureSpend(context, started);
     await context.sessionManager.suspend(started.id);
   } catch (error) {
+    // The user pressed Pause and the agent that started anyway keeps running, with a
+    // pane that the Pause left reading paused.
+    workflowEngineReporter.report(error, { tags: { stage: 'agent_pause_mid_start' } });
     console.error('[WORKFLOW-AGENT] Could not pause the agent a Pause reached while it started:', error);
   }
 }
@@ -979,8 +1008,10 @@ function workflowStillOpen(context: IpcContext, homeProjectId: string, workflowI
   try {
     const workflow = new WorkflowRepository(getProjectDb(homeProjectId)).getById(workflowId);
     return Boolean(workflow) && workflow?.state !== 'done';
-  } catch {
-    // Its project's database is closing under a delete.
+  } catch (error) {
+    // Its project's database closed under a delete: the workflow is gone. Any other
+    // failed read refuses the start of an agent whose workflow is still there.
+    if (!isClosedConnectionError(error)) workflowEngineReporter.report(error, { tags: { stage: 'agent_db_read' } });
     return false;
   }
 }
@@ -1026,15 +1057,20 @@ export function registerWorkflowAgentLifecycle(context: IpcContext): void {
         // the next start continue from the saved plan, even when this one
         // cannot start or another start already in flight takes its place.
         new WorkflowRepository(homeDb).forgetAgentSessionId(resumed.workflowId);
-      } catch {
+      } catch (error) {
+        // The conversation id the CLI could not find stays recorded and nothing starts
+        // over: the pane keeps a dead agent whose Resume fails the same way each time.
+        workflowEngineReporter.report(error, { tags: { stage: 'agent_forget_session' } });
         return;
       }
       console.warn(`[WORKFLOW-AGENT] Resume of ${resumed.workflowId.slice(0, 8)} found no conversation; starting a new one.`);
       // The start marks the pane's start-over line itself.
       void startOnce(context, resumed.homeProjectId, resumed.workflowId, resumed.grid)
+        // report-ok: startOnce reports a failed start through reportPreflightFailure.
         .catch((error: unknown) => console.error('[WORKFLOW-AGENT] Could not start over:', error));
     }).catch(() => {
-      // The host is gone (a quit or a crash): there is nothing to read.
+      // report-ok: the pty host is gone (a quit or a crash) or did not answer, so there is
+      // no scrollback to read.
     });
   };
   // The sweep that retires a session whose CLI is gone kills it on purpose, so
@@ -1119,6 +1155,9 @@ function recordReportedConversation(context: IpcContext, sessionId: string, home
       cliTarget: serializeCliTarget(context.sessionManager.getSessionCliTarget(sessionId) ?? null),
     });
   } catch (error) {
+    // The workflow keeps no id for the conversation its agent is in, so the next
+    // Resume cannot reopen it and starts a new one from the saved plan.
+    workflowEngineReporter.report(error, { tags: { stage: 'agent_conversation_record' } });
     console.warn('[WORKFLOW-AGENT] Could not record the conversation the agent reported:', error);
     return;
   }

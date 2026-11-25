@@ -14,6 +14,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Duplex } from 'node:stream';
 import type { PtyHostCommand, PtyHostEvent, PtyHostMethod, PtyHostRequestMap, RendererPort } from '../pty/host/protocol';
+import { HostHandledErrors } from '../pty/host/host-handled-error';
 import type { PtyHostRequestOptions } from '../pty/host/pty-host-client';
 import { commandRoute } from './host-routes';
 import { HOST_NOT_CONNECTED_SENTENCE, HostUnreachableError, LinkHub } from './link/link-hub';
@@ -65,6 +66,9 @@ export class HostRouter {
         return (await link.requestHelper('listeningPorts', {})).ports;
       },
       log: (line) => options.log?.(`[forward] ${line}`),
+      // This process cannot report, so a poll that failed for a reason other than a drop
+      // goes to main as a fixed code, on the channel the core's own relay uses.
+      handledErrors: new HostHandledErrors(options.emit),
       ...options.forwarding,
     });
     this.hub.setEventListener((event) => {

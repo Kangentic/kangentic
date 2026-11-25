@@ -177,6 +177,8 @@ export class LinuxTaggedProcessReader implements TaggedProcessReader {
     try {
       entries = await fsPromises.readdir(this.procRoot);
     } catch {
+      // report-ok: an unreadable process table answers an empty scan, which the reap
+      // fails with the code empty_scan and never reads as nothing running.
       return { processes: [], unreadableCount: 0 };
     }
     const pids = entries.filter((entry) => /^\d+$/.test(entry)).map((entry) => Number(entry));
@@ -204,6 +206,8 @@ export class LinuxTaggedProcessReader implements TaggedProcessReader {
       this.sendSignal(target.pid, strength === 'force' ? 'SIGKILL' : 'SIGTERM');
       return true;
     } catch {
+      // report-ok: the process exited between the identity check and the signal, or
+      // refused it. The reap's next scan says whether it still runs.
       return false;
     }
   }
@@ -215,6 +219,8 @@ export class LinuxTaggedProcessReader implements TaggedProcessReader {
     try {
       text = await fsPromises.readFile(this.procPath(target.pid, 'stat'), 'utf8');
     } catch (error) {
+      // report-ok: the read's failure is the answer. No entry means the process ended,
+      // and any other failure answers unknown, which changes no row.
       const code = (error as NodeJS.ErrnoException).code;
       return code === 'ENOENT' || code === 'ESRCH' ? false : null;
     }
@@ -233,6 +239,8 @@ export class LinuxTaggedProcessReader implements TaggedProcessReader {
         const commandLine = await fsPromises.readFile(this.procPath(target.pid, 'cmdline'));
         const argv = commandLine.toString('utf8').split('\0');
         if (argv.length > 0 && argv[argv.length - 1] === '') argv.pop();
+        // report-ok: a link that cannot be read (not ours, or gone) leaves the label to
+        // be built without the program's path.
         const executablePath = await fsPromises.readlink(this.procPath(target.pid, 'exe')).catch(() => null);
         const workingDirectory = target.workingDirectory ?? null;
         labels.set(target.pid, await labelProcess({
@@ -240,7 +248,7 @@ export class LinuxTaggedProcessReader implements TaggedProcessReader {
           argv,
           isFile: (candidate) => isFileFrom(workingDirectory, candidate),
         }));
-      } catch { /* not ours, or gone */ }
+      } catch { /* report-ok: the process is not ours or is gone, so it gets the unnamed label. */ }
     }));
     return labels;
   }
@@ -299,7 +307,8 @@ export class LinuxTaggedProcessReader implements TaggedProcessReader {
         try {
           entries = await fsPromises.readdir(fdDirectory);
         } catch {
-          return; // not ours, or gone
+          // report-ok: the process is not ours or is gone, so it owns no socket to pair.
+          return;
         }
         await Promise.all(entries.map(async (entry) => {
           try {
@@ -311,7 +320,7 @@ export class LinuxTaggedProcessReader implements TaggedProcessReader {
               ownersByInode.set(match[1], owners);
             }
             owners.add(pid);
-          } catch { /* closed mid-read */ }
+          } catch { /* report-ok: the descriptor closed mid-read, so it is no socket to pair. */ }
         }));
       }));
     }
@@ -321,6 +330,8 @@ export class LinuxTaggedProcessReader implements TaggedProcessReader {
     try {
       return parseProcStat(await fsPromises.readFile(this.procPath(pid, 'stat'), 'utf8'));
     } catch {
+      // report-ok: the process exited since it was listed. Null leaves it out of the
+      // scan and fails a kill's identity check.
       return null;
     }
   }
@@ -335,6 +346,8 @@ export class LinuxTaggedProcessReader implements TaggedProcessReader {
     try {
       tagValue = findTagInEnviron(await fsPromises.readFile(this.procPath(pid, 'environ')));
     } catch (error) {
+      // report-ok: the process exited mid-scan, or the kernel refused the read. A
+      // refusal is counted as unreadable and marked, and main logs the count.
       const code = (error as NodeJS.ErrnoException).code;
       environmentUnreadable = true;
       // ENOENT and ESRCH mean it exited mid-scan. Anything else is a refusal.
@@ -345,7 +358,7 @@ export class LinuxTaggedProcessReader implements TaggedProcessReader {
       // A directory removed while the process sits in it reads with the
       // deleted mark; the path before it is still where the process was working.
       workingDirectory = withoutDeletedSuffix(await fsPromises.readlink(this.procPath(pid, 'cwd')));
-    } catch { /* not ours, or gone */ }
+    } catch { /* report-ok: not ours, or gone. With no readable directory it is never killed. */ }
     return {
       process: {
         pid,
@@ -372,12 +385,12 @@ export class LinuxTaggedProcessReader implements TaggedProcessReader {
             scanned.role = 'multiplexer';
             return;
           }
-        } catch { /* not ours, or gone */ }
+        } catch { /* report-ok: not ours, or gone since the scan, so it gets no role. */ }
         try {
           if (GUI_LIBRARY_PATTERN.test(await fsPromises.readFile(this.procPath(scanned.pid, 'maps'), 'utf8'))) {
             scanned.role = 'visible-app';
           }
-        } catch { /* not ours, or gone */ }
+        } catch { /* report-ok: not ours, or gone since the scan, so it gets no role. */ }
       }));
     }
   }
@@ -390,6 +403,8 @@ export class LinuxTaggedProcessReader implements TaggedProcessReader {
       const match = /^Uid:\s+(\d+)/m.exec(status);
       return match !== null && Number(match[1]) === this.ownUid;
     } catch {
+      // report-ok: the process exited mid-scan, so it is not counted among our own
+      // unreadable ones.
       return false;
     }
   }

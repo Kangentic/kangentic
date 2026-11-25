@@ -122,7 +122,8 @@ export function HotkeysTab({ globalConfig }: { globalConfig: AppConfig }) {
         if (!cancelled) setProbeStatus(result);
       })
       .catch(() => {
-        /* probe is best-effort; ignore failures */
+        // report-ok: main's IPC wrap reports a handler's rejection, and the rows keep the
+        // availability they last showed.
       });
     return () => {
       cancelled = true;

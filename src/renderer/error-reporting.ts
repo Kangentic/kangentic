@@ -2,6 +2,7 @@ import { init as sentryInit, captureException } from '@sentry/electron/renderer'
 import { filterBreadcrumb } from '../shared/sentry-breadcrumbs';
 import { SENTRY_DATA_COLLECTION } from '../shared/sentry-data-collection';
 import { errorNameOf, pathFreeCopy } from '../shared/handled-error-copy';
+import { readPopOutDescriptor } from './pop-out/read-descriptor';
 import { setRendererFailureSink } from './utils/renderer-failure';
 
 /**
@@ -27,12 +28,39 @@ import { setRendererFailureSink } from './utils/renderer-failure';
 export function initRendererErrorReporting(): void {
   if (!window.electronAPI?.analytics?.errorReportingEnabled) return;
   try {
-    sentryInit({ beforeBreadcrumb: filterBreadcrumb, dataCollection: SENTRY_DATA_COLLECTION });
+    // Which window this renderer is: `main`, or the pop-out's kind (a fixed
+    // `PopOutKind`). A pop-out is its own process with its own stores, so an
+    // event that cannot say which one sent it reads like a main-window bug.
+    //
+    // Stamped on each event this renderer captures, never set on the scope. The
+    // SDK copies a renderer's scope into main's (its ScopeToMain integration), so
+    // a scope tag set here rode every MAIN-process event too, as whichever window
+    // started last. Measured in a preview: an `ipc_handler` event from main
+    // carried `window_kind: main`.
+    const kind = windowKind();
+    sentryInit({
+      beforeBreadcrumb: filterBreadcrumb,
+      dataCollection: SENTRY_DATA_COLLECTION,
+      beforeSend: (event) => {
+        event.tags = { ...event.tags, window_kind: kind };
+        return event;
+      },
+    });
     // `reportRendererFailure` (utils/renderer-failure.ts) sends through this
     // module only once the SDK is up; its callers import no SDK themselves.
     setRendererFailureSink(reportHandledRendererError);
   } catch (error) {
     console.error('[ANALYTICS] Failed to initialize renderer error reporting:', error);
+  }
+}
+
+/** `main`, or the kind of pop-out surface this window was opened for. `unknown` when it cannot be read. */
+export function windowKind(): string {
+  try {
+    return readPopOutDescriptor()?.kind ?? 'main';
+  } catch {
+    // report-ok: the tag is diagnostic only; a window whose descriptor cannot be read still reports, as unknown.
+    return 'unknown';
   }
 }
 

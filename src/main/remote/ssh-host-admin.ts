@@ -33,6 +33,7 @@ import { sshArgsFor } from './remote-host-service';
 import { assertSafeDestination } from './ssh-client';
 import { readSshConfigHosts } from './ssh-config-hosts';
 import type { RemoteHosting } from './remote-hosting';
+import { remoteHostReporter } from './remote-report';
 import {
   checkKeyFile,
   createHostKey,
@@ -78,6 +79,10 @@ async function withRollback(error: unknown, change: SignInChange | null, aside?:
     await change?.rollback();
     return error;
   } catch (rollbackError) {
+    // The host is left with its old keys set aside and a row that names a key file that is not
+    // there, so it cannot connect. The error thrown below wraps the sign-in failure, usually a
+    // refusal the IPC wrap skips by its cause, so the rollback's own failure is reported here.
+    remoteHostReporter.report(rollbackError, { tags: { stage: 'sign_in_rollback' } });
     const reason = error instanceof Error ? error.message : String(error);
     const rollbackReason = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
     const where = aside ? `, so it is still at ${aside}` : ` (it is still in the folder beside the host's keys, named ${KEYS_ASIDE_SUFFIX})`;
@@ -91,7 +96,12 @@ async function withRollback(error: unknown, change: SignInChange | null, aside?:
  * a change that finished, and must not stay as a stray private key.
  */
 async function settleInterruptedChange(host: SshHost, keyDirectory: string, aside: string): Promise<void> {
-  const present = (target: string): Promise<boolean> => fs.access(target).then(() => true, () => false);
+  // Only a path that is not there reads as absent. Any other failure stops here, before a folder
+  // is deleted below on the strength of a key that could not be looked at.
+  const present = (target: string): Promise<boolean> => fs.access(target).then(() => true, (error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return false;
+    throw error;
+  });
   if (!await present(aside)) return;
   if (!host.key_path || await present(host.key_path)) {
     await fs.rm(aside, { recursive: true, force: true });
@@ -229,6 +239,8 @@ export class SshHostAdmin {
       // A restored host goes back to being removed, so its projects stay hidden and nothing is lost.
       if (restored) this.deps.hosting.hosts.markRemoved(host.id);
       else this.deps.hosting.hosts.delete(host.id);
+      // report-ok: the add's own error is thrown next. A key folder that will not delete stays in
+      // Kangentic's own folder, where nothing uses it.
       await deleteHostKeys(host.id, this.deps.setup).catch(() => undefined);
       throw error;
     }
@@ -238,6 +250,9 @@ export class SshHostAdmin {
     await this.deps.hosting.connectHost(host.id);
     if (restored) {
       await this.deps.revealProjects?.(host.id).catch((error: unknown) => {
+        // The host is back in the list, but the agents its restored projects had running are not
+        // started again, and only a log line says so.
+        remoteHostReporter.report(error, { tags: { stage: 'reveal_projects' } });
         this.deps.log?.(`[remote] could not start ${host.name}'s projects again: ${error instanceof Error ? error.message : String(error)}`);
       });
     }
@@ -318,6 +333,9 @@ export class SshHostAdmin {
     }
 
     // The link was made for the old address or key: end it and make it again.
+    // report-ok: the pty host could not take the request. One that restarted, or fell back
+    // in-process, holds no link, a late one still takes the removal in order, and the connect
+    // below shows the host's state.
     await this.deps.hosting.hostService.disconnect(hostId).catch((error: unknown) => {
       this.deps.log?.(`[remote] could not stop the link for ${hostId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
     });
@@ -353,6 +371,8 @@ export class SshHostAdmin {
         if (hadKeys && host.key_created && host.key_path) {
           await this.takeKeyOffHost(host.destination, path.join(aside, path.basename(host.key_path)), host.name);
         }
+        // report-ok: the old keys stay in the folder set aside, which the next sign-in change or
+        // the host's removal deletes (`settleInterruptedChange`, `deleteHostKeys`).
         await fs.rm(aside, { recursive: true, force: true }).catch((error: unknown) => {
           this.deps.log?.(`[remote] could not delete the old keys of ${host.name}: ${error instanceof Error ? error.message : String(error)}`);
         });
@@ -438,10 +458,15 @@ export class SshHostAdmin {
     try {
       for (const project of projects) await this.deps.suspendProjectSessions(project);
       if (host.key_created && host.key_path) await this.takeKeyOffHost(host.destination, host.key_path, host.name);
+      // report-ok: the pty host could not take the request. One that restarted, or fell back
+      // in-process, holds no link and is not given this host again, a late one still takes the
+      // removal, and the Remove goes on.
       await this.deps.hosting.hostService.disconnect(hostId).catch((error: unknown) => {
         this.deps.log?.(`[remote] could not stop the link for ${hostId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
       });
       this.deps.hosting.status.remove(hostId);
+      // report-ok: the Remove goes on. A key folder that will not delete stays in Kangentic's own
+      // folder, where nothing uses it while the host is removed.
       await deleteHostKeys(hostId, this.deps.setup).catch(() => undefined);
       this.deps.hosting.hosts.markRemoved(hostId);
     } finally {
@@ -469,6 +494,8 @@ export class SshHostAdmin {
         await this.deps.removeProject(project);
         await this.removeShellFolder(project.path);
       } catch (error) {
+        // report-ok: handed on. The first failure is thrown after the loop as the cause of the
+        // rejection, whose message names every project that failed, and the IPC wrap judges it.
         const reason = error instanceof Error ? error.message : String(error);
         this.deps.log?.(`[remote] could not clear ${project.name}: ${reason}`);
         failed.push(`${project.name}: ${reason}`);
@@ -478,6 +505,9 @@ export class SshHostAdmin {
     if (failed.length === 0) {
       // The copies of the host's transcripts are this computer's, and no project is left to read them.
       await this.deps.removeHomeMirror?.(hostId).catch((error: unknown) => {
+        // Clear data answers as done while this computer keeps its copy of the host's
+        // transcripts, which nothing else ever deletes.
+        remoteHostReporter.report(error, { tags: { stage: 'home_mirror_remove' } });
         this.deps.log?.(`[remote] could not remove the copy of ${host.name}'s files: ${error instanceof Error ? error.message : String(error)}`);
       });
     }
@@ -547,6 +577,8 @@ export class SshHostAdmin {
     try {
       if (probe.isGitRepo) await this.excludeKangenticFolder(remote.hostId, probe.path);
     } catch (error) {
+      // report-ok: the failure is thrown next. The shell folder was made just above and is empty,
+      // so one that will not delete costs nothing.
       await fs.rm(shellFolder, { recursive: true, force: true }).catch(() => undefined);
       throw error;
     }
@@ -589,7 +621,8 @@ export class SshHostAdmin {
         removeKeyCommand(publicKey),
       ], { env: childProcessEnv(), timeout: TAKE_KEY_OFF_TIMEOUT_MS });
     } catch (error) {
-      // The key stays in the host's authorized_keys, which its owner can edit by hand.
+      // report-ok: the public key could not be read or used here, or ssh would not start. The key
+      // stays in the host's authorized_keys, which its owner can edit by hand.
       this.deps.log?.(`[remote] could not take the key off ${label}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
@@ -602,7 +635,11 @@ export class SshHostAdmin {
     const root = path.resolve(this.deps.remoteProjectsRoot);
     const target = path.resolve(shellFolder);
     if (target === root || !target.startsWith(root + path.sep)) return;
-    await fs.rm(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 }).catch(() => undefined);
+    await fs.rm(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 }).catch((error: unknown) => {
+      // A deleted project's shell folder (its session files and attachments) stays on this
+      // computer with no project row naming it, and nothing sweeps it later.
+      remoteHostReporter.report(error, { tags: { stage: 'shell_folder_remove' } });
+    });
   }
 
   private requireHost(hostId: string): SshHost {

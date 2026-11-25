@@ -9,6 +9,8 @@ import type {
   AdapterRuntimeStrategy,
   StoredCliTarget,
 } from '../../../shared/types';
+import { isDefectOrEnvironmentFailure } from '../../analytics/handled-report';
+import { sessionManagerReporter } from '../session-manager-report';
 
 type SessionHistoryHook = NonNullable<AdapterRuntimeStrategy['sessionHistory']>;
 
@@ -164,8 +166,15 @@ export class SessionHistoryReader {
       for (;;) {
         try {
           resolvedPath = await hook.locate({ agentSessionId, cwd, cliTarget: options.cliTarget ?? null });
-        } catch (err) {
-          console.warn(`[session-history] locate threw for session=${sessionId.slice(0, 8)}:`, err);
+        } catch (error) {
+          // A file that is not there yet answers null, so a throw is the adapter's
+          // locator: the session runs with no model, tokens or context shown. A locator
+          // also runs other programs (a CLI's own listing, a distro's shell), whose
+          // failure is a plain Error and theirs, so only a defect or an errno reports.
+          if (isDefectOrEnvironmentFailure(error)) {
+            sessionManagerReporter.report(error, { tags: { stage: 'history_locate' } });
+          }
+          console.warn(`[session-history] locate threw for session=${sessionId.slice(0, 8)}:`, error);
           return;
         }
         // Detach may have been called while we were awaiting locate.
@@ -191,6 +200,8 @@ export class SessionHistoryReader {
         try {
           initialCursor = (await fsPromises.stat(resolvedPath)).size;
         } catch (err) {
+          // report-ok: a transient lock or rename race on the stat, and the first change
+          // re-anchors the cursor at the file's end, so nothing stale is read.
           // Could not stat to find EOF (a transient lock / AV / rename race in
           // the window between locate confirming existence and here). Reading
           // from 0 would surface the stale pre-suspend tail this flag exists to
@@ -328,19 +339,30 @@ export class SessionHistoryReader {
       // Detached while the read was out.
       if (this.states.get(sessionId) !== state || !chunk) return;
 
-      timeSyncWork(label, () => {
-        const result: SessionHistoryParseResult = state.parse(chunk, mode);
-        dispatchSessionHistoryResult(sessionId, result, this.callbacks);
-      });
+      try {
+        timeSyncWork(label, () => {
+          const result: SessionHistoryParseResult = state.parse(chunk, mode);
+          dispatchSessionHistoryResult(sessionId, result, this.callbacks);
+        });
 
-      // First successful parse - notify the consumer so it can suppress
-      // any fallback activity trackers now that authoritative telemetry
-      // is flowing.
-      if (!state.handoffDone) {
-        state.handoffDone = true;
-        this.callbacks.onFirstTelemetry(sessionId);
+        // First successful parse - notify the consumer so it can suppress
+        // any fallback activity trackers now that authoritative telemetry
+        // is flowing.
+        if (!state.handoffDone) {
+          state.handoffDone = true;
+          this.callbacks.onFirstTelemetry(sessionId);
+        }
+      } catch (error) {
+        // The read worked and the cursor has moved on, so this is the adapter's
+        // parser or a consumer: this change's usage and events are lost, and the
+        // card shows a stale model, token count or activity.
+        sessionManagerReporter.report(error, { tags: { stage: 'history_parse' } });
+        console.warn(`[session-history] processChange failed for session=${sessionId.slice(0, 8)}:`, error);
       }
     } catch (err) {
+      // report-ok: only the file read reaches this catch, since the parse and the
+      // dispatch report in their own above. A history file that is gone closes the
+      // watcher, and one held for a moment is read again on the next change.
       const code = (err as NodeJS.ErrnoException).code;
       if (code === 'ENOENT') {
         // A detached tail's queued read can land after a newer attach began, and

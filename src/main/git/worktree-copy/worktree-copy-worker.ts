@@ -30,6 +30,8 @@ parentPort.on('message', (event: Electron.MessageEvent) => {
   if (typeof message !== 'object' || message === null || message.type !== 'copy') return;
   copyEntries(message.request)
     .then((result) => post({ type: 'result', result }))
+    // report-ok: a worker process cannot report. Main gets the failed answer and rejects
+    // the copy with it, which fails the worktree setup there.
     .catch((error: unknown) => post({
       type: 'failed',
       message: error instanceof Error ? error.message : String(error),

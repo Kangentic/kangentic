@@ -320,8 +320,9 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
       initialFetchDoneRef.current = true;
       setLoaded(true);
     } catch (fetchError) {
-      // Only show errors on initial load - transient failures during live
-      // updates (e.g. git lock contention) are silently ignored.
+      // report-ok: main's IPC wrap reports a handler's rejection. The first load shows the
+      // reason inline, and a failure during live updates (e.g. git lock contention) keeps
+      // the list already shown.
       if (generation === filesFetchGenerationRef.current && !initialFetchDoneRef.current) {
         setError(fetchError instanceof Error ? rejectionMessage(fetchError) : t`Failed to load diff`);
       }
@@ -381,7 +382,8 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
           setFileContent({ result: freshResult, filePath });
         }
       }).catch(() => {
-        // Background refetch failed - stale content remains visible
+        // report-ok: main's IPC wrap reports a handler's rejection, and the stale content
+        // already shown stays visible.
       });
       return;
     }
@@ -405,6 +407,8 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         setFileContent({ result, filePath });
       }
     } catch {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the pane shows the
+      // selected file with empty content.
       if (selectedFileRef.current === filePath) {
         setFileContent({ result: EMPTY_DIFF_CONTENT, filePath });
       }
@@ -421,7 +425,8 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
       const summary = await window.electronAPI.git.branchSummary({ worktreePath, projectPath, baseBranch });
       setBranchSummary(summary);
     } catch {
-      // Best-effort context: leave the previous summary in place on failure.
+      // report-ok: main's IPC wrap reports a handler's rejection, and the previous branch
+      // summary stays in the header.
     }
   }, [worktreePath, projectPath, baseBranch, completed]);
 
@@ -488,7 +493,8 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         const summary = await window.electronAPI.git.branchSummary({ worktreePath, projectPath, baseBranch, refreshRemote: true });
         if (!cancelled) setBranchSummary(summary);
       } catch {
-        // Best-effort context: leave the previous summary in place on failure.
+        // report-ok: main's IPC wrap reports a handler's rejection, and the previous branch
+        // summary stays in the header.
       }
     })();
     return () => { cancelled = true; };
@@ -907,6 +913,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         }
       },
       (caught: unknown) => {
+        // report-ok: main's IPC wrap reports a handler's rejection, and the toast shows the reason.
         useToastStore.getState().addToast({
           title: t`Couldn't send the failed checks`,
           ...ipcFailureToastFields(caught),

@@ -1,6 +1,7 @@
 import { parseCapabilityRequestPayload, type CapabilityRequestMessage, type CapabilityResponseMessage, type JsonValue, type PauseSessionResponsePayload } from '@kangentic/protocol';
 import { pauseTaskSession } from '../../ipc/handlers/session-pause';
 import { resolveKnownProject } from './known-project';
+import { mobileBridgeReporter } from '../mobile-bridge-report';
 import type { IpcContext } from '../../ipc/ipc-context';
 import { RefusalError } from '../../../shared/refusal';
 
@@ -50,6 +51,9 @@ export async function handlePauseSession(
   // the ok:false the phone shows.
   settled.catch((error: unknown) => {
     if (!accepted) return;
+    // The phone was told the pause was accepted, and the router never sees
+    // this rejection: the agent may still be running under a card that reads paused.
+    mobileBridgeReporter.report(error, { tags: { stage: 'pause_after_accept' } });
     console.error(`[mobile-bridge] pause-session ${payload.taskId.slice(0, 8)} failed after accept:`, error);
   });
 

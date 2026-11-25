@@ -26,11 +26,15 @@ export class GitDetector {
         });
         version = parseGitVersion(stdout);
         meetsMinimum = version ? isVersionAtLeast(version, MINIMUM_GIT_VERSION) : false;
-      } catch { /* version detection failed */ }
+      } catch {
+        // report-ok: git is on PATH but did not answer --version within 5 s, so the version
+        // reads as unknown and the Welcome screen shows its git version warning.
+      }
 
       this.cached = { found: true, path: gitPath, version, meetsMinimum };
       return this.cached;
     } catch {
+      // report-ok: `which` throws when git is not on PATH, which is the answer.
       this.cached = { found: false, path: null, version: null, meetsMinimum: false };
       return this.cached;
     }

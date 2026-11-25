@@ -126,7 +126,7 @@ function repeatCapture(contents: WebContents, options: typeof GUEST_HOLD_OPTIONS
       inFlight -= 1;
       settledCalls += 1;
     };
-    // A rejection only means this call took no frame. The capture it is holding
+    // report-ok: a rejection only means this call took no frame. The capture it is holding
     // for still reports its own result.
     contents.capturePage(HOLD_RECT, options).then(release, release);
   };

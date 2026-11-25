@@ -114,12 +114,15 @@ export async function sendExpoPush(fetchImpl: FetchLike, message: ExpoPushMessag
   try {
     response = await fetchImpl(EXPO_PUSH_ENDPOINT, requestInit);
   } catch {
-    // Network error: one retry after a pause, then give up quietly - a
-    // missed notification is recoverable, a retry loop is not.
+    // report-ok: a network error on the POST. One retry follows after a pause,
+    // and its outcome is what the caller gets. A missed notification is
+    // recoverable, a retry loop is not.
     await delay(NETWORK_RETRY_DELAY_MS);
     try {
       response = await fetchImpl(EXPO_PUSH_ENDPOINT, requestInit);
     } catch (retryError) {
+      // report-ok: the network is still down after the one retry. The failure goes
+      // back as send-failed with its detail, which the notifier logs.
       return { delivered: false, reason: 'send-failed', detail: retryError instanceof Error ? retryError.message : String(retryError) };
     }
   }
@@ -128,7 +131,8 @@ export async function sendExpoPush(fetchImpl: FetchLike, message: ExpoPushMessag
   try {
     responseJson = await response.json();
   } catch {
-    // A non-JSON body falls through to the status/ticket checks below.
+    // report-ok: a body that is not JSON carries no ticket, and the status
+    // check below still decides the result.
   }
   const ticket = extractTicket(responseJson);
 

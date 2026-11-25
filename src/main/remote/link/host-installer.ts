@@ -48,11 +48,28 @@ export interface InstalledHost {
 
 export type HostInstallErrorCode = 'unsupported-os' | 'unsupported-arch' | 'unsupported-libc' | 'checksum' | 'failed';
 
+/**
+ * Which part of the install an error came from: this build's own asset, the first look at the
+ * host, or the upload and unpack.
+ */
+export type HostInstallStep = 'asset' | 'probe' | 'install';
+
 /** A refusal or failure with the host's own words kept, for the user to read. */
 export class HostInstallError extends Error {
-  constructor(readonly code: HostInstallErrorCode, message: string) {
+  /** Where it failed. A `failed` from `probe` is nearly always ssh itself: the network or a sign-in. */
+  readonly step: HostInstallStep | null;
+  /**
+   * How the `ssh` run for that step ended, or null when it was stopped or none ran. `ssh` exits
+   * 255 when the connection or the sign-in failed, and with the remote command's own status
+   * otherwise, so this tells a script that ran on the host and failed from a host never reached.
+   */
+  readonly exitCode: number | null;
+
+  constructor(readonly code: HostInstallErrorCode, message: string, detail: { step?: HostInstallStep; exitCode?: number | null } = {}) {
     super(message);
     this.name = 'HostInstallError';
+    this.step = detail.step ?? null;
+    this.exitCode = detail.exitCode ?? null;
   }
 }
 
@@ -79,8 +96,8 @@ function glibcAtLeast(text: string, minimum: readonly [number, number]): boolean
 }
 
 function validate(asset: HostAsset): void {
-  if (!VERSION_PATTERN.test(asset.version)) throw new HostInstallError('failed', `The host version "${asset.version}" is not a plain version string.`);
-  if (!SHA256_PATTERN.test(asset.sha256)) throw new HostInstallError('failed', 'The host asset checksum is not a SHA-256 in lowercase hex.');
+  if (!VERSION_PATTERN.test(asset.version)) throw new HostInstallError('failed', `The host version "${asset.version}" is not a plain version string.`, { step: 'asset' });
+  if (!SHA256_PATTERN.test(asset.sha256)) throw new HostInstallError('failed', 'The host asset checksum is not a SHA-256 in lowercase hex.', { step: 'asset' });
 }
 
 /**
@@ -129,22 +146,22 @@ export async function installHost(
   for (const candidate of candidates) validate(candidate);
   const probe = await run(PROBE_COMMAND);
   if (probe.code !== 0) {
-    throw new HostInstallError('failed', `Could not read the host's details: ${probe.stderr.trim() || `ssh exited with ${probe.code}`}`);
+    throw new HostInstallError('failed', `Could not read the host's details: ${probe.stderr.trim() || `ssh exited with ${probe.code}`}`, { step: 'probe', exitCode: probe.code });
   }
   const [system = '', machine = '', home = '', libc = ''] = probe.stdout.split('\n').map((line) => line.trim());
   if (system !== 'Linux') {
-    throw new HostInstallError('unsupported-os', `Kangentic can run agents only on a Linux host. This one reports ${system || 'an unknown system'} ${machine}.`.trim());
+    throw new HostInstallError('unsupported-os', `Kangentic can run agents only on a Linux host. This one reports ${system || 'an unknown system'} ${machine}.`.trim(), { step: 'probe' });
   }
   const hostArch = archOf(machine);
   const asset = candidates.find((candidate) => candidate.arch === hostArch);
   if (!asset) {
     const carried = candidates.map((candidate) => (candidate.arch === 'x64' ? 'x86_64' : 'arm64')).join(' and ');
-    throw new HostInstallError('unsupported-arch', `This host is ${machine}, and this build carries the helper for ${carried || 'no CPU'}.`);
+    throw new HostInstallError('unsupported-arch', `This host is ${machine}, and this build carries the helper for ${carried || 'no CPU'}.`, { step: 'probe' });
   }
   if (!glibcAtLeast(libc, MIN_GLIBC)) {
-    throw new HostInstallError('unsupported-libc', `Kangentic's helper needs glibc ${MIN_GLIBC.join('.')} or newer. This host reports ${libc && libc !== 'none' ? libc : 'no glibc (Alpine and other musl hosts are not supported)'}.`);
+    throw new HostInstallError('unsupported-libc', `Kangentic's helper needs glibc ${MIN_GLIBC.join('.')} or newer. This host reports ${libc && libc !== 'none' ? libc : 'no glibc (Alpine and other musl hosts are not supported)'}.`, { step: 'probe' });
   }
-  if (!home.startsWith('/')) throw new HostInstallError('failed', `The host's home directory "${home}" is not an absolute path.`);
+  if (!home.startsWith('/')) throw new HostInstallError('failed', `The host's home directory "${home}" is not an absolute path.`, { step: 'probe' });
 
   const directory = `${home}/.kangentic/host/${asset.version}`;
   // The scripts name the home as `$HOME`, which sh expands on the host to the folder the probe printed,
@@ -160,9 +177,9 @@ export async function installHost(
   // Only now, with the host's CPU known and this version missing there, is the archive worth having.
   await asset.prepare?.();
   const upload = await run(installScript(asset.version, asset.sha256), { stdin: { filePath: asset.filePath }, timeoutMs: UPLOAD_TIMEOUT_MS });
-  if (upload.code === 65) throw new HostInstallError('checksum', upload.stderr.trim());
+  if (upload.code === 65) throw new HostInstallError('checksum', upload.stderr.trim(), { step: 'install', exitCode: upload.code });
   if (upload.code !== 0) {
-    throw new HostInstallError('failed', `Installing the helper failed: ${upload.stderr.trim() || `ssh exited with ${upload.code}`}`);
+    throw new HostInstallError('failed', `Installing the helper failed: ${upload.stderr.trim() || `ssh exited with ${upload.code}`}`, { step: 'install', exitCode: upload.code });
   }
   return { directory, relayCommand, installed: true };
 }

@@ -21,6 +21,7 @@ import {
 } from '@kangentic/protocol';
 import type { MobileDeviceConnectionState } from '../../../shared/types';
 import type { BridgeIdentity } from '../identity';
+import { mobileBridgeReporter } from '../mobile-bridge-report';
 import { isDialIdentifiedTransport, isRedialableTransport } from '../transport/relay-client';
 import { FORCED_REDIAL_DESCRIPTIONS, type ForcedRedialReason } from './forced-redial-reason';
 
@@ -750,8 +751,8 @@ export class BridgeSession extends EventEmitter {
       try {
         this.transport.send(wrapSessionFrame(SessionFrameKind.Application, this.streams.send.seal(plaintext, tag)));
       } catch {
-        // The socket dropped mid-flush; onTransportState discards the keys and
-        // the next 'connected' edge re-handshakes.
+        // report-ok: the socket dropped mid-flush. onTransportState discards the
+        // keys and the next 'connected' edge re-handshakes.
         return;
       }
     }
@@ -812,6 +813,8 @@ export class BridgeSession extends EventEmitter {
     try {
       unwrapped = unwrapSessionFrame(rawFrame);
     } catch (error) {
+      // report-ok: garbled or foreign bytes on a relay slot anyone can write to.
+      // The service logs the rejected frame, one line per device per window.
       this.emit('frameRejected', error);
       return;
     }
@@ -850,6 +853,10 @@ export class BridgeSession extends EventEmitter {
         if (candidate.readMessage(payload).split) matched = candidate;
         else lastError = new Error('KK handshake did not complete after the expected two messages');
       } catch (error) {
+        // report-ok: a reply to an initiation already abandoned, or bytes the relay
+        // garbled or a stranger injected. The loop tries the next initiation. A
+        // frame none can read emits handshakeFailed below, which the service logs,
+        // and a later initiation starts the handshake over.
         lastError = error;
       }
     }
@@ -899,6 +906,9 @@ export class BridgeSession extends EventEmitter {
     try {
       opened = this.streams.receive.open(payload);
     } catch (error) {
+      // report-ok: a frame these keys cannot open, because it is garbled, injected,
+      // or sealed while a rekey left the two sides on different keys. The service
+      // logs the rejected frame.
       this.emit('frameRejected', error);
       return;
     }
@@ -929,6 +939,12 @@ export class BridgeSession extends EventEmitter {
         this.refuseUnsupportedVerb(error.requestId, error.verb);
         return;
       }
+      // Unlike a frame that will not unwrap or open, these bytes opened under the
+      // session's own keys, so the paired phone sent them. It is a frame the phone
+      // built and this build cannot read, and the phone's request then times out
+      // with no answer. The report carries the error's name and frames, never
+      // what the phone sent.
+      mobileBridgeReporter.report(error, { tags: { stage: 'decode' } });
       this.emit('frameRejected', error);
       return;
     }
@@ -959,8 +975,8 @@ export class BridgeSession extends EventEmitter {
         code: UNSUPPORTED_VERB_ERROR_CODE,
       });
     } catch {
-      // The transport dropped between the open and the send; the phone's own
-      // per-verb timeout covers a refusal that never left.
+      // report-ok: the transport dropped between the open and the send, and the
+      // phone's own per-verb timeout covers a refusal that never left.
     }
     this.emit('unsupportedVerb', { requestId, verb });
   }
@@ -1025,8 +1041,8 @@ export class BridgeSession extends EventEmitter {
       const frame = this.streams.send.seal(new Uint8Array(0), FrameTag.Final);
       this.transport.send(wrapSessionFrame(SessionFrameKind.Application, frame));
     } catch {
-      // The socket dropped between the check and the send; the phone's own
-      // disconnect handling covers this case.
+      // report-ok: the socket dropped between the check and the send, and the
+      // phone's own disconnect handling covers a goodbye that never left.
     }
   }
 

@@ -97,6 +97,7 @@ const leftoverProcessesStoreInitializer: StateCreator<LeftoverProcessesStore> = 
     try {
       outcome = await window.electronAPI.leftoverProcesses.stop(processId);
     } catch {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the row reads failed.
       outcome = 'failed';
     }
     // A newer report may have evicted this row's report while main answered,
@@ -118,6 +119,8 @@ const leftoverProcessesStoreInitializer: StateCreator<LeftoverProcessesStore> = 
     try {
       endedIds = await window.electronAPI.leftoverProcesses.check(processIds);
     } catch {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the rows keep the
+      // state they had.
       return;
     }
     if (endedIds.length === 0) return;

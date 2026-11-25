@@ -32,7 +32,7 @@ import { changesBadgeKind, useChangesFacts } from '../git/git-badge';
 import { GitMenuItems } from '../git/GitMenuItems';
 import { useGitActions, type GitActions, type GitCheckout } from '../git/useGitActions';
 import { taskGitBase } from '../../../../shared/git-work-state';
-import { asSentence, ipcFailureToastFields, rejectionMessage } from '../../../lib/ipc-error';
+import { asSentence, ipcFailureToastFields } from '../../../lib/ipc-error';
 import type { Task, AgentCommand, ShortcutConfig, Swimlane } from '../../../../shared/types';
 
 /**
@@ -251,6 +251,8 @@ export function TaskDetailHeader({
     window.electronAPI.transcripts
       .listSessions(task.id, hostProjectId || null)
       .then((list) => { if (!cancelled) setHistoricalConversation({ key: historyKey, available: list.length > 0 }); })
+      // report-ok: main's IPC wrap reports a handler's rejection, and the Conversation pill
+      // reads as unavailable.
       .catch(() => { if (!cancelled) setHistoricalConversation({ key: historyKey, available: false }); });
     return () => { cancelled = true; };
   }, [task.id, taskSessionId, liveSessionRunning, hostProjectId, historyKey]);
@@ -813,10 +815,10 @@ function TaskDetailKebabItems({
         }
       }
     } catch (error) {
-      const message = rejectionMessage(error);
+      // report-ok: main's IPC wrap reports a handler's rejection, and the toast shows the reason.
       useToastStore.getState().addToast({
         title: t`Couldn't pull`,
-        message: asSentence(message),
+        ...ipcFailureToastFields(error),
         variant: 'warning',
       });
     } finally {
@@ -866,6 +868,7 @@ function TaskDetailKebabItems({
         });
       }
     } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the toast shows the reason.
       useToastStore.getState().addToast({
         title: t`Couldn't resolve PR`,
         ...ipcFailureToastFields(error, t`The PR host returned an error.`),

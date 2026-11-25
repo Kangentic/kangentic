@@ -40,7 +40,7 @@ export class ShellResolver {
         try {
           const resolved = await which(c.cmd);
           shells.push({ name: c.name, path: resolved });
-        } catch { /* not found */ }
+        } catch { /* report-ok: the shell is not installed, which is the probe's answer. */ }
       }
 
       // WSL distributions (skip Docker-internal distros)
@@ -57,7 +57,7 @@ export class ShellResolver {
         for (const distro of distros) {
           shells.push({ name: `WSL: ${distro}`, path: `wsl -d ${distro}` });
         }
-      } catch { /* WSL not available */ }
+      } catch { /* report-ok: WSL is not installed or not answering, so it lists no distro. */ }
     } else if (platform === 'darwin') {
       // macOS
       const candidates = [
@@ -71,7 +71,7 @@ export class ShellResolver {
         try {
           const resolved = await which(c.cmd);
           shells.push({ name: c.name, path: resolved });
-        } catch { /* not found */ }
+        } catch { /* report-ok: the shell is not installed, which is the probe's answer. */ }
       }
     } else {
       // Linux
@@ -88,7 +88,7 @@ export class ShellResolver {
         try {
           const resolved = await which(c.cmd);
           shells.push({ name: c.name, path: resolved });
-        } catch { /* not found */ }
+        } catch { /* report-ok: the shell is not installed, which is the probe's answer. */ }
       }
     }
 
@@ -103,7 +103,7 @@ export class ShellResolver {
       for (const cmd of ['pwsh', 'powershell', 'bash', 'cmd']) {
         try {
           return await which(cmd);
-        } catch { /* not found */ }
+        } catch { /* report-ok: the shell is not installed, so the next preference is tried. */ }
       }
       return 'cmd.exe';
     }
@@ -117,6 +117,7 @@ export class ShellResolver {
     try {
       return await which(fallback);
     } catch {
+      // report-ok: the platform's usual shell is not installed, so /bin/sh stands in.
       return '/bin/sh';
     }
   }

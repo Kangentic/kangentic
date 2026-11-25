@@ -179,6 +179,8 @@ export function useTaskSessionState(input: {
     if (probedKeyRef.current === key) return;
     probedKeyRef.current = key;
     reconcileSession(input.task.id, hostProjectId).catch((error) => {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the window keeps the
+      // paused view it already shows.
       console.warn('[useTaskSessionState] reconcile probe failed', error);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on session.id/status only; the full session object would re-probe on every flap (loop hazard, see comment above)

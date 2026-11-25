@@ -380,6 +380,7 @@ export function ShortcutsTab() {
         await window.electronAPI.boardConfig.setShortcuts(personalActions, 'local');
       }
     } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the toast shows the reason.
       useToastStore.getState().addToast({
         title: t`Couldn't save shortcuts`,
         ...ipcFailureToastFields(error),

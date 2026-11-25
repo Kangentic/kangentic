@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { reportRendererFailure } from '../../utils/renderer-failure';
 
 // The canvas a stroke is drawn on before it joins an annotation. Strokes are
 // in CSS px relative to the canvas's bounding rect. The canvas shows a stroke
@@ -126,13 +127,16 @@ export function useDrawingOverlay({
     const finished = currentStrokeRef.current;
     if (onStrokeEnd && finished.length > 0) {
       void Promise.resolve(onStrokeEnd(finished))
-        .catch(() => undefined)
+        .catch((error: unknown) => {
+          // The stroke leaves the canvas below without ever becoming an annotation mark.
+          reportRendererFailure('browser', 'stroke_end', error);
+        })
         .finally(() => setStrokes((previous) => previous.filter((stroke) => stroke !== finished)));
     }
     try {
       canvasRef.current?.releasePointerCapture(event.pointerId);
     } catch {
-      // No-op if capture was already released by the browser (fast drags
+      // report-ok: the capture was already released by the browser (fast drags
       // can fire pointerLeave + pointerUp in close succession; the second
       // release throws InvalidPointerId on some browser builds).
     }

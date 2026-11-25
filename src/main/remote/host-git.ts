@@ -326,7 +326,8 @@ export class HostGit implements RemoteGitRunner {
     try {
       await this.ask(scriptRequest(PULL_SCRIPT, [id, String(size), '0', String(size)], this.deps.hostDirectory, PULL_TIMEOUT_MS));
     } catch {
-      // The sweep removes it.
+      // report-ok: an output file that is not dropped is removed by the sweep each later run makes
+      // of files over two hours old, and the caller throws its own error next.
     }
   }
 }

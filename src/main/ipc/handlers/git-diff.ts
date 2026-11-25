@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron';
+import { onReported } from '../../analytics/ipc-handler-report';
 import { gitAt } from '../../git/git-client';
 import { remoteGitRunnerFor } from '../../git/remote-git';
 import { IPC } from '../../../shared/ipc-channels';
@@ -18,6 +19,7 @@ import { resolveTaskChanges, TASK_CHANGES_MAX_COMMITS } from '../../git/task-cha
 import { commitWebLinks } from '../../pr/pr-registry';
 import { retrievalClient } from '../../retrieval/retrieval-client';
 import { getProjectRepos, resolveProjectContext } from '../helpers/project-repos';
+import { handlerStepReporter } from '../helpers/handler-step-report';
 import type { GitBlameInput, GitBranchSummaryInput, GitCommitGraphCommit, GitCommitGraphInput, GitDiffFilesInput, GitFileContentInput, GitFileHistoryInput, GitFileImageInput, GitPendingChangesInput, GitPendingChangesResult, GitTaskChangesInput, GitTaskChangesResult, GitWorktreeHeadInput, GitWorktreeHeadResult, PRState } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import { broadcast } from '../../pop-out/window-broadcast';
@@ -71,6 +73,8 @@ export async function probePendingChanges(checkPath: string, opts?: ProbeOptions
       const { uncommittedFileCount, currentBranch } = await hostBackend.pendingChanges(checkPath);
       return { hasPendingChanges: uncommittedFileCount > 0, uncommittedFileCount, unpushedCommitCount: 0, currentBranch };
     } catch {
+      // report-ok: a host that cannot answer reads as changes present, so the move asks the
+      // user before it removes anything.
       return { hasPendingChanges: true, uncommittedFileCount: 0, unpushedCommitCount: 0, currentBranch: null };
     }
   }
@@ -97,10 +101,13 @@ export async function probePendingChanges(checkPath: string, opts?: ProbeOptions
     noteStep('status');
 
     const uncommittedFileCount = status.files.length;
-    const { branch: currentBranch } = await readWorktreeHead(checkPath);
+    const { branch: currentBranch, sha: headSha } = await readWorktreeHead(checkPath);
     noteStep('head');
 
     let unpushedCommitCount = 0;
+    // True when the count failed on a HEAD that names a commit: nothing then says how many
+    // commits a branch delete would lose, so the answer must not read as none.
+    let localOnlyCountUnknown = false;
     // `git remote` prints one name a line, and nothing for a repo with none.
     const remoteNames = (await git.raw(['remote'])).split(/\r?\n/).filter((line) => line.trim().length > 0);
     noteStep('remotes');
@@ -121,19 +128,27 @@ export async function probePendingChanges(checkPath: string, opts?: ProbeOptions
       noteStep('fetch');
       try {
         unpushedCommitCount = await countLocalOnlyCommits(checkPath, { prNumber: opts?.prNumber, prState: opts?.prState });
-      } catch {
-        // Detached HEAD or unborn branch - treat as 0.
+      } catch (error) {
+        // An unborn branch has no commit to count and none to lose, so zero is right. Any
+        // other failure used to read as zero too, and a Done move with auto-cleanup then
+        // deleted a branch holding local-only commits with no confirm. It now answers
+        // "there may be changes", which the confirm dialog shows when both counts are zero.
+        if (headSha !== null) {
+          localOnlyCountUnknown = true;
+          handlerStepReporter.report(error, { tags: { area: 'git_diff', step: 'local_only_count' } });
+        }
       }
       noteStep('local-only');
     }
 
-    const hasPendingChanges = uncommittedFileCount > 0 || unpushedCommitCount > 0;
+    const hasPendingChanges = uncommittedFileCount > 0 || unpushedCommitCount > 0 || localOnlyCountUnknown;
     if (__KANGENTIC_DEV__) {
       console.debug(`[probe] checkPendingChanges cumulative: ${stepTimings.join(', ')}`);
     }
     return { hasPendingChanges, uncommittedFileCount, unpushedCommitCount, currentBranch };
   } catch {
-    // If git fails (missing directory, corrupted repo, etc.), assume changes exist as safe default
+    // report-ok: git cannot read a worktree that is missing or corrupted. The answer assumes
+    // changes exist, the safe default, so the move asks the user before it removes anything.
     return { hasPendingChanges: true, uncommittedFileCount: 0, unpushedCommitCount: 0, currentBranch: null };
   }
 }
@@ -172,7 +187,8 @@ async function readLinkedCommits(context: IpcContext, projectId: string, taskId:
   try {
     indexingOn = context.configManager.load().knowledgeGraph?.indexingEnabled !== false;
   } catch {
-    // An unreadable config reads as the default, which is on.
+    // report-ok: an unreadable config reads as the default, which is on. ConfigManager.load
+    // degrades an unreadable file to defaults itself.
   }
   if (!indexingOn) return 'off';
   let waitTimer: ReturnType<typeof setTimeout> | undefined;
@@ -185,6 +201,10 @@ async function readLinkedCommits(context: IpcContext, projectId: string, taskId:
     .call('task.knowledge', { projectId, taskIds: [taskId], limits: { commits: TASK_CHANGES_MAX_COMMITS + 1, files: 0 } })
     .then((knowledge) => (knowledge.get(taskId)?.commits ?? []).map((commit) => commit.sha))
     .catch((error: unknown): 'unavailable' => {
+      // The Changes view shows only the commits git alone finds, or asks the user to
+      // retry. The retrieval client reports a defect or a SQLite failure itself and the
+      // reporter skips a worker that is down, so this adds a plain error a handler threw.
+      handlerStepReporter.report(error, { tags: { area: 'git_diff', step: 'linked_commits_read' } });
       console.warn('[git:taskChanges] linked commits read failed:', error instanceof Error ? error.message : error);
       return 'unavailable';
     });
@@ -301,7 +321,7 @@ export function registerGitDiffHandlers(context: IpcContext): void {
   );
   const trackedSenderIds = new Set<number>();
 
-  ipcMain.on(IPC.GIT_DIFF_SUBSCRIBE, (event, worktreePath: string) => {
+  onReported(ipcMain, IPC.GIT_DIFF_SUBSCRIBE, (event, worktreePath: string) => {
     const senderId = event.sender.id;
     if (!trackedSenderIds.has(senderId)) {
       trackedSenderIds.add(senderId);
@@ -393,7 +413,7 @@ export function registerGitDiffHandlers(context: IpcContext): void {
     return getBlame(input);
   });
 
-  ipcMain.on(IPC.GIT_DIFF_UNSUBSCRIBE, (event, worktreePath: string) => {
+  onReported(ipcMain, IPC.GIT_DIFF_UNSUBSCRIBE, (event, worktreePath: string) => {
     subscriptionRegistry.unsubscribe(event.sender.id, worktreePath);
   });
 }

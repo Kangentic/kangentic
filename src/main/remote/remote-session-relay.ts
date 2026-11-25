@@ -34,8 +34,10 @@ import * as path from 'node:path';
 import { localPathToHost, mirrorPathToHost, rootPathToHost, type SshCliPlace } from '../agent/shared/cli-target';
 import { isPlainRelativePath } from '../agent/shared/remote-files';
 import { wslHookPaths } from '../agent/shared/wsl-hook-transport';
+import { isRenameOntoHeldFile } from '../config/write-failure-notice';
 import { oversizeAnswer } from '../pty/readers/wsl-mcp-relay';
 import { MAX_FRAME_RAW_BYTES } from './protocol/frame-codec';
+import { remoteRelayReporter } from './remote-report';
 import type { PtyHostEvent } from '../pty/host/protocol';
 import type { AgentParser, RemoteProgramRunner, RemoteResumeSeed, RemoteTranscriptFile, RemoteTranscriptIndex, RemoteTranscriptSearch, RemoteTranscriptSnapshot, StoredCliTarget } from '../../shared/types';
 import type { HostCommandRequest, HostCommandResult, HostFileSearch, HostFileWrite } from './protocol/messages';
@@ -448,9 +450,14 @@ export class RemoteSessionRelay {
           if (indexKey !== undefined) indexBaseline = answer?.sizes ? answer.sizes[indexKey] ?? 0 : null;
           this.noteSearchAnswer(registration.sessionId, searchWarning, tailRequest, answer);
         } catch (error) {
+          // The agent still runs, but its transcript is not copied, so the conversation viewer,
+          // the search index and the token count stay empty for this session.
+          remoteRelayReporter.report(error, { tags: { stage: 'watch_files' } });
           tails.clear();
           this.options.log?.(`could not tail the transcript for ${registration.sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
           // The host may have started before its answer was lost, and with no tails no release would stop it.
+          // report-ok: a host still out of reach after the watch that just failed. A tail it did
+          // start sends chunks with a key no tail here holds, and `deliverChunk` drops them.
           void this.options.files.unwatchFiles(registration.hostId, registration.sessionId).catch(() => undefined);
         }
       }
@@ -459,14 +466,22 @@ export class RemoteSessionRelay {
       // settings and the MCP config, which holds the token) is removed here, as a release would. A reattach
       // pushed nothing, and the running agent still reads those files.
       if (pushedPaths.length > 0) {
+        // report-ok: the spawn's own error is thrown below. A host that cannot be told keeps a
+        // watch whose records `deliver` drops, since no session is registered for them.
         await this.options.files.unwatchHooks(registration.hostId, registration.sessionId).catch(() => undefined);
+        // report-ok: `removePushedFiles` catches and logs its own failure, so this only keeps the
+        // spawn's error, thrown below, as the one that reaches the caller.
         if (!registration.reattach) await this.removePushedFiles(registration.hostId, registration.sessionId, pushedPaths, hostHooksDirectory).catch(() => undefined);
       }
       throw error;
     }
     if (pending.released) {
       // Released while its files were being pushed (the spawn was torn down): the host stops watching now.
+      // report-ok: a drop or a host out of reach. This registration never became a session, so
+      // records a watch that stays sends are dropped by `deliver`, and a newer one watches afresh.
       await this.options.files.unwatchHooks(registration.hostId, registration.sessionId).catch(() => undefined);
+      // report-ok: a drop or a host out of reach. The chunks a tail that stays sends carry keys
+      // no session here holds, so `deliverChunk` drops them.
       if (tails.size > 0) await this.options.files.unwatchFiles(registration.hostId, registration.sessionId).catch(() => undefined);
       if (!registration.reattach) await this.removePushedFiles(registration.hostId, registration.sessionId, pushedPaths, hostHooksDirectory);
       return;
@@ -526,6 +541,8 @@ export class RemoteSessionRelay {
       });
       if (result.code !== 0) throw new Error(result.error ?? (result.timedOut ? 'the copy timed out' : (lastLine(result.stderr) || `the copy exited ${String(result.code)}`)));
     } catch (error) {
+      // A resumed agent starts with none of its earlier conversation, and only a log line says so.
+      remoteRelayReporter.report(error, { tags: { stage: 'resume_seed' } });
       this.options.log?.(`could not bring the earlier conversation over for ${registration.sessionId.slice(0, 8)}, so it starts empty: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
@@ -567,6 +584,9 @@ export class RemoteSessionRelay {
   /** Bring what the host tails in line with what is known now. One at a time, and a failure keeps what was tailing. */
   private refreshTails(entry: Registered): Promise<void> {
     entry.tailUpdate = entry.tailUpdate.then(() => this.applyTails(entry)).catch((error: unknown) => {
+      // A transcript named after the start (its id arrived late) is never copied, so the
+      // conversation viewer stays empty while the agent goes on working.
+      remoteRelayReporter.report(error, { tags: { stage: 'watch_files' } });
       this.options.log?.(`could not change what is tailed for ${entry.sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
     });
     return entry.tailUpdate;
@@ -634,6 +654,9 @@ export class RemoteSessionRelay {
   private runSnapshot(entry: Registered): Promise<number | null> {
     let finish = (): void => undefined;
     entry.snapshotRunning = new Promise((resolve) => { finish = resolve; });
+    // report-ok: the host could not be asked, or the CLI could not name its export. The last whole
+    // copy here stands, the failure is logged once, and a session still running exports again on
+    // its next tick.
     return this.exportAndTail(entry).catch((error: unknown) => {
       this.noteSnapshotFailure(entry, error instanceof Error ? error.message : String(error));
       return null;
@@ -727,6 +750,8 @@ export class RemoteSessionRelay {
     entry.snapshotTimer = null;
     // The registration stays until the host has answered: the records it flushes on the way out
     // arrive first, and `deliver` drops what it has no registration for.
+    // report-ok: a drop or a host out of reach as the session ends. The release goes on, and what
+    // a watch that stays sends later is dropped by `deliver` once the registration is gone.
     await this.options.files.unwatchHooks(entry.hostId, sessionId).catch((error: unknown) => {
       this.options.log?.(`could not stop the host watching ${sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
     });
@@ -745,6 +770,8 @@ export class RemoteSessionRelay {
     // The host's last pass arrives before this answers, so a tail that had caught up leaves the whole
     // transcript in the copy here. One still backfilling can stop short, and the next session here starts over.
     if (entry.tails.size > 0) {
+      // report-ok: a drop or a host out of reach as the session ends. The copy here can stop short
+      // of the file's end, and the next session on this conversation starts the file over.
       await this.options.files.unwatchFiles(entry.hostId, sessionId).catch((error: unknown) => {
         this.options.log?.(`could not stop the host tailing ${sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
       });
@@ -797,6 +824,9 @@ export class RemoteSessionRelay {
         await this.options.files.removeEmptyDirectories(hostId, [...folders, ...fileFolders, hooksDirectory, sessionFolder]);
       }
     } catch (error) {
+      // report-ok: the host could not be reached or would not remove them. The session's files
+      // stay in its own folder on the host, where nothing else depends on them, and the MCP token
+      // among them is not the one the server checks.
       this.options.log?.(`could not remove the session files from the host for ${sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
@@ -842,6 +872,10 @@ export class RemoteSessionRelay {
       }
       this.writeHookFile(entry, event.folder === 'inbox' ? entry.localHooks.inbox : entry.localHooks.requests, event);
     } catch (error) {
+      // What the host sent never reached this computer's session folder: the status line (model,
+      // context use) stops updating, or a record is dropped. A status file a reader holds open for
+      // a moment on Windows is not reported: the next status replaces the one that was lost.
+      if (!isRenameOntoHeldFile(error)) remoteRelayReporter.report(error, { tags: { stage: 'deliver' } });
       this.options.log?.(`could not write a hook file for ${event.sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
@@ -864,7 +898,9 @@ export class RemoteSessionRelay {
     try {
       await this.options.files.removeFiles(entry.hostId, names.map((name) => `${entry.hostHooksDirectory}/inbox/${name}`));
     } catch (error) {
-      // Still on the host, so it is sent again on the next attach and acknowledged then.
+      // report-ok: a drop or a host out of reach. The records are still on the host and queued
+      // again here, so the next batch removes them, or the next attach sends them again and they
+      // are acknowledged then.
       for (const name of names) entry.claimQueue.add(name);
       this.options.log?.(`could not remove stored records from the host for ${entry.sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -875,6 +911,9 @@ export class RemoteSessionRelay {
     try {
       writeAtomicallySync(path.join(folder, event.name), event.content);
     } catch (error) {
+      // A hook record or a request from the host's agent is not stored here, so the board misses
+      // an activity change or never shows a permission prompt the agent is waiting on.
+      remoteRelayReporter.report(error, { tags: { stage: 'hook_write' } });
       this.options.log?.(`could not write a hook file for ${event.sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
       return false;
     }
@@ -883,7 +922,7 @@ export class RemoteSessionRelay {
       // sync-write-ok: the reader also polls, so a missed byte costs 250 ms.
       fsSync.appendFileSync(entry.localHooks.signal, 'x');
     } catch {
-      // The polling reader still finds the file.
+      // report-ok: the polling reader still finds the file, so a missed wake byte costs 250 ms.
     }
     return true;
   }
@@ -900,6 +939,8 @@ export class RemoteSessionRelay {
       const answer = await this.options.files.removeFiles(entry.hostId, [hostFile]) as { removed?: number } | undefined;
       if (answer?.removed !== 1) return;
     } catch (error) {
+      // report-ok: the link went down between the frame and the claim. The call is not run here,
+      // and the hook script on the host ends its own wait with an error for the agent.
       this.options.log?.(`could not claim a request from the host for ${event.sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
       return;
     }
@@ -959,6 +1000,9 @@ export class RemoteSessionRelay {
         fsSync.closeSync(descriptor);
       }
     } catch (error) {
+      // Nothing sends a chunk again: a tailed transcript's copy here keeps a hole, and an export
+      // stops until the next one, so the conversation viewer reads a broken or stale copy.
+      remoteRelayReporter.report(error, { tags: { stage: 'transcript_write' } });
       if (isSnapshot) tail.stagedEnd = null;
       this.options.log?.(`could not write the transcript for ${event.sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
       return;
@@ -992,6 +1036,10 @@ export class RemoteSessionRelay {
       if (pending) pending.pendingPromotion = false;
       return true;
     } catch (error) {
+      // The conversation viewer keeps showing the last export while a newer whole one sits staged.
+      // A copy a reader holds open on Windows is the case the retry exists for, so it is not
+      // reported: the next export, or the release, puts the staged copy in place.
+      if (!isRenameOntoHeldFile(error)) remoteRelayReporter.report(error, { tags: { stage: 'transcript_promote' } });
       if (pending) pending.pendingPromotion = true;
       this.options.log?.(`could not put the transcript in place for ${entry.sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
       return false;
@@ -1008,7 +1056,8 @@ export class RemoteSessionRelay {
     try {
       fsSync.rmSync(stagedPath(snapshot.spec.localPath), { force: true });
     } catch {
-      // A leftover is emptied by the next export's first chunk.
+      // report-ok: a staged file that will not delete is emptied by the next export's first chunk,
+      // and the last whole copy stands meanwhile.
     }
   }
 
@@ -1029,6 +1078,9 @@ export class RemoteSessionRelay {
         await this.findSessionId(entry);
       } while (entry.indexRead.again && !entry.releaseDone);
     } catch (error) {
+      // A fresh session's conversation id is not taken from the CLI's index, so its transcript is
+      // not copied while it runs and the id waits for the agent's own report at exit.
+      remoteRelayReporter.report(error, { tags: { stage: 'index_read' } });
       this.options.log?.(`could not read the session index for ${entry.sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       entry.indexRead.running = false;
@@ -1043,6 +1095,8 @@ export class RemoteSessionRelay {
   private async findSessionId(entry: Registered): Promise<void> {
     const index = entry.transcripts?.index;
     if (!index || entry.currentAgentSessionId !== null || entry.indexBaseline === null) return;
+    // report-ok: the index copy is not here yet or cannot be read, so no id is named from it, and
+    // the agent's own report at exit still gives one.
     const content = await fs.readFile(index.path).catch(() => null);
     if (!content || content.length <= entry.indexBaseline) return;
     const others = [...this.sessions.values()].filter((other) => other !== entry && other.hostId === entry.hostId && other.transcripts?.index?.path === index.path);
@@ -1070,6 +1124,8 @@ export class RemoteSessionRelay {
     if (!entry || entry.forwarding) return;
     entry.forwarding = true;
     try {
+      // report-ok: a responses folder that is not there yet holds no answer to send, and this poll
+      // lists it again in 100 ms.
       const names = (await fs.readdir(entry.localHooks.responses).catch(() => [] as string[])).filter((name) => RESPONSE_NAME.test(name)).sort();
       for (const name of names) {
         if (entry.inFlight.has(name)) continue;
@@ -1099,7 +1155,8 @@ export class RemoteSessionRelay {
           await fs.rm(file, { force: true });
           entry.lastFailure = null;
         } catch (error) {
-          // Kept, so the next poll sends it again. A failure that repeats is logged once.
+          // report-ok: the send failed on a drop or a host out of reach. The answer is kept, so the
+          // next poll sends it again, and a failure that repeats is logged once.
           const message = error instanceof Error ? error.message : String(error);
           if (message !== entry.lastFailure) this.options.log?.(`could not send an answer to the host: ${message}`);
           entry.lastFailure = message;

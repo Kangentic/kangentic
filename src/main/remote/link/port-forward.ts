@@ -27,6 +27,8 @@ import net from 'node:net';
 import { childProcessEnv } from '../../shared/child-env';
 import { killChildTreeNow, stopChildTree } from '../../shared/child-tree-stop';
 import type { PortForwardStatus, RemoteHostConnection } from '../protocol/messages';
+import type { HostHandledErrors } from '../../pty/host/host-handled-error';
+import { isLinkDrop } from './remote-link';
 
 const STDERR_TAIL_BYTES = 2048;
 /** How long ssh gets to open its local listener before the forward counts as failed. */
@@ -46,6 +48,11 @@ export interface PortForwarderOptions {
   retryInitialMs?: number;
   retryMaxMs?: number;
   log?: (line: string) => void;
+  /**
+   * The pty host's relay to main (`host-handled-error.ts`), for a listening-ports read that fails
+   * on the host. The forwarder runs in the pty host and reports nothing itself.
+   */
+  handledErrors?: Pick<HostHandledErrors, 'report'>;
 }
 
 interface Forward {
@@ -200,6 +207,10 @@ export class PortForwarder {
         }
       }
     } catch (error) {
+      // A dropped link or a slow host is a state: the next poll asks again, and nothing is relayed.
+      // Anything else is the host's own read failing, which fails the same way on every poll, so
+      // every wanted port stays `waiting` with no reason shown and no dev server is ever reachable.
+      if (!isLinkDrop(error)) this.options.handledErrors?.report('port_forward_poll', error);
       this.options.log?.(`could not list the ports listening on ${hostId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       host.polling = false;
@@ -225,6 +236,8 @@ export class PortForwarder {
         env: childProcessEnv(),
       });
     } catch (error) {
+      // report-ok: ssh could not be started on this computer, so the forward shows blocked with the
+      // reason in `list()` and is tried again after its backoff.
       this.fail(host, forward, error instanceof Error ? error.message : String(error));
       return;
     }

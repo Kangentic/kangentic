@@ -98,7 +98,8 @@ describe('terminal input and echo never cross main', () => {
     expect(handlers).toMatch(/new MessageChannelMain\(\)/);
     expect(handlers).toMatch(/sessionManager\.attachRendererPort\(/);
     expect(handlers).toMatch(/postMessage\(IPC\.PTY_PORT,/);
-    expect(handlers).toMatch(/ipcMain\.on\(IPC\.PTY_PORT_REQUEST,/);
+    // Registered through `onReported`, the reporting form of `ipcMain.on` every listener uses.
+    expect(handlers).toMatch(/onReported\(ipcMain, IPC\.PTY_PORT_REQUEST,/);
     // A restarted host lost every port: the IPC layer issues new ones.
     expect(handlers).toMatch(/sessionManager\.on\('renderer-ports-lost',/);
   });

@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron';
 import { createHash } from 'node:crypto';
+import { onReported } from '../../analytics/ipc-handler-report';
 import { IPC } from '../../../shared/ipc-channels';
 import { runSearchEverything } from '../../search/search-core';
 import { retrievalService } from '../../retrieval/retrieval-service';
@@ -65,6 +66,7 @@ function isCallerSegment(value: unknown): value is string {
 }
 
 import type { IpcContext } from '../ipc-context';
+import { handlerStepReporter, isDefectOrEnvironmentFailure } from '../helpers/handler-step-report';
 
 /**
  * The chat's warm session under this run, or null when the agent has none.
@@ -84,7 +86,8 @@ function takeAnswerSession(chatId: string, run: AnswerRun, endGeneration?: numbe
       retrieval: run.retrieval,
     }), { endGeneration });
   } catch (error) {
-    // A session that cannot start costs the warm path, not the answer.
+    // report-ok: a session that cannot start costs the warm path, not the answer. The fresh
+    // run that answers instead shows its own failure in the chat.
     console.warn('[knowledge-graph] answer session did not start, answering with a fresh run:', error);
     return null;
   }
@@ -152,7 +155,7 @@ export function registerSearchHandlers(context: IpcContext): void {
   // start. Fire-and-forget; embeds nothing. With a chat, the answering agent's
   // warm session starts too, for an agent that has one. An idle session makes
   // no model call, so this costs a process and nothing else.
-  ipcMain.on(IPC.KNOWLEDGE_GRAPH_PREWARM, (_event, chat?: KnowledgeGraphAnswerPrewarm) => {
+  onReported(ipcMain, IPC.KNOWLEDGE_GRAPH_PREWARM, (_event, chat?: KnowledgeGraphAnswerPrewarm) => {
     retrievalService.prewarmEmbedWorker(context);
     if (!chat || !isCallerSegment(chat.chatId)) return;
     const homeProjectId = chat.projectId ?? context.currentProjectId;
@@ -167,6 +170,8 @@ export function registerSearchHandlers(context: IpcContext): void {
       .then((resolved) => {
         if (resolved.ok) takeAnswerSession(chat.chatId, resolved.run, endGeneration);
       })
+      // report-ok: a prewarm that fails warms nothing. The question that follows resolves its
+      // run again and shows any failure in the chat.
       .catch((error: unknown) => console.warn('[knowledge-graph] answer prewarm failed:', error));
   });
 
@@ -176,7 +181,7 @@ export function registerSearchHandlers(context: IpcContext): void {
   // ends a chat with a turn in flight only on X or a project switch, both of
   // which clear the thread, so nobody is waiting for that answer. Closing the
   // graph mid-turn keeps the chat and sends this only once the turn lands.
-  ipcMain.on(IPC.KNOWLEDGE_GRAPH_END_CHAT, (_event, chatId: string) => {
+  onReported(ipcMain, IPC.KNOWLEDGE_GRAPH_END_CHAT, (_event, chatId: string) => {
     if (!isCallerSegment(chatId)) return;
     answerSessionPool.end(chatId);
     stopCliRunsForChat(chatId);
@@ -637,6 +642,13 @@ export function registerSearchHandlers(context: IpcContext): void {
           agentName: adapter.displayName,
         };
       } catch (error) {
+        // The chat shows this reason in place of the answer. This catch keeps every throw
+        // in the handler from the IPC wrap, so a defect reports here. The common failure
+        // is the answering agent's own (its CLI exited, timed out or was not signed in),
+        // a plain Error the chat already shows, so only a defect or an errno reports.
+        if (isDefectOrEnvironmentFailure(error)) {
+          handlerStepReporter.report(error, { tags: { area: 'search', step: 'answer' } });
+        }
         return { ok: false, reason: error instanceof Error ? error.message : String(error) };
       }
     },
@@ -656,8 +668,11 @@ export function registerSearchHandlers(context: IpcContext): void {
     let summaries: Array<ProjectIndexSummaryRow | null> = [];
     try {
       summaries = await retrievalClient.call('projects.summaries', { projectIds: projects.map((project) => project.id) });
-    } catch {
-      // Listed with nothing indexed, below.
+    } catch (error) {
+      // Listed with nothing indexed, below: every project in the Knowledge Graph's picker
+      // reads as empty. The retrieval client reports a defect or a SQLite failure itself
+      // and the reporter skips a worker that is down.
+      handlerStepReporter.report(error, { tags: { area: 'search', step: 'project_summaries_read' } });
     }
     return projects.map((project, index) => {
       const summary = summaries[index] ?? null;

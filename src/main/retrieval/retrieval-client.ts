@@ -38,7 +38,14 @@ import { StderrTail, UTILITY_PROCESS_STDIO, captureWorkerStderr, watchdogLine } 
 import { resolveVecLoadablePath } from './vec-extension';
 import { isVecLoadCause } from './vec-load-cause';
 import { isCheckpointHoldLine } from './worker/checkpoint-labels';
-import { sendHandledFailure } from '../analytics/handled-report';
+import {
+  createChokepointReporter,
+  errorCodeOf,
+  errorNameOf,
+  sendHandledFailure,
+  type ChokepointReporter,
+} from '../analytics/handled-report';
+import { isRuntimeDefect } from '../../shared/handled-error-copy';
 import type {
   FromWorkerMessage,
   InitMessage,
@@ -216,6 +223,9 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
     }, READY_TIMEOUT_MS);
     readyTimer.unref();
     const clearReadyTimer = (): void => clearTimeout(readyTimer);
+    // report-ok: the timer goes however readiness ended. A rejection is a
+    // RetrievalUnavailableError that a waiting call gets. A crash or a late start behind it
+    // goes to restartPolicy.recordCrash, and a drop on purpose is no failure.
     this.ready.then(clearReadyTimer, clearReadyTimer);
     child.on('message', (message: unknown) => this.onWorkerMessage(child, message, markReady, replacesWorker));
     child.on('exit', (code: number) => {
@@ -247,7 +257,12 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
       return;
     }
     if (record.type === 'reply') {
-      this.settle(record.id, record.ok ? null : workerFailure(record), record.ok ? record.result : undefined);
+      const failure = record.ok ? null : workerFailure(record);
+      // Reported here, the one place every failed call passes, because its
+      // callers degrade and carry on (`reportFailedCall`).
+      const method = this.pending.get(record.id)?.method;
+      if (failure && method) reportFailedCall(method, failure);
+      this.settle(record.id, failure, record.ok ? record.result : undefined);
       return;
     }
     if (record.type === 'handledError') {
@@ -413,6 +428,38 @@ function workerFailure(reply: Extract<FromWorkerMessage, { type: 'reply'; ok: fa
   if (reply.errorName) error.name = reply.errorName;
   if (reply.errorCode) error.code = reply.errorCode;
   return error;
+}
+
+/**
+ * A call the worker answered with a failure. Every caller of `call()` catches
+ * the rejection and degrades (a viewer shows Retry, a report goes out without a
+ * section, a token count keeps its snapshot), so before this a defect in a
+ * worker handler reached nobody: the worker cannot report, and only the
+ * `sqlite_vec_load` relay below did.
+ *
+ * Reported for the two classes that are never an expected answer: a runtime
+ * defect (`TypeError`, `RangeError`, `ReferenceError`) and a SQLite failure,
+ * which is the environment and groups by its code. A plain `Error` a handler
+ * throws on purpose (a project that closed mid-call, a file that is gone) is not
+ * reported here, since the worker's handlers do not yet say which of theirs are
+ * refusals. A worker that is down rejects with `RetrievalUnavailableError`, an
+ * expected class, and never comes through this path at all.
+ *
+ * The error is rebuilt in main from the reply (`workerFailure`), so every
+ * failure carries the same frames and Sentry's stack grouping would fold them
+ * into one issue. It groups by method, name and code instead, the same exception
+ * the relayed worker failure below takes. `method` is a fixed `RetrievalMethod`.
+ * The reply's message never leaves: the copy is path-free like every other.
+ */
+const retrievalCallReporter: ChokepointReporter = createChokepointReporter('retrieval_call', {
+  shouldReport: (error) => isRuntimeDefect(error) || (errorCodeOf(error)?.startsWith('SQLITE_') ?? false),
+});
+
+function reportFailedCall(method: RetrievalMethod, error: Error): void {
+  retrievalCallReporter.report(error, {
+    tags: { method },
+    fingerprint: ['retrieval-call', method, errorNameOf(error), errorCodeOf(error) ?? 'none'],
+  });
 }
 
 const reportedWorkerFailures = new Set<string>();

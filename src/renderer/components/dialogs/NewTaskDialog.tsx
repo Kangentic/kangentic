@@ -9,6 +9,7 @@ import { useToastStore } from '../../stores/toast-store';
 import { useWorkflowStore } from '../../stores/workflow-store';
 import { ipcFailureToastFields } from '../../lib/ipc-error';
 import { openTaskFromNotification } from '../../utils/open-task-from-notification';
+import { reportRendererFailure } from '../../utils/renderer-failure';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import { useWorkflowAgentWorking } from '../../hooks/useWorkflowAgentWorking';
 import { useTaskBoardFacts } from '../../hooks/useTaskBoardFacts';
@@ -326,7 +327,15 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
         reader.readAsDataURL(file);
       });
     } catch (error) {
+      // report-ok: a file the page cannot read (moved, locked, or a folder) is the user's own
+      // file, and the toast names it.
       console.error('Failed to read attachment:', error);
+      const fileName = file.name;
+      useToastStore.getState().addToast({
+        title: t`Couldn't attach file`,
+        message: t`"${fileName}" could not be read.`,
+        variant: 'warning',
+      });
       return;
     }
     const base64 = dataUrl.split(',')[1];
@@ -492,6 +501,9 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
       });
       onClose();
     } catch (error) {
+      // The create's payload is built in this try beside the IPC call, and a failure there
+      // leaves the user with a toast and no task. The reporter drops what main's wrap saw.
+      reportRendererFailure('new_task', 'create', error);
       // Previously unhandled: a rejected create (including a pending
       // attachment write failing inside it) reached only the global
       // unhandledrejection analytics listener, with nothing shown to the

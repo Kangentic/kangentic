@@ -1,5 +1,6 @@
 import { noteLaunchNotSignedIn } from '../../accounts/account-service';
 import { ipcMain, MessageChannelMain, webContents } from 'electron';
+import { onReported } from '../../analytics/ipc-handler-report';
 import { IPC } from '../../../shared/ipc-channels';
 import { withTaskLock } from '../task-lifecycle-lock';
 import { supersedeMessageDeliveries } from '../../automations/turn-end/turn-end-passes';
@@ -14,6 +15,7 @@ import { getProjectDb } from '../../db/database';
 import { getProjectRepos, notifySpawnBlocked } from '../helpers';
 import { isUserSetupFailureClass, lineTooLongSentence, reportPtyPortFailure } from '../../pty/agent-launch-report';
 import { linkPR, autoLinkPRForTask, recordPushedBranchForSession } from '../../pr/pr-linking';
+import { prReporter } from '../../pr/pr-report';
 import { listTaskPrChecks, sendFailedPrChecks } from '../../pr/failed-checks-delivery';
 import { planExitTargetFor } from '../helpers/plan-exit-target';
 import { markResumeMiss } from '../helpers/resume-miss';
@@ -103,6 +105,8 @@ export function sessionLinkFacts(context: IpcContext, sessionId: string): Sessio
       const config = context.configManager.getEffectiveConfig(projectPath ?? undefined);
       runsOnRemoteServer = resolveExecutionTarget(agentName, config.agent.executionServers, config.agent.execution) !== null;
     } catch {
+      // report-ok: a config that cannot be read counts as a remote server, so no link is
+      // guessed. ConfigManager degrades an unreadable config file to defaults itself.
       runsOnRemoteServer = true;
     }
   }
@@ -351,7 +355,7 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
     watchRendererTeardown(target);
   };
   // A preload asks once per page load (a reload asks again).
-  ipcMain.on(IPC.PTY_PORT_REQUEST, (event) => issueRendererPort(event.sender));
+  onReported(ipcMain, IPC.PTY_PORT_REQUEST, (event) => issueRendererPort(event.sender));
   // A restarted host has none of the old ports: every renderer gets a new one,
   // before the manager replays what each renderer shows.
   context.sessionManager.on('renderer-ports-lost', (rendererIds: number[]) => {
@@ -562,7 +566,10 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
           cliTarget: parseStoredCliTarget(record.cli_target),
           transcriptPath: record.transcript_path,
         };
-      } catch {
+      } catch (error) {
+        // The card's message trail is not read for this session. A database that will not
+        // open is marked by the open-failure notifier, so this adds a query that failed.
+        sessionHandlersReporter.report(error, { tags: { stage: 'message_trail_facts' } });
         return null;
       }
     },
@@ -630,7 +637,8 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
               }
             }
           } catch {
-            // Enrichment is best-effort; the base props still send
+            // report-ok: this only enriches the session_spawn analytics event, and the base
+            // props still send. The open-failure notifier reports a database that will not open.
           }
           trackEvent('session_spawn', spawnProps);
           if (!session.transient) trackMilestone('first_spawn');
@@ -650,8 +658,10 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
               promoteRecord(sessionRepo, record.id);
             }
           }
-        } catch {
-          // DB may be closed during shutdown
+        } catch (error) {
+          // The record stays `queued` while its session runs, so a restart reads the
+          // session as one that never started. The reporter skips a quit.
+          sessionHandlersReporter.report(error, { tags: { stage: 'session_db_write' } });
         }
       }
     }
@@ -702,6 +712,8 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
         lastQueuePush = serialized;
         broadcast(context.mainWindow, IPC.SESSION_QUEUE_CHANGED, snapshot);
       } catch (error) {
+        // The board's line of who is waiting for an agent slot goes stale.
+        sessionHandlersReporter.report(error, { tags: { stage: 'queue_snapshot' } });
         console.warn('[SESSION] Could not read the agent queue:', error);
       }
     }, QUEUE_PUSH_COALESCE_MS);
@@ -801,8 +813,10 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
       const database = getProjectDb(projectId);
       const sessionRepo = new SessionRepository(database);
       recoverStaleSessionId(sessionRepo, sessionId, taskId, agentReportedId);
-    } catch {
-      // DB may be closed
+    } catch (error) {
+      // The record keeps an id the CLI no longer uses, so the next resume names a
+      // conversation that is not there. The reporter skips a quit.
+      sessionHandlersReporter.report(error, { tags: { stage: 'stale_session_id' } });
     }
   });
 
@@ -848,12 +862,16 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
       try {
         const failedTask = new TaskRepository(getProjectDb(projectId)).getById(exitedSession.taskId);
         if (failedTask) notifySpawnBlocked(context, failedTask, 'agent', new Error(startupFailure), projectId);
-      } catch {
-        // DB may be closed during shutdown; the notice is best-effort.
+      } catch (error) {
+        // The "Agent didn't start" notice is lost and the card goes quiet. The reporter
+        // skips a quit.
+        sessionHandlersReporter.report(error, { tags: { stage: 'startup_failure_notice' } });
       }
-    }).catch(() => {
-      // The host is gone (a quit or a crash) and there is nothing to read, or
-      // the adapter's parser threw on what was there: the notice is best-effort.
+    }).catch((error: unknown) => {
+      // The host is gone (a quit or a crash, both skipped by the reporter) and there is
+      // nothing to read, or the adapter's parser threw on what was there. Either way the
+      // "Agent didn't start" notice is lost.
+      sessionHandlersReporter.report(error, { tags: { stage: 'startup_failure_read' } });
     });
   };
 
@@ -863,7 +881,8 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
     try {
       new SessionRepository(getProjectDb(projectId)).setStartBlockedReason(sessionId, reason);
     } catch (error) {
-      // The row already says it. A closed database costs the reason after a restart.
+      // The row already says it. A failed write costs the reason after a restart.
+      sessionHandlersReporter.report(error, { tags: { stage: 'start_blocked_record' } });
       console.warn('[SESSION_START] Could not record why a start failed:', error);
     }
   };
@@ -973,6 +992,8 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
       // `onFailed`, not the rejection: a task the user moved to To Do or Done since
       // is refused, and a refusal is their answer rather than a failure to show.
       void resumeTaskSession(context, session.taskId, { projectId, startPath: 'retry', onFailed: notifyFailure }).catch((error: unknown) => {
+        // report-ok: resumeTaskSession reports a failed worktree or agent start itself
+        // (reportPreflightFailure) and runs onFailed. A refusal is the user's answer.
         console.warn('[AGENT-LAUNCH] The retry could not start:', error);
       });
     }).catch((error: unknown) => {
@@ -1202,8 +1223,10 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
             }
           }
         }
-      } catch {
-        // DB may be closed during shutdown
+      } catch (error) {
+        // The exit is not written to the session record and its metrics are not captured,
+        // so the record stays `running` for a session that ended. The reporter skips a quit.
+        sessionHandlersReporter.report(error, { tags: { stage: 'session_db_write' } });
       }
     }
 
@@ -1233,6 +1256,8 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
   // may have stamped after the push (but not the terminal-state skip).
   context.sessionManager.on('pr-candidate', (sessionId: string, scrollback: string) => {
     void linkPR(context, { sessionId, scrollback, bypassThrottle: true }).catch((error) => {
+      // The PR the agent just opened does not link to its task until the background sweep.
+      prReporter.report(error, { tags: { stage: 'link' } });
       console.error(`[pr-candidate] Failed to resolve PR for session ${sessionId}:`, error);
     });
   });
@@ -1246,6 +1271,8 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
     const session = context.sessionManager.getSession(sessionId);
     if (!session || session.transient) return;
     void recordPushedBranchForSession(context, sessionId, branch).catch((error) => {
+      // The task keeps no pushed branch to find its PR by, so the PR never links.
+      sessionHandlersReporter.report(error, { tags: { stage: 'pushed_branch_record' } });
       console.error(`[branch-pushed] Failed to record pushed branch for session ${sessionId}:`, error);
     });
   });

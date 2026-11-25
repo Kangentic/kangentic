@@ -129,6 +129,8 @@ export async function readRemotes(repoCwd: string): Promise<readonly GitRemote[]
       const git = gitAt(key);
       return parseRemoteOutput(await git.raw(['remote', '-v']));
     } catch {
+      // report-ok: the path is gone or not a repository yet (a worktree not created), and
+      // null reads as ownership undecidable, cached for MISS_TTL_MS only.
       return null;
     }
   })

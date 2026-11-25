@@ -106,6 +106,7 @@ function summarizeToolInputForSearch(input: unknown): string {
   try {
     return JSON.stringify(input);
   } catch {
+    // report-ok: a tool input JSON cannot serialize is searched by its string form.
     return String(input);
   }
 }

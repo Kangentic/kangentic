@@ -188,8 +188,9 @@ export class TranscriptWriter {
       const sink = timeSyncWork('transcript:open', () => this.sinkFor(projectId));
       timeSyncWork('transcript:flush', () => sink?.appendChunk(sessionId, chunk));
     } catch (error) {
-      // Best effort - don't crash the session if DB write fails. The chunk is
-      // lost to the viewer, search and the token ledger, so main hears of it.
+      // report-ok: onFlushFailed below is the host core's relay of the fixed code
+      // transcript_flush, which main reports. A failed DB write must not crash the
+      // session. The chunk is lost to the viewer, search and the token ledger.
       if (!this.flushFailureLogged) {
         this.flushFailureLogged = true;
         console.error(`[TranscriptWriter] Failed to flush transcript for ${sessionId.slice(0, 8)}:`, error);

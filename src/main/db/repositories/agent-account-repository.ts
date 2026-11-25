@@ -30,6 +30,7 @@ function parseJsonArray<T>(text: string | null): T[] | null {
     const parsed: unknown = JSON.parse(text);
     return Array.isArray(parsed) ? (parsed as T[]) : null;
   } catch {
+    // report-ok: malformed JSON in a column only Kangentic writes reads as no list.
     return null;
   }
 }

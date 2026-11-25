@@ -139,6 +139,7 @@ export async function deliverAgentMessageAndWait(
         automated: true,
       });
     } catch (error) {
+      // refusal-wrap-ok: wrapped only once the move's signal aborted, so the cause is that abort.
       if (input.signal.aborted) throw new RefusalError(abortReason, { cause: error });
       throw error;
     }

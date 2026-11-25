@@ -13,6 +13,7 @@ import {
 } from '../helpers';
 import { resolveProjectContext } from '../helpers/project-repos';
 import { announceTaskWrite } from '../helpers/task-write-announce';
+import { handlerStepReporter } from '../helpers/handler-step-report';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
 import { loadTaskProfile } from '../helpers/task-profile';
 import { withTaskLock } from '../task-lifecycle-lock';
@@ -75,8 +76,9 @@ async function resetSessionForTodoRestore(
   try {
     await cleanupTaskSession(context, task, tasks, projectId, projectPath);
   } catch (cleanupError) {
-    // Best-effort: the task is already unarchived and visible. A failed
-    // teardown leaves the stale card state, not a broken board.
+    // The task is already unarchived and visible. A failed teardown leaves the
+    // stale card state (a paused session on a To Do card), not a broken board.
+    handlerStepReporter.report(cleanupError, { tags: { area: 'archive', step: 'session_reset' } });
     console.error(`[TASK_UNARCHIVE] Session reset failed for task ${task.id.slice(0, 8)}:`, cleanupError);
   }
 }
@@ -198,6 +200,9 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
                 attachments: attachmentRepo,
               });
             } catch (err) {
+              // The restored task sits in its column with no agent. spawnAgent reports an
+              // agent that failed to start itself, and the reporter skips that error here.
+              handlerStepReporter.report(err, { tags: { area: 'archive', step: 'unarchive_spawn' } });
               console.error('[TASK_UNARCHIVE] Failed to start session:', err);
             }
           }
@@ -308,6 +313,8 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
                     attachments: attachmentRepo,
                   });
                 } catch (error) {
+                  // As for the single restore above: the task has no agent.
+                  handlerStepReporter.report(error, { tags: { area: 'archive', step: 'unarchive_spawn' } });
                   console.error('[TASK_BULK_UNARCHIVE] Failed to start session:', error);
                 }
               }

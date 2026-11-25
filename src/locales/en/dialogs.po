@@ -15,6 +15,11 @@ msgstr ", then "
 msgid "! at the very start: not. The row runs only when the last line does not match."
 msgstr "! at the very start: not. The row runs only when the last line does not match."
 
+#: src/renderer/components/dialogs/NewTaskDialog.tsx
+#: src/renderer/components/dialogs/task-detail/useAttachments.ts
+msgid "\"{fileName}\" could not be read."
+msgstr "\"{fileName}\" could not be read."
+
 #: src/renderer/components/dialogs/task-detail/useAttachments.ts
 msgid "\"{fileName}\" is over the 10 MB limit."
 msgstr "\"{fileName}\" is over the 10 MB limit."
@@ -966,6 +971,11 @@ msgstr "Couldn't add \"{filename}\""
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
 msgid "Couldn't archive task"
 msgstr "Couldn't archive task"
+
+#: src/renderer/components/dialogs/NewTaskDialog.tsx
+#: src/renderer/components/dialogs/task-detail/useAttachments.ts
+msgid "Couldn't attach file"
+msgstr "Couldn't attach file"
 
 #: src/renderer/components/dialogs/git/useGitActions.tsx
 msgid "Couldn't commit"

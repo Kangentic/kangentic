@@ -38,6 +38,7 @@ import { reopenCommandTerminalPanelAfterRestart } from '../components/command-ba
 import { captureRetainedTasks, pruneRetainedTasks, planWindowRetention } from '../window-manager/bridge/retained-task-snapshots';
 import { useWindowStore } from '../window-manager/store/window-store';
 import { showConversationExpiredNotices } from '../lib/conversation-expired-toast';
+import { reportRendererFailure } from '../utils/renderer-failure';
 
 export function useProjectSwitchEffect(currentProject: Project | null): void {
   // Tracks the project we last rendered so we can snapshot its store
@@ -430,7 +431,12 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
               // so a superseding switch keeps its own newer arm.
               useSessionStore.getState().setPendingDetailWindowsProjectId(null);
             },
-            () => {
+            (error: unknown) => {
+              // The board and backlog loads catch and report their own failures, so this is
+              // the config load: the project opens with none of its windows restored. A
+              // rejection main saw is dropped by the reporter, which leaves a throw from the
+              // renderer's own load code.
+              reportRendererFailure('projects', 'switch_load', error);
               // A board / backlog / config load rejected: no workspace will restore, so disarm
               // rather than leave the panel stuck collapsed. Skip if a newer switch superseded
               // this one (it owns the signal now).

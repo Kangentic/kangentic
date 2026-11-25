@@ -31,10 +31,10 @@ export function QrImage({ value, alt, size = 220, testId }: QrImageProps) {
         if (!cancelled) setEncoded({ key: encodeKey, dataUrl });
       })
       .catch((error: unknown) => {
-        // Fail closed to "no image": a value that exceeds QR capacity (e.g. an
-        // over-long feed URL) must not surface as an unhandled rejection, and
-        // every caller renders a labeled link beside the QR, so the
-        // destination stays reachable without it.
+        // report-ok: a value that exceeds QR capacity (e.g. an over-long feed
+        // URL) does not encode. It fails closed to "no image" instead of an
+        // unhandled rejection, and every caller renders a labeled link beside
+        // the QR, so the destination stays reachable without it.
         console.warn('[QrImage] encode failed:', error);
       });
     return () => {

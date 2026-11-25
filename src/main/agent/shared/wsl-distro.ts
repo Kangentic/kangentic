@@ -188,6 +188,8 @@ export function resolveWslDistroFacts(distro: string, run: WslExec = defaultWslE
   reading.then((facts) => {
     if (factsByDistro.get(distro) === reading) settledFactsByDistro.set(distro, facts);
   }, () => {
+    // report-ok: the caller gets this rejection through `reading`, for the CLI path row. This
+    // only drops the failed read from the cache, so a stopped distro is asked again.
     if (factsByDistro.get(distro) === reading) factsByDistro.delete(distro);
   });
   return reading;
@@ -224,6 +226,8 @@ export async function isWslDistroRunning(distro: string, run: WslExec = defaultW
     runningList = {
       readAt: now,
       names: run(['-l', '--running', '-q'], RUNNING_LIST_TIMEOUT_MS)
+        // report-ok: `wsl.exe` did not answer. No distro reads as running, so a reader nobody
+        // asked for skips the session and reads it on a later pass.
         .then((output) => parseRunningDistroNames(output.stdout), () => new Set<string>()),
     };
   }

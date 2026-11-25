@@ -95,7 +95,8 @@ export function createBeforeQuitHandler(
     try {
       dependencies.hideAllWindows();
     } catch {
-      // Cosmetic only; a window that refuses to hide must not block the quit.
+      // report-ok: cosmetic only, and on the quit path, where a report never lands. A
+      // window that refuses to hide must not block the quit.
     }
 
     const completeAndQuit = (): void => {
@@ -107,9 +108,13 @@ export function createBeforeQuitHandler(
     try {
       drain = dependencies.drainPtyExitCallbacks(ptyKillReport);
     } catch {
+      // report-ok: the drain could not start, so the quit goes on at once. This is the
+      // quit path, where a report never lands.
       completeAndQuit();
       return;
     }
+    // report-ok: the quit goes on however the drain settles. The drain's contract is
+    // never to reject, and this is the quit path, where a report never lands.
     drain.then(completeAndQuit, completeAndQuit);
   };
 }

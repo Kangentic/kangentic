@@ -40,6 +40,8 @@ try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   originalFs = require('original-fs') as typeof nodeFs;
 } catch {
+  // report-ok: `original-fs` does not exist under plain Node (vitest), where node:fs is the
+  // same unpatched module.
   originalFs = nodeFs;
 }
 

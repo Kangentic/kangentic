@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { app, BrowserWindow, ipcMain, Notification, dialog, shell, globalShortcut, clipboard, nativeImage } from 'electron';
+import { onReported } from '../../analytics/ipc-handler-report';
 import { IPC } from '../../../shared/ipc-channels';
 import { comboToAccelerator } from '../../../shared/keybindings';
 import { WorktreeManager } from '../../git/worktree-manager';
@@ -29,6 +30,7 @@ import { resolveRelayUrl } from '../../../shared/relay';
 import { EXTERNAL_OPEN_SCHEMES, isAllowedExternalUrl } from '../../../shared/external-url';
 import { readClipboardImage, writePastedImage } from '../helpers/clipboard-image';
 import { openPathBounded } from '../helpers/open-path';
+import { handlerStepReporter, isDefectOrEnvironmentFailure } from '../helpers/handler-step-report';
 import { resolveShellLaunch } from '../../pty/spawn/shell-launch';
 import { childProcessEnv } from '../../shared/child-env';
 import { spawnOffMain } from '../../utility-process/off-main-spawn';
@@ -274,7 +276,7 @@ export function registerSystemHandlers(context: IpcContext): void {
   // success and failure identically. Nothing reads it yet: the preload bridge discards the
   // sendSync result and `ElectronAPI.config.setSync` returns void. The user-facing half is
   // the CONFIG_WRITE_FAILED toast safeWriteJson already pushes.
-  ipcMain.on(IPC.CONFIG_SET_SYNC, (event, config) => {
+  onReported(ipcMain, IPC.CONFIG_SET_SYNC, (event, config) => {
     event.returnValue = context.configManager.save(config);
   });
 
@@ -398,7 +400,8 @@ export function registerSystemHandlers(context: IpcContext): void {
             result[combo] = 'taken';
           }
         } catch {
-          // Malformed accelerator or platform refusal: cannot probe.
+          // report-ok: a malformed accelerator or a platform refusal cannot be probed, and the
+          // combo answers unsupported, which the shortcut field shows.
           result[combo] = 'unsupported';
         }
       }
@@ -464,6 +467,8 @@ export function registerSystemHandlers(context: IpcContext): void {
     try {
       return await adapter.remoteExecution.probeServer(server);
     } catch (error) {
+      // report-ok: a server that cannot be reached is the answer, and Test connection in the
+      // Agent settings tab shows this reason.
       return { reachable: false, reason: error instanceof Error ? error.message : 'Unknown error' };
     }
   });
@@ -507,6 +512,14 @@ export function registerSystemHandlers(context: IpcContext): void {
         if (!title) return { ok: false, reason: 'summarize produced empty output' };
         return { ok: true, title };
       } catch (error) {
+        // The reason comes back as the result: the naming button toasts it, and an
+        // automatic name that fails leaves the task its placeholder title. This catch
+        // keeps every throw in the handler from the IPC wrap, so a defect reports here.
+        // The common failure is the naming agent's own (its CLI exited or timed out), a
+        // plain Error, so only a defect or an errno reports.
+        if (isDefectOrEnvironmentFailure(error)) {
+          handlerStepReporter.report(error, { tags: { area: 'system', step: 'summarize' } });
+        }
         const message = error instanceof Error ? error.message : String(error);
         return { ok: false, reason: message };
       }
@@ -567,6 +580,7 @@ export function registerSystemHandlers(context: IpcContext): void {
       try {
         entries = fs.readdirSync(directory, { withFileTypes: true });
       } catch {
+        // report-ok: ENOENT for a folder on the walk with no .claude/commands, which has none.
         return;
       }
       for (const entry of entries) {
@@ -585,7 +599,8 @@ export function registerSystemHandlers(context: IpcContext): void {
             const content = fs.readFileSync(fullPath, 'utf-8');
             ({ description, argumentHint } = parseFrontmatter(content));
           } catch {
-            // Skip files that can't be read
+            // report-ok: a command file that cannot be read is listed by name, with no
+            // description, in the menu the user is looking at.
           }
 
           commands.push({ name: commandName, displayName: `/${commandName}`, description, argumentHint, source: 'command' });
@@ -603,6 +618,7 @@ export function registerSystemHandlers(context: IpcContext): void {
       try {
         entries = fs.readdirSync(skillsDir, { withFileTypes: true });
       } catch {
+        // report-ok: ENOENT for a folder on the walk with no .claude/skills, which has none.
         continue;
       }
       for (const entry of entries) {
@@ -614,7 +630,8 @@ export function registerSystemHandlers(context: IpcContext): void {
         try {
           fs.accessSync(skillMdPath, fs.constants.R_OK);
         } catch {
-          continue; // no SKILL.md in this directory
+          // report-ok: a folder with no readable SKILL.md is not a skill.
+          continue;
         }
 
         seen.add(skillName);
@@ -640,7 +657,8 @@ export function registerSystemHandlers(context: IpcContext): void {
             }
           }
         } catch {
-          // Skip files that can't be read
+          // report-ok: a SKILL.md that cannot be read is listed by name, with no description,
+          // in the menu the user is looking at.
         }
 
         commands.push({
@@ -742,7 +760,12 @@ export function registerSystemHandlers(context: IpcContext): void {
     try {
       const worktreeManager = new WorktreeManager(projectPath);
       return await worktreeManager.listBranchChoices();
-    } catch { return []; }
+    } catch (error) {
+      // The base branch picker opens empty with no reason. The reporter skips a host
+      // that is unreachable.
+      handlerStepReporter.report(error, { tags: { area: 'system', step: 'branch_list' } });
+      return [];
+    }
   });
 
   // A ref typed into the base picker: what it names, or why it names nothing.
@@ -805,8 +828,8 @@ export function registerSystemHandlers(context: IpcContext): void {
   function resolveSenderWindow(event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent): Electron.BrowserWindow {
     return BrowserWindow.fromWebContents(event.sender) ?? context.mainWindow;
   }
-  ipcMain.on(IPC.WINDOW_MINIMIZE, (event) => resolveSenderWindow(event).minimize());
-  ipcMain.on(IPC.WINDOW_MAXIMIZE, (event) => {
+  onReported(ipcMain, IPC.WINDOW_MINIMIZE, (event) => resolveSenderWindow(event).minimize());
+  onReported(ipcMain, IPC.WINDOW_MAXIMIZE, (event) => {
     const win = resolveSenderWindow(event);
     if (win.isMaximized()) {
       win.unmaximize();
@@ -814,8 +837,8 @@ export function registerSystemHandlers(context: IpcContext): void {
       win.maximize();
     }
   });
-  ipcMain.on(IPC.WINDOW_CLOSE, (event) => resolveSenderWindow(event).close());
-  ipcMain.on(IPC.WINDOW_FLASH_FRAME, (event, flash: boolean) => resolveSenderWindow(event).flashFrame(flash));
+  onReported(ipcMain, IPC.WINDOW_CLOSE, (event) => resolveSenderWindow(event).close());
+  onReported(ipcMain, IPC.WINDOW_FLASH_FRAME, (event, flash: boolean) => resolveSenderWindow(event).flashFrame(flash));
   ipcMain.handle(IPC.WINDOW_IS_FOCUSED, (event) => resolveSenderWindow(event).isFocused());
   // The SENDER's own pixels, so a terminal dragged in the Command Terminal's
   // own window pictures that window and not the main one. The renderer measures
@@ -834,12 +857,14 @@ export function registerSystemHandlers(context: IpcContext): void {
       if (image.isEmpty()) return null;
       return `data:image/jpeg;base64,${image.toJPEG(90).toString('base64')}`;
     } catch {
+      // report-ok: a window destroyed since it asked throws on any call, and no picture is
+      // the answer the drag falls back on.
       return null;
     }
   });
 
   // === Notifications ===
-  ipcMain.on(IPC.NOTIFICATION_SHOW, (_event, input: NotificationInput) => showDesktopNotification(context, input));
+  onReported(ipcMain, IPC.NOTIFICATION_SHOW, (_event, input: NotificationInput) => showDesktopNotification(context, input));
   ipcMain.handle(IPC.NOTIFICATION_PICK_SOUND, (_event, eventKey: NotificationEventKey) => pickCustomSound(context.mainWindow, eventKey));
   ipcMain.handle(IPC.NOTIFICATION_READ_SOUND, (_event, eventKey: NotificationEventKey) => readCustomSound(eventKey));
 

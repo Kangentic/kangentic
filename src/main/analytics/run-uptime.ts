@@ -227,6 +227,17 @@ export function bucketUptimeSeconds(seconds: number): string {
   return '8h+';
 }
 
+/**
+ * How long THIS run has been up, in the same buckets, for the `run_uptime` tag
+ * every Sentry event carries (`run-state-tags.ts`). `unknown` before
+ * `initRunUptimeTracking` has run, which is the stretch before the app is ready.
+ * Wall-clock, time asleep included, like the checkpoint.
+ */
+export function currentRunUptimeBucket(nowMs: number = Date.now()): string {
+  if (runStartedAt === null) return 'unknown';
+  return bucketUptimeSeconds(elapsedSeconds(nowMs));
+}
+
 /** Reset module state between unit tests (vitest shares module instances). */
 export function resetRunUptimeForTests(): void {
   runFilePath = null;

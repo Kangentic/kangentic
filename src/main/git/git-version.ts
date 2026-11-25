@@ -41,6 +41,8 @@ export function getInstalledGitVersion(): Promise<string | null> {
       // simple-git ran it in the process's working directory when given none.
       .then(() => gitAt(process.cwd()).raw(['--version']))
       .then(parseGitVersion)
+      // report-ok: git is not installed or did not answer, so the version reads as unknown
+      // and the caller takes the form every git version accepts. The miss is not cached.
       .catch(() => null);
     installedGitVersion = pending;
     void pending.then((version) => {

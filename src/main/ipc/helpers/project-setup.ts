@@ -19,7 +19,7 @@ export async function ensureGitignore(projectPath: string): Promise<void> {
     try {
       content = await fs.promises.readFile(gitignorePath, 'utf-8');
     } catch {
-      // No .gitignore yet -- we'll create one
+      // report-ok: ENOENT when the project has no .gitignore yet, and one is created below.
     }
 
     // 1. Ensure .kangentic/ is ignored
@@ -66,7 +66,8 @@ export async function ensureGitignore(projectPath: string): Promise<void> {
     // that never use OpenCode never get a stray entry and the tracked .gitignore
     // is never dirtied.
   } catch (err) {
-    // Non-fatal: log and continue. Project may be read-only or on a network drive.
+    // report-ok: a read-only project folder or a network drive refuses the write, and
+    // nothing downstream of a project open reads this file's result.
     console.warn(`[PROJECT_OPEN] Could not update .gitignore at ${projectPath}:`, err);
   }
 }

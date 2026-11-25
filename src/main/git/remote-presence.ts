@@ -30,6 +30,8 @@ export async function commitsMissingFromRemotes(repoCwd: string, shas: readonly 
     }
     return missing;
   } catch {
+    // report-ok: git fails when the folder is gone or a commit does not resolve, and null
+    // reads as unknown, so the caller shows no commit links.
     return null;
   }
 }

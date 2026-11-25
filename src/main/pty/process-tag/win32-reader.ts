@@ -807,6 +807,8 @@ export class Win32TaggedProcessReader implements TaggedProcessReader {
     try {
       api = await this.loadApi();
     } catch {
+      // report-ok: without the API the answer is unknown, which changes no row in the
+      // leftover list. The reap that listed the process reports a failed load.
       return null;
     }
     try {
@@ -834,6 +836,8 @@ export class Win32TaggedProcessReader implements TaggedProcessReader {
         api.closeHandle(handle);
       }
     } catch {
+      // report-ok: a read that failed answers unknown, which changes no row in the
+      // leftover list.
       return null;
     }
   }
@@ -858,6 +862,8 @@ export class Win32TaggedProcessReader implements TaggedProcessReader {
     try {
       api = await this.loadApi();
     } catch {
+      // report-ok: the scan that found these targets loaded the same API first, and a
+      // reap whose load fails answers reader_load. No label lists a process as unnamed.
       return labels;
     }
     for (const target of targets) {
@@ -881,7 +887,7 @@ export class Win32TaggedProcessReader implements TaggedProcessReader {
           isFile: (candidate) => isFileFrom(workingDirectory, candidate),
         }));
       } catch {
-        /* gone mid-read */
+        /* report-ok: the process went mid-read, so it gets the unnamed label. */
       } finally {
         api.closeHandle(handle);
       }

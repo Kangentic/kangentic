@@ -115,6 +115,8 @@ export function runHostCommand(request: HostCommandRequest, options: RunHostComm
       // Its own process group (`detached`), so the timeout stops the program and what it started.
       child = spawn(plan.file, plan.args, { cwd: options.cwd, env, detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
     } catch (error) {
+      // report-ok: runs on the host, which cannot report; the result's error carries the failed
+      // start to main.
       resolve({ code: null, stdout: '', stderr: '', timedOut: false, error: error instanceof Error ? error.message : String(error) });
       return;
     }
@@ -123,10 +125,13 @@ export function runHostCommand(request: HostCommandRequest, options: RunHostComm
       try {
         if (child.pid !== undefined) process.kill(-child.pid, 'SIGKILL');
       } catch {
+        // report-ok: runs on the host, which cannot report; the group is already gone or cannot be
+        // signalled, so the child itself is killed next.
         try {
           child.kill('SIGKILL');
         } catch {
-          // Already gone.
+          // report-ok: runs on the host, which cannot report; the program is already gone, and
+          // stopping it was the goal.
         }
       }
     };

@@ -52,6 +52,7 @@ import { emitSpawnProgress, createProgressCallback, clearSpawnProgress } from '.
 import { ensureTaskWorktree, ensureTaskBranchCheckout, notifyConversationExpired, notifySpawnBlocked, type InitScriptMode } from './task-git';
 import { createExpiredRecapSources } from '../../transition-engine/expired-recap-sources';
 import { getProjectRepos } from './project-repos';
+import { handlerStepReporter } from './handler-step-report';
 import { withTaskLock } from '../task-lifecycle-lock';
 import { registerResumeController, releaseResumeController } from '../handlers/session-resume-controllers';
 import { runWithProjectLogContext } from '../../diagnostics/project-log-context';
@@ -509,6 +510,8 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       const swimlanes = getProjectRepos(context, options.projectId).swimlanes;
       columnName = (swimlaneId) => swimlanes.getById(swimlaneId)?.name ?? null;
     } catch (error) {
+      // The main conversation comes back with no recap of what its column sessions did.
+      handlerStepReporter.report(error, { tags: { area: 'spawn', step: 'return_recap_read' } });
       console.warn(`[spawnAgent] Could not read the column sessions task ${task.id.slice(0, 8)} ran while its conversation was away:`, error);
       return null;
     }
@@ -688,10 +691,15 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
         });
         handoffId = handoffRecord.id;
       } catch (handoffDbError) {
+        // The handoff still happens, with no row in the audit trail of which agent
+        // handed the task to which.
+        handlerStepReporter.report(handoffDbError, { tags: { area: 'handoff', step: 'handoff_record' } });
         console.error('[spawnAgent] Failed to store handoff record:', handoffDbError);
       }
     } catch (error) {
       if (isAbortError(error)) throw error;
+      // The new agent starts with no pointer to the conversation the last agent had.
+      handlerStepReporter.report(error, { tags: { area: 'handoff', step: 'handoff_prepare' } });
       console.error('[spawnAgent] Handoff preparation failed (continuing without context):', error);
     }
 
@@ -769,6 +777,8 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       handoffUnsentPrompt = textLeftToType(handoffOutcome);
     } catch (error) {
       if (isAbortError(error)) throw error;
+      // The task changed agents and the new one never started, with no notice on its card.
+      handlerStepReporter.report(error, { tags: { area: 'handoff', step: 'handoff_start' } });
       console.error('[spawnAgent] Failed to start handoff session:', error);
       return;
     }
@@ -785,6 +795,8 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
           }
         }
       } catch (error) {
+        // The handoff's audit row never names the session the task was handed to.
+        handlerStepReporter.report(error, { tags: { area: 'handoff', step: 'handoff_finalize' } });
         console.error('[spawnAgent] Failed to finalize handoff:', error);
       }
 
@@ -945,9 +957,13 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     if (fromSwimlaneId === '*') return null;
     try {
       return getProjectRepos(context, options.projectId).swimlanes.getById(fromSwimlaneId) ?? null;
-    } catch {
-      // No project open. A template variable resolving empty is the right
-      // degradation here; refusing to run the automations would not be.
+    } catch (error) {
+      // No project open is a refusal, which the reporter skips, and a database that will
+      // not open was marked by the open-failure notifier. What is left is a query that
+      // failed: `{{fromColumn}}` then resolves empty in the column's automations. A
+      // template variable resolving empty is the right degradation here; refusing to run
+      // the automations would not be.
+      handlerStepReporter.report(error, { tags: { area: 'spawn', step: 'from_column_read' } });
       return null;
     }
   };
@@ -1029,6 +1045,9 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     };
     const inBackground = (waiting: Promise<boolean>): void => {
       const opening = waiting.catch((error) => {
+        // The agent started and never got its opening prompt: the task's own prompt or its
+        // column's message. The reporter skips an abort.
+        handlerStepReporter.report(error, { tags: { area: 'spawn', step: 'opening_prompt' } });
         console.error(`[spawnAgent] Task ${task.id.slice(0, 8)}: the deferred opening prompt failed:`, error);
         return false;
       });
@@ -1593,6 +1612,9 @@ export function createEarlyAgentLauncher(input: {
         signal: input.signal,
       });
     } catch (error) {
+      // report-ok: an early launch that fails or is aborted costs only its head start.
+      // spawnAgent starts the agent after the setup script, and reports a start that fails
+      // there (reportPreflightFailure).
       if (!isAbortError(error)) {
         console.warn(`[spawnAgent] Could not start the agent of task ${input.taskId.slice(0, 8)} during its setup script; it starts after it:`, error);
       }
@@ -1878,7 +1900,8 @@ export async function autoSpawnForTask(
         failedAgent =
           getProjectRepos(context, projectId).tasks.getById(task.id)?.agent_override ?? 'default';
       } catch {
-        // DB may be closed; keep the placeholder
+        // report-ok: this read only names the agent on the report below. The spawn failure
+        // itself is reported there, with the placeholder agent.
       }
       trackEvent('spawn_failed', { agent: failedAgent, reason: 'auto_spawn' });
       reportPreflightFailure({ cause: 'auto_spawn', error, agent: failedAgent, startPath: options.startPath ?? 'board', alreadyCounted: true });

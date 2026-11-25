@@ -2,6 +2,7 @@ import { SessionRepository } from '../../db/repositories/session-repository';
 import { getProjectDb } from '../../db/database';
 import { getProjectRepos } from '../helpers';
 import { autoSpawnForTask } from '../helpers/agent-spawn';
+import { handlerStepReporter } from '../helpers/handler-step-report';
 import { applySuspendDbWrites, reconcileTaskSessionRef } from './session-reconcile';
 import { withTaskLock } from '../task-lifecycle-lock';
 import { supersedeMessageDeliveries } from '../../automations/turn-end/turn-end-passes';
@@ -221,6 +222,8 @@ export function reconcileAutoSpawnChange(
           + ` (auto-spawn turned off on "${entry.sourceName}")`,
         );
       } catch (suspendError) {
+        // The agent keeps running in a column whose auto-spawn was just turned off.
+        handlerStepReporter.report(suspendError, { tags: { area: 'auto_spawn', step: 'toggle_suspend' } });
         console.warn(
           `[${label}] Could not suspend session for task ${entry.taskId.slice(0, 8)}`
           + ` after auto-spawn was turned off on "${entry.sourceName}":`,
@@ -245,6 +248,9 @@ export function reconcileAutoSpawnChange(
           entry.swimlaneId,
         );
       } catch (spawnError) {
+        // The task gets no agent in a column whose auto-spawn was just turned on. The
+        // reporter skips what autoSpawnForTask already reported.
+        handlerStepReporter.report(spawnError, { tags: { area: 'auto_spawn', step: 'toggle_spawn' } });
         console.warn(
           `[${label}] Could not spawn agent for task ${entry.taskId.slice(0, 8)}`
           + ` after auto-spawn was turned on for "${entry.sourceName}":`,

@@ -40,6 +40,8 @@ export async function probeAgentOnHost(runCommand: HostCommandRunner, hostId: st
   try {
     result = await runCommand(hostId, { file: cliName, args: ['--version'], timeoutMs: PROBE_TIMEOUT_MS });
   } catch (error) {
+    // report-ok: a host that cannot be asked is the third answer, unknown with its reason, which
+    // the caller shows and a spawn goes on past. It is never read as missing.
     return { status: 'unknown', version: null, detail: error instanceof Error ? error.message : String(error) };
   }
   if (result.error) {

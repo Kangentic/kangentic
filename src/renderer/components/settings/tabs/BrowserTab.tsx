@@ -29,6 +29,7 @@ export function BrowserTab({ config }: { config: AppConfig }) {
         variant: 'success',
       });
     } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the toast shows the reason.
       useToastStore.getState().addToast({
         title: t`Couldn't clear browser data`,
         ...ipcFailureToastFields(error),

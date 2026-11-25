@@ -417,7 +417,8 @@ SessionManager's own events, in main:
   test a workflow's own agent passes) and can still find the transcript (the adapter's
   `locateSessionHistoryFile`, wired in `register-all.ts`), and no live terminal or resume in
   flight holds it. Nothing else limits the table: the list deletes a row whose transcript is gone,
-  so the agent's own cleanup sets the bound (30 days for Claude Code). A 50-row prune came first, and
+  so the agent's own cleanup sets the bound (30 days for Claude Code). A lookup that throws has
+  not shown the transcript gone, so its row stays, as it does for a place that cannot be read. A 50-row prune came first, and
   the rows it deleted cannot come back. The checks run 8 at a time, because a miss in Claude's
   locator scans every project folder. Measured through the IPC on a machine with 863 Claude project
   folders: 5 to 7 ms for 300 rows and 13 to 21 ms for 1,000, each a real transcript, with no main

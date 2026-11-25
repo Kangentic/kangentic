@@ -37,9 +37,11 @@ import {
   fitDefaultView,
   describeViewport,
   NO_VIEWPORT_INSETS,
+  WebglRendererUnavailableError,
   type ViewportInsets,
   type KnowledgeGraphScene,
 } from './knowledge-graph-scene';
+import { reportRendererFailure } from '../../utils/renderer-failure';
 import { reserveWebglContext } from '../../utils/terminal-webgl';
 import type { KnowledgeGraphEdge, KnowledgeGraphNode } from '../../../shared/types';
 
@@ -329,6 +331,12 @@ export function useKnowledgeGraphScene(options: UseKnowledgeGraphSceneOptions): 
       // the slot immediately: holding a reservation for a context we never got
       // would shrink the terminals' budget for nothing.
       releaseContext();
+      // No renderer is the machine's (WebGL off, the context cap) and is not reported. Any
+      // other throw came from building the scene, and the surface then says the map needs a
+      // GPU on a machine that has one.
+      if (!(error instanceof WebglRendererUnavailableError)) {
+        reportRendererFailure('knowledge_graph', 'scene_build', error);
+      }
       unavailableReason = error instanceof Error ? error.message : 'WebGL is unavailable';
       console.warn('[knowledge-graph] WebGL unavailable; the map cannot be drawn here:', error);
     }

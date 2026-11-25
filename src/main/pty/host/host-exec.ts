@@ -96,6 +96,8 @@ function realPathOf(file: string): string | null {
   try {
     return realpathSync.native(file);
   } catch {
+    // report-ok: a path that does not exist or cannot be read is no link to compare,
+    // and the callers still compare it by path and by name.
     return null;
   }
 }
@@ -220,8 +222,8 @@ export function runHostExec(request: HostExecRequest): Promise<HostExecResult> {
         });
       }
     } catch (error) {
-      // A synchronous throw (an invalid argument) is a failed run, as
-      // promisify would report it.
+      // report-ok: a synchronous throw (an invalid argument) is handed back as the failed
+      // run, which main's execAsync rejects with, as promisify would.
       const thrown: ChildProcessFailure = error instanceof Error ? error : new Error(String(error));
       resolve({ ok: false, error: failure(thrown, '', '') });
     }

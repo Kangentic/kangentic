@@ -104,7 +104,8 @@ export function recordTerminalTrace(
     try {
       listener(entry);
     } catch {
-      // A diagnostic listener must never break the resize or replay that traced.
+      // report-ok: dev builds only. A diagnostic listener that throws must never break
+      // the resize or replay that traced.
     }
   }
 }

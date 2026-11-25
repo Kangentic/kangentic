@@ -20,6 +20,9 @@ export function safeKillPty(ptyRef: PtyHandle): boolean {
     ptyRef.kill();
     return true;
   } catch (error) {
+    // report-ok: the handle throws ESRCH for a PTY that already exited, which the false
+    // return tells the caller. A kill that fails in the pty host is relayed from there
+    // as pty_kill.
     const errnoCode = (error as NodeJS.ErrnoException)?.code;
     if (errnoCode !== 'EACCES' && errnoCode !== 'ESRCH') {
       console.warn('[SESSION] pty.kill() failed:', error);

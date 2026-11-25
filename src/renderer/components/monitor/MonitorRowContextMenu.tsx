@@ -74,7 +74,10 @@ export function MonitorRowContextMenu({
         if (cancelled || !bundle) return;
         setResolved({ task: bundle.task, swimlanes: bundle.swimlanes });
       })
-      .catch(() => { /* menu simply does not open; the row click still works */ });
+      .catch(() => {
+        // report-ok: main's IPC wrap reports a handler's rejection. The menu simply does not
+        // open, and the row click still works.
+      });
     return () => { cancelled = true; };
   }, [row.projectId, row.taskId]);
 
@@ -83,11 +86,12 @@ export function MonitorRowContextMenu({
   /** Surface a failed task mutation. These actions call the project-stamped IPC
    *  directly rather than through the board store, because the row's project may
    *  not be the open one - which also means they do not inherit the board slice's
-   *  rollback-and-toast handling, so each one reports for itself. Without this the
+   *  rollback-and-toast handling, so each one toasts for itself. Without this the
    *  rejection reaches only the global `unhandledrejection` listener and the user
    *  sees an unchanged row with no explanation. The title names the action
-   *  ("Couldn't move task"); a click on the card opens the task. */
-  const reportActionFailure = (failureTitle: string, error: unknown): void => {
+   *  ("Couldn't move task"); a click on the card opens the task. It only toasts:
+   *  the write is one IPC call, and main's handler wrap reports its rejection. */
+  const toastActionFailure = (failureTitle: string, error: unknown): void => {
     const taskTitle = row.taskTitle;
     // Main's reason, as written.
     const reason = asSentence(describeIpcError(error));
@@ -106,7 +110,9 @@ export function MonitorRowContextMenu({
   const runWrite = (failureTitle: string, write: Promise<unknown>): void => {
     void write
       .then(refreshRows)
-      .catch((error) => reportActionFailure(failureTitle, error))
+      // report-ok: main's IPC wrap reports a handler's rejection, and the toast shows
+      // main's reason.
+      .catch((error) => toastActionFailure(failureTitle, error))
       .finally(() => resyncBoardAfterMonitorWrite(row.projectId));
   };
 

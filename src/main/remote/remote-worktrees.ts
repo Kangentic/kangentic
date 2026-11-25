@@ -17,7 +17,7 @@
  * files copied from the project root, and the Post-Worktree Script. The last is shell text for this
  * computer, so it never runs here (`WorktreeManager.runWorktreeInitScript`).
  *
- * Imports nothing of electron.
+ * Main only: it reports a removal it refuses through `remote-report.ts`, which reaches Sentry.
  */
 
 import * as fs from 'node:fs/promises';
@@ -29,6 +29,7 @@ import { taskWorktreeFolderFor, taskWorktreePathFor } from '../git/task-worktree
 import type { RemoteWorktreeBackend, RemoteWorktreeResolver, RemoteWorktreeTask } from '../git/remote-worktree';
 import type { EnsureWorktreeResult } from '../git/worktree-manager';
 import type { HostCommandRequest, HostCommandResult } from './protocol/messages';
+import { remoteHostReporter } from './remote-report';
 import { RefusalError } from '../../shared/refusal';
 
 const CREATE_TIMEOUT_MS = 240_000;
@@ -244,6 +245,9 @@ export class HostWorktrees implements RemoteWorktreeBackend {
     try {
       hostPath = hostWorktreePathFor(worktreePath, this.deps.shellFolder, this.deps.hostRepoPath);
     } catch (error) {
+      // A removal was asked for a path that is no worktree folder of this project. Nothing is
+      // removed, so the task's worktree stays on the host and only a log line says why.
+      remoteHostReporter.report(error, { tags: { stage: 'worktree_path' } });
       this.deps.log?.(`[WORKTREE] ${error instanceof Error ? error.message : String(error)}`);
       return false;
     }
@@ -255,10 +259,13 @@ export class HostWorktrees implements RemoteWorktreeBackend {
         return false;
       }
     } catch (error) {
-      // A host out of reach leaves the worktree where it is, and the task keeps its path to retry with.
+      // report-ok: a host out of reach leaves the worktree where it is. The caller gets false, so
+      // the task keeps its path to retry with.
       this.deps.log?.(`[WORKTREE] could not reach the host to remove ${hostPath}: ${error instanceof Error ? error.message : String(error)}`);
       return false;
     }
+    // report-ok: the host's worktree is already removed. A stand-in folder that will not delete
+    // stays on this computer, and a later worktree at the same path is made over it.
     await fs.rm(worktreePath, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 }).catch(() => undefined);
     return true;
   }

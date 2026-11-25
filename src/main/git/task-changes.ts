@@ -2,6 +2,7 @@ import { gitAt, type GitClient } from './git-client';
 import { DiffService, EMPTY_TREE_HASH } from './diff-service';
 import { parseCommitGraphLog } from './commit-graph';
 import { chooseBranchForm, classifyBaseRefWith } from './base-ref';
+import { gitWorktreeReporter } from './git-worktree-report';
 import type {
   GitCommitGraphCommit,
   GitDiffFileEntry,
@@ -143,6 +144,7 @@ async function resolveCommit(git: GitClient, ref: string): Promise<string | null
     const sha = (await git.raw(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])).trim();
     return sha || null;
   } catch {
+    // report-ok: git fails when the ref does not peel to a commit here, which is the answer.
     return null;
   }
 }
@@ -151,6 +153,8 @@ async function mergeBaseOf(git: GitClient, args: string[]): Promise<string[]> {
   try {
     return (await git.raw(['merge-base', ...args])).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   } catch {
+    // report-ok: git fails when a commit does not resolve here, and no merge base is the
+    // answer every caller reads as not related.
     return [];
   }
 }
@@ -172,7 +176,11 @@ async function commitsInClone(git: GitClient, shas: readonly string[]): Promise<
   try {
     const output = await git.raw(['log', '--no-walk=sorted', '--ignore-missing', `--format=${COMMIT_FORMAT}`, ...shas]);
     found = parseCommitGraphLog(output);
-  } catch {
+  } catch (error) {
+    // `--ignore-missing` already drops a hash this clone lacks, so a failure here is not
+    // "not in this clone". The completed task's Changes says so anyway, for commits that
+    // are there.
+    gitWorktreeReporter.report(error, { tags: { stage: 'changes_commits_in_clone' } });
     return { commits: [], oldestCommon: null };
   }
   return orderNewestFirst(git, found);
@@ -195,6 +203,8 @@ async function orderNewestFirst(git: GitClient, commits: GitCommitGraphCommit[])
   try {
     walked = (await git.raw(['rev-list', '--topo-order', ...shas, `^${common}`])).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   } catch {
+    // report-ok: a failed walk keeps the date order git already returned, which changes
+    // only the order the commits list in.
     return { commits, oldestCommon: common };
   }
   const byHash = new Map(commits.map((commit) => [commit.hash, commit]));
@@ -234,6 +244,8 @@ async function landedRun(
     const output = await git.raw(['log', '--first-parent', `--max-count=${TASK_CHANGES_MAX_COMMITS + 1}`, `--format=${COMMIT_FORMAT}`, newest, ...exclude]);
     runCommits = parseCommitGraphLog(output);
   } catch {
+    // report-ok: a failed read means the commits are not shown as one run, and the caller
+    // lists each commit's own diff instead, so every commit and file still shows.
     return null;
   }
   const wanted = new Set(shas);
@@ -276,7 +288,10 @@ async function unmergedBranchRange(
   try {
     const output = await git.raw(['log', '--first-parent', `--max-count=${TASK_CHANGES_MAX_COMMITS + 1}`, `--format=${COMMIT_FORMAT}`, head, `^${start}`]);
     commits = parseCommitGraphLog(output);
-  } catch {
+  } catch (error) {
+    // Both ends of this range just resolved, so the read should not fail. When it does,
+    // the completed task's Changes reads "no commits" for a branch that has them.
+    gitWorktreeReporter.report(error, { tags: { stage: 'changes_branch_log' } });
     return null;
   }
   if (commits.length === 0) return null;
@@ -292,6 +307,8 @@ async function reflogCreationPoint(git: GitClient, branchName: string): Promise<
     const match = /^([0-9a-f]{40,64}) branch: Created from /.exec(oldest);
     return match ? match[1] : null;
   } catch {
+    // report-ok: a branch that is gone or has no reflog has no creation point, and the
+    // merge-base stands in.
     return null;
   }
 }
@@ -341,7 +358,10 @@ async function withUnionFiles(
         const commit = diffed[index];
         const range = { base: commit.parents[0] ?? EMPTY_TREE_HASH, head: commit.hash };
         diffs[index] = (await diffService.getDiffFiles({ projectPath: input.repoPath, baseBranch: input.baseBranch, range })).files;
-      } catch {
+      } catch (error) {
+        // The list goes on without this commit's files and line counts, and nothing on it
+        // says one is missing.
+        gitWorktreeReporter.report(error, { tags: { stage: 'changes_commit_files' } });
         diffs[index] = [];
       }
     }

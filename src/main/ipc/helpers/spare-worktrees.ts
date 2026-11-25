@@ -2,6 +2,7 @@ import { worktreeFolderFromPath } from '../../../shared/worktree-folder';
 import { worktreeSkipBeforeBase } from '../../git/worktree-manager';
 import { remoteWorktreeBackendFor } from '../../git/remote-worktree';
 import type { SpareInputs, SpareProjectHooks } from '../../git/spare-worktree';
+import { handlerStepReporter } from './handler-step-report';
 import type { TaskRepository } from '../../db/repositories/task-repository';
 import type { Task } from '../../../shared/types';
 import { resolveProjectDefaultBaseBranch } from './default-base-branch';
@@ -99,11 +100,19 @@ export function sweepSpareWorktreesAtOpen(
   try {
     inputs = hooks.inputs();
   } catch (error) {
+    // The pass is skipped, so a spare built from old settings stays claimable until the
+    // next open.
+    handlerStepReporter.report(error, { tags: { area: 'spares', step: 'sweep_inputs_read' } });
     console.warn(`[SPARE] startup pass skipped for ${projectPath}: could not read its settings:`, error);
     return;
   }
   void pool.sweep(projectPath, inputs, hooks.referencedFolders)
-    .catch((error: unknown) => console.warn(`[SPARE] startup pass failed for ${projectPath}:`, error));
+    .catch((error: unknown) => {
+      // The sweep reads the task rows itself, so a failed read lands here and leaves stale
+      // and half-built spares on disk until the next open.
+      handlerStepReporter.report(error, { tags: { area: 'spares', step: 'startup_sweep' } });
+      console.warn(`[SPARE] startup pass failed for ${projectPath}:`, error);
+    });
 }
 
 /**
@@ -128,6 +137,10 @@ export async function discardProjectSpares(
     try {
       referenced = referencedWorktreeFolders(tasks);
     } catch (error) {
+      // Every spare stays, ready records included: without the task rows a sweep cannot
+      // tell a spare from a worktree a task adopted, and would delete that task's folder.
+      // The caller's delete or relocate goes on with the spares still on disk.
+      handlerStepReporter.report(error, { tags: { area: 'spares', step: 'referenced_folders_read' } });
       console.warn(`[SPARE] Could not read the task rows of ${projectPath}; keeping its spares:`, error);
       return;
     }

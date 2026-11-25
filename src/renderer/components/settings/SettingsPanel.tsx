@@ -137,7 +137,9 @@ export function SettingsPanel() {
   }, []);
 
   useEffect(() => {
+    // report-ok: main's IPC wrap reports a handler's rejection, and the shell list stays as it was.
     window.electronAPI.shell.getAvailable().then(setShells).catch(() => {});
+    // report-ok: main's IPC wrap reports a handler's rejection, and the font list stays as it was.
     window.electronAPI.font.getAvailable().then(setFonts).catch(() => {});
     // The store already holds the agent inventory from app bootstrap (App.tsx),
     // so opening Settings does not need to re-probe - only fetch when the store

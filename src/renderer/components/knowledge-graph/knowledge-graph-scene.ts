@@ -857,15 +857,36 @@ export function buildEdgeStrengths(
   return strengths;
 }
 
+/**
+ * three's renderer could not be made on the canvas: WebGL is off on this machine, or the
+ * page is at Chromium's context cap. That is the machine's, not a defect, so the host shows
+ * the map's "needs a GPU" state and reports nothing. It keeps the message three wrote. A
+ * throw from anything after the renderer is the scene's own and carries no such class.
+ */
+export class WebglRendererUnavailableError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : 'WebGL is unavailable', { cause });
+    this.name = 'WebglRendererUnavailableError';
+  }
+}
+
+function createRenderer(canvas: HTMLCanvasElement): WebGLRenderer {
+  try {
+    return new WebGLRenderer({
+      canvas,
+      antialias: true,
+      alpha: true,
+      powerPreference: 'high-performance',
+    });
+  } catch (error) {
+    throw new WebglRendererUnavailableError(error);
+  }
+}
+
 export function createKnowledgeGraphScene(options: KnowledgeGraphSceneOptions): KnowledgeGraphScene {
   const { canvas, nodes, edges, edgeColor, regionOf } = options;
 
-  const renderer = new WebGLRenderer({
-    canvas,
-    antialias: true,
-    alpha: true,
-    powerPreference: 'high-performance',
-  });
+  const renderer = createRenderer(canvas);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO));
   renderer.setClearColor(0x000000, 0);
 

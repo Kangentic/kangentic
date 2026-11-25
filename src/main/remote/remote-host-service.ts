@@ -121,6 +121,8 @@ export class RemoteHostService {
       if (!this.droppedWhileConnecting.has(hostId)) return running;
       const queued = this.queuedReconnects.get(hostId);
       if (queued) return queued;
+      // report-ok: the dropped connect's failure went to the caller that started it. This one only
+      // waits for it to end, then connects for itself.
       const reconnect = running.catch(() => undefined).then(() => {
         this.queuedReconnects.delete(hostId);
         return this.connect(hostId);
@@ -178,6 +180,8 @@ export class RemoteHostService {
   private async withKeyPrompt(host: SshHost, args: string[], error: unknown): Promise<unknown> {
     if (host.key_path || !this.deps.captureKeyPrompt) return error;
     if (!(error instanceof Error) || !/permission denied/i.test(error.message)) return error;
+    // report-ok: the repeated sign-in could not be run, so ssh's own refusal is thrown as it was,
+    // without the prompt line under it.
     const prompt = await this.deps.captureKeyPrompt(args).catch(() => null);
     if (prompt && !error.message.includes(prompt)) error.message = `${error.message}\n${prompt}`;
     return error;

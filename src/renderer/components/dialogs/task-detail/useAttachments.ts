@@ -37,13 +37,16 @@ export function useAttachments(taskId: string, updateAttachmentCount: (taskId: s
               const previewUrl = await window.electronAPI.attachments.getDataUrl(attachment.id);
               return { ...attachment, previewUrl };
             } catch {
+              // report-ok: main's IPC wrap reports a handler's rejection, and the attachment
+              // lists without a preview.
               return { ...attachment, previewUrl: undefined };
             }
           }),
         );
         if (!cancelled) setSavedAttachments(withPreviews);
       } catch {
-        // No attachments API (e.g. in tests) - ignore
+        // report-ok: main's IPC wrap reports a handler's rejection, and the task shows no
+        // attachments. A test with no attachments API lands here too.
       }
     })();
     return () => { cancelled = true; };
@@ -72,7 +75,15 @@ export function useAttachments(taskId: string, updateAttachmentCount: (taskId: s
         reader.readAsDataURL(file);
       });
     } catch (error) {
+      // report-ok: a file the page cannot read (moved, locked, or a folder) is the user's own
+      // file, and the toast names it.
       console.error('Failed to read attachment:', error);
+      const fileName = file.name;
+      useToastStore.getState().addToast({
+        title: i18n._(msg`Couldn't attach file`),
+        message: i18n._(msg`"${{ fileName }}" could not be read.`),
+        variant: 'warning',
+      });
       return;
     }
     const base64 = dataUrl.split(',')[1];
@@ -89,12 +100,14 @@ export function useAttachments(taskId: string, updateAttachmentCount: (taskId: s
         try {
           previewUrl = await window.electronAPI.attachments.getDataUrl(attachment.id);
         } catch {
-          // Preview not available
+          // report-ok: main's IPC wrap reports a handler's rejection, and the new attachment
+          // lists without a preview.
         }
       }
       setSavedAttachments((previous) => [...previous, { ...attachment, previewUrl }]);
       updateAttachmentCount(taskId, 1);
     } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the toast shows the reason.
       console.error('Failed to add attachment:', error);
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't add "${{ filename }}"`),
@@ -110,6 +123,7 @@ export function useAttachments(taskId: string, updateAttachmentCount: (taskId: s
       setSavedAttachments((previous) => previous.filter((attachment) => attachment.id !== id));
       updateAttachmentCount(taskId, -1);
     } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the toast shows the reason.
       console.error('Failed to remove attachment:', error);
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't remove attachment`),

@@ -129,6 +129,7 @@ import type { ActivityReason, ActivityState, MobileDeviceConnectionState, Sessio
 import { isWorkflowAgentSession } from '../../../shared/session-owner';
 import type { SessionManager, TurnEndedPayload } from '../../pty/session-manager';
 import type { BoardChangedEvent, BoardEventBus } from '../board-event-bus';
+import { mobileBridgeReporter } from '../mobile-bridge-report';
 import type { PushRegistration, PushRegistrationEntry, PushRegistrationStore } from './push-registration-store';
 import { createExpoWakeChannel, type FetchLike } from './expo-push-client';
 import { PushClearLedger, type OutstandingNotification, type PickedClear, type PushClearIdentity } from './push-clear-ledger';
@@ -465,6 +466,9 @@ export class PushNotifier {
       if (event.change !== 'task-updated') return;
       for (const taskId of event.ids) this.reconcileTaskPlacement(event.projectId, taskId);
     } catch (error) {
+      // The notifications this move, archive or delete made stale stay on the
+      // phone, and nothing but this log line says so.
+      mobileBridgeReporter.report(error, { tags: { stage: 'push_resolve' } });
       console.warn('[mobile-bridge/push-notifier] resolving clears for a board change failed:', error);
     }
   };
@@ -667,7 +671,10 @@ export class PushNotifier {
       let sealedBlob: string;
       try {
         sealedBlob = this.sealEnvelope(hexToBytes(registration.pushKeyHex), deviceStaticPublicKey, sealedPlaintext);
-      } catch {
+      } catch (error) {
+        // A stored key that will not seal fails every later push the same way, so
+        // this phone gets no notification again until it registers anew.
+        mobileBridgeReporter.report(error, { tags: { stage: 'push_key' } });
         continue; // a malformed stored key must not take down the other devices' sends
       }
       if (!userRequested) this.cooldowns.set(cooldownKey, now);
@@ -746,6 +753,10 @@ export class PushNotifier {
     } catch (error) {
       this.releaseCooldownIfUnclaimed(cooldownKey, stampedAt);
       this.forgetUndelivered(delivery);
+      // sendExpoPush never throws, so a throw is a defect in the send path or in
+      // a replacement WakeChannel, and the phone got no notification. The report
+      // carries the error's name and frames, never its text or the token.
+      mobileBridgeReporter.report(error, { tags: { stage: 'push_send' } });
       // The stack is kept, not reduced to the message: sendExpoPush never
       // throws, so this branch only ever fires for a replacement
       // WakeChannel, where the stack is the whole diagnostic. It is
@@ -884,7 +895,10 @@ export class PushNotifier {
         clears: picked.map((pick) => pick.entry),
         sentAt: now,
       });
-    } catch {
+    } catch (error) {
+      // As for a visible push: a stored key that will not seal never will, so
+      // the stale notifications on this phone are never cleared.
+      mobileBridgeReporter.report(error, { tags: { stage: 'push_key' } });
       this.clearLedger.dropPending(deviceId); // a malformed stored key will not seal the next try either
       return;
     }
@@ -938,6 +952,9 @@ export class PushNotifier {
       console.warn(`[mobile-bridge/push-notifier] clear push to ${deviceId.slice(0, 8)} failed:`, result.reason, redactPushTokens(result.detail));
     } catch (error) {
       this.releaseStandaloneStampIfUnclaimed(deviceId, stampedAt);
+      // As in deliver(): only a defect or a replacement WakeChannel throws here,
+      // and the notification the desk already resolved stays on the phone.
+      mobileBridgeReporter.report(error, { tags: { stage: 'push_clear' } });
       console.warn(`[mobile-bridge/push-notifier] clear push to ${deviceId.slice(0, 8)} threw:`, describeThrownSend(error));
     }
   }

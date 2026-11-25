@@ -27,6 +27,7 @@ import * as path from 'node:path';
 import { isUnderLocalRoot, localPathToHost, type SshCliPlace } from '../agent/shared/cli-target';
 import { isPlainRelativePath, type RemoteFileDeclaration } from '../agent/shared/remote-files';
 import type { HostFileWrite } from './protocol/messages';
+import { remoteHostReporter } from './remote-report';
 import { RefusalError } from '../../shared/refusal';
 
 const LOG_TAG = '[HOST_FILES]';
@@ -66,6 +67,7 @@ function isUnreadableJson(relative: string, content: string): boolean {
     JSON.parse(text);
     return false;
   } catch {
+    // report-ok: a parse failure is the answer being asked for, the file is not plain JSON.
     return true;
   }
 }
@@ -291,7 +293,8 @@ export class HostFileSync {
       }
       console.warn(`${LOG_TAG} ${excludeFile} kept changing, so the new files stay visible in git status.`);
     } catch (error) {
-      // Best-effort, as locally: the file only stays visible in git status.
+      // report-ok: the host could not be asked or would not take the write. As on this computer,
+      // the new files only stay visible in the host's git status, and the session goes on.
       console.warn(`${LOG_TAG} could not add the new files to the host's git exclude: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
@@ -456,6 +459,9 @@ export async function settleHostFiles(sessionId: string): Promise<void> {
   try {
     await sync.settle();
   } catch (error) {
+    // The host's own CLI settings keep the hook and MCP entries Kangentic added for a session
+    // that is over, so the user's CLI on the host runs with them until they are edited out.
+    remoteHostReporter.report(error, { tags: { stage: 'restore_files' } });
     console.warn(`${LOG_TAG} could not restore the host's files for session ${sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
   }
 }

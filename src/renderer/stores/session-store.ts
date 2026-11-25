@@ -604,7 +604,11 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
       // session before rethrowing, so the card stops reading as paused. No
       // caller is left to run the task detail's reconcile probe: the detail
       // closes before the suspend settles, and the card menu has no window.
-      await get().reconcileSession(taskId, stampedProjectId).catch((reconcileError) => {
+      await get().reconcileSession(taskId, stampedProjectId).catch((reconcileError: unknown) => {
+        // Reports a throw from writing the answer into the replica, which
+        // leaves the card reading paused over a running agent; a rejection main
+        // saw is dropped by the reporter.
+        reportRendererFailure('session_sync', 'reconcile_after_refused_suspend', reconcileError);
         console.warn('[session-store] reconcile after a refused suspend failed', reconcileError);
       });
       throw error;
@@ -636,6 +640,8 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
     // calls: a store test runs with no bridge, and this must never fail an open.
     void window.electronAPI?.sessions?.resumeOnOpen?.(taskId, projectId ?? useProjectStore.getState().currentProject?.id ?? null)
       ?.catch((error: unknown) => {
+        // report-ok: main's IPC wrap reports a handler's rejection, and the task opens in the
+        // state it was in.
         console.warn('[session-store] resume on open failed', error);
       });
   },

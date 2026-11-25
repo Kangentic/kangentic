@@ -73,7 +73,8 @@ export function requestMonitorDetail(
       if (destination.kind === 'focused-existing') pendingInitialEdit.delete(anchor);
     })
     .catch((error) => {
-      // Nothing opens, so nothing will take the flag either.
+      // report-ok: main's IPC wrap reports a handler's rejection. Nothing opens, so nothing
+      // will take the flag either.
       pendingInitialEdit.delete(anchor);
       console.error('[monitor] Failed to open task detail:', error);
     });

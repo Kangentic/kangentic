@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { writeTransaction } from '../../db/transaction';
+import { handlerStepReporter } from './handler-step-report';
 import type { ToolBreakdownReplayResult } from '../../activity-engine/tool-breakdown-replay';
 
 /**
@@ -84,9 +85,11 @@ export async function repairToolBreakdownDurations(
       })();
       repaired += batchRepaired;
       unreadable.push(...batchUnreadable);
-    } catch {
-      // The worker is down or a write failed: leave everything as it was, so
-      // the next open starts this list again.
+    } catch (error) {
+      // The worker is down (which the reporter skips) or a write failed: leave everything
+      // as it was, so the next open starts this list again. Until one finishes, Stats
+      // keeps the wrong per-tool durations.
+      handlerStepReporter.report(error, { tags: { area: 'session_metrics', step: 'tool_breakdown_batch' } });
       return { completed: false, scanned: start, repaired, unreadable: unreadable.length };
     }
   }
@@ -100,9 +103,11 @@ export async function repairToolBreakdownDurations(
       upsert.run(TOOL_BREAKDOWN_REPAIR_FLAG, new Date().toISOString());
       db.prepare('DELETE FROM schema_meta WHERE key = ?').run(TOOL_BREAKDOWN_REPAIR_RETRY);
     })();
-  } catch {
+  } catch (error) {
     // The rows are patched; without the flag the next open replays again and
-    // the patch, which is idempotent, changes nothing more.
+    // the patch, which is idempotent, changes nothing more. Every open pays for
+    // the replay until the flag is written.
+    handlerStepReporter.report(error, { tags: { area: 'session_metrics', step: 'tool_breakdown_flag' } });
     return { completed: false, scanned: recordIds.length, repaired, unreadable: unreadable.length };
   }
   return { completed: true, scanned: recordIds.length, repaired, unreadable: 0 };
@@ -118,7 +123,8 @@ function readRetryIds(db: Database.Database): string[] | null {
     const parsed: unknown = JSON.parse(row.value);
     if (Array.isArray(parsed) && parsed.every((id) => typeof id === 'string')) return parsed;
   } catch {
-    // A corrupt list falls back to every record, which the patch keeps idempotent.
+    // report-ok: a corrupt retry list in a row only Kangentic writes falls back to every
+    // record, which the patch keeps idempotent.
   }
   return null;
 }

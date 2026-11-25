@@ -101,6 +101,8 @@ export function fitHookRecord(content: string, maxJsonBytes: number): string {
   try {
     parsed = JSON.parse(stdin);
   } catch {
+    // report-ok: runs on the host, which cannot report; an over-size stdin that is not JSON cannot
+    // be trimmed to fit a frame, so the header alone is sent.
     return header;
   }
   for (const limit of [20_000, 2_000, 200, 20]) {
@@ -195,17 +197,22 @@ export class HookWatcher {
       }
       await this.scanStatus(sessionId, entry);
     } catch (error) {
-      // A folder the session removed under us, or an unreadable file: the next poll tries again.
+      // report-ok: runs on the host, which cannot report; a folder the session removed under us, or
+      // an unreadable file, is tried again on the next poll.
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') console.warn(`[hook-watcher] ${sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
   private async scanFolder(sessionId: string, entry: Watched, folder: 'inbox' | 'requests'): Promise<void> {
     const folderPath = path.join(entry.directory, folder);
+    // report-ok: runs on the host, which cannot report; a folder no hook has written to yet reads
+    // as no records, and the next poll lists it again.
     const names = publishedNames(await fs.readdir(folderPath).catch(() => [] as string[]), RECORD_EXTENSION[folder]);
     for (const name of names) {
       const key = `${folder}/${name}`;
       if (entry.sent.has(key)) continue;
+      // report-ok: runs on the host, which cannot report; a record claimed or given up on since the
+      // listing is gone, and one still there is not marked sent, so the next poll reads it again.
       const content = await fs.readFile(path.join(folderPath, name), 'utf8').catch(() => null);
       if (content === null) continue;
       // Every record stays on the host until Kangentic claims it (see the header).
@@ -238,10 +245,14 @@ export class HookWatcher {
 
   private async scanStatus(sessionId: string, entry: Watched): Promise<void> {
     if (!entry.statusFile) return;
+    // report-ok: runs on the host, which cannot report; the agent has not written its status file
+    // yet, and the next poll looks again.
     const stats = await fs.stat(entry.statusFile).catch(() => null);
     if (!stats) return;
     const signature = `${stats.mtimeMs}:${stats.size}`;
     if (signature === entry.statusSignature) return;
+    // report-ok: runs on the host, which cannot report; a status file replaced between the stat and
+    // the read keeps its old signature, so the next poll reads it.
     const content = await fs.readFile(entry.statusFile, 'utf8').catch(() => null);
     if (content === null) return;
     entry.statusSignature = signature;

@@ -19,6 +19,7 @@ import type {
 import type { IpcContext } from '../ipc-context';
 import { getProjectRepos, resolveProjectContext } from '../helpers/project-repos';
 import { translatePasteSubmitError } from '../helpers/paste-error-message';
+import { handlerStepReporter } from '../helpers/handler-step-report';
 import { browserUrlStore } from '../../browser/browser-url-store';
 import { browserPaneRegistry } from '../../browser/browser-pane-registry';
 import { clearBrowserPaneReason } from '../../browser/browser-pane-reason';
@@ -88,7 +89,10 @@ import { RefusalError } from '../../../shared/refusal';
 function isCommandTerminalSlotLive(context: IpcContext, projectId: string, slot: string): boolean {
   try {
     return context.sessionManager.findLiveCommandTerminalSession(projectId, slot) !== undefined;
-  } catch {
+  } catch (error) {
+    // Nothing here is known to throw. If it does, a running Command Terminal reads as
+    // gone, so its agent's page is not handed off and its pane cannot be opened.
+    handlerStepReporter.report(error, { tags: { area: 'browser', step: 'terminal_slot_lookup' } });
     return false;
   }
 }
@@ -104,7 +108,11 @@ export function registerBrowserHandlers(context: IpcContext): void {
     taskExists: (projectId, taskId) => {
       try {
         return getProjectRepos(context, projectId).tasks.getById(taskId) !== undefined;
-      } catch {
+      } catch (error) {
+        // No project open is a refusal, which the reporter skips, and a database that will
+        // not open was marked by the open-failure notifier. What is left is a query that
+        // failed: the agent is then told its task does not exist and gets no pane.
+        handlerStepReporter.report(error, { tags: { area: 'browser', step: 'task_exists_read' } });
         return false;
       }
     },
@@ -152,9 +160,11 @@ export function registerBrowserHandlers(context: IpcContext): void {
         const commandTerminal = parseCommandTerminalBrowserOwner(taskId);
         if (commandTerminal) return isCommandTerminalSlotLive(context, commandTerminal.projectId, commandTerminal.slot);
         return context.sessionManager.hasLiveSessionForTask(taskId);
-      } catch {
+      } catch (error) {
         // Never let a lookup failure decide policy: no hand-off is the safe
         // answer, since a spurious one would open a browser nobody asked for.
+        // The cost is an agent's page that dies with the window it was in.
+        handlerStepReporter.report(error, { tags: { area: 'browser', step: 'live_session_lookup' } });
         return false;
       }
     },
@@ -264,6 +274,9 @@ export function registerBrowserHandlers(context: IpcContext): void {
           await fs.promises.copyFile(annotationCapturePath(projectRoot, input.taskId, captureId), target);
           captures.set(captureId, agentRelative(target));
         } catch (caught) {
+          // The Send goes out without this annotation's page capture, so the agent gets
+          // the note with no picture of what it points at.
+          handlerStepReporter.report(caught, { tags: { area: 'browser', step: 'annotation_capture_copy' } });
           console.warn(`[browser] annotation ${annotation.number} capture missing`, caught);
         }
       }
@@ -417,6 +430,9 @@ export function registerBrowserHandlers(context: IpcContext): void {
       const partition = browserPartitionForOwner(projectId, taskId);
       await syncJarFromIdentity(partition, projectId);
     } catch (error) {
+      // The pane opens without the project's shared sign-ins, so the user is signed out
+      // of sites they were signed in to.
+      handlerStepReporter.report(error, { tags: { area: 'browser', step: 'jar_seed' } });
       console.warn('[browser-pane] ensureJar failed:', error);
     }
   });

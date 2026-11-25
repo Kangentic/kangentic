@@ -21,6 +21,7 @@ import {
 } from '../helpers';
 import { resolveProjectContext } from '../helpers/project-repos';
 import { announceTaskWrite } from '../helpers/task-write-announce';
+import { handlerStepReporter } from '../helpers/handler-step-report';
 import { deleteTaskWithCleanup, drainAutoNameAskedIds } from '../helpers/task-delete';
 import { trackEvent } from '../../analytics/analytics';
 import { reportPreflightFailure } from '../../pty/agent-launch-report';
@@ -302,6 +303,8 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
           force: true,
           preserveLinkOnNotFound: true,
         }).catch((error) => {
+          // report-ok: linkPRForTask reports a failed resolve itself (prReporter), and the card
+          // keeps its bare PR pill until the background sweep resolves the link.
           console.error(`[pr-linking] link-time resolve failed for task ${String(input.id).slice(0, 8)}:`, error);
         });
       }
@@ -415,6 +418,8 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
                   `cleanupTaskResources for task ${shortId}`,
                 );
               } catch (error) {
+                // report-ok: kept in cleanupError and added to failures[] below, which the
+                // bulk delete's result lists for the user beside what was deleted.
                 cleanupError = error;
                 const message = error instanceof Error ? error.message : String(error);
                 console.warn(
@@ -444,7 +449,11 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
             });
           }
         } catch (error) {
-          // Reaches here only if withTaskLock itself failed (unexpected).
+          // Reaches here only if withTaskLock itself failed (unexpected): the row or its
+          // attachments could not be deleted. The message goes to failures[], which the
+          // result lists for the user, and the failure is reported here because the
+          // handler still resolves.
+          handlerStepReporter.report(error, { tags: { area: 'task_crud', step: 'bulk_delete_item' } });
           const message = error instanceof Error ? error.message : String(error);
           console.error(`[TASK_BULK_DELETE] lock failure ${shortId}:`, error);
           failures.push({ id, error: message });

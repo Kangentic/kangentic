@@ -73,6 +73,8 @@ async function listBranches(projectPath: string): Promise<string[]> {
     );
     return stdout.split('\n').map((line) => line.trim()).filter(Boolean).slice(0, MAX_LISTED_BRANCHES);
   } catch {
+    // report-ok: the list only fills the "Branches found" clause of the unresolvable-base
+    // error, which the user still sees without it.
     return [];
   }
 }

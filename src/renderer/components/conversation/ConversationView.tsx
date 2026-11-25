@@ -1037,6 +1037,7 @@ function useCopyFeedback(text: string): { copied: boolean; handleCopy: () => voi
         if (timerRef.current) clearTimeout(timerRef.current);
         timerRef.current = setTimeout(() => setCopied(false), 1500);
       })
+      // report-ok: the OS denied the clipboard write, and the button does not flip to its check.
       .catch(() => undefined);
   }, [text]);
   useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
@@ -1477,6 +1478,7 @@ function summarizeInput(input: unknown): string {
     const json = JSON.stringify(input);
     return json.length > 120 ? `${json.slice(0, 120)}...` : json;
   } catch {
+    // report-ok: a tool input JSON cannot serialize is summarized by its string form.
     return String(input);
   }
 }
@@ -1485,6 +1487,7 @@ function prettyJson(input: unknown): string {
   try {
     return JSON.stringify(input, null, 2);
   } catch {
+    // report-ok: a tool input JSON cannot serialize is shown in its string form.
     return String(input);
   }
 }

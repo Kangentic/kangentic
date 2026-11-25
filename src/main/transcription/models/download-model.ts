@@ -21,6 +21,26 @@ export interface DownloadProgress {
 }
 
 /**
+ * The host or the network did not serve a model file: the request timed out, or
+ * the server answered that it is busy or failing (408, 429, any 5xx). It is an
+ * expected class (`EXPECTED_FAILURE_NAMES` in `analytics/handled-report.ts`), so
+ * no reporter files it, and the user sees its message as before. Every other
+ * status, a 404 above all, stays a plain `Error` and does report: a URL this
+ * build ships is wrong or gone, and only a release fixes that.
+ */
+export class ModelDownloadUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ModelDownloadUnavailableError';
+  }
+}
+
+/** A status a later try may not get: the server is busy, slow or failing. */
+function isUnavailableStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+/**
  * Download one URL to `destPath`, following redirects (HuggingFace 302s to a
  * CDN). Streams to a `.part` file and atomically renames on success. Calls
  * `onChunk` with the byte delta of each received chunk.
@@ -52,7 +72,8 @@ function downloadFileTo(
 
       if (status !== 200) {
         response.resume();
-        reject(new Error(`Download failed (${status}) for ${url}`));
+        const message = `Download failed (${status}) for ${url}`;
+        reject(isUnavailableStatus(status) ? new ModelDownloadUnavailableError(message) : new Error(message));
         return;
       }
 
@@ -82,7 +103,7 @@ function downloadFileTo(
     });
 
     request.on('timeout', () => {
-      request.destroy(new Error(`Timed out downloading ${url}`));
+      request.destroy(new ModelDownloadUnavailableError(`Timed out downloading ${url}`));
     });
     request.on('error', (requestError) => {
       fs.rm(partPath, { force: true }, () => reject(requestError));

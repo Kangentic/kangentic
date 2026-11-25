@@ -17,6 +17,7 @@ import {
   type WslHookReplyKind,
 } from '../../agent/shared/wsl-hook-transport';
 import { relayMcpMessage, type McpRelayInput } from './wsl-mcp-relay';
+import { wslTransportReporter } from './wsl-transport-report';
 
 /**
  * Kangentic's half of the WSL hook transport (`wsl-hook-transport.ts`): reads
@@ -53,6 +54,14 @@ const POLL_INTERVAL_MS = 250;
 /** The bridge's error log for this session, as the node bridge names it. */
 function bridgeErrorLogPath(eventsOutputPath: string): string {
   return path.join(path.dirname(eventsOutputPath), 'events-bridge.error.log');
+}
+
+/**
+ * Whether a write failed because its folder is gone. The session's folder goes
+ * with the session, so a write that lands after it is an ending, not a defect.
+ */
+function isMissingFolder(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | null)?.code === 'ENOENT';
 }
 
 /** Event and request files, in the order their hooks ran. Names start with a dot while written. */
@@ -117,6 +126,8 @@ export class WslHookInbox {
       // sync-read-ok: the exit flush, as above.
       names = publishedNames(fs.readdirSync(this.paths.inbox), '.rec');
     } catch {
+      // report-ok: the inbox folder is already gone with its session, so there is
+      // nothing left to drain.
       return;
     }
     const batch: Array<{ file: string; lines: string[] }> = [];
@@ -126,7 +137,8 @@ export class WslHookInbox {
         // sync-read-ok: the exit flush, as above.
         batch.push({ file, lines: this.linesFor(name, fs.readFileSync(file, 'utf-8')) });
       } catch {
-        // Gone already, or unreadable: nothing to add.
+        // report-ok: the file went between the listing and the read (a drain in flight
+        // took it), or cannot be read yet. It adds nothing, and one still there stays.
       }
     }
     this.commit(batch);
@@ -150,6 +162,10 @@ export class WslHookInbox {
         await this.ingestEvents();
       } while (this.drainAgain && !this.closed);
     } catch (error) {
+      // Every read and write in a drain catches its own failure, so this is a
+      // transform or a reply builder throwing. The files stay, the next poll
+      // throws again, and the distro CLI's events and hook answers never land.
+      wslTransportReporter.report(error, { tags: { stage: 'wsl_hook_drain' } });
       console.warn(`[wsl-hooks] ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       this.draining = false;
@@ -158,7 +174,9 @@ export class WslHookInbox {
 
   private async hasPending(): Promise<boolean> {
     const [events, requests] = await Promise.all([
+      // report-ok: a folder that is gone with its session holds nothing pending.
       fsPromises.readdir(this.paths.inbox).catch(() => []),
+      // report-ok: as above, a missing folder holds nothing pending.
       fsPromises.readdir(this.paths.requests).catch(() => []),
     ]);
     return publishedNames(events, '.rec').length > 0
@@ -167,11 +185,14 @@ export class WslHookInbox {
 
   private async ingestEvents(): Promise<void> {
     const generation = this.generation;
+    // report-ok: a folder that is gone with its session holds no event files.
     const names = publishedNames(await fsPromises.readdir(this.paths.inbox).catch(() => []), '.rec');
     if (names.length === 0) return;
     const batch: Array<{ file: string; lines: string[] }> = [];
     for (const name of names) {
       const file = path.join(this.paths.inbox, name);
+      // report-ok: the file went between the listing and the read, taken by the exit
+      // drain, so it adds nothing here.
       const content = await fsPromises.readFile(file, 'utf-8').catch(() => null);
       if (content !== null) batch.push({ file, lines: this.linesFor(name, content) });
     }
@@ -196,6 +217,10 @@ export class WslHookInbox {
         fs.appendFileSync(this.options.eventsOutputPath, lines.join('\n') + '\n');
         this.lastIngestFailure = null;
       } catch (error) {
+        // Until the append works, none of the distro CLI's hook events reach the
+        // engine and its card shows no activity. A folder that is gone is the
+        // session ending, not a defect.
+        if (!isMissingFolder(error)) wslTransportReporter.report(error, { tags: { stage: 'wsl_hook_append' } });
         // The files stay pending, so the next poll tries again: log a failure
         // once, not once per poll.
         const message = error instanceof Error ? error.message : String(error);
@@ -211,6 +236,7 @@ export class WslHookInbox {
       } catch (error) {
         // A file that cannot be removed is read again next drain, and its
         // event lands twice. Logged, since nothing else would show it.
+        wslTransportReporter.report(error, { tags: { stage: 'wsl_hook_remove' } });
         this.logError('ingest', `could not remove ${path.basename(entry.file)}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
@@ -233,11 +259,14 @@ export class WslHookInbox {
   }
 
   private async answerRequests(): Promise<void> {
+    // report-ok: a folder that is gone with its session holds no requests.
     const names = publishedNames(await fsPromises.readdir(this.paths.requests).catch(() => []), '.req');
     for (const name of names) {
       if (this.closed) return;
       if (this.relaysInFlight.has(name)) continue;
       const file = path.join(this.paths.requests, name);
+      // report-ok: the hook gave up and removed its request between the listing and
+      // the read, so nobody waits on an answer.
       const content = await fsPromises.readFile(file, 'utf-8').catch(() => null);
       if (content === null) continue;
       const record = parseWslHookRecord(content);
@@ -246,6 +275,8 @@ export class WslHookInbox {
         // too, and a removal happens once. So a call is either ours, and answered, or the bridge already told the
         // agent it failed, and it never runs. (For a host the claim was made on the host's own copy, in
         // `RemoteSessionRelay.claimRequest`, before this file existed.)
+        // report-ok: the removal is the claim. A file already gone is the bridge giving
+        // up first, so it told the agent the call failed and the call must not run.
         const taken = await fsPromises.unlink(file).then(() => true, () => false);
         if (!taken) continue;
         this.relaysInFlight.add(name);
@@ -255,7 +286,11 @@ export class WslHookInbox {
       const reply = await this.answer(name, record);
       if (this.closed) return;
       await this.writeResponse(name, reply, 'reply');
-      await fsPromises.rm(file, { force: true }).catch(() => undefined);
+      await fsPromises.rm(file, { force: true }).catch((error: unknown) => {
+        // An answered request that stays is answered again on every drain, and a
+        // plan approval writes its marker again each time.
+        wslTransportReporter.report(error, { tags: { stage: 'wsl_hook_remove' } });
+      });
     }
   }
 
@@ -269,8 +304,14 @@ export class WslHookInbox {
       });
       if (!this.closed) await this.writeResponse(name, answer, 'mcp');
     } catch (error) {
+      // The relay answers every failure it expects, so this is it throwing. The
+      // request was already claimed, so no answer is written and the agent's
+      // MCP call waits with nothing coming.
+      wslTransportReporter.report(error, { tags: { stage: 'wsl_hook_response' } });
       this.logError('mcp', error instanceof Error ? error.message : String(error));
     } finally {
+      // report-ok: answerRequests already removed this file to claim the request, so
+      // this second removal has nothing to do and cannot leave a call to run twice.
       await fsPromises.rm(file, { force: true }).catch(() => undefined);
       this.relaysInFlight.delete(name);
     }
@@ -284,6 +325,10 @@ export class WslHookInbox {
       await fsPromises.writeFile(temporary, text);
       await fsPromises.rename(temporary, path.join(this.paths.responses, responseName));
     } catch (error) {
+      // The hook or the MCP bridge waits on this file, so with none the agent's
+      // plan approval or tool call gets no answer. A folder that is gone is the
+      // session ending, when nobody waits.
+      if (!isMissingFolder(error)) wslTransportReporter.report(error, { tags: { stage: 'wsl_hook_response' } });
       this.logError(subject, error instanceof Error ? error.message : String(error));
     }
   }
@@ -307,6 +352,8 @@ export class WslHookInbox {
       const decisionPath = planApprovalDecisionPath(this.options.sessionDirectory);
       const decision: unknown = await fsPromises.readFile(decisionPath, 'utf-8')
         .then((raw) => JSON.parse(raw) as unknown)
+        // report-ok: no decision file yet, or one caught half written, reads as no
+        // decision, which planApprovalAnswer answers below.
         .catch(() => null);
       // The session ended during the read: its events file is gone or going,
       // and a marker there would outlive it.
@@ -326,6 +373,10 @@ export class WslHookInbox {
         this.options.onAppended();
         return approval.reply;
       } catch (error) {
+        // The hook gets an empty answer and the pipeline no marker, so the plan
+        // the agent asked about is neither approved nor shown as waiting. A
+        // folder that is gone is the session ending.
+        if (!isMissingFolder(error)) wslTransportReporter.report(error, { tags: { stage: 'wsl_hook_append' } });
         this.logError('plan-approval', error instanceof Error ? error.message : String(error));
         return '';
       }
@@ -339,6 +390,8 @@ export class WslHookInbox {
     void fsPromises.appendFile(
       bridgeErrorLogPath(this.options.eventsOutputPath),
       `${new Date().toISOString()} ${subject} ${message}\n`,
+      // report-ok: this file is a local diagnostic log, and a session whose folder is
+      // gone has nowhere to keep one.
     ).catch(() => undefined);
   }
 }

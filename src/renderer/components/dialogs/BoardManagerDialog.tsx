@@ -93,6 +93,7 @@ import { TemplateVariablePicker } from '../TemplateVariablePicker';
 import { pruneProfileReferencesForColumn } from '../../../shared/board-profile-references';
 import { snapSpawnStrategyToTarget } from '../../../shared/session-track';
 import { asSentence, describeIpcError, ipcErrorWasReported, ipcFailureToastFields, rejectionMessage } from '../../lib/ipc-error';
+import { reportRendererFailure } from '../../utils/renderer-failure';
 import { cachePerCatalog } from '../../i18n/catalog-cache';
 import type { LocalizedText } from '../../../shared/i18n/text';
 
@@ -1466,6 +1467,8 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
         setProfileOriginals(prune);
         savedDeletes += 1;
       } catch (error) {
+        // report-ok: main's IPC wrap reports a handler's rejection, and the Save toast below
+        // shows the first failure's reason.
         if (!firstError) {
           const reasonText = error instanceof Error ? rejectionMessage(error) : '';
           firstError = error instanceof Error
@@ -1543,6 +1546,8 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
         setActiveId((previous) => (previous === tempId ? created.id : previous));
         savedCreates += 1;
       } catch (error) {
+        // report-ok: main's IPC wrap reports a handler's rejection, and the Save toast below
+        // shows the first failure's reason.
         if (!firstError) {
           firstError = error instanceof Error ? error : new Error(String(error));
         }
@@ -1572,6 +1577,9 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
           .filter((id) => !id.startsWith(NEW_DRAFT_PREFIX));
         await reorderSwimlanes(finalOrder);
       } catch (error) {
+        // reorderSwimlanes toasts a rejected reorder itself and does not throw, so what lands
+        // here is the renderer's own. The Save toast shows it, and the order is not saved.
+        reportRendererFailure('board_manager', 'reorder', error);
         if (!firstError) {
           firstError = error instanceof Error ? error : new Error(String(error));
         }
@@ -1609,6 +1617,8 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
             [entry.columnId]: plannedDrafts[entry.columnId] ?? [],
           }));
         } catch (error) {
+          // report-ok: main's IPC wrap reports a handler's rejection, and the Save toast below
+          // shows the first failure's reason.
           if (!firstError) {
             const columnName = drafts[entry.columnId]?.name ?? t({ message: 'column', context: 'column name fallback' });
             const reasonText = error instanceof Error ? rejectionMessage(error) : '';
@@ -1646,6 +1656,9 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
           firstError = new Error(t`Couldn't save profiles`);
         }
       } catch (error) {
+        // saveBoardProfiles answers false for a rejected write, so what lands here is the
+        // renderer's own (the clone of the list). The Save toast shows it.
+        reportRendererFailure('board_manager', 'profiles', error);
         firstError = error instanceof Error ? error : new Error(String(error));
       }
     }
@@ -1727,6 +1740,9 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
    */
   const requestSave = useCallback(() => {
     handleSave().catch((error) => {
+      // Every failure inside handleSave returns through its firstError branch, so a throw
+      // that reaches here is a defect in the save itself, and part of the board may be unsaved.
+      reportRendererFailure('board_manager', 'save', error);
       setSaving(false);
       useToastStore.getState().addToast({
         title: t`Couldn't save`,

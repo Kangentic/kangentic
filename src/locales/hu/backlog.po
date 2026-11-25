@@ -8,6 +8,10 @@ msgstr ""
 "Language: hu\n"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+msgid "\"{fileName}\" could not be read."
+msgstr ""
+
+#: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #, fuzzy
 msgid "\"{fileName}\" is over the 10 MB limit."
 msgstr "„{fileName}” mérete meghaladja a 10 MB-os korlátot."
@@ -254,6 +258,10 @@ msgstr "{sourceTypeLabel} csatlakoztatása"
 #, fuzzy
 msgid "Connect GitLab"
 msgstr "GitLab csatlakoztatása"
+
+#: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+msgid "Couldn't attach file"
+msgstr ""
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #, fuzzy

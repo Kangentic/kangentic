@@ -107,6 +107,9 @@ export function trackBootWork(work: Promise<unknown>): void {
     state.pendingWork -= 1;
     evaluate(state);
   };
+  // report-ok: the launch settles however the work ended. Neither caller passes a promise that
+  // rejects: the cold open reports through reportRecoveryPassFailure first, and the background
+  // activation's promise only resolves.
   work.then(done, done);
 }
 

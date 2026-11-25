@@ -600,10 +600,11 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
       console.error(`[automations] "${automation.name}" on ${column.name} failed: ${messageOf(lastError)}`);
       // An adapter's classified outcome (Automation*Error, the user's endpoint
       // or script) is skipped by the reporter; anything else is a defect. The
-      // automation's and column's names are the user's, so only the type and
-      // the trigger go.
+      // automation's and column's names are the user's, so only the type goes,
+      // with which trigger ran the row and how many attempts it took.
       automationRunReporter.report(lastError, {
         tags: { automation_type: automation.type, automation_trigger: context.trigger },
+        detailTags: { attempts: String(attempt) },
       });
       continue;
     }

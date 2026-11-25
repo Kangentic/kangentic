@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import type { Stats } from 'node:fs';
 import fs from './original-fs';
 import { renameWithRetry, TRANSIENT_HANDLE_CODES } from '../fs/directory-move';
+import { gitWorktreeReporter } from './git-worktree-report';
 import { isLinkEntry } from './link-check';
 import { isAnyInitScriptRunning, whenNoInitScriptRuns } from './run-init-script';
 import { isShuttingDown } from '../shutdown-state';
@@ -103,6 +104,9 @@ export async function moveIntoRemovedWorktrees(projectPath: string, worktreePath
   try {
     return await moveIntoFolderWithUniqueName(removedWorktreesRootFor(projectPath), worktreePath);
   } catch (error) {
+    // report-ok: a process still holds the directory, or the folders are on different
+    // volumes. Every caller then removes the worktree in place through removeWorktree, which
+    // reports its own failure through worktreeRemovalReporter.
     const errnoError = error as NodeJS.ErrnoException;
     console.warn(
       `[REMOVED-WORKTREES] Could not move ${worktreePath} aside `
@@ -365,6 +369,9 @@ export function scheduleRemovedWorktreeDeletion(projectPath: string): void {
   drains.set(key, drain);
   drain.done = runDrain(drain, key)
     .catch((error: unknown) => {
+      // Nothing else empties `removed-worktrees/`. A deleter that stops on an error leaves
+      // every copy a Done move sets aside on disk, and the folder grows without bound.
+      gitWorktreeReporter.report(error, { tags: { stage: 'removed_deleter' } });
       console.warn('[REMOVED-WORKTREES] Deleter stopped on an error (non-fatal):', error);
     })
     .finally(() => {
@@ -390,12 +397,48 @@ export async function stopRemovedWorktreeDeletion(projectPath: string): Promise<
 }
 
 /**
+ * True when `rootPath` is still there and a link sits anywhere under it, or it
+ * cannot be read far enough to tell. Never enters a link, and never throws. It
+ * reads every entry left, which is nothing after a delete that worked.
+ */
+async function mayHoldLink(rootPath: string): Promise<boolean> {
+  const pending = [rootPath];
+  for (let current = pending.pop(); current !== undefined; current = pending.pop()) {
+    let stats: Stats;
+    try {
+      stats = await fs.promises.lstat(current);
+      if (await isLinkEntry(current, stats)) return true;
+    } catch (error) {
+      // report-ok: ENOENT means the entry is gone. Any other failure answers true, the
+      // cannot-tell value, and the caller keeps its recursive delete out.
+      if (errorCode(error) === 'ENOENT') continue;
+      return true;
+    }
+    if (!stats.isDirectory()) continue;
+    try {
+      for (const name of await fs.promises.readdir(current)) pending.push(path.join(current, name));
+    } catch (error) {
+      // report-ok: ENOENT means the folder went while it was read. Any other failure
+      // answers true, the cannot-tell value, and the caller keeps its recursive delete out.
+      if (errorCode(error) === 'ENOENT') continue;
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Delete this project's removed worktrees now, without waiting for init
  * scripts, and resolve when done. For a project delete, which removes the whole
  * `.kangentic/` folder next and must not leave that to a synchronous delete
  * that may follow links.
+ *
+ * Resolves true when a copy that may still hold a link is left on disk: its
+ * delete failed, and a link sits under it or it could not be read far enough to
+ * tell. The caller must then keep that synchronous delete out of `.kangentic/`.
+ * A copy left with no link in it resolves false: nothing leads out of it.
  */
-export async function deleteRemovedWorktreesNow(projectPath: string): Promise<void> {
+export async function deleteRemovedWorktreesNow(projectPath: string): Promise<boolean> {
   await stopRemovedWorktreeDeletion(projectPath);
   const root = removedWorktreesRootFor(projectPath);
   for (const name of await listRemovedWorktrees(root)) {
@@ -404,9 +447,13 @@ export async function deleteRemovedWorktreesNow(projectPath: string): Promise<vo
       assertRemovedWorktreeEntry(projectPath, entryPath);
       await deleteTreeWithoutFollowingLinks(entryPath, { beforeBatch: async () => true, onRemoved: () => undefined });
     } catch (error) {
+      // No next project open retries this one: the project is being deleted, and the
+      // delete of `.kangentic/` that follows can walk a link this copy still holds.
+      gitWorktreeReporter.report(error, { tags: { stage: 'removed_delete' } });
       console.warn(`[REMOVED-WORKTREES] Could not delete ${name} (code=${errorCode(error) ?? 'unknown'}): ${(error as Error).message}`);
     }
   }
+  return mayHoldLink(root);
 }
 
 /** The folder's entries, or none when it is missing or cannot be read. */
@@ -414,6 +461,8 @@ async function listRemovedWorktrees(root: string): Promise<string[]> {
   try {
     return await fs.promises.readdir(root);
   } catch (error) {
+    // report-ok: ENOENT when nothing was ever moved aside. A folder that cannot be read is
+    // left alone, and the drain lists it again at the next project open.
     if (errorCode(error) !== 'ENOENT') {
       console.warn(`[REMOVED-WORKTREES] Could not list ${root} (code=${errorCode(error) ?? 'unknown'})`);
     }
@@ -477,8 +526,8 @@ async function deleteOneEntry(drain: ProjectDrain, entryPath: string, name: stri
       );
     }
   } catch (error) {
-    // Left for the next project open, which lists the folder again. This
-    // drain's reruns skip it.
+    // report-ok: a held handle or a read-only entry keeps the copy on disk. It is left for
+    // the next project open, which lists the folder again. This drain's reruns skip it.
     drain.failedNames.add(name);
     console.warn(
       `[REMOVED-WORKTREES] Could not delete ${name} (code=${errorCode(error) ?? 'unknown'}), `

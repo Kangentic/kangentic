@@ -5,6 +5,7 @@ import { isShuttingDown } from '../../shutdown-state';
 import { isCommandTerminalSession } from '../../../shared/session-owner';
 import type { PtyResizeOrigin } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
+import { handlerStepReporter } from '../helpers/handler-step-report';
 
 /**
  * A spawn's deferred write, per session id, until it runs. A later write for
@@ -55,8 +56,10 @@ export function persistPtyGrid(
       if (workflowId) new WorkflowRepository(database).setAgentGrid(workflowId, grid);
       else if (session && isCommandTerminalSession(session)) context.commandTerminalHistory?.recordGrid(sessionId, grid);
       else new SessionRepository(database).updatePtyGrid(sessionId, grid);
-    } catch {
-      // Best-effort: a resume without a recorded grid spawns at the default.
+    } catch (error) {
+      // A resume without a recorded grid spawns at the default, so a terminal restored
+      // after a restart redraws at the wrong size until it is next fitted.
+      handlerStepReporter.report(error, { tags: { area: 'session_metrics', step: 'pty_grid_write' } });
     }
   };
   const pendingSpawnWrite = pendingSpawnWrites.get(sessionId);

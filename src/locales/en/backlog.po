@@ -8,6 +8,10 @@ msgstr ""
 "Language: en\n"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+msgid "\"{fileName}\" could not be read."
+msgstr "\"{fileName}\" could not be read."
+
+#: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 msgid "\"{fileName}\" is over the 10 MB limit."
 msgstr "\"{fileName}\" is over the 10 MB limit."
 
@@ -210,6 +214,10 @@ msgstr "Connect {sourceTypeLabel}"
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
 msgid "Connect GitLab"
 msgstr "Connect GitLab"
+
+#: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+msgid "Couldn't attach file"
+msgstr "Couldn't attach file"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 msgid "Couldn't delete backlog task"

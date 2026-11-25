@@ -7,6 +7,7 @@ import type { IpcContext } from '../../ipc/ipc-context';
 import { listWorkflowSummaries } from '../../workflows/workflow-view-service';
 import { workflowOfTask } from '../../workflows/workflow-home';
 import { isWorkflowTaskStopped } from '../../workflows/workflow-lock-check';
+import { mobileBridgeReporter } from '../mobile-bridge-report';
 
 /**
  * The workflow facts of one board's tasks, as the phone draws them: the strip,
@@ -34,9 +35,12 @@ export function workflowWireFacts(context: IpcContext, projectId: string, tasks:
       summaries = new Map();
       try {
         for (const summary of listWorkflowSummaries(context, homeId)) summaries.set(summary.workflow.id, summary);
-      } catch {
-        // The home's database will not open: its tasks here go without a strip
-        // rather than failing the board. A home that is gone lists none.
+      } catch (error) {
+        // Its tasks here go without a strip rather than failing the board. A
+        // home that is gone lists none. getProjectDb reports a home database
+        // that will not open and marks the error, so the reporter skips that
+        // one. What throws after the open (a query, a summary) reports here.
+        mobileBridgeReporter.report(error, { tags: { stage: 'workflow_facts' } });
       }
       summariesByHome.set(homeId, summaries);
     }
@@ -48,7 +52,11 @@ export function workflowWireFacts(context: IpcContext, projectId: string, tasks:
       let workflow: Workflow | null;
       try {
         workflow = workflowOfTask(task, projectId);
-      } catch {
+      } catch (error) {
+        // The task then reads as in no workflow and goes without a strip. A
+        // home database that will not open is reported by getProjectDb and
+        // skipped here, as above. A read that failed after the open reports.
+        mobileBridgeReporter.report(error, { tags: { stage: 'workflow_facts' } });
         workflow = null;
       }
       finishedById.set(workflowId, workflow);

@@ -8,6 +8,7 @@ import {
   extractInlineImageUrls,
 } from '../../shared';
 import { RefusalError } from '../../../../shared/refusal';
+import { reportUnclassifiedDefect } from '../../shared/unclassified-defect';
 
 
 /** Raw issue shape from the GitHub REST API. */
@@ -727,6 +728,8 @@ export class GitHubImporter {
       // preserve link; anything else is a genuine "no PR / not a gh repo" -> [].
       const toThrow = ghErrorToThrow(error);
       if (toThrow) throw toThrow;
+      // Unless gh never said it: output that will not parse, or a throw of ours.
+      reportUnclassifiedDefect(error, 'github', 'pr_by_branch');
       return [];
     }
   }
@@ -756,6 +759,7 @@ export class GitHubImporter {
     } catch (error: unknown) {
       const toThrow = ghErrorToThrow(error);
       if (toThrow) throw toThrow;
+      reportUnclassifiedDefect(error, 'github', 'pr_by_number');
       return null;
     }
   }
@@ -780,6 +784,7 @@ export class GitHubImporter {
     } catch (error: unknown) {
       const toThrow = ghErrorToThrow(error);
       if (toThrow) throw toThrow;
+      reportUnclassifiedDefect(error, 'github', 'pr_checks');
       return null;
     }
   }
@@ -844,6 +849,7 @@ export class GitHubImporter {
     } catch (error: unknown) {
       const toThrow = ghErrorToThrow(error);
       if (toThrow) throw toThrow;
+      reportUnclassifiedDefect(error, 'github', 'job_log');
       return null;
     }
   }
@@ -1015,6 +1021,7 @@ export class GitHubImporter {
     } catch (error: unknown) {
       const toThrow = ghErrorToThrow(error);
       if (toThrow) throw toThrow;
+      reportUnclassifiedDefect(error, 'github', 'pr_by_commit');
       return [];
     }
   }

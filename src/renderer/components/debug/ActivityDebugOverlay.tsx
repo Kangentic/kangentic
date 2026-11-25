@@ -386,7 +386,8 @@ function ActivityDebugOverlayContent() {
             nextCache.set(sessionId, stableSnapshot);
           }
         } catch {
-          // Ignore probe failures - the overlay is best-effort.
+          // report-ok: main's IPC wrap reports a handler's rejection, and this dev-only
+          // overlay leaves the session out until the next poll.
         }
       }
       if (!cancelled) {

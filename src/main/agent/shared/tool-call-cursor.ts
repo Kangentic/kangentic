@@ -161,8 +161,11 @@ export function createToolCallCursorStore<Entry extends ToolCallEntry>(
         const cursor = await advance(filePath);
         return cursor ? view(cursor) : null;
       };
-      // Run after the previous read either way: a failure there must not fail this one.
+      // report-ok: this read runs after the previous one either way. A failure there went to
+      // its own caller through its `next`, and must not fail this one.
       const next = previous.then(step, step);
+      // report-ok: this copy only orders the path's next read. The caller gets a failure
+      // through `next`, which is what `read` returns.
       const settled = next.then(() => undefined, () => undefined);
       readByPath.set(filePath, settled);
       void settled.then(() => {

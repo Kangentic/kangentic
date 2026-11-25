@@ -141,6 +141,7 @@ export async function parseGeminiTranscriptWindow(
   maxBytes: number,
 ): Promise<{ entries: TranscriptEntry[]; nextByteOffset: number; totalBytes: number; firstByteOffset: number; endByte: number }> {
   if (await isLegacyGeminiDocument(filePath)) {
+    // report-ok: a chat file that went away since the check above reads as an empty window.
     const totalBytes = await fs.promises.stat(filePath).then((stat) => stat.size, () => null);
     if (totalBytes === null) return { entries: [], nextByteOffset: 0, totalBytes: 0, firstByteOffset: 0, endByte: 0 };
     const entries = startByte === 0 ? await parseGeminiTranscript(agentSessionId, filePath) : [];

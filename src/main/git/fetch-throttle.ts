@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { runGitWithTimeout, isGitTimeoutError } from './git-spawn';
 import type { GitClient } from './git-client';
+import { gitWorktreeReporter } from './git-worktree-report';
 import { childProcessEnv } from '../shared/child-env';
 
 /**
@@ -80,8 +81,11 @@ function reportOutcome(
   if (!onOutcome) return;
   try {
     onOutcome(outcome);
-  } catch {
-    // Observers are best-effort; the returned start point is the contract.
+  } catch (error) {
+    // Observers are best-effort; the returned start point is the contract. An observer
+    // that throws loses the "could not fetch the latest base" note or toast, so the task
+    // starts from stale code with nothing said. Reported, never thrown on.
+    gitWorktreeReporter.report(error, { tags: { stage: 'fetch_outcome_listener' } });
   }
 }
 
@@ -231,6 +235,9 @@ export async function fetchIfStale(
     reportOutcome(options?.onOutcome, { kind: 'fetched' });
     return `origin/${branch}`;
   } catch (error) {
+    // report-ok: a fetch fails when origin is offline, missing, or lacks the branch, or on a
+    // timeout or abort. The local branch stands in, and the classified outcome goes to the
+    // caller's onOutcome observer, where a task spawn notes or toasts it.
     if (isGitTimeoutError(error)) {
       console.warn(`[FETCH] timed out after ${FETCH_TIMEOUT_MS / 1000}s, falling back to local branch ${branch}`);
     }
@@ -302,11 +309,12 @@ export async function fetchAllRemotesIfStale(checkPath: string, options?: FetchA
       });
       fetchCache.set(cacheKey, Date.now());
     } catch (error) {
+      // report-ok: a refresh fails with no remote, offline, on a timeout or on a ref lock.
+      // The probe falls back to the existing local refs, and the cache is intentionally NOT
+      // updated so the next probe retries.
       if (isGitTimeoutError(error)) {
         console.warn(`[FETCH] all-remotes refresh timed out after ${PROBE_FETCH_TIMEOUT_MS / 1000}s; using existing refs`);
       }
-      // Swallow every failure: the probe falls back to existing local refs.
-      // Cache intentionally NOT updated so the next probe retries.
     } finally {
       inFlightAllRemoteFetches.delete(cacheKey);
     }
@@ -331,7 +339,8 @@ async function resolveRepoIdentity(checkPath: string, env: NodeJS.ProcessEnv | u
     ).stdout.trim();
     if (commonDirOutput) return path.resolve(checkPath, commonDirOutput);
   } catch {
-    // Fall back to checkPath: the throttle degrades to per-worktree, still correct.
+    // report-ok: git cannot name a common dir here (not a repository, or a timeout), so the
+    // key falls back to checkPath and the throttle degrades to per-worktree, still correct.
   }
   return checkPath;
 }

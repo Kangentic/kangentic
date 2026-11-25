@@ -19,7 +19,7 @@ export function readBarCorner(projectId: string | null): AnnotationBarCorner {
     const stored = window.localStorage.getItem(`${STORAGE_PREFIX}${projectId ?? 'none'}`);
     if (stored && (CORNERS as readonly string[]).includes(stored)) return stored as AnnotationBarCorner;
   } catch {
-    // Storage can be unavailable; the default corner is fine.
+    // report-ok: localStorage can be unavailable, and the bar then sits in its default corner.
   }
   return 'top-right';
 }
@@ -28,7 +28,8 @@ export function writeBarCorner(projectId: string | null, corner: AnnotationBarCo
   try {
     window.localStorage.setItem(`${STORAGE_PREFIX}${projectId ?? 'none'}`, corner);
   } catch {
-    // Not kept: the bar still moves for this session.
+    // report-ok: localStorage can be unavailable. The corner is not kept, and the bar still
+    // moves for this session.
   }
 }
 

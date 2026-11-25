@@ -11,6 +11,7 @@ import {
 } from '../helpers';
 import { resolveProjectContext } from '../helpers/project-repos';
 import { announceTaskWrite } from '../helpers/task-write-announce';
+import { handlerStepReporter } from '../helpers/handler-step-report';
 // Directly from the submodule for the same reason as resolveProjectContext:
 // it is a pure context reader, and handler tests that vi.mock the helpers
 // barrel should keep exercising the real resolution.
@@ -75,9 +76,13 @@ export async function carryUncommittedChanges(
         await worktreeGit.raw(['apply', '--3way', patchFile]);
         result.carriedTracked = true;
       } catch {
+        // report-ok: git could not apply the patch cleanly to the new worktree. The changes
+        // stay in the main checkout, and the caller logs that they were not carried.
         result.applyFailed = true;
       } finally {
-        try { fs.unlinkSync(patchFile); } catch { /* ignore cleanup failure */ }
+        try { fs.unlinkSync(patchFile); } catch {
+          // report-ok: a patch file that cannot be removed is a leftover in the OS temp folder.
+        }
       }
     }
 
@@ -98,10 +103,15 @@ export async function carryUncommittedChanges(
         fs.copyFileSync(source, resolvedDestination);
         result.carriedUntracked.push(filePath);
       } catch {
+        // report-ok: a file that cannot be copied stays in the main checkout, and the caller
+        // logs how many were left there.
         result.failedUntracked.push(filePath);
       }
     }
   } catch (error) {
+    // Nothing is carried to the new worktree: the uncommitted changes stay in the main
+    // checkout and the handler says nothing about it.
+    handlerStepReporter.report(error, { tags: { area: 'task_branch', step: 'carry_changes' } });
     console.error('[carryUncommittedChanges] Unexpected error:', error);
   }
 
@@ -181,7 +191,8 @@ export function registerTaskBranchHandlers(context: IpcContext): void {
             console.warn(`[TASK_SWITCH_BRANCH] Could not copy ${carryResult.failedUntracked.length} untracked file(s) to worktree.`);
           }
         } catch {
-          // Best-effort, non-fatal
+          // report-ok: carryUncommittedChanges catches its own failures and never throws.
+          // Whatever it could not carry stays in the main checkout.
         }
 
         // Update session record CWD for seamless resume
@@ -196,8 +207,10 @@ export function registerTaskBranchHandlers(context: IpcContext): void {
           try {
             const worktreeGit = gitAt(updatedTask.worktree_path);
             await writeWorktreeBaseBranch(worktreeGit, input.newBaseBranch);
-          } catch {
-            // Non-fatal
+          } catch (error) {
+            // The task row has the new base and the worktree's own git config does not, so
+            // a read that goes by the recorded base (the local-only commit count) uses the old.
+            handlerStepReporter.report(error, { tags: { area: 'task_branch', step: 'base_branch_write' } });
           }
         }
 
@@ -217,7 +230,9 @@ export function registerTaskBranchHandlers(context: IpcContext): void {
         try {
           const worktreeGit = gitAt(task.worktree_path);
           await writeWorktreeBaseBranch(worktreeGit, input.newBaseBranch);
-        } catch {
+        } catch (error) {
+          // As above: the worktree's git config keeps the old base while the row has the new.
+          handlerStepReporter.report(error, { tags: { area: 'task_branch', step: 'base_branch_write' } });
           console.warn(`[TASK_SWITCH_BRANCH] Could not update git config in worktree`);
         }
 
@@ -331,6 +346,8 @@ export function registerTaskBranchHandlers(context: IpcContext): void {
           await worktreeGit.raw(['merge', '--ff-only', baseRef]);
           return { status: 'updated', baseBranch, commitCount: behind };
         } catch (mergeError) {
+          // report-ok: git refuses a merge that cannot fast-forward, and the status returned
+          // names which case it was, for the renderer's toast.
           const mergeMessage = mergeError instanceof Error ? mergeError.message : String(mergeError);
           // An untracked file colliding with an incoming one refuses the merge
           // with "would be overwritten". The dirty-tree check above deliberately

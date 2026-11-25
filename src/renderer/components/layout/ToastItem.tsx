@@ -188,7 +188,7 @@ export function ToastItem({ toast, onDismiss, interactive }: ToastItemProps) {
   const handleCopyClick = useCallback(() => {
     navigator.clipboard.writeText(copyText).then(
       () => setCopied(true),
-      // A clipboard write can be refused (no permission, no secure context).
+      // report-ok: a clipboard write can be refused (no permission, no secure context).
       // Leaving the icon un-flipped is the honest signal; a fake check is worse.
       () => {},
     );

@@ -34,6 +34,7 @@ import { broadcast } from '../../pop-out/window-broadcast';
 import { isShuttingDown } from '../../shutdown-state';
 import type { IpcContext } from '../ipc-context';
 import { resolveProjectContext } from './project-repos';
+import { handlerStepReporter } from './handler-step-report';
 
 /**
  * How long a respawned slot waits before it checks for its next terminal. The
@@ -111,8 +112,10 @@ export function endCommandTerminalBrowserIfSlotEmpty(
   if (isShuttingDown()) return;
   try {
     if (context.sessionManager.findLiveCommandTerminalSession(projectId, slot)) return;
-  } catch {
-    // No answer is no end: a browser closed in error costs the user a page.
+  } catch (error) {
+    // No answer is no end: a browser closed in error costs the user a page. Nothing here
+    // is known to throw, and a throw leaves an ended terminal's page and layout behind.
+    handlerStepReporter.report(error, { tags: { area: 'command_terminal', step: 'browser_slot_lookup' } });
     return;
   }
   endCommandTerminalBrowserSafely(context, projectId, slot, sessionId);
@@ -148,8 +151,9 @@ function endCommandTerminalBrowserSafely(context: IpcContext, projectId: string,
   try {
     endCommandTerminalBrowser(context, projectId, slot, sessionId);
   } catch (error) {
-    // Best-effort, like the task path: a browser that fails to close must
-    // never stand in the way of the terminal's own end.
+    // A browser that fails to close must never stand in the way of the terminal's own
+    // end. Its pane, lane, saved page and layout stay for the slot's next terminal.
+    handlerStepReporter.report(error, { tags: { area: 'command_terminal', step: 'browser_end' } });
     console.warn(`[browser-pane] Could not close the browser of Command Terminal ${slot}:`, error);
   }
 }
@@ -179,6 +183,8 @@ function endCommandTerminalBrowser(context: IpcContext, projectId: string, slot:
   destroyLanesForTask(ownerKey);
   clearBrowserPaneReason(ownerKey);
   void releaseViewportOverridesForSession(sessionId).catch((error: unknown) => {
+    // report-ok: releaseViewportOverride catches its own failure for each guest and forgets
+    // the override either way, and this terminal's pane is closing.
     console.warn(`[browser-viewport] Could not reset viewports for session ${sessionId.slice(0, 8)}:`, error);
   });
 
@@ -189,6 +195,9 @@ function endCommandTerminalBrowser(context: IpcContext, projectId: string, slot:
     browserUrlStore.clear(projectPath, ownerKey);
     commandTerminalBrowserStore.clear(projectPath, slot);
     void discardAnnotationDraft(projectPath, ownerKey, { retire: true }).catch((error: Error) => {
+      // The ended terminal's unsent annotations stay on disk, and the slot's next
+      // terminal opens its Browser pane on them.
+      handlerStepReporter.report(error, { tags: { area: 'command_terminal', step: 'annotation_draft_remove' } });
       console.warn(`[command-terminal] Failed to remove annotation draft for ${slot}: ${error.message}`);
     });
   }

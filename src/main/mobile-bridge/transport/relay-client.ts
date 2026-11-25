@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import diagnosticsChannel from 'node:diagnostics_channel';
 import { EventEmitter } from 'node:events';
 import type { Transport, TransportState, Unsubscribe } from '@kangentic/protocol';
+import { mobileBridgeReporter } from '../mobile-bridge-report';
 
 /**
  * The desktop's outbound relay connection: dials OUT to a blind WebSocket
@@ -17,7 +18,9 @@ import type { Transport, TransportState, Unsubscribe } from '@kangentic/protocol
  * proxy, PAC/WPAD and the OS certificate store where undici ignores all three.
  * The fallback dials outright while a proxy is configured, and otherwise after
  * undici has failed twice in a row (chooseWebSocket()). relay-websocket.ts has
- * the measurements behind that order. This file imports nothing from Electron.
+ * the measurements behind that order. This file imports nothing from Electron
+ * itself. It does import the bridge's reporter, for the two dial failures that
+ * are not the network (see RelayDialError).
  * `ws` is a devDependency used only by the in-repo relay test double
  * (tests/unit/mobile-bridge/).
  *
@@ -291,9 +294,11 @@ export type RelayDialCause =
  * own network. The relay service's health is watched on the relay side. Sentry
  * DESKTOP-4G was Pair a device reporting this as a defect.
  *
- * Two dial rejections stay plain errors and keep reporting, because neither is
+ * Two dial rejections stay plain errors and are reported, because neither is
  * the network: a relay URL that does not parse, and a WebSocket constructor
- * that throws. Both mean a bug in what reached the client.
+ * that throws. Both mean a bug in what reached the client. dial() reports each
+ * where it is thrown (`relay_url`, `relay_socket_build`), since a redial and
+ * the reconnect timer swallow the rejection.
  *
  * The message is the same for every cause, so the Pair dialog shows one sentence.
  * `dialCause` is deliberately not `cause`, which the expected-failure check
@@ -414,7 +419,9 @@ export class RelayClient implements RedialableTransport, DialIdentifiedTransport
       this.reconnectTimer = null;
     }
     this.dial().catch(() => {
-      // dial() already scheduled the next attempt on failure.
+      // report-ok: dial() already scheduled the next attempt. A RelayDialError is
+      // the network or the relay, and the dial's own defects (a socket that could
+      // not be built) are reported in dial(), where they are thrown.
     });
   }
 
@@ -431,7 +438,13 @@ export class RelayClient implements RedialableTransport, DialIdentifiedTransport
       // practice. Fail the connect() immediately rather than entering the
       // 500ms->30s backoff loop against a URL that can never parse.
       this.setState('closed');
-      return Promise.reject(error instanceof Error ? error : new Error(`Invalid relay URL: ${String(error)}`));
+      const failure = error instanceof Error ? error : new Error(`Invalid relay URL: ${String(error)}`);
+      // Reported here, where it is known not to be the network. This device
+      // never connects, and nothing downstream can tell why. The address is
+      // never sent, only the error's name. An awaiter that reports (Pair a
+      // device through the IPC wrap, a roster dial) skips it as already sent.
+      mobileBridgeReporter.report(failure, { tags: { stage: 'relay_url' } });
+      return Promise.reject(failure);
     }
     // Fresh for every attempt, the fallback stack's turns included, so the
     // relay's log can never link two of this user's dials (see the header).
@@ -468,6 +481,13 @@ export class RelayClient implements RedialableTransport, DialIdentifiedTransport
       try {
         socket = new dialChoice.webSocketConstructor(url.href);
       } catch (error) {
+        const failure = error instanceof Error ? error : new Error(String(error));
+        // A socket that could not be built is not the network. Every dial on
+        // this stack fails the same way, so the device never connects while the
+        // backoff keeps redialing. Reported here because the redial and the
+        // reconnect timer swallow the rejection. The reporter's latch keeps the
+        // repeats quiet, and an awaiter that reports skips it as already sent.
+        mobileBridgeReporter.report(failure, { tags: { stage: 'relay_socket_build' } });
         this.noteDialFailed(dialChoice.stack);
         const delayMs = this.scheduleReconnect();
         // A constructor error is the one message that can quote the dial URL,
@@ -476,7 +496,7 @@ export class RelayClient implements RedialableTransport, DialIdentifiedTransport
         const detail = (error instanceof Error ? error.message : String(error)).split(this.slotId).join('<slot>');
         console.warn(`${this.logPrefix} dial failed: ${detail}; redial in ${delayMs} ms, dial ${dialId} (via ${dialChoice.stack})`);
         this.reportDialOutcome({ dialId, stack: dialChoice.stack, outcome: 'failed' });
-        rejectOnce(error instanceof Error ? error : new Error(String(error)));
+        rejectOnce(failure);
         return;
       }
       socket.binaryType = 'arraybuffer';
@@ -604,7 +624,9 @@ export class RelayClient implements RedialableTransport, DialIdentifiedTransport
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.dial().catch(() => {
-        // dial() already scheduled the next attempt on failure.
+        // report-ok: dial() already scheduled the next attempt. A RelayDialError
+        // is the network or the relay, and the dial's own defects (a socket that
+        // could not be built) are reported in dial(), where they are thrown.
       });
     }, delayMs);
     this.reconnectTimer.unref?.();
@@ -693,7 +715,8 @@ export class RelayClient implements RedialableTransport, DialIdentifiedTransport
     try {
       abandoned.close();
     } catch {
-      // best-effort; the socket may already be tearing down
+      // report-ok: the socket may already be tearing down. A close that throws changes
+      // nothing, since its handlers came off above and the reference goes below.
     }
     this.socket = null;
     if (this.pendingDialReject) {
@@ -741,7 +764,8 @@ export class RelayClient implements RedialableTransport, DialIdentifiedTransport
       try {
         this.socket.close();
       } catch {
-        // best-effort
+        // report-ok: a socket already tearing down. Its handlers came off above and
+        // the reference goes below, so a close that throws leaves nothing behind.
       }
       this.socket = null;
     }

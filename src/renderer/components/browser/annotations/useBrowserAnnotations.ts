@@ -37,6 +37,7 @@ import {
   type AnnotationLayerState,
   type AnnotationLayerStatus,
 } from './annotationLayerScript';
+import { reportRendererFailure } from '../../../utils/renderer-failure';
 
 // The Browser pane's annotation session: the pure model in
 // `annotation-model.ts`, plus everything that touches the page or the disk.
@@ -100,19 +101,31 @@ function positiveZoom(zoomFactor: number): number {
 function runInGuest<T>(webview: WebviewElement | null, script: string): Promise<T | null> {
   if (!webview || typeof webview.executeJavaScript !== 'function') return Promise.resolve(null);
   try {
+    // report-ok: a guest that navigated or went away rejects the script, and every caller
+    // reads null as no answer from the page.
     return webview.executeJavaScript<T>(script).catch(() => null);
   } catch {
+    // report-ok: the webview throws until its guest attaches, and dom-ready draws the layer again.
     return Promise.resolve(null);
   }
 }
 
-/** Saves the session for a task, or discards the draft when nothing is left. */
-function persistSession(taskId: string, projectId: string | null, session: AnnotationSession): void {
+/**
+ * Saves the session for a task, or discards the draft when nothing is left.
+ * Exported for the unit test that drives its two failure paths.
+ */
+export function persistSession(taskId: string, projectId: string | null, session: AnnotationSession): void {
   const browser = window.electronAPI.browser;
   if (session.annotations.length === 0) {
-    void browser.discardAnnotations(taskId, projectId).catch(() => undefined);
+    void browser.discardAnnotations(taskId, projectId).catch((error: unknown) => {
+      // The draft stays on disk, so annotations the user removed come back on the next open.
+      reportRendererFailure('browser', 'annotations_save', error);
+    });
   } else {
-    void browser.saveAnnotations(taskId, sessionToDraft(session), projectId).catch(() => undefined);
+    void browser.saveAnnotations(taskId, sessionToDraft(session), projectId).catch((error: unknown) => {
+      // The annotations stay on screen but not on disk, so a restart loses them with no word.
+      reportRendererFailure('browser', 'annotations_save', error);
+    });
   }
 }
 
@@ -227,7 +240,14 @@ export function useBrowserAnnotations({
           baselineRef.current = sessionRef.current;
         }
       })
-      .catch(() => undefined)
+      .catch((error: unknown) => {
+        // The task's saved draft did not load, so the pane opens with no annotations.
+        reportRendererFailure('browser', 'annotations_load', error);
+        if (cancelled) return;
+        // As for a load that found nothing: an untouched session is the baseline, so the save
+        // effect below does not discard a draft on disk that this read could not see.
+        if (sessionRef.current.annotations.length === 0) baselineRef.current = sessionRef.current;
+      })
       .finally(() => {
         if (cancelled) return;
         loadedRef.current = true;
@@ -346,7 +366,8 @@ export function useBrowserAnnotations({
         current,
       ));
     } catch {
-      // A capture is a fallback picture; the annotation itself is already saved.
+      // report-ok: main's IPC wrap reports a failed capture save. A capture is a fallback
+      // picture, and the annotation itself is already saved.
     }
   }, [webviewRef, taskId, projectId]);
 
@@ -476,7 +497,10 @@ export function useBrowserAnnotations({
     pendingCaptureRef.current = null;
     queuedCaptureRef.current = null;
     void runInGuest(webviewRef.current, ANNOTATION_LAYER_CLEAR_SCRIPT);
-    void window.electronAPI.browser.discardAnnotations(taskId, projectId).catch(() => undefined);
+    void window.electronAPI.browser.discardAnnotations(taskId, projectId).catch((error: unknown) => {
+      // The cleared annotations stay on disk, so they come back on the next open of the task.
+      reportRendererFailure('browser', 'annotations_save', error);
+    });
   }, [webviewRef, taskId, projectId]);
 
   /** The ids of every annotation now, so a Send can later remove just what it sent. */

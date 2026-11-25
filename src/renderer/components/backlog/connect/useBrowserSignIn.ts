@@ -29,11 +29,11 @@ export type BrowserSignInOutcome =
   | { kind: 'stale' };
 
 /** The `reportRendererFailure` area each provider's dialog reports under. */
-const REPORT_AREA: Record<BrowserSignInProvider, string> = {
+const REPORT_AREA = {
   jira: 'jira-connect',
   trello: 'trello',
   linear: 'linear',
-};
+} as const satisfies Record<BrowserSignInProvider, string>;
 
 function sendCancel(provider: BrowserSignInProvider): void {
   window.electronAPI.backlog[provider].cancelSignIn().catch((cancelError: unknown) => {

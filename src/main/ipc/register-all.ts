@@ -1,4 +1,5 @@
 import { app, type BrowserWindow, ipcMain } from 'electron';
+import { onReported } from '../analytics/ipc-handler-report';
 import * as path from 'node:path';
 import { readHostAssets } from '../remote/host-assets';
 import { IPC } from '../../shared/ipc-channels';
@@ -108,6 +109,7 @@ import { isShuttingDown } from '../shutdown-state';
 import { resolveAutomationAgent } from '../automations/automation-agent';
 import { automationAgentDeps } from './helpers/automation-agent-deps';
 import { backgroundCallSink } from './helpers/background-call-sink';
+import { handlerStepReporter } from './helpers/handler-step-report';
 import { ActivityIntervalStore } from '../activity-engine/activity-interval-store';
 import { getOpenProjectDb, getProjectDb } from '../db/database';
 import { TaskMoveRepository } from '../db/repositories/task-move-repository';
@@ -205,7 +207,12 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
     onHostFirstConnected: (hostId) => { void recoverRemoteProjectsOnHost(requireContext(), hostId); },
   });
   // After startup, not before the window: a host that is down must never delay it.
-  setImmediate(() => void remoteHosting.connectAll().catch((error: unknown) => console.warn('[remote] connecting the hosts failed:', error)));
+  setImmediate(() => void remoteHosting.connectAll().catch((error: unknown) => {
+    // A host that is down is a state connectAll records and never a rejection, so this is
+    // the pass itself failing: no SSH host connects, and every remote project stays paused.
+    handlerStepReporter.report(error, { tags: { area: 'ssh_connect', step: 'connect_all' } });
+    console.warn('[remote] connecting the hosts failed:', error);
+  }));
   // One-shot child processes (version probes, help-text reads, gh and git
   // checks) run in the pty host too: on Windows each spawn's CreateProcess is
   // synchronous on the calling thread.
@@ -304,7 +311,10 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
     resolveTaskTitle: (projectId, taskId) => {
       try {
         return getProjectRepos(requireContext(), projectId).tasks.getById(taskId)?.title;
-      } catch {
+      } catch (error) {
+        // The desktop notification goes out without the task's title. A database that will
+        // not open was marked by the open-failure notifier, so this adds a query that failed.
+        handlerStepReporter.report(error, { tags: { area: 'system', step: 'notification_task_title' } });
         return undefined;
       }
     },
@@ -316,7 +326,9 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
         const task = getProjectRepos(requireContext(), projectId).tasks.getById(taskId);
         if (!task) return undefined;
         return workflowOfTask(task, projectId)?.title;
-      } catch {
+      } catch (error) {
+        // The desktop notification goes out without the workflow's title, as above.
+        handlerStepReporter.report(error, { tags: { area: 'system', step: 'notification_workflow_title' } });
         return undefined;
       }
     },
@@ -459,6 +471,8 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
       try {
         return new CommandTerminalHistoryRepository(getProjectDb(projectId));
       } catch {
+        // report-ok: a project database that will not open is reported by the open-failure
+        // notifier, and the history treats the project as having no repository.
         return null;
       }
     },
@@ -474,8 +488,12 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
       if (!(await mayReadPlaceUnattended(place))) return true;
       try {
         return (await adapter.locateSessionHistoryFile(agentSessionId, cwd, place)) !== null;
-      } catch {
-        return false;
+      } catch (error) {
+        // A lookup that threw has not shown the transcript gone. Answering "gone" made the
+        // Earlier list delete the row for good, so the row stays, as it does for a place
+        // that cannot be read, and a resume finds out when it starts.
+        handlerStepReporter.report(error, { tags: { area: 'command_terminal', step: 'history_locate' } });
+        return true;
       }
     },
     notifyChanged: (projectId) => broadcast(requireContext().mainWindow, IPC.COMMAND_TERMINAL_HISTORY_CHANGED, projectId),
@@ -600,7 +618,8 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   // No component trail: the packaged renderer bundle is minified, so a trail of
   // React frame names arrived mangled and unread, and Sentry (which both
   // boundaries also report to) carries the real symbolicated stack.
-  ipcMain.on(
+  onReported(
+    ipcMain,
     IPC.TRACK_RENDERER_ERROR,
     (_event, message: string, errorContext?: RendererErrorContext) => {
       const props: Record<string, string> = {
@@ -622,7 +641,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   // (usage.ts) because the string is erased at the IPC boundary; an unknown
   // value is dropped so the renderer cannot invent event vocabulary. Dedup
   // (once per feature per day, first-use lifetime) lives in trackFeatureUsed.
-  ipcMain.on(IPC.TRACK_FEATURE_USED, (_event, feature: string) => {
+  onReported(ipcMain, IPC.TRACK_FEATURE_USED, (_event, feature: string) => {
     if (typeof feature !== 'string' || !isKnownAnalyticsFeature(feature)) return;
     trackFeatureUsed(feature);
   });

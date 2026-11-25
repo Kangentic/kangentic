@@ -12,6 +12,7 @@ import { AUTOMATION_MANIFEST, isAutomationTrigger } from '../../../shared/automa
 import { conditionKindsAsStored, normalizeTextMatch } from '../../../shared/final-line-match';
 import { remapTaskFilterPriorities, taskFilterFromJson, taskFilterToJson } from '../../../shared/automation-filter';
 import { columnNameKey } from '../../automations/move-target';
+import { dbReporter } from '../db-report';
 import { writeTransaction } from '../transaction';
 
 interface AutomationRow {
@@ -304,10 +305,14 @@ function parseConfig(configJson: string): AutomationConfig {
   try {
     const parsed: unknown = JSON.parse(configJson);
     if (parsed && typeof parsed === 'object') return parsed as AutomationConfig;
-  } catch {
+  } catch (error) {
     // A malformed blob must not take the board down with it. An automation
     // whose config will not parse renders as an empty one and the dialog can
-    // repair it, which beats a column that refuses to load.
+    // repair it, which beats a column that refuses to load. Until someone opens
+    // that dialog the row runs with no message, script or URL, and says nothing.
+    // The reporter sends the error's class and frames, never its text, which
+    // quotes the blob.
+    dbReporter.report(error, { tags: { stage: 'automation_config_parse' } });
     console.error('[automations] could not parse a config blob; treating it as empty');
   }
   return {};

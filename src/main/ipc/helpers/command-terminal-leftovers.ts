@@ -160,6 +160,8 @@ export class CommandTerminalLeftoverReaper {
     const runReap = (): void => {
       if (this.disposed || this.deps.isShuttingDown()) return;
       void this.deps.reap(projectPath, task, wslDistros).catch((error: unknown) => {
+        // report-ok: the reap is reapTaskLeftovers, which catches its own failures, and a
+        // failed host reap is reported by reapTaskProcesses (reportTaskReapFailure).
         console.warn('[COMMAND_TERMINAL] leftover reap failed (non-fatal):', error instanceof Error ? error.message : String(error));
       });
     };
@@ -202,6 +204,8 @@ export class CommandTerminalLeftoverReaper {
     if (!stopBackgroundSession || !ended || this.deps.isShuttingDown()) return null;
     // Called on a later tick, so a dep that throws never throws into the emit.
     return Promise.resolve().then(() => stopBackgroundSession(ended)).catch((error: unknown) => {
+      // report-ok: the stop is stopEndedCommandTerminalBackgroundSession, which catches its
+      // own failures, and the reap that follows ends whatever a failed stop left running.
       console.warn('[COMMAND_TERMINAL] background session stop failed (non-fatal):', error instanceof Error ? error.message : String(error));
     });
   }

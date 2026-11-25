@@ -71,6 +71,7 @@ export async function readBranch(project: SourceProject): Promise<BranchRead> {
   } catch (error) {
     // A project folder that is no repository is the user's setup, not a defect: say so.
     if (error instanceof GitCommandError && error.gitCause === 'not_a_repository') {
+      // refusal-wrap-ok: classified first: only git's own "not a repository" is wrapped.
       throw new RefusalError('This project is not a git repository.', { cause: error });
     }
     throw error;

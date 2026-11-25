@@ -22,6 +22,7 @@
  * with nothing on screen and no error.
  */
 import { BrowserWindow, ipcMain, webContents } from 'electron';
+import { onReported } from '../../analytics/ipc-handler-report';
 import { IPC } from '../../../shared/ipc-channels';
 import { DetailOwnerRegistry } from '../../task-detail/detail-owner-registry';
 import type { DetailDestination, DetailHost, OwnedDetail } from '../../task-detail/detail-owner-registry';
@@ -119,7 +120,7 @@ export function registerTaskDetailOwnershipHandlers(): void {
   // does not stack duplicate listeners on the same webContents.
   const teardownWatched = new Set<number>();
 
-  ipcMain.on(IPC.DETAIL_SYNC_OWNED, (
+  onReported(ipcMain, IPC.DETAIL_SYNC_OWNED, (
     event,
     host: DetailHost,
     entries: ReadonlyArray<OwnedDetail>,

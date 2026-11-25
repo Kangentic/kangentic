@@ -13,7 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { REPORTER_FUNCTIONS, scanCatchSites, type CatchSite } from './helpers/error-reporting-scan';
+import { REPORTER_FUNCTIONS, scanCatchSites, scanRefusalWraps, type CatchSite } from './helpers/error-reporting-scan';
 import { UNREPORTED_CATCH_SITES } from './helpers/error-reporting-unreported-sites';
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
@@ -88,14 +88,46 @@ describe('the reporter set names real reporters', () => {
   const allSource = [...sourceText.values()].join('\n');
 
   it.each(REPORTER_FUNCTIONS.map((name) => [name]))('%s is declared under src/', (name) => {
-    const declared = new RegExp(`(?:function ${name}\\s*\\(|\\b${name}\\s*\\([^)]*\\)\\s*:\\s*[\\w<>| ]+\\s*\\{|\\b${name}\\s*=)`);
+    // A function may carry type parameters before its argument list (`function name<Area>(`).
+    const declared = new RegExp(`(?:function ${name}\\s*(?:<[^>(]*>)?\\s*\\(|\\b${name}\\s*\\([^)]*\\)\\s*:\\s*[\\w<>| ]+\\s*\\{|\\b${name}\\s*=)`);
     expect(allSource).toMatch(declared);
   });
 
   it('names every chokepoint reporter *Reporter, which the scan keys on', () => {
-    const bindings = [...allSource.matchAll(/(?:const|let)\s+(\w+)\s*=\s*createChokepointReporter\(/g)].map((match) => match[1]);
-    expect(bindings.length).toBeGreaterThan(15);
+    // With or without a type annotation: `const x: ChokepointReporter = create...`
+    // is how five of them are declared, and a pattern that wanted `x =` skipped those.
+    const bindings = [...allSource.matchAll(/(?:const|let)\s+(\w+)\s*(?::\s*[\w<>'| ,]+)?\s*=\s*createChokepointReporter\(/g)].map((match) => match[1]);
+    const calls = [...allSource.matchAll(/=\s*createChokepointReporter\(/g)].length;
+    expect(bindings.length).toBeGreaterThan(30);
+    // Every `= createChokepointReporter(` is one of the bindings read above, so a
+    // declaration shape the pattern cannot read fails here instead of going unchecked.
+    expect(bindings.length).toBe(calls);
     expect(bindings.filter((name) => !name.endsWith('Reporter'))).toEqual([]);
+  });
+});
+
+describe('a caught error is never hidden inside a RefusalError', () => {
+  const wraps = [...sourceText].flatMap(([file, text]) => scanRefusalWraps(file, text));
+
+  it('marks every RefusalError that wraps a caught error with why its cause is known', () => {
+    const unmarked = wraps.filter((site) => !site.marked).map((site) => `${site.file}:${site.line}`);
+    expect(
+      unmarked,
+      'A RefusalError is skipped before its cause is read, so wrapping a caught error in one hides a\n'
+        + 'defect for good. Classify the error first and say so with `// refusal-wrap-ok: <reason>`, or wrap\n'
+        + 'it in a plain Error with `cause`. See .claude/rules/error-reporting.md.',
+    ).toEqual([]);
+    // Not vacuous: the sites this guards are found.
+    expect(wraps.length).toBeGreaterThan(0);
+  });
+
+  it('finds a wrap in a catch, and only there, and only one that carries a cause', () => {
+    const found = (source: string): boolean[] => scanRefusalWraps('probe.ts', source).map((site) => site.marked);
+    expect(found('try { work(); } catch (error) { throw new RefusalError("No.", { cause: error }); }')).toEqual([false]);
+    expect(found('try { work(); } catch (error) {\n  // refusal-wrap-ok: only an abort reaches here.\n  throw new RefusalError("No.", { cause: error });\n}')).toEqual([true]);
+    expect(found('try { work(); } catch (error) { throw new RefusalError("No."); }')).toEqual([]);
+    expect(found('if (!project) throw new RefusalError("No project.", { cause: reason });')).toEqual([]);
+    expect(found('try { work(); } catch (error) { throw new Error("Failed.", { cause: error }); }')).toEqual([]);
   });
 });
 
@@ -132,6 +164,23 @@ describe('the catch-site detector', () => {
     expect(scan('try { work(); } catch { /* report-ok: optional probe */ }')).toEqual([true]);
     expect(scan('// report-ok: the load event reports it.\nwork().catch(() => undefined);')).toEqual([true]);
     expect(scan('try { work(); } catch {\n  // report-ok:\n  return null;\n}')).toEqual([false]);
+  });
+
+  it('counts the rejection handler of a two-argument .then as a catch by another spelling', () => {
+    const kinds = (source: string): string[] => scanCatchSites('probe.ts', source).map((site) => `${site.kind}:${site.reported}`);
+    expect(kinds('work().then(done, () => undefined);')).toEqual(['.then:false']);
+    expect(kinds('work().then(done, (error) => console.warn(error));')).toEqual(['.then:false']);
+    expect(kinds('work().then(done, done);')).toEqual(['.then:false']);
+    // Handed on, reported, or marked.
+    expect(kinds('new Promise((resolve, reject) => { work().then(resolve, reject); });')).toEqual(['.then:true']);
+    expect(kinds('work().then(done, (error) => taskMoveReporter.report(error));')).toEqual(['.then:true']);
+    expect(kinds('work().then(done, reportRendererFailure);')).toEqual(['.then:true']);
+    expect(kinds('// report-ok: the quit goes on whether the drain settled or failed.\ndrain.then(quit, quit);')).toEqual(['.then:true']);
+    expect(kinds('work().then(\n  done,\n  // report-ok: a missing file is the normal first run.\n  () => null,\n);')).toEqual(['.then:true']);
+    // No handler at all is not a site.
+    expect(kinds('work().then(done);')).toEqual([]);
+    expect(kinds('work().then(done, undefined);')).toEqual([]);
+    expect(kinds('work().then(undefined, null);')).toEqual([]);
   });
 
   it('reads TSX', () => {

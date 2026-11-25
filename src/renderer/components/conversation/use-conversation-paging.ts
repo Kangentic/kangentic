@@ -240,6 +240,8 @@ async function readPage(
     if (response.status === 'superseded') return { kind: 'superseded' };
     return { kind: 'failed' };
   } catch {
+    // report-ok: main's IPC wrap reports a handler's rejection, and the read answers failed:
+    // an edge shows its retry, and a jump or seek leaves the window where it was.
     return { kind: 'failed' };
   }
 }
@@ -549,6 +551,8 @@ export function useConversationPaging(options: ConversationPagingOptions): Conve
       const conversationId = extent.conversationId;
       void window.electronAPI.transcripts
         .timeline({ projectId, conversationId, requestKey: `${requestKey}:timeline:${conversationId}` })
+        // report-ok: main's IPC wrap reports a handler's rejection. It reads as a busy worker,
+        // which is asked again a few times before the window goes without the timeline.
         .catch((): TranscriptTimelineResponse => ({ status: 'busy' }))
         .then((reply) => {
           // A newer request for the same timeline took this one's place, and answers itself.
@@ -628,6 +632,8 @@ export function useConversationPaging(options: ConversationPagingOptions): Conve
     const key = currentKey;
     void window.electronAPI.transcripts
       .locate({ projectId, sessionId, turnUuid: locateUuid, requestKey: `${requestKey}:locate` })
+      // report-ok: main's IPC wrap reports a handler's rejection, and the search hit reads as
+      // not found.
       .catch(() => ({ status: 'not_found' as const }))
       .then((reply) => {
         if (!releaseSlot(sequence, key)) return;

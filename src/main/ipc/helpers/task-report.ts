@@ -19,6 +19,7 @@ import { collectRemoteTargets } from '../../retrieval/remote-targets';
 import { agentRegistry } from '../../agent/agent-registry';
 import { parseStoredCliTarget } from '../../agent/shared/cli-target';
 import { getProjectRepos } from './project-repos';
+import { handlerStepReporter } from './handler-step-report';
 import { assembleTaskReport, assembleTaskRoute } from './task-report-assemble';
 import type { IpcContext } from '../ipc-context';
 
@@ -49,6 +50,10 @@ export interface TaskReportReadOptions {
  */
 async function readFromIndex<Result>(read: () => Promise<Result>): Promise<Result | null> {
   const reading = read().catch((error: unknown) => {
+    // The report shows without this section: its usage ledger, its summary, or its linked
+    // commits and files. The retrieval client reports a defect or a SQLite failure itself
+    // and the reporter skips a worker that is down.
+    handlerStepReporter.report(error, { tags: { area: 'transcripts', step: 'task_report_index_read' } });
     console.warn('[task-report] index read failed:', error instanceof Error ? error.message : error);
     return null;
   });
@@ -80,6 +85,8 @@ export async function readTaskReport(context: IpcContext, projectId: string, tas
   try {
     knowledgeGraph = context.configManager.load().knowledgeGraph;
   } catch {
+    // report-ok: an unreadable config reads as the default, with indexing on.
+    // ConfigManager.load degrades an unreadable file to defaults itself.
     knowledgeGraph = undefined;
   }
   const indexingOn = knowledgeGraph?.indexingEnabled !== false;
@@ -163,6 +170,8 @@ export async function readTaskLastMessage(projectId: string, taskId: string): Pr
     if (!reply) return null;
     return { text: reply.text, writtenAt: Number.isFinite(reply.ts) ? new Date(reply.ts).toISOString() : null };
   } catch (error) {
+    // The report shows no closing message for a task with no written summary.
+    handlerStepReporter.report(error, { tags: { area: 'transcripts', step: 'task_last_message_read' } });
     console.warn('[task-report] last message read failed:', error instanceof Error ? error.message : error);
     return null;
   }

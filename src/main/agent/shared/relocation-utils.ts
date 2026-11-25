@@ -174,6 +174,8 @@ export function atomicWriteFileWithBackup(
 export function createSerialLock(): <T>(operation: () => T | Promise<T>) => Promise<T> {
   let chain: Promise<unknown> = Promise.resolve();
   return <T>(operation: () => T | Promise<T>): Promise<T> => {
+    // report-ok: the chain holds only settled copies, so the operation runs after the last one
+    // however that ended. A failed operation rejects `result`, which its own caller gets.
     const result = chain.then(operation, () => operation());
     chain = result.catch(() => {});
     return result;

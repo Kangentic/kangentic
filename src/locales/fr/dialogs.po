@@ -15,6 +15,11 @@ msgstr ""
 msgid "! at the very start: not. The row runs only when the last line does not match."
 msgstr ""
 
+#: src/renderer/components/dialogs/NewTaskDialog.tsx
+#: src/renderer/components/dialogs/task-detail/useAttachments.ts
+msgid "\"{fileName}\" could not be read."
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/useAttachments.ts
 #, fuzzy
 msgid "\"{fileName}\" is over the 10 MB limit."
@@ -1149,6 +1154,11 @@ msgstr "Impossible d'ajouter « {filename} »"
 #, fuzzy
 msgid "Couldn't archive task"
 msgstr "Impossible d'archiver la tâche"
+
+#: src/renderer/components/dialogs/NewTaskDialog.tsx
+#: src/renderer/components/dialogs/task-detail/useAttachments.ts
+msgid "Couldn't attach file"
+msgstr ""
 
 #: src/renderer/components/dialogs/git/useGitActions.tsx
 msgid "Couldn't commit"

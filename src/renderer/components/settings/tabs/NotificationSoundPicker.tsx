@@ -93,6 +93,7 @@ export function NotificationSoundPicker({ eventKey, eventName, config, disabled,
       updateGlobal({ notifications: { sounds: { [eventKey]: 'custom' }, customSounds: { [eventKey]: result.fileName } } });
       previewEventSound(eventKey, 'custom');
     } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the row shows the reason.
       onRefused(rejectionMessage(error));
     }
   };

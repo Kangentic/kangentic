@@ -73,7 +73,7 @@ export class BacklogAttachmentRepository {
 
     try {
       fs.unlinkSync(attachment.file_path);
-    } catch { /* file may already be gone */ }
+    } catch { /* report-ok: the file is already gone, and the row is removed either way. */ }
 
     this.db.prepare('DELETE FROM backlog_attachments WHERE id = ?').run(id);
     this.syncAttachmentCount(attachment.backlog_task_id);
@@ -84,7 +84,7 @@ export class BacklogAttachmentRepository {
     for (const attachment of attachments) {
       try {
         fs.unlinkSync(attachment.file_path);
-      } catch { /* file may already be gone */ }
+      } catch { /* report-ok: the file is already gone, and the rows are removed either way. */ }
     }
 
     this.db.prepare('DELETE FROM backlog_attachments WHERE backlog_task_id = ?').run(backlogTaskId);
@@ -97,7 +97,7 @@ export class BacklogAttachmentRepository {
         fs.rmdirSync(dir);
         // Also try to remove the parent backlog/<taskId> directory if empty
         fs.rmdirSync(path.dirname(dir));
-      } catch { /* not empty or doesn't exist */ }
+      } catch { /* report-ok: rmdir refuses a folder that is not empty or is already gone. */ }
     }
   }
 

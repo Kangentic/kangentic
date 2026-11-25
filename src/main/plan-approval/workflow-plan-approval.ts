@@ -9,6 +9,7 @@ import type { IpcContext } from '../ipc/ipc-context';
 import { safeLanes } from '../workflows/workflow-lanes';
 import { readWorkflowTasks } from '../workflows/workflow-tasks';
 import { notifyWorkflowChanged } from '../workflows/workflow-changed';
+import { workflowEngineReporter } from '../workflows/workflow-report';
 import { getExistingProjectDb } from '../db/database';
 import { isSqliteError } from '../db/sqlite-error';
 import { TaskRepository } from '../db/repositories/task-repository';
@@ -122,6 +123,9 @@ export function adoptLegacyPlanApproval(context: IpcContext, homeProjectId: stri
   } catch (error) {
     // A database that will not write keeps the legacy value; the next read retries.
     if (!isSqliteError(error)) throw error;
+    // Until it lands, a task's own plan approval cannot be told from the old
+    // whole-workflow value, and every read of the workflow pays for the retry.
+    workflowEngineReporter.report(error, { tags: { stage: 'plan_approval_adopt' } });
     console.warn(`[plan-approval] Could not move workflow ${workflow.id.slice(0, 8)}'s plan approval onto its tasks:`, error);
     return workflow;
   }

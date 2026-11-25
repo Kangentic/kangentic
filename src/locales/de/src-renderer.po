@@ -703,6 +703,7 @@ msgid "Couldn't move every session"
 msgstr ""
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#: src/renderer/stores/project-store.ts
 #, fuzzy
 msgid "Couldn't move project"
 msgstr "Projekt konnte nicht verschoben werden"
@@ -757,6 +758,10 @@ msgstr "MCP-Server nicht erreichbar"
 msgid "Couldn't read that folder"
 msgstr "Ordner konnte nicht gelesen werden"
 
+#: src/renderer/stores/accounts-store.ts
+msgid "Couldn't remove account"
+msgstr ""
+
 #: src/renderer/stores/workflow-store.ts
 #, fuzzy
 msgid "Couldn't remove the link"
@@ -766,6 +771,10 @@ msgstr "Verknüpfung konnte nicht entfernt werden"
 #, fuzzy
 msgid "Couldn't remove the task"
 msgstr "Aufgabe konnte nicht entfernt werden"
+
+#: src/renderer/stores/project-store.ts
+msgid "Couldn't rename project"
+msgstr ""
 
 #: src/renderer/lib/auto-name-scheduler.ts
 #, fuzzy
@@ -781,6 +790,14 @@ msgstr "Workflow konnte nicht umbenannt werden"
 #, fuzzy
 msgid "Couldn't reorder columns"
 msgstr "Spalten konnten nicht neu angeordnet werden"
+
+#: src/renderer/stores/project-store.ts
+msgid "Couldn't reorder groups"
+msgstr ""
+
+#: src/renderer/stores/project-store.ts
+msgid "Couldn't reorder projects"
+msgstr ""
 
 #: src/renderer/stores/board-store/task-slice.ts
 #, fuzzy
@@ -867,6 +884,10 @@ msgstr "Prozesse konnten nicht beendet werden"
 
 #: src/renderer/lib/account-toasts.ts
 msgid "Couldn't switch account"
+msgstr ""
+
+#: src/renderer/stores/project-store.ts
+msgid "Couldn't update group"
 msgstr ""
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx

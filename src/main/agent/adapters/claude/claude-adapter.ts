@@ -1075,6 +1075,8 @@ export class ClaudeAdapter implements AgentAdapter {
       stopRelay();
       throw error;
     }
+    // report-ok: `exited` only ever resolves, on the process's close. The relay stops with the
+    // process however it ended.
     void session.exited.then(stopRelay, stopRelay);
     return session;
   }

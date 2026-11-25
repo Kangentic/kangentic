@@ -38,6 +38,7 @@ import { getInstalledGitVersion, isVersionAtLeast } from './git-version';
 import { WORKTREE_SPARSE_PATTERNS } from './sparse-exclusion';
 import { createChokepointReporter } from '../analytics/handled-report';
 import { trackEvent } from '../analytics/analytics';
+import { gitWorktreeReporter } from './git-worktree-report';
 
 /**
  * First git whose `sparse-checkout set` accepts `--no-cone`. Older git does
@@ -72,6 +73,8 @@ export async function writeWorktreeBaseBranch(worktreeGit: Pick<GitClient, 'raw'
   try {
     await worktreeGit.raw(['config', '--worktree', 'kangentic.baseBranch', baseBranch]);
   } catch {
+    // report-ok: git refuses `--worktree` while extensions.worktreeConfig is off, and the
+    // shared write below is the fallback. Its own failure rejects to the caller.
     await worktreeGit.raw(['config', 'kangentic.baseBranch', baseBranch]);
   }
 }
@@ -89,7 +92,7 @@ async function parallelCheckoutConfig(git: Pick<GitClient, 'raw'>): Promise<stri
   try {
     if ((await git.raw(['config', '--get', 'checkout.workers'])).trim()) return [];
   } catch {
-    // `git config --get` exits 1 when the key is unset.
+    // report-ok: `git config --get` exits 1 when the key is unset, which is the answer.
   }
   const workers = Math.min(os.availableParallelism(), MAX_CHECKOUT_WORKERS);
   return workers > 1 ? ['-c', `checkout.workers=${workers}`] : [];
@@ -457,6 +460,24 @@ function longPathsCommandConfig(): string[] {
   return process.platform === 'win32' ? ['-c', 'core.longpaths=true'] : [];
 }
 
+/**
+ * git's words for a branch rename it answers "no" to: the new name is taken (an older git
+ * capitalizes it), or the old one is gone, which is what an agent that renamed its own
+ * branch leaves. Read here to decide a report and never sent. They are git's English, as
+ * `gitFailureCause`'s are: a git that prints another language is reported once per run.
+ */
+const BRANCH_RENAME_ANSWERS = /a branch named '.*' already exists|no branch named '|refname .* not found/i;
+
+/**
+ * git's words for a branch delete with nothing to do: the branch is already gone, or a
+ * worktree still has it out, which is what a removal that failed leaves behind.
+ */
+const BRANCH_REMOVE_ANSWERS = /branch '.*' not found|cannot delete branch '.*' (?:checked out|used by worktree) at\b/i;
+
+function messageMatches(error: unknown, phrase: RegExp): boolean {
+  return error instanceof Error && phrase.test(error.message);
+}
+
 /** One `[WORKTREE] create step=<name> done in <n>ms` line, timed from `startedAt`. */
 function logCreateStep(step: string, startedAt: number, detail = ''): void {
   console.log(`[WORKTREE] create step=${step} done in ${Date.now() - startedAt}ms${detail}`);
@@ -728,6 +749,13 @@ const projectQueues = new Map<string, ProjectQueue>();
 /** Monotonic counter for FIFO ordering within a priority band. */
 let gitJobSeq = 0;
 
+/**
+ * What a job still waiting in a project's git queue rejects with when the project closes
+ * (`WorktreeManager.clearQueue`). A caller that reports its own failures reads this to
+ * leave that one out: the project went away, and nothing failed.
+ */
+export const GIT_QUEUE_CLEARED_MESSAGE = 'Git queue cleared (project closed)';
+
 /** How often a long-running queue holder logs a heartbeat. */
 const GIT_QUEUE_HEARTBEAT_MS = 15_000;
 /** How often a parked job re-emits its wait progress to the renderer. */
@@ -925,6 +953,8 @@ export class WorktreeManager {
       .then(job.run)
       .then(
         (value) => { job.resolve(value); settle(); },
+        // report-ok: the error is handed on: it rejects the job's own promise, the one
+        // `withGitLock` returned, and that caller reports or handles it.
         (error) => { job.reject(error); settle(); },
       );
   }
@@ -955,7 +985,7 @@ export class WorktreeManager {
           clearInterval(job.waitTimer);
           job.waitTimer = null;
         }
-        job.reject(new Error('Git queue cleared (project closed)'));
+        job.reject(new Error(GIT_QUEUE_CLEARED_MESSAGE));
       }
       queue.waiting.length = 0;
     }
@@ -1146,7 +1176,7 @@ export class WorktreeManager {
       await this.git.raw(['rev-parse', '--verify', branchName]);
       branchExists = true;
     } catch {
-      // Branch does not exist -- will create it
+      // report-ok: the branch does not exist, and the worktree add below creates it.
     }
     // This task's own auto-generated branch, still at the start point, is what an
     // aborted creation leaves behind (see the init-script catch below). Attaching
@@ -1214,6 +1244,8 @@ export class WorktreeManager {
       try {
         await this.git.raw(['worktree', 'prune']);
       } catch (error) {
+        // report-ok: a prune that fails leaves the registration, and the worktree add below
+        // then fails on it and throws to the caller.
         console.warn(`[WORKTREE] prune before recreating ${worktreePath} failed: ${(error as Error).message}`);
       }
       options?.signal?.throwIfAborted();
@@ -1326,7 +1358,8 @@ export class WorktreeManager {
       try {
         await wtGit.raw(['config', 'core.longpaths', 'true']);
       } catch {
-        // non-fatal
+        // report-ok: the write goes to the repo's shared config, which every worktree
+        // creation writes again, and the add above already passed the setting per command.
       }
     }
 
@@ -1347,14 +1380,18 @@ export class WorktreeManager {
         await wtGit.raw(['sparse-checkout', 'set', ...WORKTREE_SPARSE_PATTERNS]);
       }
     } catch (sparseError) {
+      // report-ok: sparse-checkout fails in a linked worktree on git 2.25.0, the user's git
+      // version, and the worktree keeps the full tree.
       console.warn('[WORKTREE] Sparse-checkout not available (worktrees need git 2.26+), skipping:', sparseError);
     }
 
     // After sparse-checkout, which turns on the per-worktree config this needs.
     try {
       await writeWorktreeBaseBranch(wtGit, baseBranch);
-    } catch {
-      // Non-fatal -- merge-back falls back to 'main'
+    } catch (error) {
+      // The creation goes on, but with no record merge-back and /pull-request fall back to
+      // 'main' for this worktree, whatever base it was cut from.
+      gitWorktreeReporter.report(error, { tags: { stage: 'base_branch_write' } });
     }
     logCreateStep('configure', configureStartedAt);
   }
@@ -1404,6 +1441,7 @@ export class WorktreeManager {
       const sha = (await this.git.raw(['rev-parse', '--verify', `refs/heads/${branchName}^{commit}`])).trim();
       return sha.length > 0;
     } catch {
+      // report-ok: git fails when the branch does not exist, which is the answer.
       return false;
     }
   }
@@ -1434,8 +1472,10 @@ export class WorktreeManager {
     logCreateStep('switch', switchStartedAt, ` (spare, ${branchName} at ${startPoint})`);
     try {
       await writeWorktreeBaseBranch(spareGit, baseBranch);
-    } catch {
-      // Non-fatal, as in configureNewWorktree.
+    } catch (error) {
+      // The claim goes on, as in configureNewWorktree, and the task's merge-back then
+      // targets 'main' whatever base the spare was cut from.
+      gitWorktreeReporter.report(error, { tags: { stage: 'base_branch_write' } });
     }
     return this.branchTip(branchName);
   }
@@ -1446,6 +1486,8 @@ export class WorktreeManager {
       const tip = (await this.git.raw(['rev-parse', '--verify', `refs/heads/${branchName}^{commit}`])).trim();
       return tip || null;
     } catch {
+      // report-ok: git fails when the branch does not resolve, and null is the documented
+      // value for a fork point that could not be read.
       return null;
     }
   }
@@ -1561,7 +1603,7 @@ export class WorktreeManager {
       try {
         if ((await fs.promises.stat(path.join(this.projectPath, file))).isDirectory()) return true;
       } catch {
-        // No such path, so it is a glob or there is nothing to copy.
+        // report-ok: no such path, so it is a glob or there is nothing to copy.
         if (hasGlobMagic(file)) return true;
       }
     }
@@ -1649,6 +1691,8 @@ export class WorktreeManager {
       const startPointTip = (await this.git.raw(['rev-parse', '--verify', `${startPoint}^{commit}`])).trim();
       return branchTip !== '' && branchTip === startPointTip;
     } catch {
+      // report-ok: a ref that does not resolve cannot match the start point, and false only
+      // withholds the base from the creation's result.
       return false;
     }
   }
@@ -1672,8 +1716,14 @@ export class WorktreeManager {
     try {
       await this.git.raw(['branch', '-m', oldBranchName, newBranchName]);
       return newBranchName;
-    } catch (err) {
-      console.error('[WORKTREE] Branch rename failed:', err);
+    } catch (error) {
+      // A rename that fails leaves the branch under the old title with nothing said. Two
+      // refusals are answers and are not reported: the new name is taken, or the old one is
+      // gone because the agent renamed its own branch.
+      if (!messageMatches(error, BRANCH_RENAME_ANSWERS)) {
+        gitWorktreeReporter.report(error, { tags: { stage: 'branch_rename' } });
+      }
+      console.error('[WORKTREE] Branch rename failed:', error);
       return null;
     }
   }
@@ -1791,7 +1841,7 @@ export class WorktreeManager {
       try {
         await fs.promises.unlink(path.join(movedTo, '.git'));
       } catch {
-        // Already gone, or not a file. The deleter takes whatever is left.
+        // report-ok: already gone, or not a file. The deleter takes whatever is left.
       }
       console.log(`[WORKTREE] moved aside: ${worktreePath} -> ${movedTo} in ${Date.now() - startedAt}ms`);
     }
@@ -1799,8 +1849,9 @@ export class WorktreeManager {
     try {
       await runGitWithTimeout(this.projectPath, ['worktree', 'prune'], options?.timeoutMs ?? GIT_REMOVAL_TIMEOUT_MS);
     } catch (error) {
-      // The directory is gone either way. The debounced background prune the
-      // Done move schedules, or the next removal's own prune, clears the record.
+      // report-ok: the directory is gone either way. The debounced background prune the
+      // Done move schedules, or the next removal's own prune, clears the record, and a
+      // record still there fails the next worktree add at this path, which throws.
       console.warn(`[WORKTREE] prune after moving ${worktreePath} aside failed (non-fatal): ${(error as Error).message}`);
     }
     await notifyWorktreeRemoved(worktreePath);
@@ -1863,6 +1914,7 @@ export class WorktreeManager {
       const reaped = await reapProcessesForWorktree({
         worktreePath,
         scanTimeoutMs: REAP_SCAN_TIMEOUT_MS[profile],
+        failureReporter: gitWorktreeReporter,
       });
       console.log(`[WORKTREE] remove step=reap done in ${Date.now() - reapStartedAt}ms (killed=${reaped.length})`);
       if (reaped.length > 0) {
@@ -1895,7 +1947,10 @@ export class WorktreeManager {
     // husk-reuse + startup-retry net.
     try {
       await runGitWithTimeout(this.projectPath, ['worktree', 'prune'], timeoutMs);
-    } catch { /* best effort */ }
+    } catch {
+      // report-ok: the removal already failed, and reportWorktreeRemovalFailure below
+      // reports it. A record this prune leaves is cleared by the next removal's prune.
+    }
     // warn, not log: on a production build this is the only line that records
     // the failure at all (see GIT_QUEUE_SLOW_WARN_MS for the same reasoning).
     console.warn(
@@ -1941,6 +1996,9 @@ export class WorktreeManager {
       );
       return { removed: true, timedOut: false };
     } catch (error) {
+      // report-ok: git refuses or times out on a held or unregistered folder, and the manual
+      // removal below takes over. Its failure is returned, and removeWorktreeInternal
+      // reports it through reportWorktreeRemovalFailure.
       console.log(`[WORKTREE] remove step=git-remove failed in ${Date.now() - gitStartedAt}ms, falling back to manual removal: ${(error as Error).message}`);
     }
 
@@ -1957,6 +2015,8 @@ export class WorktreeManager {
       console.log(`[WORKTREE] remove step=manual-rm done in ${Date.now() - manualStartedAt}ms`);
       return { removed: true, timedOut: false };
     } catch (error) {
+      // report-ok: the failure is returned as this attempt's outcome, and
+      // removeWorktreeInternal reports it through reportWorktreeRemovalFailure.
       const timedOut = isRemovalTimeoutError(error);
       if (timedOut) {
         console.warn(
@@ -1985,7 +2045,14 @@ export class WorktreeManager {
   async removeBranch(branchName: string): Promise<void> {
     try {
       await runGitWithTimeout(this.projectPath, ['branch', '-D', branchName], GIT_REMOVAL_TIMEOUT_MS);
-    } catch { /* branch may not exist, or git hung and was killed */ }
+    } catch (error) {
+      // Two refusals are answers and are not reported: the branch may not exist, or a
+      // worktree whose removal failed (and reported itself) still has it out. Anything else,
+      // a git that hung and was killed included, leaves a dead branch behind each task.
+      if (!messageMatches(error, BRANCH_REMOVE_ANSWERS)) {
+        gitWorktreeReporter.report(error, { tags: { stage: 'branch_remove' } });
+      }
+    }
   }
 
   /**
@@ -2001,7 +2068,9 @@ export class WorktreeManager {
     const [remote, localRaw] = await Promise.all([
       this.listRemoteBranches(),
       this.git.raw(['for-each-ref', '--sort=-committerdate', '--format=%(refname:lstrip=2)', 'refs/heads/'])
-        .catch(() => ''), // no local list, origin's alone
+        // report-ok: with no local list the base picker shows origin's branches alone, and
+        // any branch can still be typed into it.
+        .catch(() => ''),
     ]);
     const remoteNames = new Set(remote);
     const localOnly = localRaw.split('\n')
@@ -2020,7 +2089,11 @@ export class WorktreeManager {
   async listRemoteBranches(): Promise<string[]> {
     // --no-auto-gc: the branch picker waits on this, and on Windows a due gc
     // would run inside the fetch (see fetchIfStale).
-    try { await this.git.raw(['fetch', '--prune', '--no-auto-gc']); } catch { /* offline OK */ }
+    try {
+      await this.git.raw(['fetch', '--prune', '--no-auto-gc']);
+    } catch {
+      // report-ok: offline or no remote, and the list below comes from the refs already fetched.
+    }
     // %(refname:short) shortens origin/HEAD to bare "origin" -- filter by
     // requiring the origin/ prefix before stripping it, which excludes both
     // the HEAD symref and any non-origin remotes.
@@ -2098,6 +2171,9 @@ export class WorktreeManager {
       await runGitWithTimeout(projectPath, ['worktree', 'prune'], GIT_REMOVAL_TIMEOUT_MS);
       console.log(`[WORKTREE] Background prune completed for ${projectPath}`);
     }, { priority: GitQueuePriority.BACKGROUND, label: 'background-prune' }).catch((error) => {
+      // report-ok: the queue was cleared by a project close, or the prune timed out on a held
+      // .git lock. The next removal's own prune clears the record, and a record still there
+      // fails only a later worktree add at that path, which throws.
       console.warn(`[WORKTREE] Background prune failed (non-fatal): ${(error as Error).message}`);
     });
   }
@@ -2317,7 +2393,9 @@ async function notifyWorktreeRemoved(worktreePath: string): Promise<void> {
     await worktreeRemovedListener(worktreePath);
   } catch (error) {
     // Best-effort: the worktree is already gone, and a failure here only
-    // leaves a stale entry behind. It must never fail the removal.
+    // leaves a stale entry behind. It must never fail the removal, so it is
+    // reported: an agent CLI's per-directory entries would pile up unseen.
+    gitWorktreeReporter.report(error, { tags: { stage: 'removed_listener' } });
     console.warn('[WORKTREE] worktree-removed listener failed (non-fatal):', error);
   }
 }
@@ -2368,7 +2446,9 @@ async function notifyWorktreeRemoving(worktreePath: string): Promise<void> {
     );
   } catch (error) {
     // Best-effort: failing to release a handle must never block the removal.
-    // The worst case is the pre-existing behaviour.
+    // The worst case is the pre-existing behaviour: our own watch still holds
+    // the folder, the removal fails on it, and nothing says why. So it is reported.
+    gitWorktreeReporter.report(error, { tags: { stage: 'removing_listener' } });
     console.warn('[WORKTREE] worktree-removing listener failed (non-fatal):', error);
   }
 }

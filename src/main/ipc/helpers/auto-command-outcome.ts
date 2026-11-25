@@ -3,6 +3,7 @@ import type { AutoCommandResultNotice, AutoCommandState, Task } from '../../../s
 import type { InjectionReport } from '../../transition-engine/terminal-submit-scheduler';
 import type { IpcContext } from '../ipc-context';
 import type { TaskRepository } from '../../db/repositories/task-repository';
+import { handlerStepReporter } from './handler-step-report';
 
 /**
  * Record what happened to a task's auto_command, and tell the user when it
@@ -39,8 +40,9 @@ export function reportAutoCommandOutcome(
       error: report.reason ?? null,
     });
   } catch (caughtError) {
-    // Persistence is best-effort: a DB hiccup must not swallow the notice,
-    // which is the part the user actually sees.
+    // A failed write must not swallow the notice, which is the part the user actually
+    // sees. What is lost is the durable record of what happened to the command.
+    handlerStepReporter.report(caughtError, { tags: { area: 'spawn', step: 'auto_command_record' } });
     console.error(`[auto-command] Failed to record outcome for task ${task.id.slice(0, 8)}:`, caughtError);
   }
 

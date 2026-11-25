@@ -21,6 +21,7 @@ import { describeIpcError, asSentence, ipcFailureToastFields } from '../lib/ipc-
 import { useProjectStore } from './project-store';
 import { useSessionStore } from './session-store';
 import { useToastStore } from './toast-store';
+import { reportRendererFailure } from '../utils/renderer-failure';
 import { openTaskFromNotification } from '../utils/open-task-from-notification';
 
 /** Why a watched workflow's latest read failed (see `watchedDetails`). */
@@ -236,8 +237,19 @@ function currentProjectId(): string | null {
  * One toast for every workflow action: the title names the action ("Couldn't
  * start the workflow"), the body is main's reason. The title arrives as a
  * descriptor and is translated here, when the toast is raised.
+ *
+ * It also reports. A rejection main's handler wrap saw is dropped by the
+ * reporter, since main judged it. What reports is a throw from this store's own
+ * work around the call (applying an agent's status, upserting its session),
+ * which the toast alone would have turned into "Couldn't ..." and nothing else.
+ * `operation` is the fixed word the report is keyed on.
  */
-function reportFailure(title: MessageDescriptor, error: unknown): void {
+function reportWorkflowFailure(
+  title: MessageDescriptor,
+  error: unknown,
+  operation: 'action' | 'agent_open' | 'agent_resume' | 'agent_pause' | 'create' = 'action',
+): void {
+  reportRendererFailure('workflows', operation, error);
   useToastStore.getState().addToast({ title: i18n._(title), ...ipcFailureToastFields(error), variant: 'error' });
 }
 
@@ -360,7 +372,7 @@ const workflowStoreInitializer: StateCreator<WorkflowStore> = (set, get) => {
     try {
       return { ok: true, value: await run(projectId, selectedWorkflowId) };
     } catch (error) {
-      reportFailure(failure, error);
+      reportWorkflowFailure(failure, error);
       return { ok: false };
     }
   }
@@ -382,6 +394,7 @@ const workflowStoreInitializer: StateCreator<WorkflowStore> = (set, get) => {
       workflowModuleState.pendingLinks = null;
       set({ linkFocus: { taskId, homeProjectId, detail, kept }, linkFocusLoading: false });
     } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the links overlay clears.
       console.warn('[workflow-store] Failed to load the workflow for its links:', describeIpcError(error));
       if (generation !== workflowModuleState.linkGeneration) return;
       workflowModuleState.pendingLinks = null;
@@ -400,6 +413,8 @@ const workflowStoreInitializer: StateCreator<WorkflowStore> = (set, get) => {
     try {
       detail = await window.electronAPI.workflows.get(watched.homeProjectId, workflowId);
     } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the task's workflow panel
+      // says the workflow is gone, keeps the detail it has, or says it could not be loaded.
       const message = describeIpcError(error);
       console.warn('[workflow-store] Failed to load a task\'s workflow:', message);
       if (workflowModuleState.watchedGenerations.get(workflowId) !== generation) return;
@@ -441,7 +456,7 @@ const workflowStoreInitializer: StateCreator<WorkflowStore> = (set, get) => {
       await run();
       return true;
     } catch (error) {
-      reportFailure(failure, error);
+      reportWorkflowFailure(failure, error);
       return false;
     }
   }
@@ -484,7 +499,7 @@ const workflowStoreInitializer: StateCreator<WorkflowStore> = (set, get) => {
       try {
         applyAgentStatus(selectedWorkflowId, await window.electronAPI.workflows.agentOpen(projectId, selectedWorkflowId, grid?.cols, grid?.rows));
       } catch (error) {
-        reportFailure(msg`Couldn't start the workflow agent`, error);
+        reportWorkflowFailure(msg`Couldn't start the workflow agent`, error, 'agent_open');
       }
     },
 
@@ -494,7 +509,7 @@ const workflowStoreInitializer: StateCreator<WorkflowStore> = (set, get) => {
       try {
         applyAgentStatus(selectedWorkflowId, await window.electronAPI.workflows.agentResume(projectId, selectedWorkflowId, grid?.cols, grid?.rows));
       } catch (error) {
-        reportFailure(msg`Couldn't resume the workflow agent`, error);
+        reportWorkflowFailure(msg`Couldn't resume the workflow agent`, error, 'agent_resume');
       }
     },
 
@@ -504,7 +519,7 @@ const workflowStoreInitializer: StateCreator<WorkflowStore> = (set, get) => {
       try {
         await window.electronAPI.workflows.agentPause(projectId, selectedWorkflowId);
       } catch (error) {
-        reportFailure(msg`Couldn't pause the workflow agent`, error);
+        reportWorkflowFailure(msg`Couldn't pause the workflow agent`, error, 'agent_pause');
       }
     },
 
@@ -521,6 +536,8 @@ const workflowStoreInitializer: StateCreator<WorkflowStore> = (set, get) => {
       try {
         summaries = await window.electronAPI.workflows.list(projectId);
       } catch (error) {
+        // report-ok: main's IPC wrap reports a handler's rejection, and the last list stays, or
+        // an empty one after a project switch.
         console.error('[workflow-store] Failed to load workflows:', describeIpcError(error));
         // A project switch whose read failed must not leave the old project's
         // workflow on screen under the new project's header, where its actions
@@ -568,6 +585,8 @@ const workflowStoreInitializer: StateCreator<WorkflowStore> = (set, get) => {
       try {
         supersessions = await window.electronAPI.workflows.listSupersessions(projectId);
       } catch (error) {
+        // report-ok: main's IPC wrap reports a handler's rejection, and the Done rows keep the
+        // lines they had.
         console.error('[workflow-store] Failed to load superseded tasks:', describeIpcError(error));
         return;
       }
@@ -589,6 +608,9 @@ const workflowStoreInitializer: StateCreator<WorkflowStore> = (set, get) => {
           loaded[homeProjectId] = shareSummaries(get().homeSummaries[homeProjectId] ?? [], list);
         } catch (error) {
           // A home that cannot be read (closed, deleted) names nothing; its cards show no workflow strip.
+          // That rejection is main's, and the reporter drops it. A throw from
+          // sharing the list is this store's, and it costs the same strip.
+          reportRendererFailure('workflows', 'home_summaries', error);
           console.warn('[workflow-store] Failed to load another project\'s workflows:', describeIpcError(error));
         }
       }));
@@ -670,7 +692,8 @@ const workflowStoreInitializer: StateCreator<WorkflowStore> = (set, get) => {
       try {
         detail = await window.electronAPI.workflows.get(projectId, selectedWorkflowId);
       } catch (error) {
-        // Deleted under the view (by an agent, or another surface): the list
+        // report-ok: main's IPC wrap reports a handler's rejection. The usual one is a
+        // workflow deleted under the view (by an agent, or another surface), and the list
         // reload that follows moves the view on.
         console.warn('[workflow-store] Failed to load workflow:', describeIpcError(error));
         return;
@@ -716,7 +739,7 @@ const workflowStoreInitializer: StateCreator<WorkflowStore> = (set, get) => {
         await get().loadWorkflows();
         return workflow;
       } catch (error) {
-        reportFailure(msg`Couldn't create the workflow`, error);
+        reportWorkflowFailure(msg`Couldn't create the workflow`, error, 'create');
         return null;
       }
     },

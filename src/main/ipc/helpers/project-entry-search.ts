@@ -164,7 +164,7 @@ async function runGit(
 async function isInsideGitWorkTree(cwd: string): Promise<boolean> {
   const result = await runGit(cwd, ['rev-parse', '--is-inside-work-tree'], {
     allowNonZeroExit: true,
-  }).catch(() => null);
+  }).catch(() => null); // report-ok: git with no answer means no work tree, and the folder is walked.
   return Boolean(result && result.code === 0 && result.stdout.trim() === 'true');
 }
 
@@ -181,7 +181,7 @@ async function filterGitIgnoredPaths(cwd: string, relativePaths: string[]): Prom
     const result = await runGit(cwd, ['check-ignore', '--no-index', '-z', '--stdin'], {
       allowNonZeroExit: true,
       stdin: `${chunk.join('\0')}\0`,
-    }).catch(() => null);
+    }).catch(() => null); // report-ok: check-ignore that cannot run leaves the list unfiltered.
 
     chunk = [];
     chunkBytes = 0;
@@ -232,7 +232,7 @@ async function buildWorkspaceIndexFromGit(cwd: string): Promise<WorkspaceIndex |
     cwd,
     ['ls-files', '-t', '--cached', '--others', '--exclude-standard', '-z'],
     { allowNonZeroExit: true },
-  ).catch(() => null);
+  ).catch(() => null); // report-ok: ls-files that cannot run falls back to walking the folder.
 
   if (!listedFiles || listedFiles.code !== 0) {
     return null;
@@ -246,6 +246,7 @@ async function buildWorkspaceIndexFromGit(cwd: string): Promise<WorkspaceIndex |
   await Promise.all(taggedPaths
     .filter(({ skipWorktree }) => skipWorktree)
     .map(({ relativePath }) => fs.access(path.join(cwd, relativePath)).catch(() => {
+      // report-ok: a skip-worktree entry that is not on disk is the answer, and it is left out.
       missingFromDisk.add(relativePath);
     })));
   const listedPaths = taggedPaths
@@ -311,6 +312,8 @@ async function buildWorkspaceIndex(cwd: string): Promise<WorkspaceIndex> {
           return { relativeDir, dirents };
         } catch (error) {
           if (!relativeDir) {
+            // refusal-wrap-ok: the try holds only the readdir of the folder the user picked, so
+            // what it threw is that folder refusing the read.
             throw new RefusalError(
               `Unable to scan workspace entries at '${cwd}': ${error instanceof Error ? error.message : 'unknown error'}`,
               { cause: error },

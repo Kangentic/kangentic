@@ -1,5 +1,6 @@
 import type { McpConnectionCheck } from '../../../shared/types';
 import type { StoredCliTarget } from '../../../shared/types';
+import { handlerStepReporter, isDefectOrEnvironmentFailure } from './handler-step-report';
 
 /** The session facts the watch reads. */
 export interface McpConnectionWatchSessions {
@@ -67,6 +68,12 @@ export class McpConnectionWatch {
         }
       })
       .catch((error: unknown) => {
+        // The check itself could not run, so a board whose tools never connect gets no
+        // notice outside Settings. A probe program that fails is a plain Error, so only a
+        // defect or an errno reports.
+        if (isDefectOrEnvironmentFailure(error)) {
+          handlerStepReporter.report(error, { tags: { area: 'mcp_watch', step: 'session_start_check' } });
+        }
         console.warn('[MCP] Connection check at session start failed to run:', error);
       })
       .finally(() => this.checking.delete(place));

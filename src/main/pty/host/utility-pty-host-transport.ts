@@ -55,6 +55,7 @@ import {
   type PtyHostHeartbeatStall,
   type PtyHostHeartbeatStallOutcome,
 } from './pty-host-report';
+import { sessionManagerReporter } from '../session-manager-report';
 
 const SERVICE_NAME = 'kangentic-pty-host';
 /** VS Code's pty host restart cap. */
@@ -314,6 +315,10 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
     try {
       onLateResult(result);
     } catch (error) {
+      // A reap or a Stop that timed out still ran in the host. Its late answer
+      // is the only word of what it killed, so the toast and the Done worktree
+      // retry that hang off it never happen.
+      sessionManagerReporter.report(error, { tags: { stage: 'late_reap_answer' } });
       console.warn('[pty-host] a late answer could not be handled:', error);
     }
   }
@@ -349,6 +354,8 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
     try {
       child.postMessage({ type: 'shutdown', exitWaitMs } satisfies PtyHostCommand);
     } catch {
+      // report-ok: a host that cannot take the shutdown message is already on its way
+      // out, and the kill ends it, which is what the quit wanted.
       child.kill();
     }
   }
@@ -362,8 +369,8 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
     try {
       child.postMessage(message, transfer);
     } catch {
-      // The host died between the check and the post; its exit handling
-      // reports what it held.
+      // report-ok: the host died between the check and the post. onHostExit rejects
+      // every request it held and hands the crash to restartPolicy.recordCrash.
     }
   }
 
@@ -377,6 +384,8 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
     try {
       child = utilityProcess.fork(hostPath, [], { serviceName: SERVICE_NAME, stdio: UTILITY_PROCESS_STDIO });
     } catch (error) {
+      // report-ok: restartPolicy.recordCrash below takes it as fork_failed and does the
+      // reporting, and afterHostLost schedules the next attempt.
       console.warn('[pty-host] fork failed:', error);
       this.restartPolicy.recordCrash(null, undefined, { cause: 'fork_failed' });
       this.afterHostLost();
@@ -561,10 +570,17 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
         if (beat.stalled) console.warn(`[pty-host] answered a heartbeat after ${elapsedMs} ms`);
         this.endStall(beat, 'answered', elapsedMs);
       }, (error: unknown) => {
-        // A ping that fails is how a stall ends without an answer. Any other
-        // error the host sent back for a ping has nothing to report.
+        // A ping that fails is how a stall ends without an answer.
         if (error instanceof PtyHostExitedError) this.endStall(beat, 'host_exited', null);
         else if (error instanceof PtyHostTimeoutError) this.endStall(beat, 'no_answer', null);
+        else {
+          // Anything else is the host answering its ping with an error. The core's
+          // ping only returns, so this is the host's request dispatch failing, and
+          // every other request fails with it. A stall this beat measured stays
+          // unended: an error reply is neither an answer nor a lost host, and a
+          // stall report would have to invent its outcome.
+          sessionManagerReporter.report(error, { tags: { stage: 'heartbeat_ping' } });
+        }
       }).finally(() => {
         clearTimeout(warnTimer);
         if (this.currentBeat === beat) this.currentBeat = null;

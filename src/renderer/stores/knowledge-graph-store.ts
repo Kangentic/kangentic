@@ -33,6 +33,7 @@ import type {
   KnowledgeGraphRelatedTask,
 } from '../../shared/types';
 import { rejectionMessage } from '../lib/ipc-error';
+import { reportRendererFailure } from '../utils/renderer-failure';
 
 /** What a turn is doing. */
 export type KnowledgeGraphChatTurnStatus = 'finding' | 'answering' | 'done' | 'failed';
@@ -352,6 +353,8 @@ async function startFirstBuild(projectId: string, snapshot: KnowledgeGraphSnapsh
     const progress = await window.electronAPI.knowledgeGraph.refreshGraph(projectId);
     return progress ? { ...snapshot, building: true, buildProgress: progress } : snapshot;
   } catch {
+    // report-ok: main's IPC wrap reports a handler's rejection, and the read is painted as it
+    // came, with no build shown as started.
     return snapshot;
   }
 }
@@ -422,6 +425,8 @@ const knowledgeGraphStoreInitializer: StateCreator<KnowledgeGraphState> = (set, 
         updateTurn(turn.id, () => ({ status: 'failed', reason: result.reason }));
       }
     } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the turn shows the reason
+      // in the chat.
       if (!get().thread.some((entry) => entry.id === turn.id)) return;
       updateTurn(turn.id, () => ({
         status: 'failed',
@@ -575,7 +580,8 @@ const knowledgeGraphStoreInitializer: StateCreator<KnowledgeGraphState> = (set, 
         const projects = await window.electronAPI.knowledgeGraph.graphProjects();
         set({ projects });
       } catch {
-        // The picker stays hidden, and the map shows the open project.
+        // report-ok: main's IPC wrap reports a handler's rejection, and the picker stays
+        // hidden while the map shows the open project.
       }
     },
 
@@ -634,7 +640,10 @@ const knowledgeGraphStoreInitializer: StateCreator<KnowledgeGraphState> = (set, 
         }
         set((state) => ({ scopeSnapshots: { ...state.scopeSnapshots, [projectId]: withLiveProgress(snapshot, state) } }));
         if (!firstBuild) rebuildIfStale(projectId, snapshot, fromPush);
-      } catch {
+      } catch (error) {
+        // Reports a throw from this store's own work on the snapshot (the live
+        // progress merge, the stale check); a rejection main saw is dropped there.
+        reportRendererFailure('knowledge_graph', 'scope_snapshot', error);
         // A failed re-read keeps the island already drawn, as `loadSnapshot`
         // keeps its snapshot; only a project with nothing yet is marked empty.
         if (get().scopeProjectIds?.includes(projectId) && !(projectId in get().scopeSnapshots)) {
@@ -825,7 +834,10 @@ const knowledgeGraphStoreInitializer: StateCreator<KnowledgeGraphState> = (set, 
           // Not when the graph closed while this read was in flight: `close`
           // cleared what was asked so the next open asks for its own.
           if (!firstBuild && nextProjectId && knowledgeGraphModuleState.closeCount === closesAtStart) rebuildIfStale(nextProjectId, snapshot, options?.fromPush === true && !switched);
-        } catch {
+        } catch (error) {
+          // Reports a throw from this store's own work on the snapshot, which
+          // leaves the map empty; a rejection main saw is dropped there.
+          reportRendererFailure('knowledge_graph', 'snapshot', error);
           if (ordinal === knowledgeGraphModuleState.fetchOrdinal) set({ loading: false, loaded: true });
         } finally {
           knowledgeGraphModuleState.inFlight = null;

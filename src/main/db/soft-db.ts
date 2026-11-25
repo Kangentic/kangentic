@@ -1,4 +1,5 @@
 import { isShuttingDown } from '../shutdown-state';
+import { dbReporter } from './db-report';
 
 /**
  * Run a database access that must not take its caller down with it.
@@ -61,13 +62,16 @@ export interface SoftlyOptions {
 }
 
 /**
- * Called on every notifying failure. Injected rather than imported so this
- * module's static graph stays free of `electron` and `@sentry/electron`, which
- * is the same reason `setProjectDbInitializer` exists in `database.ts`: the
- * unit tier traverses this graph and cannot load either.
+ * Called on every notifying failure. Injected rather than imported because it
+ * opens a dialog on main's window, which only `src/main/index.ts` holds. It also
+ * reports the failure, once a run, as `global_db_read`.
  *
  * Left unset, a notifying access still degrades and still logs. It just has no
  * way to tell anyone, which is the right behaviour outside a running app.
+ *
+ * An access that passes no `notify` has no one to tell either, so it reports
+ * here, through `dbReporter` (`stage: 'soft_read'`). That module is a leaf in
+ * main's graph, and no worker imports this one.
  */
 export type GlobalDbFailureNotifier = (error: unknown, operation: string) => void;
 
@@ -113,7 +117,14 @@ export function softly<T>(
     // it is the half that knows a successful Retry has re-armed it. Duplicating
     // the flag here would leave this one latched true after a recovery and
     // silence the next real failure.
-    if (options.notify) notifier?.(error, operation);
+    if (options.notify) {
+      // The notifier reports this failure itself, as `global_db_read`.
+      notifier?.(error, operation);
+    } else {
+      // An access that asks for no dialog degrades with nobody told: an advisory
+      // ledger that stops persisting, a list that reads empty.
+      dbReporter.report(error, { tags: { stage: 'soft_read' } });
+    }
 
     return fallback;
   }

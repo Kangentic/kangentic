@@ -43,6 +43,7 @@ import { TaskMoveRepository } from '../../db/repositories/task-move-repository';
 import { doneColumn } from '../../../shared/workflow-route';
 import { resolveProjectContext } from '../helpers/project-repos';
 import { wrapWorktreeSetupError } from '../helpers/worktree-setup-error';
+import { handlerStepReporter } from '../helpers/handler-step-report';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
 import { owedPromptOf, resolveResumeLineage } from '../../transition-engine/resume-conversation-guard';
 import { textLeftToType } from '../../transition-engine/resume-prompt-delivery';
@@ -102,6 +103,8 @@ export function resumeRefusalBeforeLock(context: IpcContext, projectId: string, 
     const blocked = resumeBlockReasonForTask({ task, laneRole: lane?.role });
     return blocked ? resumeBlockMessage(blocked) : null;
   } catch {
+    // report-ok: an early exit only. The locked path makes the same reads, and one that
+    // throws there rejects the Resume to its caller.
     return null;
   }
 }
@@ -215,6 +218,9 @@ export function resumeTaskSession(
     try {
       options.onFailed?.(step, error, task);
     } catch (hookError) {
+      // The resume's own failure was reported above. The caller's hook is what tells the
+      // user (the spawn-blocked notice, a phone's answer), and that is what is lost.
+      handlerStepReporter.report(hookError, { tags: { area: 'session_resume', step: 'caller_hook' } });
       console.warn('[SESSION_RESUME] onFailed hook threw:', hookError);
     }
   };

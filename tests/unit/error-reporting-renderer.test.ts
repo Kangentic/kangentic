@@ -9,26 +9,51 @@
  * window.electronAPI fresh, so unlike error-reporting-switch.test.ts's
  * main-process counterpart, no vi.resetModules() dance is needed here.
  */
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   init: vi.fn(),
   captureException: vi.fn(),
+  setTag: vi.fn(),
 }));
 
 vi.mock('@sentry/electron/renderer', () => ({
   init: mocks.init,
   captureException: mocks.captureException,
+  setTag: mocks.setTag,
 }));
 
 import { componentNamesOf, initRendererErrorReporting, reportCaughtRenderError, reportHandledRendererError } from '../../src/renderer/error-reporting';
 import { reportRendererFailure, resetRendererFailureReports, setRendererFailureSink } from '../../src/renderer/utils/renderer-failure';
 import { filterBreadcrumb } from '../../src/shared/sentry-breadcrumbs';
 
+const RENDERER_ROOT = path.resolve(__dirname, '../../src/renderer');
+
+function rendererSourceFiles(directory: string = RENDERER_ROOT): string[] {
+  const found: string[] = [];
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const fullPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) found.push(...rendererSourceFiles(fullPath));
+    else if (/\.tsx?$/.test(entry.name)) found.push(fullPath);
+  }
+  return found;
+}
+
+interface StampedEvent { tags?: Record<string, string> }
+
+/** Run `event` through the `beforeSend` the last init was handed. */
+function stampedByBeforeSend(event: StampedEvent): StampedEvent {
+  const options = mocks.init.mock.calls.at(-1)?.[0] as { beforeSend: (event: StampedEvent) => StampedEvent };
+  return options.beforeSend(event);
+}
+
 describe('initRendererErrorReporting', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     mocks.init.mockClear();
+    mocks.setTag.mockClear();
   });
 
   it('calls @sentry/electron/renderer init() when electronAPI.analytics.errorReportingEnabled is true', () => {
@@ -54,10 +79,11 @@ describe('initRendererErrorReporting', () => {
 
     initRendererErrorReporting();
 
-    // Exactly these two options, and every field spelled out: Sentry 8
+    // Exactly these three options, and every field spelled out: Sentry 8
     // collects any dataCollection field left out.
     expect(mocks.init).toHaveBeenCalledWith({
       beforeBreadcrumb: filterBreadcrumb,
+      beforeSend: expect.any(Function),
       dataCollection: {
         userInfo: false,
         cookies: false,
@@ -73,12 +99,60 @@ describe('initRendererErrorReporting', () => {
     });
   });
 
+  // A pop-out is its own renderer with its own stores, so an event that cannot
+  // say which window sent it reads like a main-window bug.
+  it.each([
+    ['the main window', { analytics: { errorReportingEnabled: true } }, 'main'],
+    ['a stats pop-out', { analytics: { errorReportingEnabled: true }, popOut: { descriptor: { kind: 'stats', params: {} } } }, 'stats'],
+    ['a pop-out whose kind is not one', { analytics: { errorReportingEnabled: true }, popOut: { descriptor: { kind: 'Fix Acme billing', params: {} } } }, 'main'],
+  ])('tags every event from %s with its window kind', (_label, electronAPI, expected) => {
+    vi.stubGlobal('window', { electronAPI, location: { hash: '' } });
+
+    initRendererErrorReporting();
+
+    // An event that carries tags of its own keeps them, and one with none gets the tag.
+    expect(stampedByBeforeSend({ tags: { source: 'renderer' } }).tags).toEqual({ source: 'renderer', window_kind: expected });
+    expect(stampedByBeforeSend({}).tags).toEqual({ window_kind: expected });
+  });
+
+  // The SDK copies a renderer's scope into main's, so a tag set on the scope here
+  // rode every main-process event as whichever window started last (seen on a
+  // real `ipc_handler` event). The tag goes on the event, and nothing in the
+  // renderer touches the scope.
+  it('never sets the window kind, or anything else, on the scope', () => {
+    vi.stubGlobal('window', { electronAPI: { analytics: { errorReportingEnabled: true } }, location: { hash: '' } });
+
+    initRendererErrorReporting();
+
+    expect(mocks.setTag).not.toHaveBeenCalled();
+    const scopeWrites = rendererSourceFiles()
+      .filter((file) => /\b(?:setTags?|setContext|setExtras?|setUser)\(|getCurrentScope|withScope\(/.test(fs.readFileSync(file, 'utf8')))
+      .map((file) => path.relative(RENDERER_ROOT, file));
+    expect(scopeWrites, 'A renderer scope write reaches every main-process event. Stamp the event in beforeSend.').toEqual([]);
+  });
+
+  it('still registers the failure sink when the window kind cannot be read', () => {
+    // No `location` on this stub, so the descriptor read throws.
+    vi.stubGlobal('window', { electronAPI: { analytics: { errorReportingEnabled: true } } });
+    setRendererFailureSink(null);
+    resetRendererFailureReports();
+
+    initRendererErrorReporting();
+
+    expect(stampedByBeforeSend({}).tags).toEqual({ window_kind: 'unknown' });
+    expect(reportRendererFailure('board', 'load', new TypeError('defect'))).toBe(true);
+    setRendererFailureSink(null);
+    resetRendererFailureReports();
+    mocks.captureException.mockReset();
+  });
+
   it('does not call init() when errorReportingEnabled is false', () => {
     vi.stubGlobal('window', { electronAPI: { analytics: { errorReportingEnabled: false } } });
 
     initRendererErrorReporting();
 
     expect(mocks.init).not.toHaveBeenCalled();
+    expect(mocks.setTag).not.toHaveBeenCalled();
   });
 
   it('does not call init() when window.electronAPI is entirely absent', () => {
@@ -195,7 +269,8 @@ describe('reportRendererFailure', () => {
   it('stops at 25 distinct operations', () => {
     let sent = 0;
     for (let index = 0; index < 26; index += 1) {
-      if (reportRendererFailure('board', `op${index}`, new RangeError('x'))) sent += 1;
+      // `as const`: the reporter takes only words the compiler can see, never a plain string.
+      if (reportRendererFailure('board', `op${index}` as const, new RangeError('x'))) sent += 1;
     }
     expect(sent).toBe(25);
     expect(mocks.captureException).toHaveBeenCalledTimes(25);
@@ -207,6 +282,27 @@ describe('reportRendererFailure', () => {
     const aborted = new Error('The operation was aborted');
     aborted.name = 'AbortError';
     expect(reportRendererFailure('board', 'c', aborted)).toBe(false);
+    expect(mocks.captureException).not.toHaveBeenCalled();
+  });
+
+  // The app's chunks are files in its own package, so one that will not load is
+  // a broken build or install. Chromium words it like a network failure.
+  it('reports a lazy chunk that did not load, which opens with the network words', () => {
+    const missingChunk = new TypeError('Failed to fetch dynamically imported module: file:///C:/Users/dev/app/assets/markdown-pipeline.js');
+    expect(reportRendererFailure('markdown', 'pipeline_load', missingChunk)).toBe(true);
+    const [sent] = mocks.captureException.mock.calls[0] as [Error];
+    expect(sent.message).toBe('Handled markdown_pipeline_load failure: TypeError');
+    // The chunk's address, which holds the install path, stays out of the copy.
+    expect(`${sent.message}\n${sent.stack ?? ''}`).not.toContain('markdown-pipeline.js');
+  });
+
+  it('skips a refusal the renderer raised itself', () => {
+    const refusal = new Error('No project is currently open');
+    refusal.name = 'RefusalError';
+    const configuration = new Error('The base branch is not set');
+    configuration.name = 'UserConfigurationError';
+    expect(reportRendererFailure('command_terminal', 'branch_switch', refusal)).toBe(false);
+    expect(reportRendererFailure('command_terminal', 'spawn', configuration)).toBe(false);
     expect(mocks.captureException).not.toHaveBeenCalled();
   });
 

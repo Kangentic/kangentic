@@ -252,6 +252,7 @@ export const handleGetSessionEvents: CommandHandler = async (
   const source = onHost ? 'this computer\'s record of the session (you cannot open this file from the host)' : eventsJsonlPath;
   const locationFields = { location: 'local' as const, ...(onHost ? { copy: true } : {}) };
 
+  // report-ok: a session with no events file yet is the answer, and the reply below says so.
   const eventsJsonlExists = await fs.promises.access(eventsJsonlPath).then(() => true, () => false);
   if (!eventsJsonlExists) {
     return {

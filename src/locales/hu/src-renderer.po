@@ -703,6 +703,7 @@ msgid "Couldn't move every session"
 msgstr ""
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#: src/renderer/stores/project-store.ts
 #, fuzzy
 msgid "Couldn't move project"
 msgstr "Nem sikerült áthelyezni a projektet"
@@ -757,6 +758,10 @@ msgstr "Nem sikerült elérni az MCP-kiszolgálót"
 msgid "Couldn't read that folder"
 msgstr "Nem sikerült beolvasni a mappát"
 
+#: src/renderer/stores/accounts-store.ts
+msgid "Couldn't remove account"
+msgstr ""
+
 #: src/renderer/stores/workflow-store.ts
 #, fuzzy
 msgid "Couldn't remove the link"
@@ -766,6 +771,10 @@ msgstr "Nem sikerült eltávolítani a kapcsolatot"
 #, fuzzy
 msgid "Couldn't remove the task"
 msgstr "Nem sikerült eltávolítani a feladatot"
+
+#: src/renderer/stores/project-store.ts
+msgid "Couldn't rename project"
+msgstr ""
 
 #: src/renderer/lib/auto-name-scheduler.ts
 #, fuzzy
@@ -781,6 +790,14 @@ msgstr "Nem sikerült átnevezni a munkafolyamatot"
 #, fuzzy
 msgid "Couldn't reorder columns"
 msgstr "Nem sikerült átrendezni az oszlopokat"
+
+#: src/renderer/stores/project-store.ts
+msgid "Couldn't reorder groups"
+msgstr ""
+
+#: src/renderer/stores/project-store.ts
+msgid "Couldn't reorder projects"
+msgstr ""
 
 #: src/renderer/stores/board-store/task-slice.ts
 #, fuzzy
@@ -867,6 +884,10 @@ msgstr "Nem sikerült leállítani a folyamatokat"
 
 #: src/renderer/lib/account-toasts.ts
 msgid "Couldn't switch account"
+msgstr ""
+
+#: src/renderer/stores/project-store.ts
+msgid "Couldn't update group"
 msgstr ""
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx

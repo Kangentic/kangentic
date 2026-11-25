@@ -4,6 +4,7 @@ import type { SessionRepository } from '../../db/repositories/session-repository
 import type { UsageHistoryRepository } from '../../db/repositories/usage-history-repository';
 import type { Task } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
+import { handlerStepReporter } from '../helpers/handler-step-report';
 
 /**
  * Resolve the effective default base branch for a project: the team-shared
@@ -136,10 +137,14 @@ export function captureGitChurn(
         sessionRepo.setTaskGitStats(recordIds, canonicalRecordId, stats);
         usageHistoryRepo.setTaskGitStats(recordIds, canonicalRecordId, stats);
       })
-      .catch(() => {
-        // Git stats capture is best-effort
+      .catch((error: unknown) => {
+        // The task's lines added and removed never reach Stats. A git error reads as zero
+        // inside the read, so what lands here is the queue or the two writes.
+        handlerStepReporter.report(error, { tags: { area: 'git_stats', step: 'churn_write' } });
       });
-  } catch {
-    // Never break the calling finalization flow
+  } catch (error) {
+    // Never break the calling finalization flow. The capture never started, so the
+    // task's lines changed never reach Stats.
+    handlerStepReporter.report(error, { tags: { area: 'git_stats', step: 'churn_capture' } });
   }
 }

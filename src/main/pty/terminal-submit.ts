@@ -4,6 +4,7 @@ import { sanitizeForPty } from '../../shared/paths';
 import { EventType, IdleReason, PromptReason, type SessionEvent } from '../../shared/types';
 import { waitForOutputSettle } from './output-settle';
 import { automatedKeysRefusal, waitUntilAutomatedKeysClear } from './automated-keys-guard';
+import { sessionManagerReporter } from './session-manager-report';
 
 /**
  * Re-export the PasteEngine error class so callers (`browser.ts`) can catch
@@ -326,6 +327,10 @@ export class TerminalSubmit {
       try {
         this.recordTyped(sessionId, text);
       } catch (error) {
+        // The recorder marks its own failures. A throw past it leaves this text
+        // unrecorded with no mark, so a turn end can read Kangentic's own
+        // message as one a person typed.
+        sessionManagerReporter.report(error, { tags: { stage: 'typed_text_record' } });
         console.warn(`[terminal-submit] could not record typed text for session ${sessionId.slice(0, 8)}:`, error);
       }
     }

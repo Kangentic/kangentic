@@ -10,6 +10,7 @@ import { imageKindForPath } from '../../shared/image-preview';
 import { loadDocumentPlugins, loadedDocumentPlugins, type DocumentRehypePlugins } from '../utils/markdown-document-plugins';
 import { isMarkdownAlertKind, type MarkdownAlertKind } from '../utils/markdown-alert-kinds';
 import { resolveMarkdownHref, resolveRepoAssetPath } from '../utils/markdown-repo-link';
+import { reportRendererFailure } from '../utils/renderer-failure';
 
 const remarkPlugins = [remarkGfm];
 
@@ -95,7 +96,12 @@ function useRepoImage(path: string | null, loadImage: (path: string) => Promise<
       .then((url) => {
         if (!cancelled) setLoaded({ path, url });
       })
-      .catch(() => {
+      .catch((error: unknown) => {
+        // A host's reader resolves null for an image it cannot show, so a rejection is the
+        // reader's own failure. The image shows as its alt text. The one host today
+        // (DiffViewer) reports its own read and answers null, so this is for a reader
+        // that does reject.
+        reportRendererFailure('markdown', 'image_load', error);
         if (!cancelled) setLoaded({ path, url: null });
       });
     return () => {
@@ -307,7 +313,10 @@ function DocumentCodeBlock({ children, node, ...rest }: ComponentProps<'pre'> & 
       .then((html) => {
         if (!cancelled) setHighlighted({ key, html });
       })
-      .catch(() => {
+      .catch((error: unknown) => {
+        // An unknown fence language resolves null, so a rejection is the colorizer failing.
+        // Every fenced block in the preview then shows uncolored.
+        reportRendererFailure('markdown', 'code_colorize', error);
         if (!cancelled) setHighlighted({ key, html: null });
       });
     return () => {
@@ -348,7 +357,9 @@ function useDocumentPlugins(): DocumentRehypePlugins | null {
       .then((loaded) => {
         if (!cancelled) setPlugins(loaded);
       })
-      .catch(() => {
+      .catch((error: unknown) => {
+        // The preview renders without the pipeline, so a document's HTML shows as text.
+        reportRendererFailure('markdown', 'pipeline_load', error);
         if (!cancelled) setPlugins([]);
       });
     return () => {

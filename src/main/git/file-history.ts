@@ -57,7 +57,8 @@ export async function getFileHistory(input: GitFileHistoryInput): Promise<GitFil
     ]);
     return { commits: parseFileHistoryLog(rawLog) };
   } catch {
-    // Untracked file, path never committed, or repo error - empty history.
+    // report-ok: an untracked file or a path never committed has no history, and the
+    // popover shows its empty state.
     return { commits: [] };
   }
 }

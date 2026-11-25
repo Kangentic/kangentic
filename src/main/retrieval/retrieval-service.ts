@@ -50,12 +50,21 @@ import { resolveEmbeddingModel, type EmbeddingModelDef } from './embedder/embedd
 import { isEmbeddingModelPresent, downloadEmbeddingModel } from './embedder/embedding-model';
 import { isLocalEmbeddingSupported } from './embedder/embedding-runtime-support';
 import { requiresUserInteraction } from '../../shared/activity-state';
+import { isRuntimeDefect } from '../../shared/handled-error-copy';
+import { createChokepointReporter } from '../analytics/handled-report';
 import type { IpcContext } from '../ipc/ipc-context';
 import type { Embedder } from './types';
 import type {
   KnowledgeGraphStatus, KnowledgeGraphSemanticState, KnowledgeGraphModelState, KnowledgeGraphSummaryStatus, KnowledgeGraphCodeStatus, SummaryChoice, Project, ActivityState,
   KnowledgeGraphRebuildPlan, KnowledgeGraphSourcesStatus, KnowledgeGraphIndexCounts, KnowledgeGraphIndexCorpus,
 } from '../../shared/types';
+
+/**
+ * A failure in main's own indexing code that reached only the log: an indexing job on the
+ * serial chain (`job`), and the embedding model's download (`model_download`). What the
+ * retrieval worker answers is reported where its reply lands (`reportFailedCall`).
+ */
+export const retrievalServiceReporter = createChokepointReporter('retrieval_service');
 
 /** Grace period after a finalize event before indexing, so the agent CLI has
  *  flushed its native history file.
@@ -163,6 +172,12 @@ function chain(job: () => Promise<unknown>): void {
   jobChain = jobChain.then(() => job()).then(
     () => undefined,
     (error) => {
+      // The index stops updating for whatever this job covered, with only the log line below
+      // to say so. What the worker answered was judged where its reply landed
+      // (reportFailedCall), and a worker that is down is an expected class. So only a runtime
+      // defect is sent here: the worker's own are already marked reported, which leaves a
+      // throw from main's job code.
+      if (isRuntimeDefect(error)) retrievalServiceReporter.report(error, { tags: { stage: 'job' } });
       console.warn('[retrieval] job failed:', error);
     },
   );
@@ -959,6 +974,11 @@ function ensureModelDownload(context: IpcContext): void {
       if (projectId) embedEngine.markDirty(projectId);
     },
     (error) => {
+      // Semantic search stays off until the model is on disk. The reporter skips the network's
+      // own errnos and a host that did not serve the file (`ModelDownloadUnavailableError`: a
+      // timeout, a busy or failing server). What is left is ours or the disk's: a file the
+      // host no longer has at the address this build ships, or a write the disk refused.
+      retrievalServiceReporter.report(error, { tags: { stage: 'model_download' } });
       console.warn('[retrieval] embedding model download failed:', error);
       modelDownloadState = 'error';
     },

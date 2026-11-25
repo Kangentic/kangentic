@@ -5,6 +5,7 @@ import type { LeftoverProcess, LeftoverProcessReport } from '../../../shared/typ
 import type { LeftoverProcessEntry } from '../../pty/process-tag/tagged-reap';
 import { sendToRenderer } from '../send-to-renderer';
 import { isLeftInWorktree } from './reap-verdict';
+import { handlerStepReporter } from './handler-step-report';
 
 /** A report goes out once no reap is running and none has added to it for this long. */
 export const REPORT_QUIET_MS = 400;
@@ -199,13 +200,16 @@ export class LeftoverProcessReports {
     try {
       report.send(outgoing);
     } catch (error) {
-      // A timer callback: a throw here would be an uncaught exception in main.
+      // A timer callback: a throw here would be an uncaught exception in main. Caught, it
+      // is a lost toast: the user is never told what a task left running.
+      handlerStepReporter.report(error, { tags: { area: 'task_cleanup', step: 'leftover_report_send' } });
       console.warn('[TASK-REAP] Could not send the leftover-process report (non-fatal):', error);
     }
     try {
       this.reportListener?.(outgoing);
     } catch {
-      // A listener is telemetry; it never breaks the report.
+      // report-ok: the listener is the analytics count, so a miss loses one count. The
+      // report itself already went out above.
     }
   }
 }

@@ -9,6 +9,7 @@ import { computeDismissedIdsAfterDismiss } from '../../shared/announcements';
 import { hasModelIdShape, parseModelId } from '../../shared/model-id';
 import { invalidateAllProjects } from './project-cache';
 import { useAnnouncementsStore } from './announcements-store';
+import { reportRendererFailure } from '../utils/renderer-failure';
 
 /**
  * This module's mutable state, one object every evaluation of the module shares
@@ -381,6 +382,8 @@ const configStoreInitializer: StateCreator<ConfigStore> = (set, get) => {
       // That reload is unforced, so it never forces a re-probe, and a failed
       // one keeps the list already shown.
       if (partial.agent || partial.discoveredModelsByAgent) {
+        // report-ok: main's IPC wrap reports a handler's rejection, and the list already
+        // shown stays.
         get().loadAgentList().catch(() => undefined);
       }
       return result;
@@ -399,12 +402,16 @@ const configStoreInitializer: StateCreator<ConfigStore> = (set, get) => {
         .map((announcement) => announcement.id);
       // Fire-and-forget, matching the other incidental config writes here:
       // failing to persist the dismissal must not break hiding the banner.
+      // A write that failed brings the banner back at the next launch, and main's
+      // wrap reports that one. What is reported here is the renderer's own:
+      // updateConfig refreshes this store after its write, and a throw there
+      // reaches nobody else. A rejection main saw is dropped by the reporter.
       void get()
         .updateConfig({
           dismissedAnnouncementIds:
             computeDismissedIdsAfterDismiss(existing, activeIds, announcementId),
         })
-        .catch(() => undefined);
+        .catch((error: unknown) => { reportRendererFailure('config', 'dismiss_announcement', error); });
     },
 
     captureOnboardingBaseline: (projectId, baseline) => {
@@ -569,7 +576,7 @@ const configStoreInitializer: StateCreator<ConfigStore> = (set, get) => {
       // value via deepMergeConfig on the next refresh.
       get().updateConfig({
         discoveredModelsByAgent: { ...current, [agent]: next },
-      }).catch(() => undefined);
+      }).catch(() => undefined); // report-ok: a cache write the next usage tick writes again.
     },
 
     rememberModelContextWindow: (agent, model, contextWindowSize) => {
@@ -590,7 +597,7 @@ const configStoreInitializer: StateCreator<ConfigStore> = (set, get) => {
           ...byAgent,
           [agent]: { ...forAgent, [baseId]: contextWindowSize },
         },
-      }).catch(() => undefined);
+      }).catch(() => undefined); // report-ok: a cache write the next usage tick writes again.
     },
 
     rescanModels: () => {
@@ -601,9 +608,9 @@ const configStoreInitializer: StateCreator<ConfigStore> = (set, get) => {
       if (configModuleState.modelRescanInFlight) return;
       if (Date.now() - configModuleState.modelRescanLastAtMs < MODEL_RESCAN_COOLDOWN_MS) return;
       configModuleState.modelRescanInFlight = true;
-      // Fire-and-forget: the dropdown already shows the current list and
-      // re-renders via useKnownModels once loadAgentList resolves (~2s), so the
-      // UI never blocks on the probe round trip.
+      // report-ok: main's IPC wrap reports a handler's rejection, and the dropdown keeps
+      // the list it already shows. Not awaited: the dropdown re-renders via useKnownModels
+      // once loadAgentList resolves (~2s), so the UI never blocks on the probe round trip.
       get().loadAgentList(true).catch(() => undefined).finally(() => {
         configModuleState.modelRescanInFlight = false;
         configModuleState.modelRescanLastAtMs = Date.now();
@@ -759,6 +766,8 @@ const configStoreInitializer: StateCreator<ConfigStore> = (set, get) => {
         // global agent write does in updateConfig. Unforced, so it never re-probes a
         // CLI whose path did not change.
         if (partial.agent?.cliPaths) {
+          // report-ok: main's IPC wrap reports a handler's rejection, and the list already
+          // shown stays.
           get().loadAgentList().catch(() => undefined);
         }
         // Only the project still being edited gets the optimistic local update, the same
@@ -777,7 +786,9 @@ const configStoreInitializer: StateCreator<ConfigStore> = (set, get) => {
       };
       // The chain tail stays Promise<void> so a write's result cannot leak into the
       // NEXT write's `then`; the caller gets its own promise carrying the result.
+      // report-ok: the tail never rejects (below), so `write` runs here only as the next link.
       const written = configModuleState.projectOverrideWrites.then(write, write);
+      // report-ok: the rejection is `written`'s, which this write's caller holds and handles.
       configModuleState.projectOverrideWrites = written.then(() => undefined, () => undefined);
       return written;
     },
@@ -840,7 +851,9 @@ systemAppearance?.addEventListener('change', onAppearanceChange);
 const unsubscribeThemeSync = useConfigStore.subscribe((state, prevState) => {
   const resolved = resolvedTheme(state);
   if (resolved !== resolvedTheme(prevState)) {
-    try { localStorage.setItem('kng-resolved-theme', resolved); } catch { /* localStorage may be unavailable */ }
+    try { localStorage.setItem('kng-resolved-theme', resolved); } catch {
+      // report-ok: localStorage may be unavailable, and it only seeds the next launch's first paint.
+    }
     // A commit from the Theme tab parks the preview ON the committed theme while the
     // config write is in flight, so the app never drops back to the old theme for the
     // round trip. Once the write lands the preview is redundant; retire it here, where

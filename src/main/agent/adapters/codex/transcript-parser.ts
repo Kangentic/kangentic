@@ -305,6 +305,7 @@ export async function findCodexTranscriptFile(agentSessionId: string, place: Cli
   // opens; a found one is re-checked instead of walked to again.
   const key = `${root}\u0000${agentSessionId}`;
   const known = foundRollouts.get(key);
+  // report-ok: a remembered rollout that is gone is the answer, and the walk below looks again.
   if (known && await fs.promises.stat(known).then(() => true, () => false)) return known;
   foundRollouts.delete(key);
   const pattern = rolloutFilePattern(agentSessionId);

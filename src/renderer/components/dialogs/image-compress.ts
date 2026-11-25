@@ -112,6 +112,8 @@ export async function encodeImageFileAsPng(input: File): Promise<Uint8Array | nu
       bitmap.close();
     }
   } catch {
+    // report-ok: the dropped bytes do not decode as an image here, and the caller falls back
+    // to the path it had.
     return null;
   }
 }
@@ -174,6 +176,8 @@ export async function compressClipboardImage(input: File): Promise<CompressResul
       bitmap.close();
     }
   } catch (error) {
+    // report-ok: a pasted image this browser could not decode or re-encode. The toast says so
+    // and the original file is sent.
     console.error('[image-compress] Failed to compress pasted image:', error);
     useToastStore.getState().addToast({
       title: i18n._(msg`Couldn't compress image`),

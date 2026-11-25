@@ -1,5 +1,6 @@
 import path from 'node:path';
 import fs from './original-fs';
+import { gitWorktreeReporter } from './git-worktree-report';
 import { removeWithRetry, type RemoveWithRetryOptions } from './rm-with-retry';
 
 /**
@@ -25,6 +26,7 @@ function isJunction(targetPath: string): boolean {
     fs.readlinkSync(targetPath);
     return true;
   } catch {
+    // report-ok: readlink throws for a path that is not a link, which is the answer.
     return false;
   }
 }
@@ -61,11 +63,20 @@ function isJunction(targetPath: string): boolean {
  * minutes while it holds the git queue. Cases 1, 2, and 4 are already bounded
  * (a reparse point or file-like removal completes in microseconds), so the
  * option does not apply to them.
+ *
+ * Never throws. Resolves true when a LINK is still at the path afterwards: a
+ * junction or a symlink whose removal failed. A recursive delete of the
+ * worktree would walk through it into the main checkout's node_modules, so
+ * `clearWorktreeLinks` refuses the removal on true. Every other failure
+ * resolves false, as nothing leads out of a real directory or a file, and the
+ * removal that follows reports its own failure on it.
  */
 export async function removeNodeModulesPath(
   targetPath: string,
   options?: { removeOptions?: RemoveWithRetryOptions },
-): Promise<void> {
+): Promise<boolean> {
+  // Set once the path is known to hold a link, just before the link is removed.
+  let removingLink = false;
   try {
     const stat = fs.lstatSync(targetPath);
     // Windows junction check MUST come first - lstatSync().isSymbolicLink()
@@ -74,10 +85,12 @@ export async function removeNodeModulesPath(
     // readlinkSync probe reliably identifies them. rmdirSync removes the
     // reparse point without following it into the target.
     if (process.platform === 'win32' && isJunction(targetPath)) {
+      removingLink = true;
       fs.rmdirSync(targetPath);
     } else if (stat.isSymbolicLink()) {
       // POSIX symlinks (and Windows symlinks, not junctions): file-like,
       // non-recursive rmSync works and doesn't follow the link.
+      removingLink = true;
       fs.rmSync(targetPath, { force: true });
     } else if (stat.isDirectory()) {
       // Real directory - e.g. worktree ran `npm install` instead of
@@ -92,11 +105,17 @@ export async function removeNodeModulesPath(
       // named node_modules, but handle it defensively.
       fs.rmSync(targetPath, { force: true });
     }
+    return false;
   } catch (error) {
     // ENOENT is expected (already gone)
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-      console.warn(`[WORKTREE] Failed to remove ${targetPath}: ${(error as Error).message}`);
-    }
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    // A link left in place is the failure that can cost the main checkout its
+    // node_modules, so it is reported here. A real directory that would not
+    // delete is a held folder, which the worktree removal that follows reports
+    // itself (`worktreeRemovalReporter`), so it is not reported twice.
+    if (removingLink) gitWorktreeReporter.report(error, { tags: { stage: 'link_remove' } });
+    console.warn(`[WORKTREE] Failed to remove ${targetPath}: ${(error as Error).message}`);
+    return removingLink;
   }
 }
 
@@ -121,6 +140,9 @@ export function removeLinkOnly(targetPath: string): boolean {
     }
     return false;
   } catch (error) {
+    // report-ok: ENOENT means the link is already gone. After any other failure removeLinks
+    // finds the link still there and refuses the removal, and a copy moved aside is safe
+    // with it, because its deleter removes a link as a link.
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
       console.warn(`[WORKTREE] Failed to remove the ${targetPath} link: ${(error as Error).message}`);
     }
@@ -162,6 +184,9 @@ export async function linkNodeModules(worktreePath: string, rootPath: string): P
     }
   } catch (error: unknown) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      // What was already at the path would not come out, so the link below cannot be
+      // made over it. This is the cause: the attempt below only says the path is taken.
+      gitWorktreeReporter.report(error, { tags: { stage: 'link_precheck' } });
       console.warn('[WORKTREE] Failed to check existing node_modules, will try to create link:', error);
     }
     // ENOENT means it doesn't exist yet. Will create below.
@@ -172,6 +197,9 @@ export async function linkNodeModules(worktreePath: string, rootPath: string): P
     fs.symlinkSync(rootModules, worktreeModules, linkType);
     console.log(`[WORKTREE] Created node_modules ${linkType}: ${worktreeModules} -> ${rootModules}`);
   } catch (error) {
+    // The worktree is made with no node_modules, so the agent's first typecheck or test
+    // fails on missing packages and nothing on screen says the link is why.
+    gitWorktreeReporter.report(error, { tags: { stage: 'link_create' } });
     console.warn('[WORKTREE] Failed to create node_modules link (non-fatal):', error);
   }
 }

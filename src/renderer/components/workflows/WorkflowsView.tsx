@@ -297,17 +297,22 @@ export function WorkflowsView() {
         try {
           await useSessionStore.getState().killSession(session.id);
         } catch (error) {
+          // report-ok: main's IPC wrap reports a handler's rejection, and the toast shows
+          // main's reason.
           reportDeleteFailure(task, taskProjectId, error);
           return;
         }
       }
-      // The board store reports its own failure.
+      // report-ok: the board store's deleteTask rolls back and toasts a failed delete before
+      // it rethrows, and main's IPC wrap reports the handler's rejection.
       await useBoardStore.getState().deleteTask(task.id).catch(() => undefined);
       return;
     }
     try {
       await window.electronAPI.tasks.delete(task.id, taskProjectId);
     } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the toast shows
+      // main's reason.
       reportDeleteFailure(task, taskProjectId, error);
     }
   }, [reportDeleteFailure]);

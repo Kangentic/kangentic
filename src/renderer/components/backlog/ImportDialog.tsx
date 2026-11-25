@@ -232,6 +232,8 @@ export function ImportDialog({ source, onClose, onSourceReplaced }: ImportDialog
       if (fetchSequenceRef.current !== token) return;
       void reconcile('incremental');
     }).catch((cliError: unknown) => {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the dialog's error
+      // banner shows the reason.
       if (fetchSequenceRef.current !== token) return;
       setCliError(cliError instanceof Error ? rejectionMessage(cliError) : t`CLI check failed`);
       setLoading(false);
@@ -257,7 +259,8 @@ export function ImportDialog({ source, onClose, onSourceReplaced }: ImportDialog
       setIssues(cachedIssues);
       if (cachedIssues.length > 0) setLoading(false);
     }).catch(() => {
-      // A cache-read failure is non-fatal; the reconcile below will populate.
+      // report-ok: main's IPC wrap reports a handler's rejection, and the reconcile below
+      // populates the list the cache would have painted.
     });
 
     checkThenReconcile(cachedPromise);
@@ -523,6 +526,8 @@ export function ImportDialog({ source, onClose, onSourceReplaced }: ImportDialog
       loadBacklog();
       onClose();
     } catch (importError: unknown) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the dialog shows the
+      // reason inline.
       setError(importError instanceof Error ? rejectionMessage(importError) : t`Import failed`);
       setImporting(false);
     }

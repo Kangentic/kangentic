@@ -4,9 +4,10 @@
  * `Error occurred in handler for '<channel>'` breadcrumb, or as the renderer's
  * `Error invoking remote method` event with main's stack lost.
  *
- * Only `handle` is wrapped. An `ipcMain.on` listener (a fire-and-forget send:
- * audio chunks, window controls, a diff subscription) has no caller to reject to,
- * so its throw is an uncaught exception, which Sentry's own handler reports.
+ * Only `handle` is wrapped by the patch. An `ipcMain.on` listener (a
+ * fire-and-forget send: audio chunks, window controls, a diff subscription) has
+ * no caller to reject to, so it registers through `onReported` below, which
+ * reports its throw the same path-free way and rethrows nothing.
  *
  * It patches `ipcMain.handle` itself, in its own module, rather than living in the
  * IPC recorder (`diagnostics/ipc-recorder.ts`). The recorder is diagnostics and
@@ -15,7 +16,7 @@
  *
  * What it sends follows `handled-report.ts`: the fixed message
  * `Handled ipc_handler failure: <Name>`, the original frames, and the tags
- * `source`, `channel`, `error_name` and `errno`. The channel is a tag and never in a
+ * `source`, `channel`, `error_name`, `errno` and `ran_for`. The channel is a tag and never in a
  * fingerprint: one cause reached from several channels (`handleTaskMove` alone has
  * four entry points) groups on its stack, not on the channel it came through.
  *
@@ -28,8 +29,8 @@
  * was reported. `describeIpcError` strips the marker, so every reason reads as before.
  */
 
-import type { IpcMain, IpcMainInvokeEvent } from 'electron';
-import { createChokepointReporter, wasSentToErrorReporting, type ChokepointReporter } from './handled-report';
+import type { IpcMain, IpcMainEvent, IpcMainInvokeEvent } from 'electron';
+import { createChokepointReporter, ranForBucket, wasSentToErrorReporting, type ChokepointReporter } from './handled-report';
 import { REPORTED_FAILURE_MARKER, hasReportedFailureMarker } from '../../shared/reported-failure-marker';
 
 export const IPC_HANDLER_REPORT_SOURCE = 'ipc_handler';
@@ -64,19 +65,73 @@ export function rejectionToRethrow(error: unknown): unknown {
   return marked;
 }
 
-/** Run `listener`, report a throw or a rejection, and rethrow it, marked when its report was sent. */
+/**
+ * Run `listener`, report a throw or a rejection, and rethrow it, marked when its
+ * report was sent. The report says how long the handler ran first (`ran_for`),
+ * which tells a throw on entry from a handler that waited on something.
+ */
 export async function runReportedHandler(
   channel: string,
   listener: HandleListener,
   event: IpcMainInvokeEvent,
   handlerArguments: unknown[],
 ): Promise<unknown> {
+  const startedAt = Date.now();
   try {
     return await listener(event, ...handlerArguments);
   } catch (error) {
-    ipcHandlerReporter.report(error, { tags: { channel } });
+    ipcHandlerReporter.report(error, {
+      tags: { channel },
+      detailTags: { ran_for: ranForBucket(Date.now() - startedAt) },
+    });
     throw rejectionToRethrow(error);
   }
+}
+
+/** An `ipcMain.on` listener, as Electron types it. */
+type OnListener = Parameters<IpcMain['on']>[1];
+
+/**
+ * Run a fire-and-forget listener and report its throw or rejection. Nothing is
+ * rethrown: the renderer sent and is not waiting, so there is no caller to tell.
+ * The failure is logged for the local trail and the listener's work is lost, as
+ * it was when the throw went uncaught.
+ */
+export async function runReportedListener(
+  channel: string,
+  listener: OnListener,
+  event: IpcMainEvent,
+  listenerArguments: unknown[],
+): Promise<void> {
+  try {
+    const result: unknown = listener(event, ...listenerArguments);
+    await result;
+  } catch (error) {
+    ipcHandlerReporter.report(error, { tags: { channel, kind: 'listener' } });
+    console.error(`[IPC] listener for ${channel} failed:`, error);
+  }
+}
+
+/**
+ * Register a fire-and-forget listener (`ipcMain.on`) that reports its own
+ * failure. Every listener in `src/main` registers through this.
+ *
+ * A bare `ipcMain.on` listener that throws is an uncaught exception. Sentry's
+ * own handler does report that, but with the error's message, which here can
+ * quote a path or a title, and with nothing that names the channel. Through this
+ * helper the same failure goes out as `Handled ipc_handler failure: <Name>`,
+ * tagged `channel` and `kind=listener`, latched and filtered like a handler's.
+ *
+ * A helper and not a patch of `ipcMain.on`, unlike `handle`: a patched `on`
+ * would register a wrapper, and a later `removeListener(channel, listener)`
+ * would then find nothing to remove. The listener is called in the same tick,
+ * so one that answers a `sendSync` through `event.returnValue` still does.
+ * `ipc-handler-report.test.ts` fails a bare `ipcMain.on(` elsewhere in `src/main`.
+ */
+export function onReported(target: Pick<IpcMain, 'on'>, channel: string, listener: OnListener): void {
+  target.on(channel, (event, ...listenerArguments) => {
+    void runReportedListener(channel, listener, event, listenerArguments);
+  });
 }
 
 let installed = false;

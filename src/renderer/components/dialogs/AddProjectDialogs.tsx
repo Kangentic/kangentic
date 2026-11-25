@@ -188,6 +188,8 @@ function useDirectoryListing(hostId: string) {
       setError(null);
       if (directory === HOME_DIRECTORY && result.insideHome) setHome(result.path);
     } catch (caught) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the folder list shows
+      // the host's reason inline.
       if (request !== latestRequest.current) return;
       setListing(null);
       setError(describeIpcError(caught));
@@ -299,6 +301,8 @@ function AddRemoteProjectForm({ hostId }: { hostId: string }) {
       closeAddProjectDialog();
       await openProject(project.id);
     } catch (caught) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the form shows the
+      // reason inline. openProject toasts its own failure and does not throw.
       if (!openRef.current) return;
       setError(describeIpcError(caught));
       setBusy(false);

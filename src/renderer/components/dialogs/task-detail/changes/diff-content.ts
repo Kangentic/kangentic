@@ -129,6 +129,8 @@ export async function fetchDiffContent(
     // image then shows as a failed read in the preview alone.
     const [text, image] = await Promise.all([
       window.electronAPI.git.fileContent(input),
+      // report-ok: main's IPC wrap reports a handler's rejection, and the SVG preview alone
+      // shows a failed read while its text diff stays.
       fetchImageSides(input, previousImage).catch(() => null),
     ]);
     return { text, image };
@@ -208,6 +210,7 @@ async function decodeSide(dataUrl: string, size: number): Promise<DiffImageSide>
   try {
     image = await loadImage(dataUrl);
   } catch {
+    // report-ok: the file's bytes are not an image, and the pane says the side cannot be decoded.
     return { kind: 'undecodable', size };
   }
   if (image.naturalWidth === 0 || image.naturalHeight === 0) return { kind: 'undecodable', size };

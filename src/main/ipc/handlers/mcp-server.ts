@@ -6,6 +6,7 @@ import { checkMcpConnection, wslDistrosOfCliPaths } from '../../agent/mcp-connec
 import { mcpServerStartFailure } from '../../agent/mcp-server-start-failure';
 import { broadcast } from '../../pop-out/window-broadcast';
 import { McpConnectionWatch } from '../helpers/mcp-connection-watch';
+import { handlerStepReporter, isDefectOrEnvironmentFailure } from '../helpers/handler-step-report';
 import type { IpcContext } from '../ipc-context';
 
 /** Whether an agent's CLI may run in a WSL distro, so its path can name one. */
@@ -31,6 +32,14 @@ export function registerMcpServerHandlers(context: IpcContext): void {
         startStoppedDistros: options?.explicit === true,
       });
     } catch (error) {
+      // A check that cannot run answers as a failure, and the MCP Server tab's connection
+      // row shows this error as its text. This catch keeps every throw in the handler from
+      // the IPC wrap, so a defect reports here. A probe program that fails (a distro that
+      // does not answer) is a plain Error the row already shows, so only a defect or an
+      // errno reports.
+      if (isDefectOrEnvironmentFailure(error)) {
+        handlerStepReporter.report(error, { tags: { area: 'mcp_watch', step: 'connection_check' } });
+      }
       return { connected: false, error: error instanceof Error ? error.message : String(error) };
     }
   });

@@ -62,7 +62,8 @@ export function createSignalExitHandler(dependencies: SignalExitDependencies): (
     try {
       dependencies.hideAllWindows();
     } catch {
-      // Cosmetic only; a window that refuses to hide must not block the exit.
+      // report-ok: cosmetic only, and on a signal's exit path, where a report never
+      // lands. A window that refuses to hide must not block the exit.
     }
     dependencies.writeQueuedLogs();
 
@@ -70,9 +71,13 @@ export function createSignalExitHandler(dependencies: SignalExitDependencies): (
     try {
       drain = dependencies.drainPtyExitCallbacks(report);
     } catch {
+      // report-ok: the drain could not start, so the process exits at once. This is a
+      // signal's exit path, where a report never lands.
       writeLogsAndExit();
       return;
     }
+    // report-ok: the process exits however the drain settles. The drain's contract is
+    // never to reject, and this is a signal's exit path, where a report never lands.
     drain.then(writeLogsAndExit, writeLogsAndExit);
   };
 }

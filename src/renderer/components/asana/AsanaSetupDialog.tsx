@@ -30,6 +30,8 @@ export function AsanaSetupDialog({ onClose, onSaved, initialError }: AsanaSetupD
     try {
       await window.electronAPI.shell.openExternal(ASANA_APPS_URL);
     } catch (openError) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the link simply does
+      // not open.
       console.warn('[AsanaSetupDialog] openExternal failed', openError);
     }
   };
@@ -50,6 +52,8 @@ export function AsanaSetupDialog({ onClose, onSaved, initialError }: AsanaSetupD
       }
       onSaved();
     } catch (saveError: unknown) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the dialog shows the
+      // reason inline.
       setError(saveError instanceof Error ? rejectionMessage(saveError) : t`Could not save the token.`);
     } finally {
       setSubmitting(false);

@@ -9,6 +9,7 @@ import type { WorkflowXmlInput } from '../agent/shared/prompt-xml';
 import { applyProfileToLane } from '../transition-engine/column-strategy';
 import { resolveSessionTarget } from '../transition-engine/session-isolation';
 import { loadTaskProfile } from '../ipc/helpers/task-profile';
+import { workflowEngineReporter } from './workflow-report';
 import { workflowRuntimeContext } from './workflow-runtime';
 
 /**
@@ -48,7 +49,10 @@ export function readWorkflowPromptFacts(task: Task, projectId: string | null): W
         const lane = lanes.find((candidate) => candidate.id === other.swimlane_id);
         const column = lane?.name ?? (other.archived_at ? doneColumn(lanes)?.name : null) ?? 'another column';
         return { task: other, column };
-      } catch {
+      } catch (error) {
+        // A link whose far end cannot be read is left out of the block: the agent is
+        // not told of a task it waits for, or of one that waits on it.
+        workflowEngineReporter.report(error, { tags: { stage: 'prompt_link_read' } });
         return null;
       }
     };
@@ -86,7 +90,10 @@ export function readWorkflowPromptFacts(task: Task, projectId: string | null): W
       waitsFor,
       blocks,
     };
-  } catch {
+  } catch (error) {
+    // The workflow block is left out of the task's prompt, so its agent starts without
+    // its route, where a plan approval sends it, or the tasks it waits for.
+    workflowEngineReporter.report(error, { tags: { stage: 'prompt_facts' } });
     return null;
   }
 }

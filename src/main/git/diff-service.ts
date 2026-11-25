@@ -129,6 +129,8 @@ async function mergeBaseOf(git: GitClient, first: string, second: string): Promi
     const oid = (await git.raw(['merge-base', first, second])).trim();
     return oid || null;
   } catch {
+    // report-ok: a ref that does not resolve here (never fetched, or a base under another
+    // name) has no merge base, and getMergeBase falls back to the next candidate.
     return null;
   }
 }
@@ -148,6 +150,8 @@ async function branchCreationPoint(git: GitClient): Promise<string | null> {
     const match = /^([0-9a-f]{40,64}) branch: Created from /.exec(oldest);
     return match ? match[1] : null;
   } catch {
+    // report-ok: a detached HEAD or a branch with no reflog has no creation point, and the
+    // merge-base stands in.
     return null;
   }
 }
@@ -201,6 +205,8 @@ export class DiffService {
       this.parentRefCache.set(commitOid, parentRef);
       return parentRef;
     } catch {
+      // report-ok: a root commit has no parent, so the empty tree stands in. It is not
+      // cached, so any other miss is asked again on the next fetch.
       return EMPTY_TREE_HASH;
     }
   }
@@ -408,6 +414,8 @@ export class DiffService {
           const stats = await fs.promises.stat(absolutePath);
           return stats.size;
         } catch {
+          // report-ok: the file was deleted between git status and this stat, and its size
+          // only steers the choice between inline and worker counting.
           return 0;
         }
       }),
@@ -435,7 +443,8 @@ export class DiffService {
           const result = await countFileLines(absolutePaths[index]);
           return { path: filePath, status: 'U', insertions: result.insertions, deletions: 0, binary: result.binary };
         } catch {
-          // File may have been deleted between status and read
+          // report-ok: the file may have been deleted between status and read, and it then
+          // lists with no lines.
           return { path: filePath, status: 'U', insertions: 0, deletions: 0, binary: false };
         }
       }),

@@ -1,6 +1,7 @@
 import { accountsReporter, reportAccountProblem, scrubFailureDetail } from '../../accounts/account-report';
 import { listedAgentsPath, readListedAgentsFile, writeListedAgentsFile } from '../../accounts/listed-agents-file';
 import { dialog, ipcMain } from 'electron';
+import { onReported } from '../../analytics/ipc-handler-report';
 import { IPC } from '../../../shared/ipc-channels';
 import {
   DEFAULT_AGENT_ACCOUNTS_CONFIG,
@@ -178,6 +179,9 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
     try {
       service.recordUsage(usage.rateLimits);
     } catch (error) {
+      // The account keeps its old usage, which the Accounts tab shows and Automatic
+      // order ranks by.
+      accountsReporter.report(error, { tags: { stage: 'usage_record' } });
       console.warn('[ACCOUNTS] Could not record usage:', error);
     }
   });
@@ -380,6 +384,9 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
         service.reportProblem('turn-failed-after-move', agent, { detail: scrubFailureDetail(detail) });
       }
     } catch (error) {
+      // What a failed turn says about its account (a refused conversation, a failure
+      // just after a move) is never worked out, so that account problem goes unheard.
+      accountsReporter.report(error, { tags: { stage: 'turn_failure_report' } });
       console.warn('[ACCOUNTS] Could not report a failed turn:', error);
     }
   };
@@ -574,6 +581,8 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
           return { loginId, account, duplicateOf, cancelled };
         })
         .catch((error): AgentAccountLoginEnded => {
+          // The sign-in ended and its dialog closes with no account and no reason.
+          accountsReporter.report(error, { tags: { stage: 'login_complete' } });
           console.warn('[ACCOUNTS] Could not read who signed in:', error);
           return { loginId, account: null, duplicateOf: null, cancelled };
         })
@@ -609,6 +618,8 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
       const loginId = await runner.start(account.id, command);
       return { ok: true, loginId, accountId: account.id };
     } catch (error) {
+      // The Accounts tab toasts only that the sign-in did not start, never why.
+      accountsReporter.report(error, { tags: { stage: 'login_start' } });
       console.warn('[ACCOUNTS] Could not start a sign-in:', error);
       if (createdAccountId) service.remove(createdAccountId);
       return { ok: false, reason: 'failed', message: error instanceof Error ? error.message.split('\n')[0] : String(error) };
@@ -616,10 +627,10 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
   });
   ipcMain.handle(IPC.ACCOUNTS_LOGIN_BACKLOG, (_event, loginId: unknown): string =>
     (typeof loginId === 'string' ? runner.backlog(loginId) : ''));
-  ipcMain.on(IPC.ACCOUNTS_LOGIN_INPUT, (_event, loginId: unknown, data: unknown) => {
+  onReported(ipcMain, IPC.ACCOUNTS_LOGIN_INPUT, (_event, loginId: unknown, data: unknown) => {
     if (typeof loginId === 'string' && typeof data === 'string') runner.write(loginId, data);
   });
-  ipcMain.on(IPC.ACCOUNTS_LOGIN_RESIZE, (_event, loginId: unknown, cols: unknown, rows: unknown) => {
+  onReported(ipcMain, IPC.ACCOUNTS_LOGIN_RESIZE, (_event, loginId: unknown, cols: unknown, rows: unknown) => {
     if (typeof loginId === 'string' && typeof cols === 'number' && typeof rows === 'number') runner.resize(loginId, cols, rows);
   });
   ipcMain.handle(IPC.ACCOUNTS_CANCEL_LOGIN, (_event, loginId: unknown): void => {

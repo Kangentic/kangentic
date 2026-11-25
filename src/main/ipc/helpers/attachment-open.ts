@@ -88,8 +88,9 @@ function resolveOpenTarget(
     fs.copyFileSync(attachment.file_path, tempPath);
     return tempPath;
   } catch {
-    // Locked or otherwise uncopyable. Opening the stored file directly is
-    // worse only in the MAX_PATH case above, and far better than failing.
+    // report-ok: a viewer still holding the temp copy locks it, or it is otherwise
+    // uncopyable. Opening the stored file directly is worse only in the MAX_PATH case
+    // above, and far better than failing.
     return attachment.file_path;
   }
 }
@@ -99,6 +100,7 @@ function copyIsCurrent(sourcePath: string, copyPath: string): boolean {
   try {
     return fs.statSync(copyPath).size === fs.statSync(sourcePath).size;
   } catch {
+    // report-ok: ENOENT when no temp copy exists yet, so the caller makes one.
     return false;
   }
 }

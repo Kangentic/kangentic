@@ -122,6 +122,7 @@ export async function removeWithRetry(
       });
       return;
     } catch (error) {
+      // report-ok: kept as lastError and thrown below once the retry ladder runs out.
       lastError = error;
     }
   }
@@ -159,6 +160,8 @@ async function removeUntilDeadline(
       await fs.promises.rm(targetPath, { recursive: true, force: true, maxRetries: 0 });
       return;
     } catch (error) {
+      // report-ok: kept as lastError and thrown below as the timeout's cause once the
+      // deadline passes.
       lastError = error;
     }
     attempt += 1;

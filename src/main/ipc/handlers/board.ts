@@ -15,7 +15,8 @@ function triggerWriteBack(context: IpcContext): void {
   try {
     context.boardConfigManager.writeBack();
   } catch {
-    // Non-fatal: write-back failure should never block UI operations
+    // report-ok: writeBack only arms a debounce timer, so nothing fails here. The write it
+    // schedules catches its own failure in doWriteBack, which reports it (`board_config`).
   }
 }
 

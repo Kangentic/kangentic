@@ -10,6 +10,7 @@ import { useToastStore } from '../toast-store';
 import { useProjectStore } from '../project-store';
 import { invalidateProject } from '../project-cache';
 import { describeIpcError, asSentence, ipcErrorWasReported, ipcFailureToastFields } from '../../lib/ipc-error';
+import { reportRendererFailure } from '../../utils/renderer-failure';
 import { isWorkflowLockMessage } from '../../utils/board-workflow';
 import { boardWorkflowNow, refusedBoardMove, showWorkflowRefusal } from '../../utils/workflow-refusal';
 import { openTaskFromNotification } from '../../utils/open-task-from-notification';
@@ -359,7 +360,8 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
               return { ok: true };
             }
           } catch {
-            // Git check failed - show confirmation as safe default
+            // report-ok: main's IPC wrap reports a handler's rejection of the git check, and
+            // the confirm dialog opens as the safe default.
             get().enqueueMoveConfirm({
               input,
               uncommittedFileCount: 0,
@@ -475,6 +477,10 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
       return { ok: true };
     } catch (err) {
       if (isSupersededMove(input.taskId, thisGen)) return { ok: true }; // Superseded; not this move's failure
+      // A rejection main's handler wrap saw is dropped by the reporter (main
+      // judged it). What reports is a throw from this function's own work after
+      // the move landed: the list apply, the session writes, the toast.
+      reportRendererFailure('board', 'move', err);
       // The write never landed, so no payload will ever differ from the pinned
       // snapshot and the content-based drop can never fire. Release the pin
       // BEFORE the rollback reload below, or the card is held at the failed
@@ -572,6 +578,8 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
       set((state) => applyTaskListPayload(state, nextTasks));
     } catch (err) {
       if (isSupersededMove(taskId, thisGen)) return; // Don't clobber newer state on error
+      // Reports a throw from the list apply; a rejection main saw is dropped there.
+      reportRendererFailure('board', 'reorder', err);
       await get().loadBoard();
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't reorder task`),

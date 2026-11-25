@@ -1,4 +1,5 @@
 import { shell } from 'electron';
+import { handlerStepReporter } from './handler-step-report';
 
 export const OPEN_PATH_TIMEOUT_MS = 5000;
 
@@ -45,6 +46,8 @@ export function openPathBounded(targetPath: string, options?: OpenPathBoundedOpt
       // caller's fallback, which can still act in the main process.
       void openPromise.then(
         (lateError) => options?.onLateOutcome?.(lateError),
+        // report-ok: the invoke was answered at the timeout, so there is nothing left to
+        // answer, and the race's own rejection handler below reports this same rejection.
         () => {
           // Nothing left to report: the invoke was answered at the timeout.
         },
@@ -64,7 +67,10 @@ export function openPathBounded(targetPath: string, options?: OpenPathBoundedOpt
         // openPath is documented never to reject, but this function exists to
         // guarantee the invoke is answered - so it cannot depend on an
         // upstream contract holding. Report a rejection as the failure it is
-        // instead of stalling until the timer and then claiming success.
+        // instead of stalling until the timer and then claiming success. A
+        // rejection is Electron breaking that contract, so it is reported too:
+        // after the timeout fired, the answer below reaches nobody.
+        handlerStepReporter.report(error, { tags: { area: 'system', step: 'open_path_rejected' } });
         clearTimeout(timer);
         const message = error instanceof Error ? error.message : String(error);
         // Never resolve '' here: '' is this function's success value.

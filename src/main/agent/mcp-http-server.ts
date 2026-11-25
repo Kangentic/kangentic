@@ -54,7 +54,7 @@ import { registerProjectTools } from './mcp-http/project-tools';
 import { registerSearchTools } from './mcp-http/search-tools';
 import { isAnswerCaller, workflowIdOfCaller } from './mcp-http/caller-url';
 import { scopeServerToWorkflowAgent } from './mcp-http/workflow-agent-scope';
-import { mcpRequestReporter, withToolReporting } from './mcp-http/tool-reporting';
+import { mcpRequestReporter, mcpToolCallerOf, withToolReporting } from './mcp-http/tool-reporting';
 import { registerDiagnosticsTools } from './mcp-http/diagnostics-tools';
 import { registerUsageTools } from './mcp-http/usage-tools';
 import { resolveMcpCaller, callerBrowserOwner } from './mcp-http/caller-task';
@@ -428,8 +428,6 @@ export function buildConfiguredMcpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
     { instructions },
   );
-  // Every tool registered below reports a defect its callback throws (tool-reporting.ts).
-  const mcpServer = withToolReporting(createdServer);
   // The calling agent's task, looked up once for the request: the browser
   // tools scope their default pane to it, and the move tool's workflow lock
   // lets a task's own agent move it while its workflow runs. Its session goes
@@ -437,6 +435,9 @@ export function buildConfiguredMcpServer(
   // A Command Terminal resolves to no task here, by design: its registry row's
   // task id is synthetic. Its browser surface is keyed by its own owner key.
   const caller = resolveMcpCaller(browser);
+  // Every tool registered below reports a defect its callback throws, tagged
+  // with who asked (tool-reporting.ts).
+  const mcpServer = withToolReporting(createdServer, mcpToolCallerOf(caller));
   const callerTaskId = caller.taskId;
   const browserOwner = callerBrowserOwner(browser.projectId, caller);
   registerTaskTools(mcpServer, resolver, taskCounter, toolArgumentNotices, callerTaskId ?? null, browser.callerSessionId ?? null);
@@ -494,7 +495,7 @@ export function buildAnswerMcpServer(resolver: RequestResolver, callerSessionId?
     },
   );
   // The caller rides along so the run's searches reach the Knowledge Graph trace.
-  registerSearchTools(withToolReporting(mcpServer), resolver, callerSessionId);
+  registerSearchTools(withToolReporting(mcpServer, 'answer_agent'), resolver, callerSessionId);
   return mcpServer;
 }
 
@@ -530,7 +531,7 @@ export function buildWorkflowAgentMcpServer(
     + 'its reply says: it tells you whether and when that checkout becomes readable. Do not search the disk '
     + 'for another project\'s folder.';
   const mcpServer = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions });
-  const scoped = scopeServerToWorkflowAgent(withToolReporting(mcpServer), workflowId);
+  const scoped = scopeServerToWorkflowAgent(withToolReporting(mcpServer, 'workflow_agent'), workflowId);
   registerTaskTools(scoped, resolver, taskCounter, toolArgumentNotices, null);
   registerProfileTools(scoped, resolver);
   registerAutomationTools(scoped, resolver);

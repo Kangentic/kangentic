@@ -27,6 +27,7 @@ import type {
 } from '../../shared/types';
 import { DEFAULT_CONFIG } from '../../shared/types';
 import { reconcileMonitorRows } from './monitor-rows';
+import { reportRendererFailure } from '../utils/renderer-failure';
 
 /** Coalescing window for view-preference writes, so dragging a filter is one save. */
 const VIEW_PERSIST_DEBOUNCE_MS = 400;
@@ -133,6 +134,10 @@ const monitorStoreInitializer: StateCreator<MonitorState> = (set, get) => ({
       // MONITOR_CHANGED arrives to self-heal a failed handshake - closing and
       // reopening the monitor re-runs it. Not worth a retry loop for a local
       // ipcRenderer.invoke that only fails once the app is tearing down.
+      // A throw from applying the snapshot lands here too, and leaves the
+      // Agent Monitor empty until it is reopened. That one is reported; a
+      // rejection main saw is dropped by the reporter.
+      reportRendererFailure('monitor', 'subscribe', error);
       console.error('[monitor] Failed to subscribe:', error);
     } finally {
       set({ loading: false });
@@ -141,6 +146,8 @@ const monitorStoreInitializer: StateCreator<MonitorState> = (set, get) => ({
 
   detach: () => {
     void window.electronAPI?.monitor?.unsubscribe?.().catch((error) => {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the monitor closes
+      // either way.
       console.error('[monitor] Failed to unsubscribe:', error);
     });
   },
@@ -161,6 +168,9 @@ const monitorStoreInitializer: StateCreator<MonitorState> = (set, get) => ({
         const snapshot = await monitorApi.getSnapshot();
         if (ordinal === monitorModuleState.fetchOrdinal) get().applySnapshot(snapshot);
       } catch (error) {
+        // Reports a throw from applying the snapshot, which leaves the rows
+        // stale; a rejection main saw is dropped by the reporter.
+        reportRendererFailure('monitor', 'snapshot', error);
         console.error('[monitor] Failed to load snapshot:', error);
       } finally {
         set({ loading: false });
@@ -264,6 +274,8 @@ const monitorStoreInitializer: StateCreator<MonitorState> = (set, get) => ({
     monitorModuleState.persistTimer = setTimeout(() => {
       monitorModuleState.persistTimer = null;
       void window.electronAPI?.config?.set({ monitor: view }).catch((error) => {
+        // report-ok: main's IPC wrap reports a handler's rejection, and the view stays as
+        // set for this run.
         console.error('[monitor] Failed to persist view:', error);
       });
     }, VIEW_PERSIST_DEBOUNCE_MS);

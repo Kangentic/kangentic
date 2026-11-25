@@ -59,6 +59,6 @@ export function registerTerminalLinks(
   terminal.registerLinkProvider(createPathLinkProvider(terminal, gesture, cache, (printedPath) => {
     void window.electronAPI.sessions.revealLinkPath(sessionId, printedPath).then((revealed) => {
       if (!revealed) showPathGone(printedPath);
-    }, () => showPathGone(printedPath));
+    }, () => showPathGone(printedPath)); // report-ok: main's IPC wrap reports it. The toast says so.
   }));
 }

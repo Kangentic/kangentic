@@ -50,12 +50,27 @@ const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const ARCHES: readonly HostArch[] = ['x64', 'arm64'];
 const DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
 
+/**
+ * The archive that was downloaded is not the one this build's manifest names: another size, or
+ * another SHA-256. Its own class, so a connect that fails on it is told from the network and
+ * reported, since the manifest and the release it points at are Kangentic's own.
+ */
+export class HostProgramMismatchError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'HostProgramMismatchError';
+  }
+}
+
 export function readHostAssets(directory: string, appVersion: string, options: HostAssetsOptions = {}): HostAssetsResult {
   const manifestPath = path.join(directory, 'manifest.json');
   let parsed: unknown;
   try {
     parsed = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   } catch (error) {
+    // report-ok: a build with no host program has no manifest, and one that cannot be read or
+    // parsed counts the same. The problem goes back to the caller, and a connect then fails with
+    // HostProgramMissingError, shown on the host's row.
     const missing = (error as NodeJS.ErrnoException).code === 'ENOENT';
     return { assets: [], problem: missing ? `No host program: ${manifestPath} does not exist.` : `The host program's manifest could not be read: ${(error as Error).message}` };
   }
@@ -121,6 +136,8 @@ async function sha256OfFile(filePath: string): Promise<string | null> {
     for await (const chunk of fs.createReadStream(filePath)) hash.update(chunk as Buffer);
     return hash.digest('hex');
   } catch {
+    // report-ok: no cached archive yet, or one that cannot be read, matches no checksum, so it is
+    // downloaded and verified again.
     return null;
   }
 }
@@ -167,11 +184,11 @@ async function fetchVerified(options: DownloadOptions): Promise<void> {
   if (!response.ok) throw new RefusalError(`Could not download the host program: ${downloadHost} answered ${response.status}.`);
   const bytes = Buffer.from(await response.arrayBuffer());
   if (options.expectedSize !== null && bytes.length !== options.expectedSize) {
-    throw new Error(`The host program downloaded is ${bytes.length} bytes and its manifest says ${options.expectedSize}, so it was not kept.`);
+    throw new HostProgramMismatchError(`The host program downloaded is ${bytes.length} bytes and its manifest says ${options.expectedSize}, so it was not kept.`);
   }
   const actual = createHash('sha256').update(bytes).digest('hex');
   if (actual !== options.sha256) {
-    throw new Error('The host program downloaded does not match the checksum this build of Kangentic carries, so it was not kept or sent to the host.');
+    throw new HostProgramMismatchError('The host program downloaded does not match the checksum this build of Kangentic carries, so it was not kept or sent to the host.');
   }
   await fs.promises.writeFile(partial, bytes, { mode: 0o600 });
   await fs.promises.rename(partial, options.destination);

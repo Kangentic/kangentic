@@ -47,7 +47,8 @@ export const createBoardConfigSlice: StateCreator<BoardStore, [], [], BoardConfi
     try {
       warnings = await window.electronAPI.boardConfig.getLastWarnings(projectId);
     } catch {
-      // The banner is advisory. A failed fetch leaves it as the push left it.
+      // report-ok: main's IPC wrap reports a handler's rejection, and the advisory banner
+      // stays as the push left it.
       return;
     }
     get().receiveOpenConfigWarnings(projectId, warnings);
@@ -84,6 +85,7 @@ export const createBoardConfigSlice: StateCreator<BoardStore, [], [], BoardConfi
     try {
       warnings = await window.electronAPI.boardConfig.apply(projectId);
     } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the toast shows the reason.
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't apply kangentic.json`),
         ...ipcFailureToastFields(error),

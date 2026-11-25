@@ -22,6 +22,7 @@ import { queuePlacesByTaskId } from '../../shared/queue-place';
 import type { QueueSnapshot } from '../../shared/types';
 import type { SessionManager } from '../pty/session-manager';
 import { toQueuePlaceWire } from './handlers/wire-mappers';
+import { mobileBridgeReporter } from './mobile-bridge-report';
 
 /** The desktop's own queue push coalesces at this interval (`QUEUE_PUSH_COALESCE_MS`). */
 const QUEUE_PLACE_COALESCE_MS = 100;
@@ -111,7 +112,9 @@ export class QueuePlaceFeed {
     try {
       current = queuePlaceKeysOf(this.options.readSnapshot());
     } catch (error) {
-      // A read that fails costs the phone a count, never the bridge.
+      // A read that fails costs the phone a count, never the bridge. Every
+      // queued card on a phone then keeps the place it last showed.
+      mobileBridgeReporter.report(error, { tags: { stage: 'queue_feed' } });
       console.warn('[mobile-bridge] could not read the queue for the board feed:', error);
       return;
     }
@@ -133,6 +136,9 @@ export class QueuePlaceFeed {
         try {
           listener(projectId, taskIds);
         } catch (error) {
+          // A board subscription that throws is a defect, and its phone misses
+          // this change of place.
+          mobileBridgeReporter.report(error, { tags: { stage: 'queue_feed' } });
           console.warn('[mobile-bridge] queue-place listener failed:', error);
         }
       }

@@ -3,6 +3,7 @@ import { useProjectStore } from '../project-store';
 import type { ConversationTabRequest, GitDiffScope, Task, TaskDetailViewState } from '../../../shared/types';
 import type { SessionStore } from './types';
 import { sharedModuleState } from '../hmr-store-pin';
+import { reportRendererFailure } from '../../utils/renderer-failure';
 
 /** A completed task view's tabs. */
 export type CompletedTab = 'summary' | 'changes' | 'conversation' | 'usage' | 'description';
@@ -504,6 +505,8 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
   loadBrowserOffscreenTasks: async () => {
     // Optional-chained for the same reason every other bootstrap read is: a
     // Vite full reload can run this before the preload bridge is re-injected.
+    // report-ok: main's IPC wrap reports a handler's rejection, and the set stays as the
+    // last push left it.
     const taskIds = await window.electronAPI.browser?.getOffscreenSurfaces?.().catch(() => null);
     if (!taskIds) return;
     get().setBrowserOffscreenTasks(taskIds);
@@ -654,7 +657,10 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
       let blob: TaskDetailViewState;
       try {
         blob = JSON.parse(task.detail_view_state as string) as TaskDetailViewState;
-      } catch {
+      } catch (error) {
+        // Only this app writes the blob, so text that will not parse is a writer
+        // defect, and the task opens without its saved split and panels.
+        reportRendererFailure('task_detail', 'view_state_parse', error);
         continue; // malformed; already marked hydrated so we won't retry
       }
       if (blob.dividerRatio !== undefined) dividerRatio[task.id] = blob.dividerRatio;

@@ -41,7 +41,8 @@ async function countPaths(paths: string[]): Promise<LineCountEntry[]> {
         const result = await countFileLines(absolutePath);
         return { path: absolutePath, insertions: result.insertions, binary: result.binary };
       } catch {
-        // File may have been deleted/moved between the caller's stat and this read.
+        // report-ok: the file may have been deleted or moved between the caller's stat and
+        // this read, and it then counts as no lines, as main's inline count does.
         return { path: absolutePath, insertions: 0, binary: false };
       }
     }),
@@ -63,6 +64,8 @@ parentPort.on('message', (event: Electron.MessageEvent) => {
     const requestId = message.id;
     countPaths(message.paths)
       .then((entries) => post({ type: 'result', id: requestId, entries }))
+      // report-ok: a worker process cannot report. Main gets the error reply, resolves the
+      // request as null and counts the files inline.
       .catch((error: unknown) => post({ type: 'error', id: requestId, message: String(error) }));
   }
 });

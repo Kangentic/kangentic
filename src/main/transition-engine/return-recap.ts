@@ -2,6 +2,7 @@ import type { SessionRecord } from '../../shared/types';
 import type { CommitsSince } from '../git/worktree-head';
 import type { IsolatedRunRecord } from '../db/repositories/session-repository';
 import { isSlashCommand } from '../automations/turn-end/agent-message-delivery';
+import { handlerStepReporter } from '../ipc/helpers/handler-step-report';
 
 /**
  * What the task's main conversation is told when it resumes after an isolated
@@ -163,7 +164,10 @@ function cutReply(text: string): string {
   return `${(lastBreak > RECAP_REPLY_CHARS * 0.6 ? cut.slice(0, lastBreak) : cut).trimEnd()}...`;
 }
 
-/** `promise`, or `fallback` once `timeoutMs` passes first. Never rejects when `promise` does not. */
+/**
+ * `promise`, or `fallback` once `timeoutMs` passes first. Never rejects when `promise` does not.
+ * A rejection is reported as the return recap's, its one caller.
+ */
 export function withinBudget<Value>(promise: Promise<Value>, timeoutMs: number, fallback: Value): Promise<Value> {
   return new Promise<Value>((resolve) => {
     const timer = setTimeout(() => resolve(fallback), timeoutMs);
@@ -173,7 +177,11 @@ export function withinBudget<Value>(promise: Promise<Value>, timeoutMs: number, 
         clearTimeout(timer);
         resolve(value);
       },
-      () => {
+      (error: unknown) => {
+        // The recap's two reads answer null on their own failures, so a rejection is a defect
+        // in building it. The resume goes out without the recap, as on a spent budget, and the
+        // main conversation never learns what the isolated column did.
+        handlerStepReporter.report(error, { tags: { area: 'agent_spawn', step: 'return_recap' } });
         clearTimeout(timer);
         resolve(fallback);
       },

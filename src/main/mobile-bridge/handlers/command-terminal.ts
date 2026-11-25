@@ -24,6 +24,7 @@ import { AgentCliNotFoundError } from '../../agent/shared/agent-cli-not-found';
 import { commandTerminalDisplayName, commandTerminalHistoryName, commandTerminalSlotNumber } from '../../../shared/command-terminal-name';
 import type { IpcContext } from '../../ipc/ipc-context';
 import { resolveKnownProject } from './known-project';
+import { mobileBridgeReporter } from '../mobile-bridge-report';
 import { toWireJson } from './wire-mappers';
 
 /**
@@ -134,6 +135,10 @@ export async function handleCommandTerminal(
     };
     return { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(startPayload) };
   } catch (error) {
+    // This handler answers `ok: false` for every failure, so the router, which
+    // reports only a throw, never sees one. The two named classes below are
+    // refusals the reporter skips itself; anything else is a defect.
+    mobileBridgeReporter.report(error, { tags: { stage: 'command_terminal_start' } });
     const message = error instanceof Error ? error.message : String(error);
     console.warn(`[mobile-bridge] Command Terminal ${payload.action} refused in ${payload.projectId.slice(0, 8)}: ${message}`);
     if (error instanceof CommandTerminalStartError) return refuseWithCode(request, START_REFUSAL_CODES[error.code], message);

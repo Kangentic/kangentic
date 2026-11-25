@@ -141,6 +141,8 @@ function HostProgramLine({ hostId }: { hostId: string }) {
     const refresh = (): void => {
       hostProgram(hostId).then(
         (answer) => { if (!cancelled) setProgram((current) => (drawsSameLine(current, answer) ? current : answer)); },
+        // report-ok: a host that cannot answer is a state the row above already shows, main's
+        // IPC wrap reports a handler's rejection, and this extra line hides.
         () => { if (!cancelled) setProgram(null); },
       );
     };
@@ -293,6 +295,8 @@ export function SshTab() {
     try {
       setTrustTarget({ status, probe: await probeChangedKey(status.host.id) });
     } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the host's row shows
+      // main's reason.
       setRowError({ hostId: status.host.id, message: describeIpcError(error) });
     }
   }
@@ -323,9 +327,14 @@ export function SshTab() {
   const [configHosts, setConfigHosts] = useState<SshConfigHost[]>([]);
   useEffect(() => {
     let current = true;
-    listConfigHosts().then((found) => {
-      if (current) setConfigHosts(found);
-    }, () => undefined);
+    listConfigHosts().then(
+      (found) => {
+        if (current) setConfigHosts(found);
+      },
+      // report-ok: main's IPC wrap reports a handler's rejection, and an SSH config that
+      // cannot be read means the address fields offer no suggestions.
+      () => undefined,
+    );
     return () => {
       current = false;
     };
@@ -365,6 +374,8 @@ export function SshTab() {
       setProbe(learned);
       setStep('trust');
     } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the Add host form shows
+      // main's reason.
       if (session !== addSessionRef.current) return;
       setAddError(describeIpcError(error));
     } finally {
@@ -385,6 +396,8 @@ export function SshTab() {
       await checkKeyFile(chosen);
       if (session === addSessionRef.current) setKeyFilePath(chosen);
     } catch (error) {
+      // report-ok: a key file that cannot be used is refused by main with the reason, and the
+      // Add host form shows it. Main's IPC wrap reports any other rejection.
       if (session !== addSessionRef.current) return;
       setKeyFilePath('');
       setAddError(describeIpcError(error));
@@ -405,6 +418,8 @@ export function SshTab() {
       await addHost({ name: name.trim(), destination: destination.trim(), signIn, expectedFingerprint: probe.fingerprint });
       if (session === addSessionRef.current) resetAdd();
     } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the Add host form shows
+      // main's reason.
       if (session !== addSessionRef.current) return;
       // The password is not kept past a failed attempt.
       setPassword('');
@@ -418,6 +433,8 @@ export function SshTab() {
     try {
       await action();
     } catch (error) {
+      // report-ok: every row action is an SSH store IPC call. Main's IPC wrap reports a
+      // handler's rejection, and the host's row shows main's reason.
       setRowError({ hostId, message: describeIpcError(error) });
     }
   }
@@ -451,6 +468,8 @@ export function SshTab() {
       await checkKeyFile(chosen);
       setEditKeyFilePath(chosen);
     } catch (error) {
+      // report-ok: a key file that cannot be used is refused by main with the reason, and the
+      // edit form shows it. Main's IPC wrap reports any other rejection.
       setEditKeyFilePath('');
       setEditError(describeIpcError(error));
     }
@@ -481,6 +500,8 @@ export function SshTab() {
       await updateHost(target.host.id, { name: editName.trim(), destination, expectedFingerprint: editProbe?.fingerprint, signIn });
       closeEdit();
     } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the edit form shows
+      // main's reason.
       // The password is not kept past a failed attempt.
       setEditPassword('');
       setEditError(describeIpcError(error));

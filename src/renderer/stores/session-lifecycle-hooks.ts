@@ -26,6 +26,9 @@
  * removes the cycle - not the absence of both imports.
  */
 
+// A leaf: `renderer-failure.ts` imports only `src/shared`, so it adds no store edge.
+import { reportRendererFailure } from '../utils/renderer-failure';
+
 interface SessionLifecycleHooks {
   /** Tear down the project's Command Terminal (transient) PTYs. */
   killTransientSessionForProject: (projectId: string) => Promise<void>;
@@ -48,5 +51,10 @@ export function registerSessionLifecycleHooks(hooks: SessionLifecycleHooks): voi
  * a failure to reap its terminals must not block the delete or the switch.
  */
 export function killTransientSessionForProject(projectId: string): void {
-  registeredHooks?.killTransientSessionForProject(projectId).catch(() => {});
+  // The slice action catches every rejected kill itself, so only a throw from
+  // its own store scrub lands here. That leaves a gone project's Command
+  // Terminal entries in the store, so it is reported, and still blocks nothing.
+  registeredHooks?.killTransientSessionForProject(projectId).catch((error: unknown) => {
+    reportRendererFailure('command_terminal', 'project_cleanup', error);
+  });
 }

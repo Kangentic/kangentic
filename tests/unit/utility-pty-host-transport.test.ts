@@ -907,9 +907,10 @@ describe('UtilityPtyHostTransport', () => {
       expect(reports[0].contexts.pty_host.inFlight).toEqual(['exec', 'getDiagnostics', 'spawn']);
     });
 
-    it('reports nothing when the host answers a stalled ping with an error of its own', async () => {
+    it('reports no stall when the host answers a stalled ping with an error of its own', async () => {
       // Only a lost host or a spent budget ends a stall; a plain error reply is neither, and a
-      // report claiming an outcome for it would be invented.
+      // stall report claiming an outcome for it would be invented. The failed ping itself is
+      // reported on its own, as `session_manager` / `heartbeat_ping`.
       const { child, pingId } = await hostWithPingSent();
       await vi.advanceTimersByTimeAsync(11_000);
       child.emit('message', { type: 'reply', id: pingId, ok: false, error: { message: 'x', name: 'Error' } });

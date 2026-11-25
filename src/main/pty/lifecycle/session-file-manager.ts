@@ -152,12 +152,17 @@ export class SessionFileManager {
     // Clean up merged settings file (written by Claude's command-builder).
     // status.json and events.jsonl are StatusFileReader's responsibility.
     if (state.mergedSettingsPath) {
-      try { fs.unlinkSync(state.mergedSettingsPath); } catch { /* may not exist */ }
+      try { fs.unlinkSync(state.mergedSettingsPath); } catch {
+        // report-ok: ENOENT when the file was never written or is already gone.
+      }
     }
 
     // Remove the session directory and any remaining telemetry files.
     if (state.sessionDir) {
-      try { fs.rmSync(state.sessionDir, { recursive: true, force: true }); } catch { /* already gone */ }
+      try { fs.rmSync(state.sessionDir, { recursive: true, force: true }); } catch {
+        // report-ok: removing an ended session's folder. One a handle still holds on
+        // Windows stays on disk, which costs a few small telemetry files.
+      }
     }
 
     this.paths.delete(sessionId);

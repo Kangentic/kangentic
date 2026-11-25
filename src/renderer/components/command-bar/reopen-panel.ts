@@ -43,6 +43,8 @@ async function restoreIsOver(projectId: string): Promise<boolean> {
   try {
     return (await window.electronAPI.sessions.waitForCommandTerminalRestore(projectId)) !== false;
   } catch {
+    // report-ok: main's IPC wrap reports a handler's rejection. A wait that failed only means
+    // main cannot say, and the live check after it still decides.
     return true;
   }
 }

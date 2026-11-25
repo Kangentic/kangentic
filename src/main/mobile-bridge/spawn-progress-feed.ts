@@ -25,6 +25,7 @@
  * emits.
  */
 import { onSpawnProgressChange, SPAWN_PROGRESS_TTL_MS } from '../transition-engine/spawn-progress';
+import { mobileBridgeReporter } from './mobile-bridge-report';
 
 /** Window after an emit during which further changes coalesce into one trailing emit. */
 const THROTTLE_MS = 1000;
@@ -129,6 +130,9 @@ export class SpawnProgressFeed {
       try {
         projectId = this.resolveProjectIdForTask(taskId);
       } catch (error) {
+        // The phone's card never shows this task's preparing label, and the
+        // spawn it describes goes on untouched.
+        mobileBridgeReporter.report(error, { tags: { stage: 'spawn_feed' } });
         console.warn('[mobile-bridge] could not resolve the project for a spawn-progress change:', error);
         return;
       }
@@ -143,6 +147,9 @@ export class SpawnProgressFeed {
       try {
         listener(projectId, taskId);
       } catch (error) {
+        // A board subscription that throws is a defect, and its phone misses
+        // this label change.
+        mobileBridgeReporter.report(error, { tags: { stage: 'spawn_feed' } });
         console.warn('[mobile-bridge] spawn-progress listener failed:', error);
       }
     }

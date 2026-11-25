@@ -47,6 +47,7 @@ import { serializeCliTarget } from '../../agent/shared/cli-target';
 import { normalizeCommandTerminalName } from '../../../shared/command-terminal-name';
 import { parseModelId } from '../../../shared/model-id';
 import { isCommandTerminalSession } from '../../../shared/session-owner';
+import { handlerStepReporter } from './handler-step-report';
 import type { CommandTerminalHistoryRepository, CommandTerminalHistoryRow } from '../../db/repositories/command-terminal-history-repository';
 
 type AgentSessionIdListener = (sessionId: string, taskId: string, projectId: string, agentSessionId: string) => void;
@@ -351,6 +352,8 @@ export class CommandTerminalHistory {
       repository.deleteUnusedExcept(liveConversationIds);
       rows = repository.listUsed();
     } catch (error) {
+      // The Earlier list comes back empty, so no ended conversation can be resumed.
+      handlerStepReporter.report(error, { tags: { area: 'command_terminal', step: 'history_list' } });
       warn('list', error);
       return [];
     }
@@ -463,6 +466,8 @@ export class CommandTerminalHistory {
     try {
       return this.deps.getRepository(projectId)?.get(agentSessionId) ?? null;
     } catch (error) {
+      // The conversation reads as gone, so a resume or a restart restore of it is refused.
+      handlerStepReporter.report(error, { tags: { area: 'command_terminal', step: 'history_find' } });
       warn('find', error);
       return null;
     }
@@ -602,6 +607,9 @@ export class CommandTerminalHistory {
     try {
       action();
     } catch (error) {
+      // Every history write passes here: a conversation's row, its name, its end. One
+      // that fails leaves the Earlier list and the restart restore with a wrong record.
+      handlerStepReporter.report(error, { tags: { area: 'command_terminal', step: 'history_write' } });
       warn(step, error);
     }
   }
@@ -610,6 +618,8 @@ export class CommandTerminalHistory {
     try {
       return action();
     } catch (error) {
+      // Every guarded history read passes here, and its caller goes on with the fallback.
+      handlerStepReporter.report(error, { tags: { area: 'command_terminal', step: 'history_read' } });
       warn(step, error);
       return fallback;
     }

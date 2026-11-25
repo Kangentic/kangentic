@@ -117,6 +117,8 @@ export async function enumerateWorktrees(
       // host-value-ok: gitAt maps this folder to the host
       parsed = await parseWorktreeList(project.path, paths);
     } catch (error) {
+      // report-ok: only a host that could not list its worktrees throws here, and its message
+      // goes back on the project as `error` for the caller to read.
       results.push({ ...shape, worktrees: [], error: error instanceof Error ? error.message : String(error) });
       continue;
     }
@@ -217,6 +219,8 @@ async function countLeftRight(git: GitClient, ref: string): Promise<{ behind: nu
     if (!Number.isFinite(behind) || !Number.isFinite(ahead)) return null;
     return { behind, ahead };
   } catch {
+    // report-ok: git fails when the ref does not exist (no remote, base never fetched), and
+    // null lets the caller try the next candidate.
     return null;
   }
 }
@@ -226,6 +230,8 @@ function gitAtOrNull(directory: string): GitClient | null {
   try {
     return gitAt(directory);
   } catch {
+    // report-ok: the worktree was removed between the listing and this read, and its record
+    // keeps what git listed.
     return null;
   }
 }
@@ -261,6 +267,8 @@ async function buildRecord(
     const status = await worktreeGit.status();
     dirty = status.files.length > 0;
   } catch {
+    // report-ok: status fails on a half-broken worktree (mid-rebase, missing HEAD), and the
+    // record keeps what else could be read.
     dirty = false;
   }
 
@@ -270,6 +278,7 @@ async function buildRecord(
     const isoTimestamp = (await worktreeGit.raw(['log', '-1', '--format=%cI'])).trim();
     lastCommitTs = isoTimestamp || null;
   } catch {
+    // report-ok: an unborn or broken HEAD has no commit to read, and the timestamp is null.
     lastCommitTs = null;
   }
 
@@ -294,6 +303,8 @@ async function buildRecord(
       isMainCheckout: entry.isMainCheckout,
     }) ?? null;
   } catch {
+    // report-ok: a throwing resolver counts as no base, as the option's doc says. The
+    // record's baseRef stays null and its counts fall back to the branch's upstream.
     baseBranch = null;
   }
   if (baseBranch) {
@@ -319,7 +330,8 @@ async function buildRecord(
         }
       }
     } catch {
-      // No upstream configured (common for fresh task worktrees) - leave as null.
+      // report-ok: no upstream configured (common for fresh task worktrees), and the counts
+      // stay null.
     }
   }
 

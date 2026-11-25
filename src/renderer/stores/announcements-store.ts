@@ -135,7 +135,8 @@ const announcementsStoreInitializer: StateCreator<AnnouncementsState> = (set, ge
     // disk read is still in flight. Gating the write on the local copy would
     // silently drop that read forever. Main's handler no-ops on an unknown or
     // already-read id, so an extra call is free.
-    // Fire-and-forget: failing to persist must not break the UI (same shape as
+    // report-ok: main's IPC wrap reports a handler's rejection, and a read that did not
+    // persist shows as unread again after the next archive load (same shape as
     // dismissAnnouncement in config-store.ts).
     void window.electronAPI.announcements?.markRead(announcementId).catch(() => undefined);
   },

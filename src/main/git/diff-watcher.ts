@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { gitAt } from './git-client';
+import { gitAt, type GitClient } from './git-client';
+import { gitWorktreeReporter } from './git-worktree-report';
 import { replacePathPrefix } from '../../shared/paths';
 import { remoteGitRunnerFor, type RemoteGitRunner } from './remote-git';
 
@@ -32,6 +33,20 @@ const IGNORED_SEGMENTS = new Set(['.git', 'node_modules', '.kangentic']);
  */
 function isIgnoredWatchPath(filename: string): boolean {
   return filename.split(path.sep).some((segment) => IGNORED_SEGMENTS.has(segment));
+}
+
+/**
+ * The watch failures that are the machine's and not a defect. `ENOENT`: the folder is not
+ * there (a worktree removed under an open panel, a path subscribed to before it existed).
+ * `ENOSPC`, `EMFILE` and `ENFILE`: the OS is out of watches or handles. On Linux `fs.watch`
+ * answers `ENOSPC` once the user's inotify watch limit is spent, which a machine running
+ * several dev servers reaches on its own, and no release changes that limit.
+ */
+const EXPECTED_WATCH_FAILURE_CODES: ReadonlySet<string> = new Set(['ENOENT', 'ENOSPC', 'EMFILE', 'ENFILE']);
+
+/** True for a watch failure that is not reported. Every other failure of `fs.watch` is. */
+function isExpectedWatchFailure(error: unknown): boolean {
+  return EXPECTED_WATCH_FAILURE_CODES.has((error as NodeJS.ErrnoException | null | undefined)?.code ?? '');
 }
 
 /**
@@ -173,8 +188,11 @@ export class DiffWatcher {
         fire();
       });
       entry.watchers.push(treeWatcher);
-    } catch {
-      // fs.watch may fail on some platforms or if path doesn't exist
+    } catch (error) {
+      // fs.watch may fail on some platforms or if path doesn't exist. A folder that is
+      // gone is expected. Anything else leaves the Changes panel with no live updates for
+      // this checkout, and nothing on screen says so.
+      if (!isExpectedWatchFailure(error)) gitWorktreeReporter.report(error, { tags: { stage: 'diff_watch' } });
     }
 
     // 2. Git metadata (index, HEAD, logs/HEAD, ...). Resolved async because it
@@ -207,6 +225,8 @@ export class DiffWatcher {
         failed = false;
         last = current;
       } catch {
+        // report-ok: the host is out of reach, which is a state. The next answer after a
+        // failure fires, so the panel reads again.
         failed = true;
       } finally {
         running = false;
@@ -250,7 +270,16 @@ export class DiffWatcher {
       return;
     }
 
-    gitAt(worktreePath)
+    let git: GitClient;
+    try {
+      git = gitAt(worktreePath);
+    } catch {
+      // report-ok: gitAt throws at once for a folder that is not there, the same missing
+      // folder the working-tree watch just met. Thrown on from here it left subscribe()
+      // with its entry registered and nobody holding the teardown.
+      return;
+    }
+    git
       .raw(['rev-parse', '--absolute-git-dir'])
       .then((output) => {
         const gitDir = output.trim();
@@ -266,7 +295,8 @@ export class DiffWatcher {
         this.armGitMetadataWatches(worktreePath, gitDir, entry, fire);
       })
       .catch(() => {
-        // Not a git repo, or git unavailable: the working-tree watch still applies.
+        // report-ok: the folder is not a git repository, or git is not installed. The
+        // working-tree watch still applies.
       });
   }
 
@@ -290,8 +320,11 @@ export class DiffWatcher {
         if (filename && GIT_META_FILES.has(path.basename(filename.toString()))) fire();
       });
       entry.watchers.push(metaWatcher);
-    } catch {
-      // ignore: a single missing watch must not break the rest
+    } catch (error) {
+      // A single missing watch must not break the rest, so it is reported, not thrown:
+      // without it a commit, a stage or a checkout no longer refreshes the panel. A git
+      // folder that is gone (a worktree removed under the panel) is expected.
+      if (!isExpectedWatchFailure(error)) gitWorktreeReporter.report(error, { tags: { stage: 'diff_watch' } });
     }
 
     // logs/HEAD moves on every commit / checkout / reset. It lives one level
@@ -303,8 +336,10 @@ export class DiffWatcher {
           if (filename && path.basename(filename.toString()) === 'HEAD') fire();
         });
         entry.watchers.push(logsWatcher);
-      } catch {
-        // ignore
+      } catch (error) {
+        // Without this watch a commit or a reset no longer refreshes the panel. A logs
+        // folder that went between the check above and here is expected.
+        if (!isExpectedWatchFailure(error)) gitWorktreeReporter.report(error, { tags: { stage: 'diff_watch' } });
       }
     }
   }
@@ -321,7 +356,7 @@ export class DiffWatcher {
       try {
         watcher.close();
       } catch {
-        // ignore: closing an already-dead watcher is harmless
+        // report-ok: the watcher is already dead, and the entry is dropped either way.
       }
     }
     this.watchers.delete(worktreePath);

@@ -15,6 +15,7 @@ import type { useTaskProgress } from '../../../utils/task-progress';
 import { describeIpcError, asSentence, ipcErrorWasReported, ipcFailureToastFields } from '../../../lib/ipc-error';
 import { sessionFailureBody, sessionToggleFailureToast, toastIfReconnectedResume } from '../../../utils/session-toggle';
 import { openTaskFromNotification } from '../../../utils/open-task-from-notification';
+import { reportRendererFailure } from '../../../utils/renderer-failure';
 
 // agent-focus-ok: this file takes no main-process push. The scan reads the
 // window's own `onClose()` callback as one. The task a toast card opens here is
@@ -31,14 +32,20 @@ function opensTask(projectId: string | null, taskId: string): { onOpen?: () => v
  * toasts for them. Without this the rejection reached only the global
  * `unhandledrejection` listener, and the user saw the window close with no word
  * that nothing happened. The task is still on the board, so the card opens it.
+ *
+ * It reports before it toasts. `operation` is a fixed word and the task's title
+ * goes to the toast alone. A rejection main's handler wrap saw is dropped by the
+ * reporter, so what this sends is a failure only the renderer saw. Exported for
+ * the unit test that drives it.
  */
-function reportActionFailure(
-  action: 'archive' | 'send to backlog',
+export function reportTaskActionFailure(
+  operation: 'archive' | 'send_to_backlog',
   task: { id: string; title: string; projectId: string | null },
   error: unknown,
 ): void {
+  reportRendererFailure('task_detail', operation, error);
   useToastStore.getState().addToast({
-    title: action === 'archive' ? i18n._(msg`Couldn't archive task`) : i18n._(msg`Couldn't send to backlog`),
+    title: operation === 'archive' ? i18n._(msg`Couldn't archive task`) : i18n._(msg`Couldn't send to backlog`),
     message: `"${task.title}": ${asSentence(describeIpcError(error, ''))}`,
     reported: ipcErrorWasReported(error),
     variant: 'warning',
@@ -204,6 +211,9 @@ export function useTaskActions(input: {
       // pendingAction is cleared by the effect below once the session store
       // actually reflects the target state.
     } catch (err) {
+      // A pause closes the window before it settles, so a failure here reaches the user as a
+      // toast over a closed window. The host's refresh runs in this try beside the IPC call.
+      reportRendererFailure('task_detail', 'toggle_session', err);
       console.error('Toggle session failed:', err);
       const direction = action === 'pausing' ? 'pause' : 'resume';
       if (action === 'resuming') {
@@ -247,6 +257,7 @@ export function useTaskActions(input: {
       setResumeError('');
       await host.refresh();
     } catch (err) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the toast shows the reason.
       console.error('Reset session failed:', err);
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't reset session`),
@@ -266,6 +277,7 @@ export function useTaskActions(input: {
       await input.resumeSession(input.task.id, command.displayName, taskProjectId);
       await host.refresh();
     } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the toast shows the reason.
       console.error('Command invocation failed:', error);
       useSessionStore.getState().clearPendingCommandLabel(input.task.id);
       useToastStore.getState().addToast({
@@ -275,6 +287,9 @@ export function useTaskActions(input: {
         reported: ipcErrorWasReported(error),
         variant: 'warning',
       });
+      // report-ok: both hosts' refresh (loadBoard, the monitor's bundle read) report their own
+      // failure through reportRendererFailure and do not reject. The catch only guards a host
+      // whose refresh one day does.
       await host.refresh().catch(() => {});
       setPendingAction(null);
     }
@@ -442,6 +457,8 @@ export function useTaskActions(input: {
           }
           await host.refresh();
         } catch (error) {
+          // report-ok: main's IPC wrap reports a handler's rejection, and the toast shows the
+          // reason while the form stays open.
           console.error('switchBranch failed:', error);
           useToastStore.getState().addToast({
             title: i18n._(msg`Couldn't switch branch`),
@@ -479,7 +496,8 @@ export function useTaskActions(input: {
         try {
           await host.updateTask(payload);
         } catch (error) {
-          // The form stays open with the edits intact. Without the toast the
+          // report-ok: main's IPC wrap reports a handler's rejection, and the toast shows
+          // the reason. The form stays open with the edits intact. Without the toast the
           // rejection reached only the global `unhandledrejection` listener,
           // and a Save from the unsaved-edits prompt left no trace at all.
           console.error('updateTask failed:', error);
@@ -534,7 +552,7 @@ export function useTaskActions(input: {
     try {
       await host.sendToBacklog(input.task.id);
     } catch (error) {
-      reportActionFailure('send to backlog', { id: input.task.id, title: taskTitle, projectId: taskProjectId }, error);
+      reportTaskActionFailure('send_to_backlog', { id: input.task.id, title: taskTitle, projectId: taskProjectId }, error);
       return;
     }
     useToastStore.getState().addToast({
@@ -565,12 +583,15 @@ export function useTaskActions(input: {
     try {
       await window.electronAPI.tasks.move({ taskId, targetSwimlaneId: doneLane.id, targetPosition: laneTasks.length }, host.projectId || null);
     } catch (error) {
-      reportActionFailure('archive', { id: taskId, title: taskTitle, projectId: taskProjectId }, error);
+      reportTaskActionFailure('archive', { id: taskId, title: taskTitle, projectId: taskProjectId }, error);
       return;
     } finally {
       // The board host archived optimistically, and this reconciles it either
       // way the move settles. The monitor host has no list to echo into, so
       // this is where the board under it learns of the archive.
+      // report-ok: both hosts' refresh (loadBoard, the monitor's bundle read) report their own
+      // failure through reportRendererFailure and do not reject. The catch only guards a host
+      // whose refresh one day does.
       void host.refresh().catch(() => {});
     }
     useToastStore.getState().addToast({

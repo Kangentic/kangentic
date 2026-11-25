@@ -22,6 +22,8 @@ export class HostProcessTreeProbe implements ProcessTreeProbe {
     try {
       return await this.listFromHost();
     } catch {
+      // report-ok: the host did not answer or is restarting. The watcher skips this
+      // cycle, as it does a probe timeout, and asks again on the next.
       return [];
     }
   }

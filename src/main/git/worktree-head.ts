@@ -1,8 +1,21 @@
 import { gitAt } from './git-client';
+import { gitWorktreeReporter } from './git-worktree-report';
 import { RemoteGitUnavailableError } from './remote-git';
 import { viaGitRead } from './git-read-queue';
 import { isSafeBranchName } from './push-command';
 import { isOptionShapedRef, TAG_REF_PREFIX } from './base-ref';
+
+/**
+ * `gitAt`'s own error for a folder that is not there (`git-client.ts` keeps simple-git's
+ * words for it). A relocated project or a reclaimed worktree is expected, so the two reads
+ * below that report their failures leave this one out. Read by its text, here, so a test
+ * that replaces the client needs no export beyond `gitAt`.
+ */
+const MISSING_DIRECTORY = /directory that does not exist/;
+
+function isMissingDirectory(error: unknown): boolean {
+  return error instanceof Error && MISSING_DIRECTORY.test(error.message);
+}
 
 /**
  * Read the worktree's live HEAD: the actual branch (preferred over the stored
@@ -89,6 +102,8 @@ export async function readCommitsSince(worktreePath: string, fromSha: string, li
         });
       return { head, commits, omitted: Math.max(0, total - commits.length) };
     } catch {
+      // report-ok: the anchor commit no longer resolves, or the worktree is gone. Null reads
+      // as no history to list, and the return recap goes out without a commit list.
       return null;
     }
   });
@@ -116,7 +131,8 @@ export async function readLocalBranchSha(repoCwd: string, branchName: string): P
       const sha = (await git.revparse(['--verify', '--quiet', `${LOCAL_REF_PREFIX}${branchName}`])).trim();
       return HEX_SHA_PATTERN.test(sha) ? sha : null;
     } catch {
-      // Missing branch, or `gitAt()` itself threw on a missing directory.
+      // report-ok: the branch is missing, or `gitAt()` itself threw on a missing directory.
+      // Null is the documented answer, and the caller records no head_sha.
       return null;
     }
   });
@@ -148,6 +164,8 @@ export async function hasCommitsAheadOfBase(repoCwd: string, baseBranch: string,
       const commitCountOutput = (await git.raw(['rev-list', '--count', `${baseBranch}..${sha}`])).trim();
       return Number.parseInt(commitCountOutput, 10) > 0;
     } catch {
+      // report-ok: a base ref or commit that does not resolve here reads as no commits
+      // ahead, so the caller skips the commit anchor instead of risking a wrong PR link.
       return false;
     }
   });
@@ -196,19 +214,23 @@ export async function isShaContainedInRef(repoCwd: string, ref: string, sha: str
         try {
           commitCountOutput = (await git.raw(['rev-list', '--count', `${candidateRef}..${sha}`])).trim();
         } catch {
-          // This ref form does not resolve here (never fetched, or no remote) - try the next.
+          // report-ok: this ref form does not resolve here (never fetched, or no remote),
+          // so the next is tried.
           continue;
         }
         const aheadCount = Number.parseInt(commitCountOutput, 10);
         return Number.isNaN(aheadCount) ? null : aheadCount === 0;
       }
       return null;
-    } catch {
+    } catch (error) {
       // `gitAt()` itself throws when repoCwd is not an existing directory (a
-      // relocated project, a reclaimed worktree). The outer try keeps the
+      // relocated project, a reclaimed worktree): expected, and not reported.
+      // Anything else that lands here is a defect that would read as "cannot
+      // tell" for every PR, with nothing said. The outer try keeps the
       // never-answers-with-a-failure contract INSIDE the queued job, as
       // git-read-queue.ts requires: a rejection here would surface to
       // pr-linking.ts as a non-PRResolver error, which clears the task's PR link.
+      if (!isMissingDirectory(error)) gitWorktreeReporter.report(error, { tags: { stage: 'head_read' } });
       return null;
     }
   });
@@ -232,7 +254,8 @@ async function countCommitsNotOnBase(git: ReturnType<typeof gitAt>, baseBranch: 
       const count = Number.parseInt(countOutput, 10);
       return Number.isNaN(count) ? null : count;
     } catch {
-      // This ref form does not resolve here (never fetched, or no remote) - try the next.
+      // report-ok: this ref form does not resolve here (never fetched, or no remote), so
+      // the next is tried.
     }
   }
   return null;
@@ -267,6 +290,8 @@ export async function readWorktreeWork(worktreePath: string, baseBranch: string)
         uncommittedFiles: status.files.length,
       };
     } catch {
+      // report-ok: null means cannot tell, and both callers then refuse to end the task's
+      // work and say the branch could not be read.
       return null;
     }
   });
@@ -429,7 +454,11 @@ export async function readRefsPointingAtSha(
       }
 
       return { remoteBranches, pointsAtBaseTip };
-    } catch {
+    } catch (error) {
+      // A repoCwd that is gone (a relocated project, a reclaimed worktree) is expected.
+      // Any other failure skips the PR ladder's last tier, so a branch pushed under
+      // another name never gets its PR linked, and nothing says the refs went unread.
+      if (!isMissingDirectory(error)) gitWorktreeReporter.report(error, { tags: { stage: 'refs_read' } });
       return empty;
     }
   });

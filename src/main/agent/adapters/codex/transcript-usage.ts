@@ -343,8 +343,11 @@ function withResultCursor<T>(filePath: string, view: (cursor: ResultCursor) => T
     const cursor = await advanceCursor(filePath);
     return cursor ? view(cursor) : null;
   };
-  // Run after the previous read either way: a failure there must not fail this one.
+  // report-ok: this read runs after the previous one either way. A failure there went to its
+  // own caller through its `next`, and must not fail this one.
   const next = previous.then(step, step);
+  // report-ok: this copy only orders the path's next read. The caller gets a failure through
+  // `next`, which is what this function returns.
   const settled = next.then(() => undefined, () => undefined);
   resultReads.set(filePath, settled);
   void settled.then(() => {

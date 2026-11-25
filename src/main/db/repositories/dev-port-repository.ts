@@ -1,4 +1,5 @@
 import { getGlobalDb } from '../database';
+import { dbReporter } from '../db-report';
 import { softly as softDbAccess } from '../soft-db';
 import type { DevPortLease } from '../../../shared/types';
 
@@ -94,6 +95,9 @@ export class DevPortRepository {
       try {
         listener();
       } catch (error) {
+        // What is derived from the ledger stops following it: a port forwarded from an
+        // SSH host stays open after its task let it go, or one a task claimed never opens.
+        dbReporter.report(error, { tags: { stage: 'dev_port_listener' } });
         console.warn('[dev-ports] a ledger listener threw:', error);
       }
     }

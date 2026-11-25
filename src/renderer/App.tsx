@@ -57,6 +57,7 @@ import * as terminalWebglModule from './utils/terminal-webgl';
 import * as imageCompressModule from './components/dialogs/image-compress';
 import * as projectCacheModule from './stores/project-cache';
 import * as iconRegistryModule from './utils/icon-registry';
+import * as rendererFailureModule from './utils/renderer-failure';
 import {
   autoNameTimers,
   scheduleAutoNameSuggestion,
@@ -1705,5 +1706,6 @@ if (import.meta.env.DEV) {
     imageCompress: imageCompressModule,
     projectCache: projectCacheModule,
     iconRegistry: iconRegistryModule,
+    rendererFailure: rendererFailureModule,
   };
 }

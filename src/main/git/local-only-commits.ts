@@ -71,7 +71,9 @@ async function contentMergedShas(git: GitClient): Promise<Set<string>> {
       }
       return merged;
     } catch {
-      continue; // Upstream ref missing - try the next, else give up (no false negative).
+      // report-ok: the upstream ref is missing, so the next is tried. Giving up only keeps
+      // the unpushed-commits warning (no false negative).
+      continue;
     }
   }
   return new Set();
@@ -83,7 +85,8 @@ async function resolveBaseBranch(git: GitClient): Promise<string> {
     const configured = (await git.raw(['config', 'kangentic.baseBranch'])).trim();
     if (configured) return configured;
   } catch {
-    // Not set (older worktree, or branched outside Kangentic).
+    // report-ok: the key is not set (older worktree, or branched outside Kangentic), and
+    // 'main' stands in.
   }
   return 'main';
 }
@@ -97,7 +100,9 @@ async function isPrMerged(checkPath: string, pr?: PrMergeContext): Promise<boole
     const resolved = await withTimeout(resolvePRByNumber(checkPath, pr.prNumber), PR_LOOKUP_TIMEOUT_MS);
     return resolved?.state === 'merged';
   } catch {
-    return false; // gh missing / unauthenticated / offline / timeout - keep the warning.
+    // report-ok: gh is missing, signed out, offline or timed out, and the unpushed-commits
+    // warning is kept.
+    return false;
   }
 }
 

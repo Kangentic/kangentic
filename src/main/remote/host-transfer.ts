@@ -253,6 +253,8 @@ export async function writeHostBytes(access: HostCommandAccess, hostPath: string
     if (lines.includes('refused')) throw refusal(hostPath);
   } catch (error) {
     // The script removes its staging file when it fails. This covers a chunk that never reached it.
+    // report-ok: the write's own error is thrown next. An abort the host never gets leaves a
+    // staging file beside the target, which costs disk there.
     await access.runCommand(scriptRequest(WRITE_SCRIPT, [hostPath, id, 'abort', size])).catch(() => undefined);
     throw error;
   }

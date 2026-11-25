@@ -25,6 +25,7 @@ import {
 } from '../../../../utils/diff-scroll-memory';
 import { copyDiffSelection } from '../../../../utils/diff-clipboard';
 import { monoFontFamily } from '../../../../utils/mono-font-family';
+import { reportRendererFailure } from '../../../../utils/renderer-failure';
 import { registerDiffViewerSnapshotReader } from '../../../../monaco-error-funnel';
 import { readAttachedViewModel, type DisposableViewModel } from '../../../../monaco-diff-view-model';
 import { monacoThemeForTheme, selectDiffAlgorithmOptions } from './diff-render-options';
@@ -347,6 +348,8 @@ export function DiffViewer({
   // document variant). Its rehype pipeline is a lazy chunk; start loading it
   // when a markdown file is selected, so the eye toggle renders at once.
   useEffect(() => {
+    // report-ok: this only starts the lazy chunk early. MarkdownRenderer's useDocumentPlugins
+    // asks for it again when the preview renders, and a failed load is handled there.
     if (isMarkdown) void loadDocumentPlugins().catch(() => {});
   }, [isMarkdown]);
 
@@ -405,7 +408,15 @@ export function DiffViewer({
     const entries = cache.entries;
     const cached = entries.get(path);
     if (cached) return cached;
-    const read = fetchDocumentImage(scope, path, imageSide).catch(() => null);
+    // The read is an IPC call and then this renderer's own work on the answer (the bytes
+    // into a data URL). Main's wrap reports a handler's rejection and the reporter drops
+    // that one, so what is sent is a failure of the renderer's half. The preview shows the
+    // image's alt text either way. `useRepoImage` reports a rejection too, but this catch
+    // answers null first, so its own never sees one from this host.
+    const read = fetchDocumentImage(scope, path, imageSide).catch((error: unknown) => {
+      reportRendererFailure('markdown', 'image_load', error);
+      return null;
+    });
     entries.set(path, read);
     void read.then((url) => {
       if (url === null && entries.get(path) === read) entries.delete(path);
@@ -461,6 +472,7 @@ export function DiffViewer({
         if (!cancelled) setFetchedBlame({ key: blameKey, lines: result.lines });
       })
       .catch(() => {
+        // report-ok: main's IPC wrap reports a handler's rejection, and the diff shows no blame.
         if (!cancelled) setFetchedBlame({ key: blameKey, lines: [] });
       });
     return () => {

@@ -26,6 +26,16 @@ import { nextProjectToOpen } from '../utils/next-project';
  */
 export type OpenProjectOutcome = 'opened' | 'missing-path' | 'not-found' | 'failed';
 
+/**
+ * Say that a sidebar change did not save. Each caller wrote the change into the
+ * list before main answered and has just reloaded the list to undo it, so
+ * without this a rename or a drag snaps back with no word. `title` is already
+ * translated by the caller.
+ */
+function toastRevertedChange(title: string, error: unknown): void {
+  useToastStore.getState().addToast({ title, ...ipcFailureToastFields(error), variant: 'error' });
+}
+
 // Hydration gate: tracks whether both loadProjects() and loadCurrent() have
 // resolved at least once. Kept out of the store interface, in one object every
 // evaluation of this module shares (`sharedModuleState`), so the pin's refreshed
@@ -213,6 +223,9 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
           // message IS the PROJECT_PATH_MISSING_PREFIX sentinel, which
           // describeIpcError has no reason to know how to strip, so
           // interpolating it would leak the raw token into the toast.
+          // A new error, not `err`: the reporter drops a rejection main's wrap
+          // saw, and what failed here is the renderer's list, not the handler.
+          reportRendererFailure('projects', 'open_missing_row', new Error('The project list holds no row for a project whose folder main reports missing.'));
           useToastStore.getState().addToast({
             title: i18n._(msg`Couldn't open project`),
             message: i18n._(msg`Its record could not be found after refreshing the project list.`),
@@ -233,6 +246,11 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
         await get().loadProjects();
         await get().loadCurrent();
         const stillListed = get().projects.some((candidate) => candidate.id === id);
+        // Listed after a refetch and still not found: main disagrees with its own
+        // list. A new error, since the reporter drops the rejection main saw.
+        if (stillListed) {
+          reportRendererFailure('projects', 'open_not_found_listed', new Error('Main lists a project it cannot find.'));
+        }
         useToastStore.getState().addToast({
           title: i18n._(msg`Project not available`),
           // Not describeIpcError(err) in the stillListed branch: this err's
@@ -267,6 +285,7 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
       try {
         project = await window.electronAPI.projects.getCurrent();
       } catch (err) {
+        // report-ok: main's IPC wrap reports a handler's rejection, and the toast shows the reason.
         useToastStore.getState().addToast({
           title: i18n._(msg`Couldn't open project`),
           ...ipcFailureToastFields(err),
@@ -317,9 +336,10 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
     set({ projects: reordered });
     try {
       await window.electronAPI.projects.reorder(ids);
-    } catch {
-      // Rollback on error
+    } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the toast says the order did not save.
       await get().loadProjects();
+      toastRevertedChange(i18n._(msg`Couldn't reorder projects`), error);
     }
   },
 
@@ -335,8 +355,10 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
     }));
     try {
       await window.electronAPI.projects.rename(id, name);
-    } catch {
+    } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the toast says the name did not save.
       await get().loadProjects();
+      toastRevertedChange(i18n._(msg`Couldn't rename project`), error);
     }
   },
 
@@ -387,8 +409,10 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
     }));
     try {
       await window.electronAPI.projects.setGroup(projectId, groupId);
-    } catch {
+    } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the toast says the move did not save.
       await get().loadProjects();
+      toastRevertedChange(i18n._(msg`Couldn't move project`), error);
     }
   },
 
@@ -482,8 +506,10 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
     set({ groups: reordered });
     try {
       await window.electronAPI.projectGroups.reorder(ids);
-    } catch {
+    } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the toast says the order did not save.
       await get().loadGroups();
+      toastRevertedChange(i18n._(msg`Couldn't reorder groups`), error);
     }
   },
 
@@ -499,8 +525,10 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
     }));
     try {
       await window.electronAPI.projectGroups.setCollapsed(id, newCollapsed);
-    } catch {
+    } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the toast says the group did not save.
       await get().loadGroups();
+      toastRevertedChange(i18n._(msg`Couldn't update group`), error);
     }
   },
 });

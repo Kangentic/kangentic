@@ -94,6 +94,7 @@ export async function peelToCommit(projectPath: string, ref: string): Promise<st
     const sha = stdout.trim();
     return sha || null;
   } catch {
+    // report-ok: git exits 1 when the ref does not peel to a commit, which is the answer.
     return null;
   }
 }
@@ -162,6 +163,7 @@ async function isAncestor(projectPath: string, ancestor: string, descendant: str
     });
     return true;
   } catch {
+    // report-ok: git exits 1 when the commit is not an ancestor, which is the answer.
     return false;
   }
 }
@@ -209,6 +211,8 @@ export async function fetchTagFromOrigin(projectPath: string, name: string, opti
       signal: options?.signal,
     });
   } catch {
+    // report-ok: origin has no such tag or cannot be reached, and the caller then shows the
+    // base as unresolved.
     return false;
   }
   return (await peelToCommit(projectPath, tagRef)) !== null;
@@ -255,6 +259,8 @@ export async function resolveRefForDisplay(projectPath: string, ref: string, opt
     // `origin/main`): a base that moves under a name that is not a branch.
     return { ok: false, reason: 'not-a-base', error: `'${trimmed}' is not a branch, tag or commit SHA.` };
   } catch (error) {
+    // report-ok: a ref the user typed does not resolve, and git's own words for why are
+    // returned to the base picker that asked.
     const stderr = (error as { stderr?: unknown }).stderr;
     const text = typeof stderr === 'string' && stderr.trim()
       ? stderr.trim()

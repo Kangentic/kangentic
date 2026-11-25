@@ -23,7 +23,8 @@ export function useLanguageRestart(): (locale: AppLocale) => Promise<void> {
       // the window is still up.
       void useConfigStore.getState().loadConfig();
     } catch (error) {
-      // The toast says what to do; the reason goes to the log.
+      // report-ok: main's IPC wrap reports a handler's rejection. The toast says what to do,
+      // and the reason goes to the log.
       console.error('Display language restart failed:', error);
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't restart`),

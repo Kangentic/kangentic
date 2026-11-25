@@ -14,6 +14,7 @@
 
 import type { ProjectRemote } from '../../shared/types';
 import type { PortForwardStatus, RemoteHostRequest } from './protocol/messages';
+import { remoteHostReporter } from './remote-report';
 
 export interface PortForwardPlanDeps {
   leases(): Array<{ port: number; projectId: string }>;
@@ -57,7 +58,12 @@ export class PortForwardPlan {
   /** The wanted ports of every host, from the ledger, and whether each changed since it was sent. */
   syncNow(): Promise<void> {
     // One at a time, so two overlapping syncs cannot send an older set after a newer one.
-    this.running = this.running.then(() => this.send()).catch(() => undefined);
+    this.running = this.running.then(() => this.send()).catch((error: unknown) => {
+      // Each host's send has its own catch, so what lands here is a failed read of the dev-port
+      // ledger or the project table: no host is told its ports, and a remote project's dev
+      // server stays out of reach of this computer until the ledger next changes.
+      remoteHostReporter.report(error, { tags: { stage: 'port_forward_plan' } });
+    });
     return this.running;
   }
 
@@ -71,6 +77,8 @@ export class PortForwardPlan {
     try {
       return (await this.deps.send({ op: 'listForwards', hostId })) as PortForwardStatus[];
     } catch (error) {
+      // report-ok: the pty host exited, did not answer in time, or runs in-process with no links.
+      // The dev-port answer leaves its forward line out and still reports what the host listens on.
       this.deps.log?.(`could not read the forwarded ports of ${hostId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
       return [];
     }
@@ -99,6 +107,9 @@ export class PortForwardPlan {
         // An emptied host is remembered as empty, not dropped, so a later resend still clears nothing twice.
         this.sent.set(hostId, key);
       } catch (error) {
+        // report-ok: the pty host exited, did not answer in time, or runs in-process with no
+        // links. The set is not recorded as sent, so the next sync sends it again, and a restarted
+        // pty host is sent everything.
         this.deps.log?.(`could not send the forwarded ports of ${hostId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }

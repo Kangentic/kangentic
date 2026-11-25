@@ -90,9 +90,12 @@ export function registerMobileBridgeHandlers(context: IpcContext): void {
       // Any 2xx counts as reachable, and `version` is optional in the body:
       // a relay that reports none (self-hosted, or older than the field) is
       // still working, so requiring it would report it as unreachable.
+      // report-ok: a relay whose health body is not JSON still answered, and reads as no version.
       const body = (await response.json().catch(() => null)) as { version?: string } | null;
       return { reachable: true, version: body?.version ?? null, latencyMs };
     } catch (error) {
+      // report-ok: a relay that is down or slow is the answer, and the Test result beside
+      // the relay field shows this reason.
       return { reachable: false, reason: error instanceof Error ? error.message : 'Unknown error' };
     }
   });

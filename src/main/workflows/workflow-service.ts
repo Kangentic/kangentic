@@ -53,6 +53,7 @@ import { MAX_WORKFLOW_TASKS } from './workflow-limits';
 import { wakeWorkflowEngine } from './workflow-wake';
 import { requestWorkflowCatchUp } from './workflow-catch-up';
 import { notifyWorkflowChanged } from './workflow-changed';
+import { workflowEngineReporter } from './workflow-report';
 import { cancelWorkflowRecovery, forgetWorkflowRecovery } from './workflow-recovery-state';
 import { announceBoardChange } from './workflow-board-announce';
 import { endWorkflowAgent } from './workflow-agent';
@@ -146,8 +147,10 @@ export function stallReader(workflow: Workflow): (projectId: string, task: Pick<
       try {
         const db = getExistingProjectDb(projectId);
         stalls = db ? new AutomationRunRepository(db).listStalledTasks() : new Map<string, string>();
-      } catch {
-        // A board whose run log cannot be read shows no stall.
+      } catch (error) {
+        // A board whose run log cannot be read shows no stall: a stalled task loses its
+        // mark in the Workflows view, the picker and an agent's read of the workflow.
+        workflowEngineReporter.report(error, { tags: { stage: 'stalls_read' } });
         stalls = new Map<string, string>();
       }
       byProject.set(projectId, stalls);
@@ -276,7 +279,10 @@ function boardTask(projectId: string, taskId: string): Task | null {
   try {
     const db = getExistingProjectDb(projectId);
     return db ? new TaskRepository(db).getById(taskId) ?? null : null;
-  } catch {
+  } catch (error) {
+    // The plan read then names a task taken in at Start without its number, so an agent
+    // or a person cannot tell which board task the plan holds.
+    workflowEngineReporter.report(error, { tags: { stage: 'take_in_read' } });
     return null;
   }
 }
@@ -301,6 +307,8 @@ function boardProfilesOf(context: IpcContext, projectId: string): BoardProfile[]
     const projectPath = context.projectRepo.getById(projectId)?.path;
     return projectPath ? context.boardConfigManager.getBoardProfiles(projectPath) : [];
   } catch {
+    // report-ok: a project or board config that cannot be read lists no profiles, so no
+    // profile is named and a set is refused where the user sees it.
     return [];
   }
 }
@@ -590,7 +598,8 @@ export async function checkPlannedModel(context: IpcContext, homeProjectId: stri
     cliPathOverrides = config.agent?.cliPaths ?? {};
     discoveredModelsByAgent = config.discoveredModelsByAgent ?? {};
   } catch {
-    // An unreadable config checks against the default CLI paths.
+    // report-ok: an unreadable config checks against the default CLI paths, and a typo that
+    // passes then fails when its task first runs.
   }
   const rejection = await validateSpawnOverrides({
     agentOverride: settingText(entry.agentOverride),
@@ -905,6 +914,9 @@ export async function startWorkflow(context: IpcContext, homeProjectId: string, 
     try {
       supersededSource = await supersedeSourceTask(context, homeProjectId, workflow);
     } catch (error) {
+      // The task the workflow replaced stays in To Do beside the tasks made from it, with
+      // no "Superseded by" line, so the same work can be started twice.
+      workflowEngineReporter.report(error, { tags: { stage: 'start_done_move' } });
       console.error(`[WORKFLOW] Started ${workflowId.slice(0, 8)}, but could not move its source task to Done:`, error);
     }
   }
@@ -941,6 +953,9 @@ function undoStartWrites(committed: ReadonlyArray<StartBoardWrite>): void {
       })();
       for (const taskId of createdTaskIds) tasks.delete(taskId);
     } catch (undoError) {
+      // The board keeps tasks of a workflow that never started: created ones nobody
+      // planned to keep, and taken-in ones that a retry of Start then refuses.
+      workflowEngineReporter.report(undoError, { tags: { stage: 'start_undo' } });
       console.error(`[WORKFLOW] Could not undo a failed Start on project ${projectId.slice(0, 8)}:`, undoError);
     }
   }
@@ -1085,6 +1100,9 @@ function pauseOwnSessionAfterTurn(
         console.log(`[WORKFLOW] #${member.task.display_id} runs a newer session than the one that paused its workflow; left it running.`);
       }
     } catch (error) {
+      // The workflow reads Paused while the agent that paused it keeps running, and
+      // nothing waits on this pause to say so.
+      workflowEngineReporter.report(error, { tags: { stage: 'pause_member' } });
       console.warn(`[WORKFLOW] Could not pause #${member.task.display_id} after its own pause call:`, error);
     } finally {
       release();
@@ -1205,6 +1223,7 @@ async function bringBackTaskAgent(context: IpcContext, projectId: string, task: 
       // list can run a script for minutes, and the phone's Resume answers in
       // 10 s. It is counted as accepted, as the phone's own Start is.
       autoSpawnForTask(context, projectId, { id: task.id, title: task.title }, decision.laneId, { startPath: 'workflow' }).catch((error: unknown) => {
+        // report-ok: autoSpawnForTask reports its own failure through reportPreflightFailure.
         console.warn(`[WORKFLOW] Could not start #${task.display_id}'s agent on Resume:`, error);
       });
       return 'started';
@@ -1220,6 +1239,8 @@ function resumeNowRefused(projectId: string, taskId: string): boolean {
     const lane = lanes.find((candidate) => candidate.id === current.swimlane_id);
     return resumeBlockReasonForTask({ task: current, laneRole: lane?.role }) !== null;
   } catch {
+    // report-ok: a board that cannot be read answers "not refused", so the caller rethrows
+    // the resume failure it was judging and Resume counts the task as failed.
     return false;
   }
 }
@@ -1558,6 +1579,9 @@ export function deleteWorkflow(context: IpcContext, homeProjectId: string, workf
   cancelWorkflowRecovery(workflowId);
   // Its agent's conversation goes with it, and so does its session.
   endWorkflowAgent(context, workflowId).catch((error: unknown) => {
+    // A deleted workflow's agent then keeps running, holding an agent slot and memory,
+    // with no pane left to stop it from.
+    workflowEngineReporter.report(error, { tags: { stage: 'delete_end_agent' } });
     console.error(`[WORKFLOW] Could not end the agent of ${workflowId.slice(0, 8)}:`, error);
   });
   notifyWorkflowChanged(homeProjectId, workflowId);
@@ -1608,6 +1632,8 @@ export async function deleteNeverStartedTasks(context: IpcContext, released: Rel
       (deleted ? result.deleted : result.kept).push(entry);
       if (deleted) noteAttempt(entry);
     } catch (error) {
+      // report-ok: the failure goes back in the result's failed list with its message, which
+      // the Delete toast and the MCP answer show.
       console.error(`[WORKFLOW] Could not delete task ${entry.taskId.slice(0, 8)}, which never started:`, error);
       result.failed.push({ ...entry, reason: error instanceof Error ? error.message : String(error) });
       // Its attachments may be gone even though the row stayed, as for a failed TASK_DELETE.

@@ -242,6 +242,8 @@ export async function reapTaggedProcessesInWsl(
     }
     return [...killed];
   } catch (error) {
+    // report-ok: handed to onFailure, where SessionManager.reapInDistro reports it
+    // through reportTaskReapFailure as wsl_error.
     onFailure(error);
     return [...killed];
   }

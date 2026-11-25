@@ -84,6 +84,7 @@ export class LineCountClient {
     try {
       child = utilityProcess.fork(workerPath, [], { serviceName: SERVICE_NAME, stdio: UTILITY_PROCESS_STDIO });
     } catch (error) {
+      // report-ok: restartPolicy.recordCrash below reports it, and the caller counts inline.
       // A fork that throws is a crash like any other, so it goes through the
       // policy rather than latching the cap directly - otherwise one transient
       // fork failure disabled offload permanently, with no decay.
@@ -169,7 +170,7 @@ export class LineCountClient {
       try {
         child.postMessage({ type: 'shutdown' });
       } catch {
-        // ignore; kill below is the real teardown
+        // report-ok: the worker already exited, and the kill below is the real teardown.
       }
       child.kill();
     }

@@ -1272,7 +1272,13 @@ export function useTerminal(options: UseTerminalOptions) {
       const capped = new Promise<undefined>((resolve) => { capTimer = setTimeout(() => resolve(undefined), FRAME_HOLD_CAP_MS); });
       // The repaint landed and main answered, or the cap.
       void Promise.race([
-        Promise.all([repainted, answered]).then(([, answer]) => answer, () => undefined),
+        Promise.all([repainted, answered]).then(([, answer]) => answer, (error: unknown) => {
+          // The hold ends with no answer, as it does at the cap. A rejected resize main saw
+          // is dropped by the reporter, which leaves a throw from this terminal's own
+          // handling of the answer (`requestGrid`).
+          reportRendererFailure('terminal', 'frame_hold_answer', error);
+          return undefined;
+        }),
         capped,
       ])
         .finally(() => {
@@ -2983,6 +2989,8 @@ export function useTerminal(options: UseTerminalOptions) {
     if (!sessionId) return;
     window.electronAPI.sessions.resetTerminal(sessionId).then(
       () => reloadScrollbackRef.current?.({ skipResize: true, skipFocus: true }),
+      // report-ok: main's IPC wrap reports a handler's rejection, and the terminal keeps its
+      // last frame.
       () => undefined,
     );
   }, {
