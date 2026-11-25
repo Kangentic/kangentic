@@ -39,6 +39,12 @@ export interface SpawnWithAbortOptions {
   env?: NodeJS.ProcessEnv;
   /** Which end of output past the cap is kept: the start (default), or the end, where a hook says why it failed. */
   keepOutput?: 'head' | 'tail';
+  /**
+   * The most of each stream that is kept, in characters. Omitted, 1,000,000.
+   * A caller that parses the whole of stdout raises it: a listing cut at the cap
+   * parses as a shorter listing, and nothing says it was cut.
+   */
+  maxOutputChars?: number;
 }
 
 export interface SpawnWithAbortTarget {
@@ -129,7 +135,7 @@ export function spawnWithAbort(
   options: SpawnWithAbortOptions,
 ): Promise<{ stdout: string; stderr: string }> {
   const { command, args, cwd, label, signalKillAssertsTimeout } = target;
-  const { timeoutMs, signal: externalSignal, keepOutput = 'head' } = options;
+  const { timeoutMs, signal: externalSignal, keepOutput = 'head', maxOutputChars = MAX_CAPTURED_OUTPUT_CHARS } = options;
   // Always passed, never inherited: git runs repository hooks and the init
   // script can start anything, so neither gets Crashpad's pipe name
   // (child-env.ts).
@@ -196,9 +202,9 @@ export function spawnWithAbort(
     const stdoutDecoder = new StringDecoder('utf8');
     const stderrDecoder = new StringDecoder('utf8');
     const appendCapped = (captured: string, text: string): string => {
-      if (keepOutput === 'head') return captured.length < MAX_CAPTURED_OUTPUT_CHARS ? captured + text : captured;
+      if (keepOutput === 'head') return captured.length < maxOutputChars ? captured + text : captured;
       const joined = captured + text;
-      return joined.length > 2 * MAX_CAPTURED_OUTPUT_CHARS ? joined.slice(-MAX_CAPTURED_OUTPUT_CHARS) : joined;
+      return joined.length > 2 * maxOutputChars ? joined.slice(-maxOutputChars) : joined;
     };
     const onStdout = (chunk: Buffer): void => { stdout = appendCapped(stdout, stdoutDecoder.write(chunk)); };
     const onStderr = (chunk: Buffer): void => { stderr = appendCapped(stderr, stderrDecoder.write(chunk)); };

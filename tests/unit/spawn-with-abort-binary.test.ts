@@ -176,6 +176,39 @@ describe('spawnWithAbort kill mechanism per spawn shape', () => {
     expect(error.timedOut).toBe(false);
   });
 
+  describe('how much of stdout is kept', () => {
+    // Eight chunks of 250,000 characters: twice the default cap.
+    const chunk = Buffer.from('x'.repeat(250_000));
+
+    function emitTwoMillionCharacters(child: FakeChild): void {
+      for (let index = 0; index < 8; index += 1) child.stdout.emit('data', chunk);
+    }
+
+    it('stops at 1,000,000 characters by default, so a verbose child cannot fill memory or an error', async () => {
+      const child = fakeChild(4242);
+      spawnMock.mockReturnValue(child);
+
+      const pending = spawnWithAbort(BINARY_TARGET, { timeoutMs: 1_000 });
+      emitTwoMillionCharacters(child);
+      child.emit('close', 0, null);
+
+      expect((await pending).stdout).toHaveLength(1_000_000);
+    });
+
+    it('keeps all of it for a caller that raises the cap to parse a whole listing', async () => {
+      // A listing cut at the default parses as a shorter listing: the git work
+      // state counted 32,367 changed files where the checkout held 150,000.
+      const child = fakeChild(4242);
+      spawnMock.mockReturnValue(child);
+
+      const pending = spawnWithAbort(BINARY_TARGET, { timeoutMs: 1_000, maxOutputChars: 4_000_000 });
+      emitTwoMillionCharacters(child);
+      child.emit('close', 0, null);
+
+      expect((await pending).stdout).toHaveLength(2_000_000);
+    });
+  });
+
   it('contrast: a shell command gets no `signal`, leads its own group on POSIX, and loses its tree on abort', async () => {
     const child = fakeChild(4242);
     spawnMock.mockReturnValue(child);

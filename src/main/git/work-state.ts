@@ -18,6 +18,13 @@ import type { GitWorkState, GitWorkStateInput } from '../../shared/git-work-stat
 
 const READ_TIMEOUT_MS = 20_000;
 
+/**
+ * How much of the status listing is kept: more than any checkout prints (one
+ * record per changed file, so millions of files), and under the longest string
+ * the runtime holds.
+ */
+const STATUS_LISTING_MAX_CHARS = 256 * 1024 * 1024;
+
 /** What `git status --porcelain=v2 --branch -z` says about the checkout. */
 export interface PorcelainStatus {
   branch: string | null;
@@ -74,8 +81,8 @@ export interface GitWorkDetail extends GitWorkState {
   pushRemote: string | null;
 }
 
-async function git(directory: string, args: readonly string[]): Promise<string> {
-  const { stdout } = await runGitWithTimeout(directory, args, { timeoutMs: READ_TIMEOUT_MS });
+async function git(directory: string, args: readonly string[], maxOutputChars?: number): Promise<string> {
+  const { stdout } = await runGitWithTimeout(directory, args, { timeoutMs: READ_TIMEOUT_MS, maxOutputChars });
   return stdout;
 }
 
@@ -152,9 +159,12 @@ async function countAheadOfBase(directory: string, baseBranch: string): Promise<
  */
 export async function readGitWorkDetail(input: GitWorkStateInput): Promise<GitWorkDetail> {
   const directory = input.worktreePath ?? input.projectPath;
+  // The whole listing, as the Changes panel's own file list reads it. Cut at the default
+  // 1,000,000 characters it parsed as a shorter listing: 150,000 untracked files in a folder
+  // missing from .gitignore counted as 32,367 changed files, beside a panel listing them all.
   const status = parsePorcelainStatus(await git(directory, [
     '--no-optional-locks', 'status', '--porcelain=v2', '--branch', '--untracked-files=all', '-z',
-  ]));
+  ], STATUS_LISTING_MAX_CHARS));
   const remotes = (await readRemotes(directory)) ?? [];
   const { branch } = status;
   const onBaseBranch = branch !== null
