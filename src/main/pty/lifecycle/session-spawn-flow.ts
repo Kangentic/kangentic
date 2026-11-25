@@ -26,7 +26,7 @@ import { traceTerminal } from '../terminal-trace';
 import { planRemoteSpawn } from '../spawn/remote-spawn';
 import { localPathToHost, placeFromStored } from '../../agent/shared/cli-target';
 import { remoteTranscriptSource, type RemoteSessionRegistration } from '../../remote/remote-session-relay';
-import { batchShimGiveUpOf, directLaunchOfBatchShim } from '../../agent/shared/npm-shim-target';
+import { batchShimGiveUpDetailOf, directLaunchOfBatchShim } from '../../agent/shared/npm-shim-target';
 import { buildTypedLaunch, launchRefusal, type TypedLaunch, type TypedLaunchInput } from '../spawn/typed-launch';
 import { accountHomeEnvOf } from '../spawn/account-home-env';
 import { sessionManagerReporter } from '../session-manager-report';
@@ -343,7 +343,7 @@ export async function performSpawn(
       shell,
       platform: remotePlan ? 'linux' : process.platform,
       typedLaunch,
-      shimGaveUp: batchShimGiveUpOf,
+      shimGiveUpDetailOf: batchShimGiveUpDetailOf,
     });
     if (refusal) throw refusal;
   }

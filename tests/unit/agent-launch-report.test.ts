@@ -1365,6 +1365,14 @@ describe('the session id capture reports', () => {
         exit_by: 'pty',
         output_class: 'other',
         other_from: 'unknown',
+        launcher: 'none',
+        command_head: 'unknown',
+        command_head_since_detection: 'unknown',
+        shell_printed: 'before_launch',
+        first_output_s: '<1',
+        session_age_s: '>300',
+        typed_line_bytes: '1024',
+        overlay_ceiling: 'no',
       });
       expect(contexts).toEqual({});
       expect(fingerprint).toEqual(['agent-launch', 'agent_exited', 'no_conversation']);
@@ -1402,6 +1410,49 @@ describe('the session id capture reports', () => {
       it('says the code is unknown when the PTY left none, and that the PTY ended it', async () => {
         await settleAtCeiling({ exitCode: null });
         expect(sentTags()).toMatchObject({ exit_code: 'unknown', exit_by: 'pty' });
+      });
+
+      // Sentry DESKTOP-4Z printed cmd's "cannot find the path" and could not say
+      // whether the path was the CLI's own or one the CLI runs. Every other
+      // launch report says that with these tags.
+      it('says whether the command head and the launcher are still there, never where', async () => {
+        existsSync.mockReturnValue(false);
+        await settleAtCeiling(
+          { agentCliPath: '/Users/dev/.npm-global/bin/codex', launcherPath: '/Users/dev/secret-project/launch.sh' },
+          { readOutput: async () => 'The system cannot find the path specified.\r\n' },
+        );
+        const tags = sentTags();
+        expect(tags).toMatchObject({
+          output_class: 'no_such_file',
+          command_head: 'missing',
+          command_head_since_detection: 'unknown',
+          launcher: 'missing',
+          shell_printed: 'before_launch',
+        });
+        expect(JSON.stringify(tags)).not.toContain('/Users/dev');
+      });
+
+      it('keeps what the capture window recorded where the launch tags name the same thing', async () => {
+        const diedAtStart = session({
+          agentName: 'codex',
+          agentCliVersion: '0.163.0 (Codex CLI)',
+          resuming: false,
+          status: 'exited',
+          shell: 'pwsh',
+          openingPrompt: 'command_line',
+          sessionIdCreation: 'not_asked',
+          firstOutputAt: STARTED_AT_MS + 900,
+          agentRanAt: STARTED_AT_MS + 5_000,
+          exitedAt: STARTED_AT_MS + 34_000,
+        });
+        noteSessionIdCaptureWindowPassed(diedAtStart, async () => 'absent', async () => 'signed_in');
+        // Facts that changed on the row after the window read them.
+        diedAtStart.shell = '/bin/zsh';
+        diedAtStart.startPath = 'retry';
+        reportSessionIdCaptureOutcome(diedAtStart.id, atCeiling, 'exited');
+        await flushReportChain();
+
+        expect(sentTags()).toMatchObject({ shell: 'pwsh', start_path: 'board', agent: 'codex', agent_cli_version: '0.163.0' });
       });
 
       it('still sends the report when the read fails', async () => {
@@ -1992,6 +2043,13 @@ describe('reportPreflightFailure', () => {
     });
     expect((sent as Error).message).toBe('Agent launch failed: preflight (batch_shim_unresolved)');
     expect(fingerprint).toEqual(['agent-launch', 'preflight', 'batch_shim_unresolved']);
+    expect(eventTags).not.toHaveProperty('batch_shim_shape');
+  });
+
+  // Sentry DESKTOP-3Y recurred as `unparsed`, which named no shape to support next.
+  it('names the shape of a shim it could not parse', () => {
+    reportPreflightFailure({ ...base, cause: 'agent_start', error: new AgentBatchShimUnresolvedError('unparsed', 'absolute_path') });
+    expect(reportHandledError.mock.calls[0][1]).toMatchObject({ batch_shim: 'unparsed', batch_shim_shape: 'absolute_path' });
   });
 
   it('sends a fixed message, never the text git wrote', () => {

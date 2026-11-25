@@ -1033,8 +1033,9 @@ in one Sentry org, one triage surface.
     draws that screen as cursor moves, which read as one run-on line, so
     `identifyUserSetupFailure`'s whole-line patterns cannot match it. A never-captured session
     whose agent died at start goes to the launch report instead, as stage `agent_exited` with
-    cause `no_conversation`, carrying every tag below and what the launch printed and how it ended
-    (`output_class`, `other_from`, `exit_code`, `exit_by`). All four must hold: it settled at the
+    cause `no_conversation`, carrying every tag below, the launch tags every launch report sends,
+    and what the launch printed and how it ended (`output_class`, `other_from`, `exit_code`,
+    `exit_by`). All four must hold: it settled at the
     ceiling with its PTY exited on its own (`settled_by` `ceiling`, `session_status` `exited`),
     not by a removal and not by a `kill()` that kept its row (`intentionalExit`, such as the
     `cleanup_worktree` action's or a user's stop). The agent-absence sweep's retirement still
@@ -1346,7 +1347,7 @@ in one Sentry org, one triage surface.
   | `pty_spawn` | The shell did not spawn. Its `source` stays `pty_spawn` | `PtyOutputNotConnectedError`, or the plain `Error` every earlier issue was grouped on |
   | `shell_exit` | The shell exited on its own with no sign the agent ran | `AgentLaunchShellExitError` |
   | `never_started` | The sweep, or a timer where the sweep cannot judge, found no agent and no sign one ran; or a launch on an SSH host whose adapter reports its start and whose output named its cause | `AgentLaunchNeverStartedError` |
-  | `agent_exited` | A CLI named its own startup failure (`describeStartupFailure`), or a never-captured session's agent ran, then ended on its own under a minute later with no prompt, no session store and no deliberate kill (cause `no_conversation`, sent from the `agent_session_id` report with its tags, `output_class`, `other_from`, `exit_code` and `exit_by`). For a shell the agent-absence sweep retired, the agent's end is the shell's last output, since the sweep can kill it minutes later. A session whose launch already reported sends no capture report | `AgentLaunchAgentExitedError` |
+  | `agent_exited` | A CLI named its own startup failure (`describeStartupFailure`), or a never-captured session's agent ran, then ended on its own under a minute later with no prompt, no session store and no deliberate kill (cause `no_conversation`, sent from the `agent_session_id` report with its tags, the launch tags below, `output_class`, `other_from`, `exit_code` and `exit_by`). For a shell the agent-absence sweep retired, the agent's end is the shell's last output, since the sweep can kill it minutes later. A session whose launch already reported sends no capture report | `AgentLaunchAgentExitedError` |
   | `abandoned` | A person, or a quit an update or the OS began, ended a launch that had shown nothing for 15 s | `AgentLaunchAbandonedError` |
   | `pty_port` | A renderer that stays open never got its terminal port | `PtyPortDeliveryError` |
 
@@ -1382,11 +1383,13 @@ in one Sentry org, one triage surface.
   (`pause`, `kill`, `quit`) and `agent_process` (`present`, `absent`, `unknown`). An `abandoned`
   report from a quit adds `quit_by` (below).
   `never_started` adds `judge` (`sweep`, `timer`). A launch on an SSH host judged on its output sends `sweep` though no sweep ran, with no `agent_process` tag and a `typed_line_bytes` of 0. An `agent_exited` report with cause
-  `no_conversation` is the exception to this list: it carries `stage`, `cause`, `platform`,
-  `attempt`, `source` (`agent_launch`) and the `agent_session_id` report's tags, then `output_class`
-  and `other_from` as above, `exit_code` (`unknown` with none on the row) and `exit_by` (`pty`, or
-  `sweep` for a shell the agent-absence sweep retired, whose code the retirement masks to 0). Until
-  Sentry DESKTOP-4Z it had none of these four, and could not say why the agent left. Its output is
+  `no_conversation` carries this list, read when the report is made and before its output is read, with the `agent_session_id` report's
+  tags over it, which win where both name a fact (`agent`, `agent_cli_version`, `start_path`,
+  `shell`), then `output_class` and `other_from` as above, `exit_code` (`unknown` with
+  none on the row) and `exit_by` (`pty`, or `sweep` for a shell the agent-absence sweep retired,
+  whose code the retirement masks to 0). Until Sentry DESKTOP-4Z it had none of the last four, and
+  could not say why the agent left. On 0.63.0 it said `no_such_file`, cmd's "cannot find the path",
+  and still could not say whose path, because it had no `command_head` or `launcher`. Its output is
   read when the ceiling settles it, minutes after the exit, because the host keeps an exited
   session's output until its row is removed. A row that is gone, or a ring a restarted host no
   longer holds, reads `not_read`, and a read that fails `unreadable`; either way it is sent. Its
@@ -1414,8 +1417,14 @@ in one Sentry org, one triage surface.
   under the cause `batch_shim_unresolved` whichever path started it, with `batch_shim` naming why
   the shim gave up (`unreadable`, `unparsed`, `target_missing`, `target_batch` for a chain of
   shims past `MAX_SHIM_HOPS`, `target_ps1`, `target_extensionless`, `target_other`, `node_path`).
+  With `unparsed`, `batch_shim_shape` says what the program line of the shim that gave up looked
+  like (`batchShimShapeOf`), read from its text and never the text itself: `absolute_path` (a quoted
+  target that names its drive or share), `env_var_path` (a quoted target under a `%NAME%` other than
+  the shim's folder), `unquoted_shim_folder`, `unquoted_program`, `calls_batch` (a `call`, or a
+  `.cmd` or `.bat` program), `no_program_line` (no line passes `%*` on) or `other`.
   Sentry DESKTOP-3R saw only the typed refusal, 30 to 60 s later, and could not say which shim, and
-  DESKTOP-3Y's one `target_not_script` covered every target that was not a program or a script. A
+  DESKTOP-3Y's one `target_not_script` covered every target that was not a program or a script.
+  DESKTOP-3Y came back on 0.63.0 as a Claude shim that was `unparsed` and nothing more. A
   Post-Worktree Script failure (`WorktreeSetupScriptError`) adds how the script ended, from
   `spawnWithAbort`'s fields: `script_exit` (its exit code), `script_signal` (a `SIG` name, for a
   script something else killed) and `timed_out` (`yes`, `no`). Sentry DESKTOP-3D had none and could
