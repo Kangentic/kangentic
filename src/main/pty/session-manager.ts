@@ -860,6 +860,7 @@ export class SessionManager extends EventEmitter {
         if (!session) return;
         const storeEvidence = session.agentParser?.runtime?.sessionId?.storeEvidence;
         const loginEvidence = session.agentParser?.runtime?.sessionId?.loginEvidence;
+        const hookLoadEvidence = session.agentParser?.runtime?.sessionId?.hookLoadEvidence;
         const cliTarget = session.cliTarget ?? null;
         // The login the session read is in its account's home, which may not be the agent's own.
         const accountHome = this.accountHomeOf(session);
@@ -881,6 +882,9 @@ export class SessionManager extends EventEmitter {
             ? () => storeEvidence({ cwd: session.commandCwd, cliTarget, spawnedAt, claimedSessionIds: this.claimedSessionIdsBesides(session) })
             : null,
           loginEvidence ? () => loginEvidence({ cliPath, cliTarget, accountHome: accountHome ?? null }) : null,
+          hookLoadEvidence
+            ? () => hookLoadEvidence({ cwd: session.commandCwd ?? session.cwd, eventsOutputPath: session.eventsOutputPath ?? null, cliTarget, spawnedAt })
+            : null,
         );
       },
       onCaptureOutcome: (id, outcome) => {

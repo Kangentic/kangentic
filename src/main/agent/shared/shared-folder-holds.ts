@@ -76,6 +76,11 @@ export class SharedFolderHolds {
     return this.isHeld(target) ? null : target;
   }
 
+  /** True while `sessionId` holds a folder. */
+  holds(sessionId: string): boolean {
+    return this.holdBySession.has(sessionId);
+  }
+
   /** True while any session holds `folder`. */
   isHeld(folder: string): boolean {
     const key = sharedFolderKey(folder);

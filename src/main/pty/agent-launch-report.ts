@@ -32,7 +32,14 @@ import { isShuttingDown } from '../shutdown-state';
 import { isAbortError } from '../../shared/abort-utils';
 import { AgentUserSetupError, isUserConfigurationError, type UserSetupFailure } from '../../shared/user-configuration-error';
 import { shellProgramName } from '../../shared/shell-quote';
-import type { LaunchStartPath, OpeningPromptDelivery, SessionIdCreationOutcome, SessionIdLoginEvidence, SessionIdStoreEvidence } from '../../shared/types';
+import type {
+  LaunchStartPath,
+  OpeningPromptDelivery,
+  SessionIdCreationOutcome,
+  SessionIdHookLoadEvidence,
+  SessionIdLoginEvidence,
+  SessionIdStoreEvidence,
+} from '../../shared/types';
 import {
   SESSION_ID_CAPTURE_SOURCES,
   SESSION_ID_CAPTURE_WINDOW_MS,
@@ -727,8 +734,12 @@ const STORE_EVIDENCE_WAIT_MS = 2_000;
  */
 const LOGIN_EVIDENCE_WAIT_MS = 25_000;
 
+/** The longest a session-id report waits on the agent's hook-load check, which reads one small file. */
+const HOOK_LOAD_EVIDENCE_WAIT_MS = 2_000;
+
 const STORE_EVIDENCE_ANSWERS: ReadonlySet<SessionIdStoreEvidence> = new Set<SessionIdStoreEvidence>(['present', 'absent']);
 const LOGIN_EVIDENCE_ANSWERS: ReadonlySet<SessionIdLoginEvidence> = new Set<SessionIdLoginEvidence>(['signed_in', 'signed_out']);
+const HOOK_LOAD_EVIDENCE_ANSWERS: ReadonlySet<SessionIdHookLoadEvidence> = new Set<SessionIdHookLoadEvidence>(['events', 'setup', 'none']);
 
 /**
  * A session past the capture window: its facts at the window, the store and
@@ -743,6 +754,17 @@ interface PendingSessionIdReport {
   storeCheck: (() => Promise<SessionIdStoreEvidence>) | null;
   loginEvidence: Promise<SessionIdLoginEvidence>;
   nodeEvidence: Promise<NodeOnPathEvidence>;
+  /**
+   * Asked again at the outcome, whose answer wins: a hook layer that loaded after
+   * the window still loaded.
+   */
+  hookLoadCheck: (() => Promise<SessionIdHookLoadEvidence>) | null;
+  /**
+   * The same check at the window, while the session's folder surely exists. The
+   * outcome falls back to it when its own read says `unknown`: a removal deletes
+   * the folder in the same tick that settles the outcome, before that read runs.
+   */
+  hookLoadAtWindow: Promise<SessionIdHookLoadEvidence | 'unknown'>;
   /** Kept past a removal from the registry: the prompt, run and exit times are read off it at the outcome. */
   session: ManagedSession;
 }
@@ -841,14 +863,16 @@ function boundedEvidence<Evidence extends string>(
  * nothing. Taken now, while the row exists, and sent by
  * `reportSessionIdCaptureOutcome` once the outcome is known. The agent's store
  * check (`sessionId.storeEvidence`) and login check (`sessionId.loginEvidence`)
- * start now too, as close to the miss as can be. An agent that already sent both
- * kinds this run is not held, and neither check runs: neither outcome could send
- * anything.
+ * start now too, as close to the miss as can be. Its hook-load check
+ * (`sessionId.hookLoadEvidence`) runs now and again at the outcome, whose answer
+ * wins unless it is `unknown`. An agent that already sent both kinds this run is
+ * not held, and no check runs: neither outcome could send anything.
  */
 export function noteSessionIdCaptureWindowPassed(
   session: ManagedSession,
   storeCheck: (() => Promise<SessionIdStoreEvidence>) | null,
   loginCheck: (() => Promise<SessionIdLoginEvidence>) | null = null,
+  hookLoadCheck: (() => Promise<SessionIdHookLoadEvidence>) | null = null,
 ): void {
   const agent = agentTag(session.agentName);
   if (neverCapturedSessionIdAgents.has(agent) && lateSessionIdAgents.has(agent)) return;
@@ -869,6 +893,8 @@ export function noteSessionIdCaptureWindowPassed(
     storeCheck,
     loginEvidence: boundedEvidence(loginCheck, LOGIN_EVIDENCE_ANSWERS, LOGIN_EVIDENCE_WAIT_MS),
     nodeEvidence: nodeOnPathEvidence(session),
+    hookLoadCheck,
+    hookLoadAtWindow: boundedEvidence(hookLoadCheck, HOOK_LOAD_EVIDENCE_ANSWERS, HOOK_LOAD_EVIDENCE_WAIT_MS),
     session,
   });
 }
@@ -1159,7 +1185,14 @@ export function reportSessionIdCaptureOutcome(
   const printed = readPrintedOutput(mayHaveDiedAtStart ? readOutputOf(session) : null);
   const lateEvidence = outcome.kind === 'late' ? lateEvidenceSettled(session, outcome.capturedBy) : Promise.resolve();
   const storeEvidence = outcome.kind === 'never' ? settleTimeStoreEvidence(pending) : pending.storeEvidence;
-  void Promise.all([storeEvidence, pending.loginEvidence, pending.nodeEvidence, lateEvidence]).then(([idStore, login, nodeOnPath]) => {
+  // The outcome's answer counts a hook layer that loaded after the window. A removal deletes the
+  // session's folder before this read runs, so its `unknown` falls back to the window's answer.
+  // What that misses is a hook layer that loaded after the window in a session then removed.
+  const hookLoadEvidence = Promise.all([
+    boundedEvidence(pending.hookLoadCheck, HOOK_LOAD_EVIDENCE_ANSWERS, HOOK_LOAD_EVIDENCE_WAIT_MS),
+    pending.hookLoadAtWindow,
+  ]).then(([atOutcome, atWindow]) => (atOutcome === 'unknown' ? atWindow : atOutcome));
+  void Promise.all([storeEvidence, pending.loginEvidence, pending.nodeEvidence, hookLoadEvidence, lateEvidence]).then(([idStore, login, nodeOnPath, hookLoad]) => {
     if (isShuttingDown()) return;
     if (outcome.kind === 'late' && capturedOnTime(session, outcome.capturedAt)) return;
     if (outcome.kind === 'late' && capturedOnTimeByOutput(session, outcome.capturedAt)) {
@@ -1195,6 +1228,9 @@ export function reportSessionIdCaptureOutcome(
       id_store: idStore,
       login,
       node_on_path: nodeOnPath,
+      // Whether the agent's hook layer loaded at all: with hook_seen=no, `none` is
+      // a hook that never ran, `setup` one that ran and heard nothing (DESKTOP-3A).
+      hook_load: hookLoad,
     };
     if (exitedWithNoConversation(session, outcome, sessionStatus, idStore)) {
       reportExitedWithNoConversation(session, captureTags, printed);

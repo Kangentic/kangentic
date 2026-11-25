@@ -1169,17 +1169,82 @@ describe('OpenCode Adapter', () => {
   });
 });
 
-describe('OpenCodeAdapter - removeHooks holds deferral', () => {
-  // Tests the per-session holds in OpenCodeAdapter.removeHooks. When two
-  // concurrent sessions in the same project both call buildCommand with
-  // eventsOutputPath, each holds the project root under its own session id.
-  // The plugin file must remain until the LAST holder calls removeHooks.
+/**
+ * Whether a session's activity plugin loaded, for the session-id report
+ * (`hook_load`). Both plugins leave `opencode-plugin.json` beside the events
+ * file when OpenCode sets them up, and stamp their first event there. Sentry
+ * DESKTOP-3A's OpenCode 2 events had no plugin line at all, which reads the same
+ * for a plugin that never loaded and one that loaded and heard nothing.
+ */
+describe('OpenCodeAdapter - hookLoadEvidence', () => {
+  let sessionDir: string;
+  let eventsOutputPath: string;
+  const spawnedAt = new Date('2026-11-25T12:00:00.000Z');
+  const adapter = new OpenCodeAdapter();
+
+  function check(overrides: Partial<{ cwd: string; eventsOutputPath: string | null; cliTarget: { kind: 'ssh' } }> = {}) {
+    const hookLoadEvidence = adapter.runtime.sessionId?.hookLoadEvidence;
+    if (!hookLoadEvidence) throw new Error('OpenCode declares no hookLoadEvidence');
+    return hookLoadEvidence({ cwd: sessionDir, eventsOutputPath, spawnedAt, ...overrides } as Parameters<typeof hookLoadEvidence>[0]);
+  }
+
+  function writeMarker(marker: unknown): void {
+    fs.writeFileSync(path.join(sessionDir, 'opencode-plugin.json'), typeof marker === 'string' ? marker : JSON.stringify(marker));
+  }
+
+  beforeEach(() => {
+    sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kangtest-opencode-hook-load-'));
+    eventsOutputPath = path.join(sessionDir, 'events.jsonl');
+  });
+
+  afterEach(() => {
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  });
+
+  it('reads events for a plugin set up after the spawn that heard an event', async () => {
+    writeMarker({ kangenticOpenCodePlugin: 1, major: 2, setupAt: spawnedAt.getTime() + 1_500, firstEventAt: spawnedAt.getTime() + 1_600 });
+    await expect(check()).resolves.toBe('events');
+  });
+
+  it('reads setup for a plugin set up after the spawn that heard nothing', async () => {
+    writeMarker({ kangenticOpenCodePlugin: 1, major: 2, setupAt: spawnedAt.getTime() + 1_500, firstEventAt: null });
+    await expect(check()).resolves.toBe('setup');
+  });
+
+  it('reads none with no marker, and for one an earlier run of the same session folder left', async () => {
+    await expect(check()).resolves.toBe('none');
+    writeMarker({ kangenticOpenCodePlugin: 1, major: 2, setupAt: spawnedAt.getTime() - 60_000, firstEventAt: spawnedAt.getTime() - 59_000 });
+    await expect(check()).resolves.toBe('none');
+  });
+
+  it('reads unknown for a marker it cannot read as one', async () => {
+    writeMarker('{"kangenticOpenCodePlugin":1,"setupAt":');
+    await expect(check()).resolves.toBe('unknown');
+    writeMarker({ setupAt: 'soon' });
+    await expect(check()).resolves.toBe('unknown');
+  });
+
+  it('reads unknown where the plugin writes nothing beside an events file here', async () => {
+    writeMarker({ kangenticOpenCodePlugin: 1, major: 2, setupAt: spawnedAt.getTime() + 1_500, firstEventAt: null });
+    // A host over SSH publishes into its hook folder, and a session with no events path runs no plugin.
+    await expect(check({ cliTarget: { kind: 'ssh' } })).resolves.toBe('unknown');
+    await expect(check({ eventsOutputPath: null })).resolves.toBe('unknown');
+  });
+});
+
+describe('OpenCodeAdapter - the OpenCode 2 copy outlives each session', () => {
+  // OpenCode 2 watches its plugin files: deleting the copy while a session runs
+  // unloads the plugin, and every later turn of that session writes nothing
+  // (measured on 2.0.23 and 2.2.5, Sentry DESKTOP-3A). The copy does nothing in
+  // an OpenCode started outside a Kangentic session (no KANGENTIC_EVENTS_PATH), so
+  // a session's release leaves it, and only the forced cleanup (project delete,
+  // no session id) removes it.
   //
   // Strategy: use a real temp directory as the project root so buildCommand
   // actually installs the plugin (via buildHooks). Only an OpenCode 2 spawn
-  // (and one on an SSH host) installs a copy and holds it: an OpenCode 1 spawn
-  // names the packaged script instead (the block below), so every build here
-  // is OpenCode 2's.
+  // (and one on an SSH host) installs a copy: an OpenCode 1 spawn names the
+  // packaged script instead (the block below), so every build here is
+  // OpenCode 2's.
 
   let projectDir: string;
   let concurrentAdapter: OpenCodeAdapter;
@@ -1212,64 +1277,34 @@ describe('OpenCodeAdapter - removeHooks holds deferral', () => {
     fs.rmSync(projectDir, { recursive: true, force: true });
   });
 
-  it('plugin file is still present after first removeHooks when two sessions share the project', () => {
-    // Simulate two concurrent OpenCode sessions in the same project.
+  it('keeps the copy through every session\'s release, the last one\'s too', () => {
     concurrentAdapter.buildCommand(makeBuildOptions('session-alpha'));
     concurrentAdapter.buildCommand(makeBuildOptions('session-beta'));
-
-    // Plugin must be installed after both buildCommand calls.
     expect(fs.existsSync(pluginPath())).toBe(true);
 
-    // First holder releases. Plugin must stay.
     concurrentAdapter.removeHooks(projectDir, 'session-alpha');
     expect(fs.existsSync(pluginPath())).toBe(true);
-  });
-
-  it('plugin file is removed after the last holder calls removeHooks', () => {
-    concurrentAdapter.buildCommand(makeBuildOptions('session-alpha'));
-    concurrentAdapter.buildCommand(makeBuildOptions('session-beta'));
-
-    concurrentAdapter.removeHooks(projectDir, 'session-alpha');
-    // alpha is gone, beta still holds - plugin present.
-    expect(fs.existsSync(pluginPath())).toBe(true);
-
     concurrentAdapter.removeHooks(projectDir, 'session-beta');
-    // Last holder released - plugin must be gone.
-    expect(fs.existsSync(pluginPath())).toBe(false);
-  });
-
-  it('an older session of the same task releasing late keeps the newer session\'s plugin', () => {
-    concurrentAdapter.buildCommand(makeBuildOptions('old-session', { taskId: 'task-a' }));
-    concurrentAdapter.buildCommand(makeBuildOptions('new-session', { taskId: 'task-a' }));
-
-    concurrentAdapter.removeHooks(projectDir, 'old-session');
     expect(fs.existsSync(pluginPath())).toBe(true);
-
-    concurrentAdapter.removeHooks(projectDir, 'new-session');
-    expect(fs.existsSync(pluginPath())).toBe(false);
   });
 
-  it('an OpenCode 2 worktree session\'s release removes the plugin its build installed in the project root', () => {
-    // OpenCode 2 walks up past the worktree, so the plugin lands in `<projectRoot>/.opencode/plugins/`, while the session
-    // layer releases with the worktree the session ran in.
+  it('keeps the copy in the project root when a worktree session releases, for the root\'s other sessions', () => {
+    // OpenCode 2 walks up past the worktree to the project root's copy, while the
+    // session layer releases with the worktree the session ran in.
     const worktree = path.join(projectDir, '.kangentic', 'worktrees', 'task-a');
     fs.mkdirSync(worktree, { recursive: true });
+    concurrentAdapter.buildCommand(makeBuildOptions('session-root'));
     concurrentAdapter.buildCommand(makeBuildOptions('session-a', { cwd: worktree }));
-    expect(fs.existsSync(pluginPath())).toBe(true);
 
     concurrentAdapter.removeHooks(worktree, 'session-a');
-    expect(fs.existsSync(pluginPath())).toBe(false);
+    expect(fs.existsSync(pluginPath())).toBe(true);
   });
 
-  it('double removeHooks call for the same session is idempotent and does not throw', () => {
-    concurrentAdapter.buildCommand(makeBuildOptions('session-solo'));
-
-    concurrentAdapter.removeHooks(projectDir, 'session-solo');
-    // Plugin is gone after the only holder releases.
-    expect(fs.existsSync(pluginPath())).toBe(false);
-
-    // Calling removeHooks again for the same session must not throw.
-    expect(() => concurrentAdapter.removeHooks(projectDir, 'session-solo')).not.toThrow();
+  it('keeps the copy for a release that took no hold, such as a session built before this run', () => {
+    concurrentAdapter.buildCommand(makeBuildOptions('session-live'));
+    concurrentAdapter.removeHooks(projectDir, 'session-from-an-earlier-run');
+    expect(fs.existsSync(pluginPath())).toBe(true);
+    expect(() => concurrentAdapter.removeHooks(projectDir, 'session-from-an-earlier-run')).not.toThrow();
   });
 
   it('removeHooks without a session id removes the plugin whoever holds it', () => {
@@ -1412,7 +1447,7 @@ describe('OpenCodeAdapter - the OpenCode 1 activity plugin', () => {
     expect(fs.readFileSync(userPlugin, 'utf8')).toContain('// mine');
   });
 
-  it('leaves the OpenCode 2 copy a running session holds, at its spawn and its release', () => {
+  it('leaves the OpenCode 2 copy at an OpenCode 1 spawn and at either session\'s release', () => {
     const version = vi.spyOn(OpenCodeDetector.prototype, 'getCachedVersion').mockReturnValue('v2.2.5');
     adapter.buildCommand(worktreeOptions({ ptySessionId: 'session-v2' }));
     const v2Plugin = path.join(projectDir, '.opencode', 'plugins', 'kangentic-activity', 'index.js');
@@ -1424,7 +1459,7 @@ describe('OpenCodeAdapter - the OpenCode 1 activity plugin', () => {
     adapter.removeHooks(projectDir, 'session-v1');
     expect(fs.existsSync(v2Plugin)).toBe(true);
     adapter.removeHooks(projectDir, 'session-v2');
-    expect(fs.existsSync(v2Plugin)).toBe(false);
+    expect(fs.existsSync(v2Plugin)).toBe(true);
   });
 });
 
@@ -1574,9 +1609,9 @@ describe('OpenCode 2 spawns', () => {
       const v2Plugin = path.join(projectDir, '.opencode', 'plugins', 'kangentic-activity', 'index.js');
       expect(fs.existsSync(v2Plugin)).toBe(true);
       expect(fs.existsSync(path.join(projectDir, '.opencode', 'plugins', 'kangentic-activity.js'))).toBe(false);
-      // Held for the session like the V1 file, and gone once it releases.
+      // Kept past the session's release: OpenCode 2 unloads a plugin whose file goes away.
       adapter.removeHooks(projectDir, 'session-v2');
-      expect(fs.existsSync(v2Plugin)).toBe(false);
+      expect(fs.existsSync(v2Plugin)).toBe(true);
     });
   });
 });

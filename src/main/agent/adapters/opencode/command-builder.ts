@@ -79,12 +79,15 @@ export function namesActivityPlugin(options: ActivityPluginOptions): boolean {
 
 /**
  * Whether a spawn installs the activity plugin into a folder's
- * `.opencode/plugins/`: OpenCode 2, which walks up past the worktree and finds
- * the project root's copy, and either major on a host over SSH, whose copy goes
- * in its working folder (its events ride the hook folder, see the plugin
- * script). The builder installs it and the adapter holds the folder for it, so
- * both read this one answer. Which plugin is the builder's to pick: OpenCode 2
- * does not run OpenCode 1 plugins, so it gets its own (`buildHooks`).
+ * `.opencode/plugins/`: OpenCode 2, and either major on a host over SSH, whose
+ * copy goes in its working folder (its events ride the hook folder, see the
+ * plugin script). OpenCode 2 reads every `.opencode` from its working folder up
+ * to the filesystem root, so a worktree session loads the project root's copy:
+ * measured with `opencode debug config` and real `--standalone --prompt` runs on
+ * 2.0.23, 2.2.5 and 2.4.1, on Windows, in a WSL distro and on macOS (Sentry DESKTOP-3A's
+ * recurrence). The builder installs it and the adapter reads this one answer
+ * too. Which plugin is the builder's to pick: OpenCode 2 does not run OpenCode 1
+ * plugins, so it gets its own (`buildHooks`).
  */
 export function installsActivityPlugin(options: ActivityPluginOptions): boolean {
   return runsActivityPlugin(options) && !namesActivityPlugin(options);

@@ -731,6 +731,7 @@ export async function performSpawn(
     ...(input.mintedAgentSessionId && input.agentSessionId ? { mintedAgentSessionId: true } : {}),
     agentCliVersion: input.agentCliVersion ?? null,
     agentCliPath: input.agentCliPath ?? null,
+    eventsOutputPath: input.eventsOutputPath || null,
     resumeEvidence: input.resumeEvidence ?? null,
   };
 

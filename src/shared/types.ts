@@ -7952,6 +7952,21 @@ export interface AdapterRuntimeStrategy {
      */
     loginEvidence?(options: { cliPath: string | null; cliTarget?: StoredCliTarget | null; accountHome?: string | null }): Promise<SessionIdLoginEvidence>;
     /**
+     * Whether the agent's hook layer loaded in this session, for a session
+     * whose id the capture window did not see: `events` when it loaded and
+     * heard an event, `setup` when it loaded and heard nothing, `none` when
+     * nothing says it loaded since the spawn. An agent whose hooks write only
+     * once a conversation exists (OpenCode's plugin) leaves no line in either
+     * of the last two cases, so `hook_seen` alone cannot tell them apart (Sentry
+     * DESKTOP-3A). Asked at the window and again when the outcome settles. The
+     * outcome's answer wins, so a hook layer that loaded after the window
+     * counts, unless it is `unknown` (a removed session's folder is gone by
+     * then). A fixed word, `unknown` where this computer cannot see it. Read
+     * only by the session-id capture reports; an adapter without it reports
+     * `unknown`.
+     */
+    hookLoadEvidence?(options: SessionIdHookLoadEvidenceOptions): Promise<SessionIdHookLoadEvidence>;
+    /**
      * True when a SessionStart hook that moves the conversation to another id
      * (`statusFile.parseSessionStart`: a `/clear`, a branch, a `/resume` inside
      * the TUI) switches the session's id by itself. For an agent whose
@@ -8684,6 +8699,17 @@ export interface SessionIdStoreEvidenceOptions {
 
 /** Whether an agent's CLI holds a login (`sessionId.loginEvidence`). */
 export type SessionIdLoginEvidence = 'signed_in' | 'signed_out' | 'unknown';
+
+/** Whether an agent's hook layer loaded in a session (`sessionId.hookLoadEvidence`). */
+export type SessionIdHookLoadEvidence = 'events' | 'setup' | 'none' | 'unknown';
+
+/** What `sessionId.hookLoadEvidence` is asked about: the session's cwd, events file and spawn. */
+export interface SessionIdHookLoadEvidenceOptions {
+  cwd: string;
+  eventsOutputPath: string | null;
+  cliTarget?: StoredCliTarget | null;
+  spawnedAt?: Date;
+}
 
 /**
  * What the resume check (`src/main/transition-engine/resume-conversation-guard.ts`)

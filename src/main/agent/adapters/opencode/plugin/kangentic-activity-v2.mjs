@@ -9,11 +9,15 @@
 // loader reads only `{plugin,plugins}/*.{ts,js}`, one level deep, so it never
 // sees this file.
 //
-// OpenCode 2's plugin contract (measured on 2.2.5): the module's default
-// export is `{ id, setup(ctx) }`, a plain object, so no `@opencode/plugin`
-// import is needed (a project could not resolve it). `setup` subscribes to
-// `ctx.event.subscribe()` and registers `ctx.tool.hook('execute.before' |
-// 'execute.after')`, and returns its cleanup.
+// OpenCode 2's plugin contract (measured on 2.0.23, 2.2.5 and 2.4.1, the same
+// on each): the module's default export is `{ id, setup(ctx) }`, a plain
+// object, so no `@opencode/plugin` import is needed (a project could not
+// resolve it). `setup` subscribes to `ctx.event.subscribe()`, which returns an
+// async iterable, registers `ctx.tool.hook('execute.before' | 'execute.after')`,
+// and returns its cleanup. OpenCode 2 runs it in the server process, which a
+// `--standalone` TUI starts as its own `serve --stdio` child with the spawn's
+// environment. It watches the file: a rewrite reloads the plugin, and a delete
+// unloads it for the rest of the session.
 //
 // The leading sentinel comment ("// kangentic-activity") is required:
 // hook-manager.ts uses it to identify files it authored before deletion, so
@@ -377,15 +381,73 @@ function writeStatus(status) {
   }
 }
 
+/**
+ * Beside the events file: when OpenCode set this plugin up, and when the
+ * subscription gave it its first event. The session-id report reads it
+ * (`hookLoadEvidence` in opencode-adapter.ts), because a session with no plugin
+ * line reads the same whether the plugin never loaded or loaded and heard
+ * nothing (Sentry DESKTOP-3A). Times only, nothing of the session. The OpenCode 1
+ * plugin writes the same file.
+ */
+const loadMarkerPath = eventsPath ? path.join(path.dirname(eventsPath), 'opencode-plugin.json') : null;
+
+function writeLoadMarker(setupAt, firstEventAt) {
+  if (!loadMarkerPath) return;
+  // Written beside it and renamed into place, so the reader never sees half a file.
+  const temporaryPath = `${loadMarkerPath}.${process.pid}.tmp`;
+  const text = JSON.stringify({ kangenticOpenCodePlugin: 1, major: 2, setupAt, firstEventAt });
+  try {
+    fs.writeFileSync(temporaryPath, text);
+    fs.renameSync(temporaryPath, loadMarkerPath);
+  } catch {
+    // A rename Windows refuses while another program holds the marker falls back to writing it
+    // in place. Best effort: the session may have ended and its folder gone.
+    try {
+      fs.rmSync(temporaryPath, { force: true });
+      fs.writeFileSync(loadMarkerPath, text);
+    } catch {
+      // Nothing more to do.
+    }
+  }
+}
+
+/**
+ * The first event an earlier setup in this same server process heard. OpenCode
+ * reloads the plugin when its file is rewritten, and the new setup must not
+ * reset a session that heard events to one that heard nothing. A marker set up
+ * before this process started is an earlier run's, which a resume leaves in the
+ * reused session folder.
+ */
+function firstEventOfThisProcess() {
+  if (!loadMarkerPath || typeof process.uptime !== 'function') return null;
+  try {
+    const marker = JSON.parse(fs.readFileSync(loadMarkerPath, 'utf-8'));
+    const processStartedAt = Date.now() - process.uptime() * 1000;
+    const sameProcess = typeof marker.setupAt === 'number' && marker.setupAt >= processStartedAt;
+    return sameProcess && typeof marker.firstEventAt === 'number' ? marker.firstEventAt : null;
+  } catch {
+    // No marker yet, or one this plugin cannot read: nothing to keep.
+    return null;
+  }
+}
+
 export default {
   id: 'kangentic.activity',
   async setup(ctx) {
     if (!eventsPath && !hookDirectory) return undefined;
+    const setupAt = Date.now();
+    const earlierFirstEventAt = firstEventOfThisProcess();
+    writeLoadMarker(setupAt, earlierFirstEventAt);
     const tracker = createV2SessionTracker();
     const controller = new AbortController();
     void (async () => {
+      let heard = false;
       try {
         for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
+          if (!heard) {
+            heard = true;
+            writeLoadMarker(setupAt, earlierFirstEventAt ?? Date.now());
+          }
           for (const line of tracker.onEvent(event)) appendEvent(line);
           if (tracker.takeStatusChange()) writeStatus(tracker.status());
         }

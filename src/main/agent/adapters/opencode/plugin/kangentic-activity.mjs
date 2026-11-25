@@ -533,13 +533,49 @@ function writeStatus(status) {
   }
 }
 
+/**
+ * Beside the events file: when OpenCode loaded this plugin, and when its first
+ * event came. The session-id report reads it (`hookLoadEvidence` in
+ * opencode-adapter.ts), because a session with no plugin line reads the same
+ * whether the plugin never loaded or loaded and heard nothing (Sentry
+ * DESKTOP-3A). Times only. The OpenCode 2 plugin writes the same file.
+ */
+const loadMarkerPath = eventsPath ? path.join(path.dirname(eventsPath), 'opencode-plugin.json') : null;
+
+function writeLoadMarker(setupAt, firstEventAt) {
+  if (!loadMarkerPath) return;
+  // Written beside it and renamed into place, so the reader never sees half a file.
+  const temporaryPath = `${loadMarkerPath}.${process.pid}.tmp`;
+  const text = JSON.stringify({ kangenticOpenCodePlugin: 1, major: 1, setupAt, firstEventAt });
+  try {
+    fs.writeFileSync(temporaryPath, text);
+    fs.renameSync(temporaryPath, loadMarkerPath);
+  } catch {
+    // A rename Windows refuses while another program holds the marker falls back to writing it
+    // in place. Best effort: the session may have ended and its folder gone.
+    try {
+      fs.rmSync(temporaryPath, { force: true });
+      fs.writeFileSync(loadMarkerPath, text);
+    } catch {
+      // Nothing more to do.
+    }
+  }
+}
+
 export const KangenticActivity = async () => {
   const tracker = createSessionTracker();
+  const setupAt = Date.now();
+  writeLoadMarker(setupAt, null);
+  let heard = false;
   const flushStatus = () => {
     if (tracker.takeStatusChange()) writeStatus(tracker.status());
   };
   return {
     event: async ({ event }) => {
+      if (!heard) {
+        heard = true;
+        writeLoadMarker(setupAt, Date.now());
+      }
       for (const line of tracker.onEvent(event)) appendEvent(line);
       flushStatus();
     },

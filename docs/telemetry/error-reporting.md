@@ -1114,7 +1114,18 @@ in one Sentry org, one triage surface.
     session ran in, its account's folder or the agent's own. Codex reads `auth.json` there and
     runs `codex login status` only when there is none; every other agent, a CLI in a distro or on
     a host, a session whose account is no longer known, and a check that gave no answer within
-    25 s read `unknown`). Every
+    25 s read `unknown`), and `hook_load` (`events`, `setup`, `none`, `unknown`: whether the
+    agent's hook layer loaded in this session, from the adapter's `sessionId.hookLoadEvidence`,
+    asked at the window and again when the outcome is known. The outcome's answer wins, so a layer
+    that loaded after the window counts, and the window's answer stands in when the outcome's is
+    `unknown`, as for a removed session whose folder is already gone. OpenCode reads
+    the marker its plugin writes beside the events file when it is set up (`opencode-plugin.json`,
+    two timestamps): `setup` for a plugin that loaded and heard no event, `events` for one that
+    heard one, `none` for no marker or one an earlier run of the folder left (1 s slack, 30 s for a
+    CLI in a WSL distro, whose clock can trail). A host over SSH, remote mode, an unreadable marker,
+    a session folder that is gone, every other agent and a check past 2 s read `unknown`.
+    With `hook_seen=no` it tells a plugin that never ran from one that ran and heard nothing,
+    which DESKTOP-3A's OpenCode 2 events could not). Every
     value is fixed; no path or id leaves. One `prompt_seen` source has been
     confirmed in a real run: OpenCode 1's plugin writes `prompt` on `chat.message` (1.18.31,
     Windows). Cursor's `beforeSubmitPrompt` hook was written from its docs. DESKTOP-4C's

@@ -54,7 +54,7 @@ import path from 'node:path';
 import conptyCaptures from '../fixtures/conpty-cmd-failures.json';
 import type { ManagedSession } from '../../src/main/pty/session-registry';
 import { SESSION_ID_CAPTURE_SOURCES } from '../../src/main/pty/lifecycle/session-id-manager';
-import type { AgentParser, SessionIdLoginEvidence, SessionIdStoreEvidence, StoredCliTarget } from '../../src/shared/types';
+import type { AgentParser, SessionIdHookLoadEvidence, SessionIdLoginEvidence, SessionIdStoreEvidence, StoredCliTarget } from '../../src/shared/types';
 
 const STARTED_AT = '2026-11-04T12:00:00.000Z';
 const STARTED_AT_MS = Date.parse(STARTED_AT);
@@ -835,9 +835,65 @@ describe('the session id capture reports', () => {
       id_store: 'present',
       login: 'unknown',
       node_on_path: 'yes',
+      hook_load: 'unknown',
     });
     expect(contexts).toEqual({});
     expect(fingerprint).toEqual(['agent-session-id-not-captured', 'codex']);
+  });
+
+  // Sentry DESKTOP-3A came back from OpenCode 2 on macOS with hook_seen=no, which
+  // reads the same whether the plugin never loaded or loaded and heard nothing.
+  // The agent's own check of its hook layer says which.
+  describe('the hook load evidence', () => {
+    async function settleWithHookLoad(
+      hookLoadCheck: (() => Promise<SessionIdHookLoadEvidence>) | null,
+      overrides: Partial<ManagedSession> = {},
+    ): Promise<void> {
+      const pastWindow = session({ agentName: 'opencode', resuming: false, ...overrides });
+      noteSessionIdCaptureWindowPassed(pastWindow, null, null, hookLoadCheck);
+      reportSessionIdCaptureOutcome(pastWindow.id, never, null);
+      await vi.waitFor(() => expect(reportHandledError).toHaveBeenCalled());
+    }
+
+    it.each<SessionIdHookLoadEvidence>(['events', 'setup', 'none'])('sends the check\'s answer %s as hook_load', async (answer) => {
+      await settleWithHookLoad(async () => answer);
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({ agent: 'opencode', hook_load: answer });
+    });
+
+    it('asks at the outcome, so a hook layer that loaded after the window counts', async () => {
+      let loaded = false;
+      const pastWindow = session({ agentName: 'opencode', resuming: false });
+      noteSessionIdCaptureWindowPassed(pastWindow, null, null, async () => (loaded ? 'events' : 'none'));
+      loaded = true;
+      reportSessionIdCaptureOutcome(pastWindow.id, never, null);
+      await vi.waitFor(() => expect(reportHandledError).toHaveBeenCalled());
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({ hook_load: 'events' });
+    });
+
+    it.each<[string, (() => Promise<SessionIdHookLoadEvidence>) | null]>([
+      ['has no check', null],
+      ['throws', async () => { throw new Error('EACCES C:\\Users\\dev\\project\\.kangentic\\sessions\\a\\opencode-plugin.json'); }],
+      ['answers something else', async () => 'C:\\Users\\dev\\project' as SessionIdHookLoadEvidence],
+    ])('reads unknown when the check %s, with nothing of it in the tags', async (_label, check) => {
+      await settleWithHookLoad(check);
+      const eventTags = reportHandledError.mock.calls[0][1];
+      expect(eventTags).toMatchObject({ hook_load: 'unknown' });
+      expect(JSON.stringify(eventTags)).not.toContain('Users');
+    });
+
+    it('stops waiting on a check that hangs', async () => {
+      vi.useFakeTimers();
+      try {
+        noteSessionIdCaptureWindowPassed(session({ agentName: 'opencode', resuming: false }), null, null, () => new Promise(() => undefined));
+        reportSessionIdCaptureOutcome('session-1-long-id', never, null);
+        await vi.advanceTimersByTimeAsync(1_999);
+        expect(reportHandledError).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(reportHandledError.mock.calls[0][1]).toMatchObject({ hook_load: 'unknown' });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   // A signed-out Codex opens on its sign-in screen. It draws a frame, so the
@@ -1361,6 +1417,7 @@ describe('the session id capture reports', () => {
         id_store: 'absent',
         login: 'signed_in',
         node_on_path: 'yes',
+        hook_load: 'unknown',
         exit_code: '1',
         exit_by: 'pty',
         output_class: 'other',

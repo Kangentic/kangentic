@@ -430,6 +430,7 @@ describe('session id not captured', () => {
       id_store: 'present',
       login: 'unknown',
       node_on_path: 'yes',
+      hook_load: 'unknown',
     });
   });
 
