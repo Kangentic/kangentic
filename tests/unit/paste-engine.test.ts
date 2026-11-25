@@ -21,7 +21,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { createPasteEngine, sanitizeForPaste, PasteSubmitError, pasteFailureDetail, pasteOutputBucket, POST_ENTER_DATA_FLOOR_BYTES } from '../../src/main/pty/paste-engine';
+import { createPasteEngine, sanitizeForPaste, PasteSubmitError, pasteFailureDetail, userFacingDetailOf, pasteOutputBucket, POST_ENTER_DATA_FLOOR_BYTES } from '../../src/main/pty/paste-engine';
 import { AUTOMATED_KEYS_HOLD_LOG_MS, resetAutomatedKeysGuardForTests } from '../../src/main/pty/automated-keys-guard';
 import type { SubmissionVerifier } from '../../src/shared/types';
 
@@ -161,6 +161,18 @@ describe('pasteFailureDetail', () => {
     ],
   ])('says it in one sentence for %s', (_label, error, sentence) => {
     expect(pasteFailureDetail(error)).toBe(sentence);
+  });
+});
+
+describe('userFacingDetailOf', () => {
+  it('gives the sentence for a paste error itself, and nothing for anything else', () => {
+    const pasteError = new PasteSubmitError('timeout', 'paste-engine: x timed out after 30000ms');
+    expect(userFacingDetailOf(pasteError)).toBe('The paste did not finish in time.');
+    // A wrapper carries its own reason, so the paste error under a cause is not read.
+    expect(userFacingDetailOf(new Error('wrapped', { cause: pasteError }))).toBeUndefined();
+    expect(userFacingDetailOf(Object.assign(new Error('look-alike'), { name: 'PasteSubmitError', code: 'timeout' }))).toBeUndefined();
+    expect(userFacingDetailOf('The paste failed.')).toBeUndefined();
+    expect(userFacingDetailOf(undefined)).toBeUndefined();
   });
 });
 
@@ -1028,6 +1040,8 @@ describe('PasteEngine.pasteAndSubmit for an automated sender', () => {
     const error = await settled;
     expect((error as PasteSubmitError).code).toBe('held');
     expect((error as PasteSubmitError).message).toContain('the Bash tool call has not ended');
+    expect(error).toMatchObject({ heldStage: 'writing', heldReason: 'the Bash tool call has not ended' });
+    expect(pasteFailureDetail(error as PasteSubmitError)).toBe('The message was not pasted: the Bash tool call has not ended.');
     expect(mockSessionManager.writeRawCalls).toHaveLength(0);
   });
 

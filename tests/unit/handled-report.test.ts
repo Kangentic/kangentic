@@ -218,6 +218,23 @@ describe('sendHandledFailure', () => {
     expect(JSON.stringify(reportHandledError.mock.calls.map((call) => [(call[0] as Error).message, call[1]]))).not.toContain('Acme');
   });
 
+  // A held paste carries no facts, and a malformed `facts` must not lose the code
+  // or throw: the report still says which kind of paste failure it was.
+  it.each([
+    ['no facts', {}],
+    ['null facts', { facts: null }],
+    ['a string for facts', { facts: 'Fix Acme billing' }],
+    ['an array for facts', { facts: ['Fix Acme billing'] }],
+  ])('keeps only the paste code for a held paste with %s', (_label, extra) => {
+    const heldError = Object.assign(new Error('paste-engine: held for Fix Acme billing'), { name: 'PasteSubmitError', code: 'held', ...extra });
+    sendHandledFailure('automation_runner', heldError);
+
+    const tags = reportHandledError.mock.calls[0][1] as Record<string, string>;
+    expect(tags.paste_code).toBe('held');
+    expect(Object.keys(tags).filter((tagKey) => tagKey.startsWith('paste_'))).toEqual(['paste_code']);
+    expect(JSON.stringify(tags)).not.toContain('Acme');
+  });
+
   it.each([
     ['a V8 TypeError naming the property it read', new TypeError("Cannot read properties of undefined (reading 'Fix Acme billing')")],
     ['a Node ERR_INVALID_ARG_TYPE quoting its value', Object.assign(
