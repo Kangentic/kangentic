@@ -147,6 +147,26 @@ export function powerShellTrampolineCmdShim(invocation: string, relativeTarget: 
 }
 
 /**
+ * Scoop's `.cmd` shim for a `.ps1` target, captured from a real scoop install
+ * with only the script path replaced. It quotes the absolute path of the
+ * script, so it is no `%~dp0`-rooted npm shim, and it picks `pwsh` or
+ * `powershell` when it runs. Two spaces sit before each `%*`.
+ */
+export function scoopPs1CmdShim(scriptPath: string): string {
+  return [
+    `@rem ${scriptPath}`,
+    '@echo off',
+    'where /q pwsh.exe',
+    'if %errorlevel% equ 0 (',
+    `    pwsh -noprofile -ex unrestricted -file "${scriptPath}"  %*`,
+    ') else (',
+    `    powershell -noprofile -ex unrestricted -file "${scriptPath}"  %*`,
+    ')',
+    '',
+  ].join(CMD_SHIM_LINE_ENDING);
+}
+
+/**
  * npm's `.cmd` shim for a target with no shebang, as `writeShim_` in npm's
  * `cmd-shim` writes it (checked line for line against `lib/index.js` of
  * cmd-shim 9.0.2, the copy npm bundles under `bin-links`, and byte for byte
