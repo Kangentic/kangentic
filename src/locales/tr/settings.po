@@ -3956,8 +3956,9 @@ msgid "Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth cac
 msgstr "Kangentic tarayıcısının çerezlerini, localStorage, IndexedDB, service worker ve HTTP/kimlik doğrulama önbelleklerini siler. Kaydedilen URL'ler korunur."
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "With an error, the app's state as fixed ranges: time running, time since the computer woke, which window it came from, whether the window was showing or focused, and whether the processor was slowed"
-msgstr ""
+msgstr "Bir hatayla birlikte, uygulamanın durumu sabit aralıklar olarak: çalışma süresi, bilgisayarın uyanmasından bu yana geçen süre, hatanın hangi pencereden geldiği, pencerenin görünür veya odakta olup olmadığı ve işlemcinin yavaşlatılıp yavaşlatılmadığı"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy

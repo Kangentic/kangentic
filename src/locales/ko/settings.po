@@ -3956,8 +3956,9 @@ msgid "Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth cac
 msgstr "Kangentic 브라우저의 쿠키, localStorage, IndexedDB, 서비스 워커, HTTP/인증 캐시를 지웁니다. 저장된 URL은 유지됩니다."
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "With an error, the app's state as fixed ranges: time running, time since the computer woke, which window it came from, whether the window was showing or focused, and whether the processor was slowed"
-msgstr ""
+msgstr "오류와 함께 고정된 범위로 나타낸 앱 상태: 실행 시간, 컴퓨터가 절전 모드에서 깨어난 후 경과 시간, 오류가 발생한 창, 창이 표시되어 있었는지 또는 포커스 상태였는지, 프로세서 속도가 제한되었는지 여부"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
