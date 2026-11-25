@@ -20,6 +20,7 @@
  * latches a key once per run. No case starts a real git: every git run goes
  * through the fake client or the fake runner below.
  */
+import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -800,7 +801,8 @@ describe('a Changes panel watch that could not be armed', () => {
     hoisted.makeGit = () => fakeGit(async () => `${gitDirectory}\n`);
     const watch = vi.spyOn(fs, 'watch').mockImplementation(((target: fs.PathLike) => {
       if (String(target) === refused) throw errnoError(code, 'watch', refused);
-      return { close: () => undefined };
+      // A real FSWatcher is an emitter, and DiffWatcher listens for its 'error'.
+      return Object.assign(new EventEmitter(), { close: () => undefined });
     }) as unknown as typeof fs.watch);
     const { DiffWatcher } = await import('../../src/main/git/diff-watcher');
     const watcher = new DiffWatcher();

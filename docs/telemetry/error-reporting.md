@@ -887,8 +887,9 @@ in one Sentry org, one triage surface.
     `deferred_board_config`, `pty_host_loss`, `activate_project`, `remote_projects`), `db_open` and
     `db_migration` (tags `database`, `stage`: `open`, `pragma`, `migrate`, `initialize`), `held_messages`, `session_handlers` (tag `stage`),
     `session_transcript_path` (a write of the agent's reported transcript path to its session row
-    that threw; tag `stage`: `status_line`, `session_start_hook`), `accounts`, `agent_list` (a defect in the agent inventory's deferred read of the agents in use; tag `stage`: `in_use_read`), `artifact_detection`, `metrics_snapshot`, `diff_watch` (a Changes panel file watch that
-    failed after it was armed, which Node emits as an `'error'` on the watcher, DESKTOP-58; tag
+    that threw; tag `stage`: `status_line`, `session_start_hook`), `accounts`, `agent_list` (a defect in the agent inventory's deferred read of the agents in use; tag `stage`: `in_use_read`), `artifact_detection`, `metrics_snapshot`, `diff_watch_lost` (a Changes panel file watch that
+    failed after it was armed, which Node emits as an `'error'` on the watcher, DESKTOP-58, as
+    against the `diff_watch` stage of `git_worktree` below, a watch that could not be opened; tag
     `watch`: `tree`, `git_meta`, `git_logs`, and `rearm`: `held` when the watch armed again,
     `polling` when it could not and a 10 s poll keeps the panel current instead; no path is sent),
     `worktree_removal` (tags `profile`,
