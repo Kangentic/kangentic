@@ -1744,7 +1744,8 @@ this".
   never by a scan). If one does, a failure is counted. If none does, or the host cannot say, it is
   reported. What a startup sweep kept is remembered for the same question (`rememberLeft`), and
   still never shown. A reap that failed, or that the host had not answered in time, names no task,
-  and a failure after it reports unless a late answer has named a process there since. Sentry
+  and a failure after it reports unless a late answer has named a process there since, or it has
+  the `no_holder_seen` shape below. Sentry
   DESKTOP-3P was 15 events, every one `EBUSY` on Windows. Its `holders: none` on 11 of them is no
   evidence against a kept process: the holder scan (`findWorktreePathHolders`) reads command lines,
   and a process holding the folder only as its working directory cannot be seen on Windows.
