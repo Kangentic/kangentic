@@ -43,7 +43,7 @@ vi.mock('../../src/main/agent/shared/wsl-distro', async (importOriginal) => {
   return { ...actual, resolveWslDistroFacts: async () => facts(), peekWslDistroFacts: () => facts() };
 });
 
-import { OpenCodeAdapter } from '../../src/main/agent/adapters/opencode';
+import { OpenCodeAdapter, OpenCodeDetector } from '../../src/main/agent/adapters/opencode';
 import {
   exportDistroOpenCodeSession,
   isDistroOpenCodeV2,
@@ -179,6 +179,26 @@ describe('an OpenCode session in a WSL distro', () => {
     expect(expected).toMatch(/^file:\/\/\//);
     expect(configOf(adapter.buildEnv(options))).toEqual({ plugin: [expected] });
     expect(fs.existsSync(path.join(options.cwd, '.opencode'))).toBe(false);
+  });
+
+  // The copy is a file on this machine, which the distro reads at its /mnt path.
+  // OpenCode 2 unloads a plugin whose file is deleted under a running session
+  // (Sentry DESKTOP-3A), so only a host's copy over SSH is held and removed per
+  // session. A distro's copy is this machine's and stays like any local one.
+  it('keeps an OpenCode 2 distro session\'s plugin copy when the session releases', () => {
+    const version = vi.spyOn(OpenCodeDetector.prototype, 'getCachedVersion').mockReturnValue('v2.2.5');
+    try {
+      const adapter = new OpenCodeAdapter();
+      const options = { ...sessionOptions(targetOn('nat')), mcpServerEnabled: false };
+      adapter.buildCommand(options);
+      const copy = path.join(options.cwd, '.opencode', 'plugins', 'kangentic-activity', 'index.js');
+      expect(fs.existsSync(copy)).toBe(true);
+
+      adapter.removeHooks(options.cwd, options.ptySessionId);
+      expect(fs.existsSync(copy)).toBe(true);
+    } finally {
+      version.mockRestore();
+    }
   });
 
   it('reads the transcript from the distro CLI\'s export, never this machine\'s database', async () => {
