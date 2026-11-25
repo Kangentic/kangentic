@@ -14,7 +14,7 @@ import { resolveColumn } from '../commands/column-resolver';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { resolveTask } from '../commands/task-resolver';
-import type { ToolArgumentNotices } from './tool-call-logging';
+import type { InspectedToolName, ToolArgumentNotices } from './tool-call-logging';
 import type { CommandContext } from '../commands';
 import type { PlanApproval } from '../../../shared/types';
 import { LABEL_ENTRY_GUIDE, LABEL_ENTRY_SCHEMA, PRIORITY_GUIDE, PRIORITY_SCHEMA } from './label-priority-schema';
@@ -160,29 +160,39 @@ function isBacklogColumn(columnName: string | null | undefined): boolean {
  * carried no `labels` alongside a large description. Not an error: the write
  * succeeded and only the labels are missing, so this is a next step rather
  * than a refusal. `followUp` is the concrete next call, supplied by each tool
- * since only they know how to name the task without a lookup.
+ * since only they know how to name the task without a lookup. `toolName`
+ * picks the closing hint, because `labels: []` means different things: on a
+ * create it only says "none", but on an update it REPLACES the list, so
+ * pointing an agent that meant to keep the task's labels at [] would wipe them.
  */
-function buildLabelsAbsentNotice(descriptionLength: number, followUp: string): string {
+function buildLabelsAbsentNotice(
+  descriptionLength: number,
+  toolName: InspectedToolName,
+  followUp: string,
+): string {
+  const noLabelsHint = toolName === 'kangentic_create_task'
+    ? 'If the task should have no labels, pass labels: [] on a call like this one and this line will not appear.'
+    : 'To keep the task\'s labels, resend them with the description; labels: [] sets none. Either way this line will not appear.';
   return `[Labels not received] This call arrived with no 'labels' argument alongside a ${descriptionLength}-char `
     + 'description - the known large-payload drop upstream of Kangentic, in the MCP client\'s tool-call emission. '
     + `The write itself succeeded. If you meant to label this task, ${followUp} now. `
-    + 'If you did not, ignore this line.';
+    + noLabelsHint;
 }
 
 /**
  * Append the labels-absent advisory when THIS request's raw arguments tripped
  * the large-description signature for `toolName`. A no-op otherwise, so a
- * caller who deliberately sent no labels never sees a line.
+ * caller who sent `labels`, `[]` included, never sees a line.
  */
 function withLabelsAbsentNotice(
   result: McpToolResult,
-  toolName: 'kangentic_create_task' | 'kangentic_update_task',
+  toolName: InspectedToolName,
   notices: ToolArgumentNotices | undefined,
   followUp: string,
 ): McpToolResult {
   const descriptionLength = notices?.labelsAbsentWithLargeDescription[toolName];
   if (descriptionLength === undefined) return result;
-  return appendNoticeLine(result, buildLabelsAbsentNotice(descriptionLength, followUp));
+  return appendNoticeLine(result, buildLabelsAbsentNotice(descriptionLength, toolName, followUp));
 }
 
 /**
@@ -253,7 +263,7 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_create_task',
     {
-      description: 'Create a task on the Kangentic board (default: the To Do column on the active board) or in the backlog. This is the only task-creation tool - use it whenever the user asks to "create a task", "add a todo", "add to backlog", or similar. ATTACHMENTS RULE: When the user\'s prompt references local files by absolute path (design handoffs, mockups, screenshots, specs, READMEs, transcripts), pass those paths in `attachments` on this same call. Default to attaching, not omitting. Do not require a second user request to add them. The only exception is files the user explicitly named as "for context only, don\'t attach." With no `column` argument, the task always lands in the active board\'s To Do column - never the backlog. Pass `column: "Backlog"` (case-insensitive) to create a backlog item instead. Pass any other column name (e.g. "Planning", "Code Review") to land directly in that board column. Board tasks are ready to work on immediately; with worktrees on (the project default) each gets its own worktree and branch, and with `useWorktree: false` the agent works in the project directory on the branch already checked out. If the user\'s prompt names a different Kangentic project, pass that name as `project` to route the task to that project instead of the active default - do not rely on the active default when the user clearly targeted another project. The name counts however it is phrased, not just the explicit "create a task in X" form: "create a task in X to fix ...", "the X to do board", "add a bug to the X board", "in X", and "X\'s backlog" all target project X. Use kangentic_list_projects to find valid selectors. LABELS WITH A LONG DESCRIPTION: due to a known large-payload limitation, when this call carries both a long description (roughly 1KB or more) and labels, the labels can be dropped before they reach the server. In that case create the task here (you may omit labels), then set labels with a separate labels-only kangentic_update_task call right after.',
+      description: 'Create a task on the Kangentic board (default: the To Do column on the active board) or in the backlog. This is the only task-creation tool - use it whenever the user asks to "create a task", "add a todo", "add to backlog", or similar. ATTACHMENTS RULE: When the user\'s prompt references local files by absolute path (design handoffs, mockups, screenshots, specs, READMEs, transcripts), pass those paths in `attachments` on this same call. Default to attaching, not omitting. Do not require a second user request to add them. The only exception is files the user explicitly named as "for context only, don\'t attach." With no `column` argument, the task always lands in the active board\'s To Do column - never the backlog. Pass `column: "Backlog"` (case-insensitive) to create a backlog item instead. Pass any other column name (e.g. "Planning", "Code Review") to land directly in that board column. Board tasks are ready to work on immediately; with worktrees on (the project default) each gets its own worktree and branch, and with `useWorktree: false` the agent works in the project directory on the branch already checked out. If the user\'s prompt names a different Kangentic project, pass that name as `project` to route the task to that project instead of the active default - do not rely on the active default when the user clearly targeted another project. The name counts however it is phrased, not just the explicit "create a task in X" form: "create a task in X to fix ...", "the X to do board", "add a bug to the X board", "in X", and "X\'s backlog" all target project X. Use kangentic_list_projects to find valid selectors. LABELS WITH A LONG DESCRIPTION: due to a known large-payload limitation, when this call carries both a long description (roughly 1KB or more) and labels, the labels can be dropped before they reach the server. In that case create the task here without labels, then set labels with a separate labels-only kangentic_update_task call right after. When the task should have no labels, pass `labels: []`. The server then knows nothing was dropped and adds no note.',
       inputSchema: z.object({
         title: z.string().max(200).describe('Task title (max 200 characters)'),
         description: z.string().max(TASK_DESCRIPTION_MAX_LENGTH, { error: descriptionOverLimit }).optional().describe(`Task description. Supports markdown. At most ${TASK_DESCRIPTION_MAX_LENGTH} characters: it rides the agent's command line. Attach longer material as a file.`),
@@ -684,7 +694,7 @@ export function registerTaskTools(
         prNumber: z.number().int().positive().optional().describe('Pull request number.'),
         agent: z.string().optional().describe('Agent name to assign (e.g. "claude", "codex"). Rejected if it is not a registered agent, with the valid names listed. Pass empty string to clear.'),
         priority: PRIORITY_SCHEMA.optional().describe(`Task priority. ${PRIORITY_GUIDE}`),
-        labels: z.array(LABEL_ENTRY_SCHEMA).optional().describe(`Replace the task's label list. Pass [] to clear all labels. ${LABEL_ENTRY_GUIDE} If this same call also sets a long description (roughly 1KB or more), set labels in a separate labels-only update instead, or they may be dropped before reaching the server.`),
+        labels: z.array(LABEL_ENTRY_SCHEMA).optional().describe(`Replace the task's label list. Pass [] to clear all labels. ${LABEL_ENTRY_GUIDE} If this same call also sets a long description (roughly 1KB or more), set labels in a separate labels-only update instead, or they may be dropped before reaching the server. With a long description, omitted labels draw a "Labels not received" note. To avoid it, resend the current labels to keep them, or pass [] to clear them.`),
         baseBranch: z.string().optional().describe('What the task\'s worktree branches from: a branch (e.g. "main"), a tag or a commit SHA.'),
         useWorktree: z.boolean().optional().describe('Whether the task uses an isolated git worktree. Set false and nothing is checked out: no worktree is created, the user\'s working tree is untouched, and the agent runs in the project directory on whatever branch the repo currently has out. True is ignored while the project has worktrees turned off in its Git settings.'),
         model: z.string().max(200).optional().describe('Model override for this task (e.g. "opus", "claude-opus-4-8", or the friendly "Opus 4.8"). A friendly versioned name is converted to the CLI id, then checked against the models the resolved agent offers; an unknown one is rejected here with the valid list. When that agent enumerates no models, the value is accepted as given. Pass empty string to clear.'),
