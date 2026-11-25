@@ -21,19 +21,43 @@ let mockExistsSyncResult = true;
 /** Count of fs.watch() handles created, per watched path, to assert a repeat subscribe reuses one handle. */
 const watchHandleCountByPath = new Map<string, number>();
 
-vi.mock('node:fs', () => ({
-  default: {
-    watch: vi.fn((watchPath: string, _options: unknown, callback: (eventType: string, filename: string | null) => void) => {
-      watchCallback = callback;
-      watchCallbacksByPath.set(watchPath, callback);
-      watchHandleCountByPath.set(watchPath, (watchHandleCountByPath.get(watchPath) ?? 0) + 1);
-      const closeFn = vi.fn();
-      mockCloseFns.set(watchPath, closeFn);
-      return { close: closeFn };
-    }),
-    existsSync: vi.fn(() => mockExistsSyncResult),
-  },
-}));
+/**
+ * The latest handle per watched path. Each is an EventEmitter, as Node's
+ * FSWatcher is, so a test can emit 'error' on it the way libuv's callback does.
+ */
+const watchHandlesByPath = new Map<string, import('node:events').EventEmitter & { close: ReturnType<typeof vi.fn> }>();
+
+/** Paths whose next fs.watch() throws, standing in for a re-arm that cannot open. */
+const failingWatchPaths = new Set<string>();
+
+vi.mock('node:fs', async () => {
+  const { EventEmitter } = await import('node:events');
+  return {
+    default: {
+      watch: vi.fn((watchPath: string, _options: unknown, callback: (eventType: string, filename: string | null) => void) => {
+        if (failingWatchPaths.has(watchPath)) {
+          throw Object.assign(new Error('EMFILE: too many open files, watch'), { code: 'EMFILE' });
+        }
+        watchCallback = callback;
+        watchCallbacksByPath.set(watchPath, callback);
+        watchHandleCountByPath.set(watchPath, (watchHandleCountByPath.get(watchPath) ?? 0) + 1);
+        const closeFn = vi.fn();
+        mockCloseFns.set(watchPath, closeFn);
+        const handle = Object.assign(new EventEmitter(), { close: closeFn });
+        watchHandlesByPath.set(watchPath, handle);
+        return handle;
+      }),
+      existsSync: vi.fn(() => mockExistsSyncResult),
+    },
+  };
+});
+
+// Capture the watch-error reports instead of sending them.
+const reportMock = vi.hoisted(() => vi.fn((_error: unknown, _options?: { tags?: Record<string, string> }) => true));
+vi.mock('../../src/main/analytics/handled-report', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/analytics/handled-report')>();
+  return { ...actual, createChokepointReporter: () => ({ report: reportMock, reset: vi.fn() }) };
+});
 
 // Mock gitAt so the git-metadata tests can control rev-parse output.
 // Tests that don't call subscribe() with a mocked git dir are unaffected because
@@ -61,7 +85,7 @@ vi.mock('node:path', async () => {
 });
 
 import path from 'node:path';
-import { DiffWatcher } from '../../src/main/git/diff-watcher';
+import { DiffWatcher, REARM_DELAYS_MS, REARM_BUDGET_RESET_MS, FALLBACK_POLL_MS } from '../../src/main/git/diff-watcher';
 
 // ── Tests ──────────────────────────────────────────────────────────────────
 
@@ -74,6 +98,8 @@ describe('DiffWatcher', () => {
     mockCloseFns.clear();
     watchCallbacksByPath.clear();
     watchHandleCountByPath.clear();
+    watchHandlesByPath.clear();
+    failingWatchPaths.clear();
     watchCallback = null;
     mockExistsSyncResult = true;
     // Default: git is not a real repo, so rev-parse rejects and watchGitMetadata no-ops.
@@ -549,6 +575,292 @@ describe('DiffWatcher', () => {
       expect(callback).toHaveBeenCalledTimes(1);
       vi.advanceTimersByTime(500);
       expect(callback).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  // ── watch error ──────────────────────────────────────────────────────────
+  //
+  // Sentry DESKTOP-58: Node's FSWatcher closes its own handle on a libuv error
+  // status, then emits 'error'. With no listener the emit throws in main, and
+  // the dead handle stayed in the entry, so every later subscriber joined a
+  // watch that never fired again and the Changes panel stopped updating.
+
+  describe('watch error', () => {
+    const worktreePath = '/mock/project';
+    const fakeGitDir = '/mock/project/.git';
+    const fakeLogsDir = path.join(fakeGitDir, 'logs');
+
+    const WATCH_KINDS = [
+      { kind: 'tree', watchPath: worktreePath, filename: 'src/file.ts' },
+      { kind: 'git_meta', watchPath: fakeGitDir, filename: 'index' },
+      { kind: 'git_logs', watchPath: fakeLogsDir, filename: 'HEAD' },
+    ];
+
+    /** The error Node's FSWatcher emits for a ReadDirectoryChangesW failure libuv cannot map. */
+    function unknownWatchError(): Error {
+      return Object.assign(new Error('UNKNOWN: unknown error, watch'), { code: 'UNKNOWN', errno: -4094, syscall: 'watch' });
+    }
+
+    async function subscribeWithGitDir(callback: () => void): Promise<void> {
+      mockGitRaw.mockResolvedValue(`${fakeGitDir}\n`);
+      watcher.subscribe(worktreePath, callback);
+      await Promise.resolve();
+      await Promise.resolve();
+    }
+
+    it.each(WATCH_KINDS)('a $kind watch error does not throw, closes that watch, and the re-armed watch dispatches', async ({ kind, watchPath, filename }) => {
+      const callback = vi.fn();
+      await subscribeWithGitDir(callback);
+      const failedHandle = watchHandlesByPath.get(watchPath)!;
+      const watchError = unknownWatchError();
+
+      expect(() => failedHandle.emit('error', watchError)).not.toThrow();
+      expect(failedHandle.close).toHaveBeenCalledTimes(1);
+      expect(watchHandleCountByPath.get(watchPath)).toBe(1);
+
+      vi.advanceTimersByTime(REARM_DELAYS_MS[0]);
+      expect(watchHandleCountByPath.get(watchPath)).toBe(2);
+      expect(reportMock).toHaveBeenCalledTimes(1);
+      expect(reportMock).toHaveBeenCalledWith(watchError, { tags: { watch: kind, rearm: 'held' } });
+
+      // One catch-up dispatch, so subscribers re-read what changed while the watch was down.
+      vi.advanceTimersByTime(500);
+      expect(callback).toHaveBeenCalledTimes(1);
+
+      // A later change on the re-armed handle still dispatches.
+      watchCallbacksByPath.get(watchPath)!('change', filename);
+      vi.advanceTimersByTime(500);
+      expect(callback).toHaveBeenCalledTimes(2);
+
+      // The dead handle left the entry: teardown closes the live one, not the dead one again.
+      watcher.unsubscribe(worktreePath);
+      expect(failedHandle.close).toHaveBeenCalledTimes(1);
+      expect(watchHandlesByPath.get(watchPath)!.close).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not re-arm a path released while its re-arm is pending', async () => {
+      const callback = vi.fn();
+      await subscribeWithGitDir(callback);
+
+      watchHandlesByPath.get(worktreePath)!.emit('error', unknownWatchError());
+      // The worktree-removing listener releases the path before the delete.
+      watcher.releaseUnder(worktreePath);
+      vi.advanceTimersByTime(REARM_DELAYS_MS.reduce((total, delay) => total + delay, 0) + FALLBACK_POLL_MS * 3);
+
+      expect(watchHandleCountByPath.get(worktreePath)).toBe(1);
+      expect(callback).not.toHaveBeenCalled();
+      expect(reportMock).not.toHaveBeenCalled();
+    });
+
+    it('falls back to a poll when the re-arm keeps failing, and stops it once the watch arms', () => {
+      const callback = vi.fn();
+      watcher.subscribe('/project', callback);
+      const watchError = unknownWatchError();
+
+      watchHandlesByPath.get('/project')!.emit('error', watchError);
+      failingWatchPaths.add('/project');
+      for (const delay of REARM_DELAYS_MS) vi.advanceTimersByTime(delay);
+
+      expect(reportMock).toHaveBeenCalledTimes(1);
+      expect(reportMock).toHaveBeenCalledWith(watchError, { tags: { watch: 'tree', rearm: 'polling' } });
+      expect(callback).not.toHaveBeenCalled();
+
+      // A poll tick dispatches even though the watch still cannot arm.
+      vi.advanceTimersByTime(FALLBACK_POLL_MS + 500);
+      expect(callback).toHaveBeenCalledTimes(1);
+
+      // The next tick arms the watch again, and the poll stops.
+      failingWatchPaths.delete('/project');
+      vi.advanceTimersByTime(FALLBACK_POLL_MS + 500);
+      expect(callback).toHaveBeenCalledTimes(2);
+      expect(watchHandleCountByPath.get('/project')).toBe(2);
+
+      vi.advanceTimersByTime(FALLBACK_POLL_MS * 3);
+      expect(callback).toHaveBeenCalledTimes(2);
+
+      // The watch the poll armed dispatches on its own.
+      watchCallbacksByPath.get('/project')!('change', 'src/file.ts');
+      vi.advanceTimersByTime(500);
+      expect(callback).toHaveBeenCalledTimes(3);
+    });
+
+    it('moves a watch that keeps failing after each re-arm to the poll instead of re-arming it forever', () => {
+      const callback = vi.fn();
+      watcher.subscribe('/project', callback);
+
+      for (const delay of REARM_DELAYS_MS) {
+        watchHandlesByPath.get('/project')!.emit('error', unknownWatchError());
+        vi.advanceTimersByTime(delay);
+      }
+      expect(watchHandleCountByPath.get('/project')).toBe(REARM_DELAYS_MS.length + 1);
+
+      // Out of re-arms: the next error is left to the poll, which tries once per tick.
+      watchHandlesByPath.get('/project')!.emit('error', unknownWatchError());
+      vi.advanceTimersByTime(FALLBACK_POLL_MS - 1);
+      expect(watchHandleCountByPath.get('/project')).toBe(REARM_DELAYS_MS.length + 1);
+      expect(reportMock).toHaveBeenLastCalledWith(expect.anything(), { tags: { watch: 'tree', rearm: 'polling' } });
+
+      vi.advanceTimersByTime(1);
+      expect(watchHandleCountByPath.get('/project')).toBe(REARM_DELAYS_MS.length + 2);
+    });
+
+    it('stops the poll when the last subscriber leaves', () => {
+      const callback = vi.fn();
+      const unsubscribe = watcher.subscribe('/project', callback);
+
+      watchHandlesByPath.get('/project')!.emit('error', unknownWatchError());
+      failingWatchPaths.add('/project');
+      for (const delay of REARM_DELAYS_MS) vi.advanceTimersByTime(delay);
+
+      unsubscribe();
+      failingWatchPaths.delete('/project');
+      vi.advanceTimersByTime(FALLBACK_POLL_MS * 3);
+
+      expect(callback).not.toHaveBeenCalled();
+      expect(watchHandleCountByPath.get('/project')).toBe(1);
+    });
+
+    it('ignores an error from a handle whose path was released and subscribed again, even with its re-arm budget spent', async () => {
+      const oldCallback = vi.fn();
+      await subscribeWithGitDir(oldCallback);
+
+      // Spend the tree's whole budget on the first entry, so an error that slipped past the
+      // release guard would report 'polling' and start a poll instead of quietly re-arming.
+      for (const delay of REARM_DELAYS_MS) {
+        watchHandlesByPath.get(worktreePath)!.emit('error', unknownWatchError());
+        vi.advanceTimersByTime(delay);
+      }
+      const oldTreeHandle = watchHandlesByPath.get(worktreePath)!;
+      reportMock.mockClear();
+      oldCallback.mockClear();
+
+      watcher.unsubscribe(worktreePath);
+      const newCallback = vi.fn();
+      // The git dir is cached, so this arms all three watches synchronously on a new entry.
+      watcher.subscribe(worktreePath, newCallback);
+      const treeHandleCountAfterResubscribe = watchHandleCountByPath.get(worktreePath);
+      const newTreeHandle = watchHandlesByPath.get(worktreePath)!;
+      expect(newTreeHandle).not.toBe(oldTreeHandle);
+
+      expect(() => oldTreeHandle.emit('error', unknownWatchError())).not.toThrow();
+      vi.advanceTimersByTime(REARM_DELAYS_MS.reduce((total, delay) => total + delay, 0) + FALLBACK_POLL_MS * 3);
+
+      expect(watchHandleCountByPath.get(worktreePath)).toBe(treeHandleCountAfterResubscribe);
+      expect(reportMock).not.toHaveBeenCalled();
+      expect(newCallback).not.toHaveBeenCalled();
+      expect(oldCallback).not.toHaveBeenCalled();
+      // The new entry's own watch was never touched and still dispatches.
+      expect(newTreeHandle.close).not.toHaveBeenCalled();
+      watchCallbacksByPath.get(worktreePath)!('change', 'src/file.ts');
+      vi.advanceTimersByTime(500);
+      expect(newCallback).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the poll running while one of two failed kinds is still down, and stops it once both arm', async () => {
+      const callback = vi.fn();
+      await subscribeWithGitDir(callback);
+
+      watchHandlesByPath.get(worktreePath)!.emit('error', unknownWatchError());
+      watchHandlesByPath.get(fakeGitDir)!.emit('error', unknownWatchError());
+      failingWatchPaths.add(worktreePath);
+      failingWatchPaths.add(fakeGitDir);
+      for (const delay of REARM_DELAYS_MS) vi.advanceTimersByTime(delay);
+      expect(reportMock).toHaveBeenCalledTimes(2);
+      expect(reportMock).toHaveBeenCalledWith(expect.anything(), { tags: { watch: 'tree', rearm: 'polling' } });
+      expect(reportMock).toHaveBeenCalledWith(expect.anything(), { tags: { watch: 'git_meta', rearm: 'polling' } });
+      expect(callback).not.toHaveBeenCalled();
+
+      // Tree arms on this tick; git_meta is still down, so the poll must keep going.
+      failingWatchPaths.delete(worktreePath);
+      vi.advanceTimersByTime(FALLBACK_POLL_MS + 500);
+      expect(watchHandleCountByPath.get(worktreePath)).toBe(2);
+      expect(watchHandleCountByPath.get(fakeGitDir)).toBe(1);
+      expect(callback).toHaveBeenCalledTimes(1);
+
+      // Next tick still fires subscribers and retries git_meta, which still cannot open.
+      vi.advanceTimersByTime(FALLBACK_POLL_MS);
+      expect(callback).toHaveBeenCalledTimes(2);
+      expect(watchHandleCountByPath.get(fakeGitDir)).toBe(1);
+
+      // git_meta opens on the next tick, which is the last one.
+      failingWatchPaths.delete(fakeGitDir);
+      vi.advanceTimersByTime(FALLBACK_POLL_MS);
+      expect(callback).toHaveBeenCalledTimes(3);
+      expect(watchHandleCountByPath.get(fakeGitDir)).toBe(2);
+
+      vi.advanceTimersByTime(FALLBACK_POLL_MS * 4);
+      expect(callback).toHaveBeenCalledTimes(3);
+    });
+
+    it('spends the re-arm budget per watch kind, not across kinds', async () => {
+      const callback = vi.fn();
+      await subscribeWithGitDir(callback);
+
+      // Tree spends two of its three delays.
+      watchHandlesByPath.get(worktreePath)!.emit('error', unknownWatchError());
+      vi.advanceTimersByTime(REARM_DELAYS_MS[0]);
+      watchHandlesByPath.get(worktreePath)!.emit('error', unknownWatchError());
+      vi.advanceTimersByTime(REARM_DELAYS_MS[1]);
+      expect(watchHandleCountByPath.get(worktreePath)).toBe(3);
+
+      // git_meta still has its whole budget, so its first failure waits the first delay.
+      watchHandlesByPath.get(fakeGitDir)!.emit('error', unknownWatchError());
+      vi.advanceTimersByTime(REARM_DELAYS_MS[0] - 1);
+      expect(watchHandleCountByPath.get(fakeGitDir)).toBe(1);
+      vi.advanceTimersByTime(1);
+      expect(watchHandleCountByPath.get(fakeGitDir)).toBe(2);
+
+      // Tree's third failure waits the third delay.
+      watchHandlesByPath.get(worktreePath)!.emit('error', unknownWatchError());
+      vi.advanceTimersByTime(REARM_DELAYS_MS[2] - 1);
+      expect(watchHandleCountByPath.get(worktreePath)).toBe(3);
+      vi.advanceTimersByTime(1);
+      expect(watchHandleCountByPath.get(worktreePath)).toBe(4);
+    });
+
+    describe('budget reset', () => {
+      /** Fails the tree through its whole budget, then once more, and lets the poll arm it. */
+      function spendBudgetAndArmThroughPoll(): void {
+        watcher.subscribe('/project', vi.fn());
+        for (const delay of REARM_DELAYS_MS) {
+          watchHandlesByPath.get('/project')!.emit('error', unknownWatchError());
+          vi.advanceTimersByTime(delay);
+        }
+        watchHandlesByPath.get('/project')!.emit('error', unknownWatchError());
+        vi.advanceTimersByTime(FALLBACK_POLL_MS);
+        expect(watchHandleCountByPath.get('/project')).toBe(REARM_DELAYS_MS.length + 2);
+        reportMock.mockClear();
+      }
+
+      it('re-arms again after a watch stayed up for REARM_BUDGET_RESET_MS, instead of leaving it to the poll', () => {
+        spendBudgetAndArmThroughPoll();
+        const handleCount = watchHandleCountByPath.get('/project')!;
+
+        vi.advanceTimersByTime(REARM_BUDGET_RESET_MS);
+        watchHandlesByPath.get('/project')!.emit('error', unknownWatchError());
+
+        vi.advanceTimersByTime(REARM_DELAYS_MS[0] - 1);
+        expect(watchHandleCountByPath.get('/project')).toBe(handleCount);
+        vi.advanceTimersByTime(1);
+        expect(watchHandleCountByPath.get('/project')).toBe(handleCount + 1);
+        expect(reportMock).toHaveBeenCalledWith(expect.anything(), { tags: { watch: 'tree', rearm: 'held' } });
+      });
+
+      it('leaves a watch that fails again inside REARM_BUDGET_RESET_MS to the poll', () => {
+        spendBudgetAndArmThroughPoll();
+        const handleCount = watchHandleCountByPath.get('/project')!;
+
+        vi.advanceTimersByTime(REARM_BUDGET_RESET_MS - 1);
+        watchHandlesByPath.get('/project')!.emit('error', unknownWatchError());
+
+        // Past every re-arm delay, short of the poll's first tick.
+        vi.advanceTimersByTime(FALLBACK_POLL_MS - 1);
+        expect(watchHandleCountByPath.get('/project')).toBe(handleCount);
+        expect(reportMock).toHaveBeenCalledWith(expect.anything(), { tags: { watch: 'tree', rearm: 'polling' } });
+
+        vi.advanceTimersByTime(1);
+        expect(watchHandleCountByPath.get('/project')).toBe(handleCount + 1);
+      });
     });
   });
 

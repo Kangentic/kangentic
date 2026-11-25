@@ -193,6 +193,55 @@ describe('metrics snapshot timer', () => {
   });
 });
 
+describe('diff watch', () => {
+  // Sentry DESKTOP-58: a Changes panel watch that failed after arming. Node
+  // builds that error with the watched path in its message and `path`.
+  it('reports a failed watch under source diff_watch, grouped as an environment failure, with no path', async () => {
+    const fs = (await import('node:fs')).default;
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const watchedDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'diff-watch-report-'));
+    vi.doMock('../../src/main/git/git-client', () => ({
+      gitAt: () => ({ raw: () => Promise.reject(new Error('not a git repository')) }),
+    }));
+    const watchSpy = vi.spyOn(fs, 'watch');
+    vi.useFakeTimers();
+    const { DiffWatcher, REARM_DELAYS_MS } = await import('../../src/main/git/diff-watcher');
+    const diffWatcher = new DiffWatcher();
+    try {
+      diffWatcher.subscribe(watchedDirectory, vi.fn());
+      const treeWatcher = watchSpy.mock.results[0].value as EventEmitter;
+      const watchError = Object.assign(new Error(`UNKNOWN: unknown error, watch '${watchedDirectory}'`), {
+        code: 'UNKNOWN',
+        errno: -4094,
+        syscall: 'watch',
+        path: watchedDirectory,
+      });
+
+      treeWatcher.emit('error', watchError);
+      vi.advanceTimersByTime(REARM_DELAYS_MS[0]);
+
+      expect(onlyReportTags()).toMatchObject({
+        source: 'diff_watch',
+        watch: 'tree',
+        rearm: 'held',
+        errno: 'UNKNOWN',
+        syscall: 'watch',
+        error_name: 'Error',
+      });
+      const [reportedError, tags, contexts, fingerprint] = reportHandledError.mock.calls[0] as [Error, unknown, unknown, unknown];
+      expect(reportedError.message).toBe('Handled diff_watch failure: Error');
+      expect(fingerprint).toEqual(['handled-env', 'Error', 'UNKNOWN']);
+      const reportedText = JSON.stringify({ message: reportedError.message, tags, contexts, fingerprint });
+      expect(reportedText).not.toContain(path.basename(watchedDirectory));
+    } finally {
+      diffWatcher.closeAll();
+      vi.doUnmock('../../src/main/git/git-client');
+      fs.rmSync(watchedDirectory, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('artifact detection', () => {
   it('reports a link write that throws, under source artifact_detection and stage detect', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});

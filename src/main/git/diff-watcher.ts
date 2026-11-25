@@ -4,8 +4,44 @@ import { gitAt, type GitClient } from './git-client';
 import { gitWorktreeReporter } from './git-worktree-report';
 import { replacePathPrefix } from '../../shared/paths';
 import { remoteGitRunnerFor, type RemoteGitRunner } from './remote-git';
+import { createChokepointReporter } from '../analytics/handled-report';
 
 const DEBOUNCE_MS = 500;
+
+/**
+ * A watch that failed after it was armed. Node's FSWatcher closes its own
+ * handle on a libuv error status and then emits 'error' (Sentry DESKTOP-58:
+ * `UNKNOWN` on Windows, a ReadDirectoryChangesW completion error libuv has no
+ * mapping for). Tags: `watch` (which of the three), `rearm` (`held` when the
+ * watch armed again, `polling` when it did not and a poll drives the
+ * subscribers instead), and the errno the reporter adds. No path is sent.
+ */
+const diffWatchReporter = createChokepointReporter('diff_watch');
+
+/** The three watches a local path arms, as the `watch` tag names them. */
+type WatchKind = 'tree' | 'git_meta' | 'git_logs';
+
+/**
+ * Delays before each re-arm of a watch that failed. Each watch kind spends
+ * them in turn, and a re-arm that cannot open spends one too, so a watch that
+ * arms and fails again at once cannot re-arm forever. Past the last one the
+ * poll takes over.
+ */
+export const REARM_DELAYS_MS: readonly number[] = [1000, 3000, 10_000];
+
+/**
+ * How long a watch must stay up before its kind gets the full REARM_DELAYS_MS
+ * budget back. A watch that held this long failed for a new reason, so a
+ * panel open for days is not left to the slow poll by three unrelated errors.
+ */
+export const REARM_BUDGET_RESET_MS = 60_000;
+
+/**
+ * How often subscribers are told to re-read while a watch cannot be armed. A
+ * tick costs each subscriber one diff read, and it also tries the failed
+ * watches again; the poll stops once they all arm.
+ */
+export const FALLBACK_POLL_MS = 10_000;
 
 /**
  * Longest a pending run may be held before the callbacks fire regardless.
@@ -50,6 +86,14 @@ function isExpectedWatchFailure(error: unknown): boolean {
 }
 
 /**
+ * Report a watch that could not be opened when it was first armed, unless the machine
+ * caused it. A watch that fails after it armed goes through `diffWatchReporter` instead.
+ */
+function reportFirstArmFailure(error: unknown): void {
+  if (!isExpectedWatchFailure(error)) gitWorktreeReporter.report(error, { tags: { stage: 'diff_watch' } });
+}
+
+/**
  * fs.watch's `ignore` option, added in Node 24.14 ("fs: add `ignore` option to
  * `fs.watch`", https://nodejs.org/en/blog/release/v24.14.0; Electron 44.5.1
  * ships Node 24.21). The installed @types/node predates it. On Linux, Node
@@ -81,8 +125,20 @@ export const REMOTE_POLL_MS = 2000;
 
 interface WatcherEntry {
   watchers: fs.FSWatcher[];
-  /** Ends the poll of a checkout on a host. Null for a local path, which is watched. */
+  /**
+   * Ends the poll of a checkout on a host, or of a local path whose watch
+   * failed and could not be armed again. Null while a local path is watched.
+   */
   stopPolling: (() => void) | null;
+  /** Pending re-arms of failed watches, cleared when the path is released. */
+  rearmTimers: Set<ReturnType<typeof setTimeout>>;
+  /**
+   * Re-arms spent per watch kind, against REARM_DELAYS_MS. Cleared for a kind
+   * whose watch stayed up for REARM_BUDGET_RESET_MS before it failed.
+   */
+  rearmAttempts: Map<WatchKind, number>;
+  /** Watches the fallback poll tries to arm on each tick. */
+  failedWatches: Map<WatchKind, () => fs.FSWatcher>;
   debounceTimer: ReturnType<typeof setTimeout> | null;
   /** When the current pending run started, for the MAX_DEBOUNCE_WAIT_MS cap.
    *  Only meaningful while `debounceTimer` is non-null. */
@@ -109,6 +165,11 @@ interface WatcherEntry {
  *     so we never descend into the huge, churning objects/ store (which would
  *     also exhaust inotify watches on Linux). This makes commits, staging, and
  *     checkouts refresh the panel automatically, replacing the manual button.
+ *
+ * A watch that fails after arming ('error') is closed, dropped from its entry,
+ * and armed again after a delay, with one catch-up fire. One that cannot be
+ * armed again is left to a slow poll, so subscribers never sit on a silent
+ * entry. A released path is never re-armed.
  */
 export class DiffWatcher {
   private readonly watchers = new Map<string, WatcherEntry>();
@@ -133,6 +194,9 @@ export class DiffWatcher {
     const entry: WatcherEntry = {
       watchers: [],
       stopPolling: null,
+      rearmTimers: new Set(),
+      rearmAttempts: new Map(),
+      failedWatches: new Map(),
       debounceTimer: null,
       pendingSince: 0,
       callbacks: new Set([callback]),
@@ -180,20 +244,18 @@ export class DiffWatcher {
     // 1. Working tree (recursive), ignoring .git/, node_modules/, .kangentic/.
     //    `ignore` keeps Linux's walk out of those trees (WatchOptionsWithIgnore);
     //    the callback's own check stays for a runtime that only filters events.
-    try {
+    const openTreeWatch = (): fs.FSWatcher => {
       const treeWatchOptions: WatchOptionsWithIgnore = { recursive: true, ignore: isIgnoredWatchPath };
-      const treeWatcher = fs.watch(worktreePath, treeWatchOptions, (_eventType, filename) => {
+      return fs.watch(worktreePath, treeWatchOptions, (_eventType, filename) => {
         if (!filename) return;
         if (isIgnoredWatchPath(filename.toString())) return;
         fire();
       });
-      entry.watchers.push(treeWatcher);
-    } catch (error) {
-      // fs.watch may fail on some platforms or if path doesn't exist. A folder that is
-      // gone is expected. Anything else leaves the Changes panel with no live updates for
-      // this checkout, and nothing on screen says so.
-      if (!isExpectedWatchFailure(error)) gitWorktreeReporter.report(error, { tags: { stage: 'diff_watch' } });
-    }
+    };
+    // fs.watch may fail on some platforms or if the path doesn't exist. A folder that is
+    // gone is expected. Anything else leaves the Changes panel with no live updates for
+    // this checkout, and nothing on screen says so.
+    this.tryArmWatch(worktreePath, entry, 'tree', openTreeWatch, fire, reportFirstArmFailure);
 
     // 2. Git metadata (index, HEAD, logs/HEAD, ...). Resolved async because it
     //    needs the absolute git dir (a worktree's lives under the main repo's
@@ -315,33 +377,134 @@ export class DiffWatcher {
 
     // Top-level git dir: index (staging), HEAD, ORIG_HEAD, MERGE_HEAD,
     // packed-refs. Non-recursive, so objects/ is never descended.
-    try {
-      const metaWatcher = fs.watch(gitDir, { recursive: false }, (_eventType, filename) => {
+    const openMetaWatch = (): fs.FSWatcher =>
+      fs.watch(gitDir, { recursive: false }, (_eventType, filename) => {
         if (filename && GIT_META_FILES.has(path.basename(filename.toString()))) fire();
       });
-      entry.watchers.push(metaWatcher);
-    } catch (error) {
-      // A single missing watch must not break the rest, so it is reported, not thrown:
-      // without it a commit, a stage or a checkout no longer refreshes the panel. A git
-      // folder that is gone (a worktree removed under the panel) is expected.
-      if (!isExpectedWatchFailure(error)) gitWorktreeReporter.report(error, { tags: { stage: 'diff_watch' } });
-    }
+    // A single missing watch must not break the rest, so it is reported, not thrown:
+    // without it a commit, a stage or a checkout no longer refreshes the panel. A git
+    // folder that is gone (a worktree removed under the panel) is expected.
+    this.tryArmWatch(worktreePath, entry, 'git_meta', openMetaWatch, fire, reportFirstArmFailure);
 
     // logs/HEAD moves on every commit / checkout / reset. It lives one level
     // down, so watch the logs/ directory itself (non-recursive).
     const logsDir = path.join(gitDir, 'logs');
     if (fs.existsSync(logsDir)) {
-      try {
-        const logsWatcher = fs.watch(logsDir, { recursive: false }, (_eventType, filename) => {
+      const openLogsWatch = (): fs.FSWatcher =>
+        fs.watch(logsDir, { recursive: false }, (_eventType, filename) => {
           if (filename && path.basename(filename.toString()) === 'HEAD') fire();
         });
-        entry.watchers.push(logsWatcher);
-      } catch (error) {
-        // Without this watch a commit or a reset no longer refreshes the panel. A logs
-        // folder that went between the check above and here is expected.
-        if (!isExpectedWatchFailure(error)) gitWorktreeReporter.report(error, { tags: { stage: 'diff_watch' } });
-      }
+      // Without this watch a commit or a reset no longer refreshes the panel. A logs
+      // folder that went between the check above and here is expected.
+      this.tryArmWatch(worktreePath, entry, 'git_logs', openLogsWatch, fire, reportFirstArmFailure);
     }
+  }
+
+  /**
+   * Open one watch and keep it in the entry, with the 'error' listener that
+   * stops a failed watch from throwing in main. Returns false when the watch
+   * cannot be opened, so each caller decides what a failed open means. A first
+   * arm passes `onOpenFailure` to report why; a re-arm passes none, since it
+   * reports the error that started it once it settles.
+   */
+  private tryArmWatch(
+    worktreePath: string,
+    entry: WatcherEntry,
+    kind: WatchKind,
+    openWatch: () => fs.FSWatcher,
+    fire: () => void,
+    onOpenFailure?: (error: unknown) => void,
+  ): boolean {
+    let watcher: fs.FSWatcher;
+    try {
+      watcher = openWatch();
+    } catch (error) {
+      // report-ok: the false return hands the outcome to the caller, and a first arm's
+      // onOpenFailure reports it through reportFirstArmFailure.
+      onOpenFailure?.(error);
+      return false;
+    }
+    const armedAt = Date.now();
+    watcher.on('error', (error: unknown) => {
+      // Node released the handle before it emitted, so this close only marks
+      // the watcher closed.
+      try {
+        watcher.close();
+      } catch {
+        // report-ok: the handle is already gone; scheduleRearm reports the error unless the path was released first.
+      }
+      const index = entry.watchers.indexOf(watcher);
+      if (index !== -1) entry.watchers.splice(index, 1);
+      // Released or replaced while the error was in flight.
+      if (this.watchers.get(worktreePath) !== entry) return;
+      if (Date.now() - armedAt >= REARM_BUDGET_RESET_MS) entry.rearmAttempts.delete(kind);
+      this.scheduleRearm(worktreePath, entry, kind, openWatch, fire, error);
+    });
+    entry.watchers.push(watcher);
+    return true;
+  }
+
+  /**
+   * Arm a failed watch again after the next delay in REARM_DELAYS_MS, with one
+   * catch-up fire for what changed while it was down. When the delays are
+   * spent, hand the watch to the fallback poll. Reports the failure once the
+   * outcome is known, unless the path is released first.
+   */
+  private scheduleRearm(
+    worktreePath: string,
+    entry: WatcherEntry,
+    kind: WatchKind,
+    openWatch: () => fs.FSWatcher,
+    fire: () => void,
+    error: unknown,
+  ): void {
+    const attempt = entry.rearmAttempts.get(kind) ?? 0;
+    if (attempt >= REARM_DELAYS_MS.length) {
+      entry.failedWatches.set(kind, openWatch);
+      this.startFallbackPoll(worktreePath, entry, fire);
+      diffWatchReporter.report(error, { tags: { watch: kind, rearm: 'polling' } });
+      return;
+    }
+    entry.rearmAttempts.set(kind, attempt + 1);
+    const timer = setTimeout(() => {
+      entry.rearmTimers.delete(timer);
+      if (this.watchers.get(worktreePath) !== entry) return;
+      if (!this.tryArmWatch(worktreePath, entry, kind, openWatch, fire)) {
+        // Cannot open yet: spend the next delay, and report when that settles.
+        this.scheduleRearm(worktreePath, entry, kind, openWatch, fire, error);
+        return;
+      }
+      fire();
+      diffWatchReporter.report(error, { tags: { watch: kind, rearm: 'held' } });
+    }, REARM_DELAYS_MS[attempt]);
+    timer.unref?.();
+    entry.rearmTimers.add(timer);
+  }
+
+  /**
+   * Drive the subscribers from a slow poll while a watch cannot be armed, and
+   * try the failed watches again on each tick. Stops once they all arm, or
+   * when the path is released (`unsubscribe` calls `stopPolling`).
+   */
+  private startFallbackPoll(worktreePath: string, entry: WatcherEntry, fire: () => void): void {
+    if (entry.stopPolling) return;
+    const timer = setInterval(() => {
+      if (this.watchers.get(worktreePath) !== entry) {
+        clearInterval(timer);
+        return;
+      }
+      fire();
+      // A watch still failing stays in the map, and the poll tries it next tick.
+      for (const [kind, openWatch] of [...entry.failedWatches]) {
+        if (this.tryArmWatch(worktreePath, entry, kind, openWatch, fire)) entry.failedWatches.delete(kind);
+      }
+      if (entry.failedWatches.size === 0) {
+        clearInterval(timer);
+        entry.stopPolling = null;
+      }
+    }, FALLBACK_POLL_MS);
+    timer.unref?.();
+    entry.stopPolling = () => clearInterval(timer);
   }
 
   unsubscribe(worktreePath: string): void {
@@ -351,6 +514,8 @@ export class DiffWatcher {
     if (entry.debounceTimer !== null) {
       clearTimeout(entry.debounceTimer);
     }
+    for (const timer of entry.rearmTimers) clearTimeout(timer);
+    entry.rearmTimers.clear();
     entry.stopPolling?.();
     for (const watcher of entry.watchers) {
       try {

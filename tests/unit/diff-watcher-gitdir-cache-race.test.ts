@@ -33,7 +33,8 @@ vi.mock('node:fs', () => ({
     watch: vi.fn((watchPath: string, _options: unknown, _callback: (eventType: string, filename: string | null) => void) => {
       const closeFn = vi.fn();
       mockCloseFns.set(watchPath, closeFn);
-      return { close: closeFn };
+      // DiffWatcher attaches an 'error' listener to every handle it arms.
+      return { close: closeFn, on: vi.fn() };
     }),
     existsSync: vi.fn(() => true),
   },
