@@ -38,6 +38,7 @@ function makeContext(): IpcContext {
     terminalSubmit: {
       submitContent: vi.fn(async () => undefined),
     },
+    terminalSubmitScheduler: { hasPending: vi.fn(() => false) },
   } as unknown as IpcContext;
 }
 
