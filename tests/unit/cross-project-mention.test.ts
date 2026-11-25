@@ -70,62 +70,72 @@ function makeResolver(extraProjects: Array<Partial<Project>>): RequestResolver {
   });
 }
 
+/** Names only, for the cases that are about WHICH projects matched. */
+function mentionedNames(resolver: RequestResolver, title: string, description = ''): string[] {
+  return detectCrossProjectMention(resolver, title, description).map((mention) => mention.name);
+}
+
+// Through the real resolver, so the active-project exclusion and the
+// registered list are the ones the tool sees. The matching rules themselves
+// are covered in project-mention.test.ts.
 describe('detectCrossProjectMention', () => {
   it('fires on a distinct dotted name even when it shares a prefix with the active project', () => {
     const resolver = makeResolver([{ name: 'kangentic.com' }]);
-    expect(detectCrossProjectMention(resolver, 'update the kangentic.com landing page')).toEqual([
-      'kangentic.com',
-    ]);
+    expect(mentionedNames(resolver, 'update the kangentic.com landing page')).toEqual(['kangentic.com']);
   });
 
   it('does not fire when only the active project name appears', () => {
     const resolver = makeResolver([{ name: 'kangentic.com' }]);
     // "kangentic" is the active project (excluded) and the bare word does
     // not satisfy the "kangentic.com" token boundary, so nothing matches.
-    expect(detectCrossProjectMention(resolver, 'work in kangentic on the bug')).toEqual([]);
+    expect(mentionedNames(resolver, 'work in kangentic on the bug')).toEqual([]);
   });
 
   it('does not fire when no registered project is mentioned', () => {
     const resolver = makeResolver([{ name: 'Acme-Website' }]);
-    expect(detectCrossProjectMention(resolver, 'fix the broken login form')).toEqual([]);
+    expect(mentionedNames(resolver, 'fix the broken login form')).toEqual([]);
   });
 
   it('matches multi-word names as an exact phrase', () => {
     const resolver = makeResolver([{ name: 'Agent Testing' }]);
-    expect(detectCrossProjectMention(resolver, 'file this under Agent Testing please')).toEqual([
-      'Agent Testing',
-    ]);
+    expect(mentionedNames(resolver, 'file this under Agent Testing please')).toEqual(['Agent Testing']);
   });
 
-  it('escapes regex metacharacters and matches case-insensitively', () => {
+  it('escapes regex metacharacters and matches an identifier-like name case-insensitively', () => {
     const resolver = makeResolver([{ name: 'ACME-WEB-PORTAL' }]);
-    expect(detectCrossProjectMention(resolver, 'add a bug to the acme-web-portal board')).toEqual([
-      'ACME-WEB-PORTAL',
-    ]);
+    expect(mentionedNames(resolver, 'add a bug to the acme-web-portal board')).toEqual(['ACME-WEB-PORTAL']);
   });
 
   it('treats a literal dot as a dot, not a wildcard', () => {
     const resolver = makeResolver([{ name: 'kangentic.com' }]);
     // If the dot were a wildcard, "kangenticXcom" would match. It must not.
-    expect(detectCrossProjectMention(resolver, 'see kangenticXcom for details')).toEqual([]);
+    expect(mentionedNames(resolver, 'see kangenticXcom for details')).toEqual([]);
   });
 
   it('does not match a name embedded inside a larger word', () => {
     const resolver = makeResolver([{ name: 'Sydor' }]);
-    expect(detectCrossProjectMention(resolver, 'the presydored release notes')).toEqual([]);
+    expect(mentionedNames(resolver, 'the presydored release notes')).toEqual([]);
   });
 
   it('skips names shorter than the minimum match length', () => {
     const resolver = makeResolver([{ name: 'QA' }]);
-    expect(detectCrossProjectMention(resolver, 'run the QA suite before shipping')).toEqual([]);
+    expect(mentionedNames(resolver, 'run the QA suite before shipping')).toEqual([]);
   });
 
   it('returns each matched project once even when mentioned repeatedly', () => {
     const resolver = makeResolver([{ name: 'Agent Testing' }, { name: 'Acme-Website' }]);
-    const result = detectCrossProjectMention(
-      resolver,
-      'move Agent Testing work to Acme-Website and keep Agent Testing in sync',
-    );
-    expect(result).toEqual(['Agent Testing', 'Acme-Website']);
+    expect(mentionedNames(resolver, 'move Agent Testing work to Acme-Website and keep Agent Testing in sync'))
+      .toEqual(['Agent Testing', 'Acme-Website']);
+  });
+
+  it('reads the title and the description separately, so a title hit is strong', () => {
+    const resolver = makeResolver([{ name: 'Acme-Website' }]);
+    expect(detectCrossProjectMention(resolver, 'Port the Acme-Website footer', '')).toEqual([
+      { name: 'Acme-Website', registeredName: 'Acme-Website', strength: 'strong', where: 'title' },
+    ]);
+    expect(detectCrossProjectMention(resolver, 'Port the footer', 'Ported from Acme-Website.')).toEqual([
+      { name: 'Acme-Website', registeredName: 'Acme-Website', strength: 'weak', where: 'mention' },
+    ]);
   });
 });
+
