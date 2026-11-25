@@ -31,7 +31,7 @@ Nineteen event types are tracked, all on critical-path actions only:
 | `app_launch` | App starts (when analytics is enabled) | platform, arch, clientId; from the second launch on, the previous run's lastRunUptimeSeconds, lastRunUptime (`<1m` / `1-5m` / `5-30m` / `30m-2h` / `2-8h` / `8h+`), lastRunExit (`clean` / `failsafe` / `abrupt`) |
 | `settings_snapshot` | Once per app run, right after `app_launch` | one key per global setting that differs from its default (see below), plus deviations (`0` / `1` / `2` / `3-5` / `6+`) |
 | `app_heartbeat` | Every 55 minutes while at least one agent session is active; skipped when idle. Also fires once right before system sleep if a session is active | activeSessions, suspendedSessions, queuedSessions, totalSessions |
-| `app_error` | Uncaught exception, unhandled rejection, renderer crash, React ErrorBoundary, updater failure, PTY spawn failure, or a worktree removal a kept process blocked | source, message (sanitized); see per-source extras below |
+| `app_error` | Uncaught exception, unhandled rejection, renderer crash, React ErrorBoundary, updater failure, PTY spawn failure, a worktree removal a kept process blocked, or a Done move's removal that failed `EBUSY` on the folder with no holder seen | source, message (sanitized); see per-source extras below |
 | `project_create` | User creates a project, through the New Project dialog or by adding a folder | (none) |
 | `project_relocate` | User re-points a project at another folder, either through the Locate Folder dialog (`repoint`) or the one-step Move in Project Settings > General (`move`) | mode (`repoint` / `move`) |
 | `task_complete` | Task moves to Done | agent, model, permissionMode, durationSeconds, costUsd, inputTokens, outputTokens, toolCalls |
