@@ -3380,8 +3380,9 @@ msgid "Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth cac
 msgstr "清除 Kangentic 瀏覽器的 Cookie、localStorage、IndexedDB、Service Worker 及 HTTP/驗證快取。已儲存的 URL 會保留。"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "With an error, the app's state as fixed ranges: time running, time since the computer woke, which window it came from, whether the window was showing or focused, and whether the processor was slowed"
-msgstr ""
+msgstr "隨錯誤一併收集的應用程式狀態（以固定範圍表示）：執行時間長度、電腦喚醒後經過的時間、錯誤來自哪個視窗、視窗當時是否顯示或處於焦點，以及處理器是否被降速"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Workflow agent"

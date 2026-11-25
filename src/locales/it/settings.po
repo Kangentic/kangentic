@@ -3956,8 +3956,9 @@ msgid "Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth cac
 msgstr "Cancella cookie, localStorage, IndexedDB, service worker e cache HTTP/auth del browser Kangentic. Gli URL salvati vengono mantenuti."
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "With an error, the app's state as fixed ranges: time running, time since the computer woke, which window it came from, whether the window was showing or focused, and whether the processor was slowed"
-msgstr ""
+msgstr "Con un errore, lo stato dell'app come intervalli fissi: tempo di esecuzione, tempo trascorso dalla riattivazione del computer, da quale finestra proviene, se la finestra era visibile o attiva e se il processore era rallentato"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
