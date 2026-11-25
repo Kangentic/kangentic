@@ -223,7 +223,7 @@ describe('captureScreenshot holds the guest for the capture', () => {
     // The error carries what the hold did, for the driver's report (DESKTOP-46).
     const assertion = expect(pending).rejects.toMatchObject({
       name: 'ScreenshotNotComposited',
-      message: expect.stringMatching(/not being composited/),
+      message: expect.stringMatching(/drew no frame/),
       hold: 'armed',
       hostState: 'visible',
       hostHold: 'settled',
