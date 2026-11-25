@@ -171,7 +171,7 @@ export interface BatchShimLaunch {
 export type BatchShimGiveUp =
   /** The file could not be read, or was too large to be a shim. */
   | 'unreadable'
-  /** No quoted target rooted at the shim's own folder. */
+  /** No quoted target rooted at the shim's own folder. `BatchShimShape` says what it had instead. */
   | 'unparsed'
   /** The target the shim names is not on disk. */
   | 'target_missing'
@@ -194,7 +194,36 @@ export type BatchShimGiveUp =
    */
   | 'node_path';
 
-type BatchShimOutcome = { launch: BatchShimLaunch } | { gaveUp: BatchShimGiveUp };
+/**
+ * What the program line of a shim that gave up `unparsed` looked like, as a
+ * fixed word read from its text and never the text itself. Sent as the
+ * `batch_shim_shape` tag, so a report says which shape to support next: Sentry
+ * DESKTOP-3Y recurred on 0.63.0 as a Claude shim that was `unparsed` and
+ * nothing more.
+ */
+export type BatchShimShape =
+  /** The target is quoted and names its drive or share, as scoop's and hand-written wrappers do. */
+  | 'absolute_path'
+  /** The target is quoted and rooted at a `%NAME%` other than the shim's own folder (`%LOCALAPPDATA%`). */
+  | 'env_var_path'
+  /** The shim's own folder with no quotes around it (`node %~dp0cli.js %*`). */
+  | 'unquoted_shim_folder'
+  /** A program line with no quotes and no shim folder (`C:\tools\claude.exe %*`). */
+  | 'unquoted_program'
+  /** A `call`, or a program that is itself a `.cmd` or `.bat`. */
+  | 'calls_batch'
+  /** No line passes the arguments on (`%*`), comments and `echo` aside. */
+  | 'no_program_line'
+  /** A program line none of the above fits, such as a quoted relative path. */
+  | 'other';
+
+/** Why a shim was not read past, and, for one that did not parse, its shape. */
+export interface BatchShimGiveUpDetail {
+  gaveUp: BatchShimGiveUp;
+  shape?: BatchShimShape;
+}
+
+type BatchShimOutcome = { launch: BatchShimLaunch } | BatchShimGiveUpDetail;
 
 /**
  * The most shims one launch reads through: the shim on the command line and
@@ -262,13 +291,94 @@ function batchWords(text: string): string[] {
   return text.match(/"[^"]*"|[&|()]+|[^\s"&|()]+/g) ?? [];
 }
 
+/** A word with the quotes around it taken off. */
+function unquoted(word: string): string {
+  return word.replace(/^"|"$/g, '');
+}
+
+/**
+ * The words of the command `text` ends in: those after its last `&`, `|`, `(`
+ * or `)`. An echo-off `@` stands alone ahead of a quoted program and is taken
+ * off; one that leads a bare program stays on its word.
+ */
+function lastCommandWords(text: string): string[] {
+  const words = batchWords(text);
+  const commandWords = words.slice(words.findLastIndex((word) => /^[&|()]+$/.test(word)) + 1);
+  if (commandWords[0] === '@') commandWords.shift();
+  return commandWords;
+}
+
+/** A line cmd reads no further: a comment, which an `&` after it does not end. */
+const COMMENT_LINE = /^@?\s*(?:rem(?:\s|$)|::)/i;
+
+/** A command that starts no program: an `echo` (`echo off`, `echo.`, `echo(`), or a comment after an `&`. */
+const NON_PROGRAM_COMMAND = /^@?\s*(?:echo(?!\w)|rem(?:\s|$)|::)/i;
+
+/** A word that is the shim's own folder. */
+const SHIM_FOLDER_REFERENCE = new RegExp(SHIM_FOLDER_ROOT, 'i');
+
+/** A word rooted at a `%NAME%`. Group 1 is the name. */
+const VARIABLE_ROOT = /^%(~?\w+)%/;
+
+/**
+ * The command a line hands its arguments to: the text before its last `%*`,
+ * from the last `&` or `|` outside quotes. `@echo off & "C:\tools\claude.exe" %*`
+ * hands them to the program, not to the `echo`.
+ */
+function commandBeforeArguments(line: string): string {
+  const beforeArguments = line.slice(0, line.lastIndexOf('%*'));
+  let commandStart = 0;
+  let quoted = false;
+  for (let index = 0; index < beforeArguments.length; index++) {
+    const character = beforeArguments[index];
+    if (character === '"') quoted = !quoted;
+    else if (!quoted && (character === '&' || character === '|')) commandStart = index + 1;
+  }
+  return beforeArguments.slice(commandStart).trim();
+}
+
+/**
+ * The shape of a shim's program line (`BatchShimShape`). A `^` at a line's end
+ * joins it to the next, as cmd joins them. The program line is the last line
+ * whose command passes the arguments on, as the script is the last argument
+ * `parseNpmShimTarget` keeps. Only that command is read, from its last `&`, `|`
+ * or `(`, and of it, the last quoted word before `%*`, which is the target.
+ */
+export function batchShimShapeOf(content: string): BatchShimShape {
+  const programCommand = content
+    .replace(/\^\r?\n/g, '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.includes('%*') && !COMMENT_LINE.test(line))
+    .map(commandBeforeArguments)
+    .filter((command) => !NON_PROGRAM_COMMAND.test(command))
+    .at(-1);
+  if (programCommand === undefined) return 'no_program_line';
+
+  const commandWords = lastCommandWords(programCommand);
+  const programWord = unquoted((commandWords[0] ?? '').replace(/^@/, ''));
+  if (/^call$/i.test(programWord) || isWindowsBatchShim(programWord)) return 'calls_batch';
+  // A `set ARGS=%*` keeps the arguments for a later line that names no `%*`.
+  if (/^set$/i.test(programWord)) return 'other';
+
+  const quotedWord = commandWords.filter((word) => word.startsWith('"')).at(-1);
+  if (quotedWord === undefined) {
+    return commandWords.some((word) => SHIM_FOLDER_REFERENCE.test(word)) ? 'unquoted_shim_folder' : 'unquoted_program';
+  }
+  const target = unquoted(quotedWord);
+  if (FULLY_QUALIFIED_WINDOWS_PATH.test(target)) return 'absolute_path';
+  const variable = VARIABLE_ROOT.exec(target);
+  if (variable && !/^~?dp0$/i.test(variable[1])) return 'env_var_path';
+  return 'other';
+}
+
 /**
  * What a program word may stand for, as the shim spells it. A `"%_prog%"` is
  * every value the shim sets that variable to, which in npm's shim is the
  * program beside the shim and the bare name.
  */
 function programSpellings(word: string, content: string): string[] {
-  const spelling = word.replace(/^"|"$/g, '');
+  const spelling = unquoted(word);
   const variable = /^%(\w+)%$/.exec(spelling);
   if (!variable) return [spelling];
   const assignments = new RegExp(`${BATCH_SET}${variable[1]}=([^"\\r\\n]*)`, 'gim');
@@ -339,11 +449,7 @@ function powerShellLaunchOf(
       const insideQuotes = (beforeTarget.match(/"/g)?.length ?? 0) % 2 !== 0;
       if (afterTarget !== '%*' || insideQuotes) return null;
 
-      const words = batchWords(beforeTarget);
-      const commandWords = words.slice(words.findLastIndex((word) => /^[&|()]+$/.test(word)) + 1);
-      // An echo-off `@` stands alone ahead of a quoted program, and leads a bare one.
-      if (commandWords[0] === '@') commandWords.shift();
-      const [programWord, ...lineFlags] = commandWords;
+      const [programWord, ...lineFlags] = lastCommandWords(beforeTarget);
       if (programWord === undefined || !lineFlags.every((flag) => PLAIN_FLAG.test(flag))) return null;
       if (flags !== null && flags.join(' ') !== lineFlags.join(' ')) return null;
       flags = lineFlags;
@@ -433,7 +539,8 @@ function shimChainOutcome(
   try {
     const relativeTarget = parseNpmShimTarget(content);
     const target = relativeTarget === null ? null : underShimFolder(shimPath, relativeTarget);
-    if (relativeTarget === null || target === null) return { gaveUp: 'unparsed' };
+    // The shape of the shim that gave up, an inner one of a chain included.
+    if (relativeTarget === null || target === null) return { gaveUp: 'unparsed', shape: batchShimShapeOf(content) };
     if (!fileExists(target)) return { gaveUp: 'target_missing' };
     if (/\.exe$/i.test(target)) return { launch: { program: target, script: null } };
     if (isWindowsBatchShim(target)) {
@@ -469,10 +576,18 @@ export function directLaunchOfBatchShim(
   return 'launch' in outcome ? outcome.launch : null;
 }
 
-/** Why `directLaunchOfBatchShim` gave up on a shim, or null when it did not. */
+/** Why `directLaunchOfBatchShim` gave up on a shim, or null when it did not: `batchShimGiveUpDetailOf`'s word alone. */
 export function batchShimGiveUpOf(shimPath: string, dependencies: NpmShimTargetDependencies = {}): BatchShimGiveUp | null {
+  return batchShimGiveUpDetailOf(shimPath, dependencies)?.gaveUp ?? null;
+}
+
+/** Why `directLaunchOfBatchShim` gave up on a shim, with the shape of one that did not parse, or null when it did not. */
+export function batchShimGiveUpDetailOf(
+  shimPath: string,
+  dependencies: NpmShimTargetDependencies = {},
+): BatchShimGiveUpDetail | null {
   const outcome = batchShimLaunchOutcome(shimPath, dependencies);
-  return 'gaveUp' in outcome ? outcome.gaveUp : null;
+  return 'gaveUp' in outcome ? outcome : null;
 }
 
 function readShimFromDisk(candidatePath: string): string {

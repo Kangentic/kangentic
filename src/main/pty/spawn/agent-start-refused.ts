@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import type { StartBlockedReason } from '../../../shared/types';
-import type { BatchShimGiveUp } from '../../agent/shared/npm-shim-target';
+import type { BatchShimGiveUp, BatchShimShape } from '../../agent/shared/npm-shim-target';
 
 // The refusals of an agent's start that come before it has a PTY. A module of
 // its own, importing nothing that reports, so the launch report can read a
@@ -76,12 +76,14 @@ export class AgentCommandTooLongError extends AgentStartRefusedError {
  *
  * Reportable on purpose, unlike `AgentCommandTooLongError`: a shim this cannot
  * resolve is a gap in the launcher, not the user's prompt, and `shimGaveUp`
- * (the `batch_shim` tag) says which shape to support next.
+ * (the `batch_shim` tag) says which shape to support next. For a shim that did
+ * not parse, `shimShape` (the `batch_shim_shape` tag) says what its program line
+ * looked like, read from its text and never the text itself (Sentry DESKTOP-3Y).
  */
 export class AgentBatchShimUnresolvedError extends AgentStartRefusedError {
   readonly reason: StartBlockedReason = 'prompt-too-long';
 
-  constructor(readonly shimGaveUp: BatchShimGiveUp) {
+  constructor(readonly shimGaveUp: BatchShimGiveUp, readonly shimShape?: BatchShimShape) {
     super(PROMPT_TOO_LONG_MESSAGE);
     this.name = 'AgentBatchShimUnresolvedError';
   }

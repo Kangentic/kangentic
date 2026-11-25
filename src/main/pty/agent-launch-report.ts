@@ -426,8 +426,12 @@ function errorShapeTags(error: unknown): Record<string, string> {
   // folder), which its redacted path cannot say. Sentry DESKTOP-2P could not.
   if (error instanceof AgentStartRefusedError) tags.start_refused_reason = error.reason;
   // A fixed word: why a `.cmd` shim could not be read past (Sentry DESKTOP-3R
-  // could not say which shim its user had).
-  if (error instanceof AgentBatchShimUnresolvedError) tags.batch_shim = error.shimGaveUp;
+  // could not say which shim its user had). With `unparsed`, `batch_shim_shape`
+  // says what the shim's program line looked like (DESKTOP-3Y named none).
+  if (error instanceof AgentBatchShimUnresolvedError) {
+    tags.batch_shim = error.shimGaveUp;
+    if (error.shimShape) tags.batch_shim_shape = error.shimShape;
+  }
   if (error instanceof WorktreeSetupScriptError) Object.assign(tags, setupScriptTags(error));
   return tags;
 }
@@ -1248,7 +1252,14 @@ function readPrintedOutput(readOutput: LaunchOutputReader): Promise<PrintedOutpu
  * nothing more. Its one report is claimed before the read answers, so no other
  * stage can send beside it. The cause stays `no_conversation` whatever the
  * output says, since the issue is grouped on it. `claimLaunchReport` keys on the
- * agent and attempt, so both go in the tags.
+ * agent and attempt, so both go in the tags: the agent from the capture window,
+ * the attempt from `launchTagsOf`.
+ *
+ * It carries the launch tags every other launch report sends (`launchTagsOf`),
+ * read now, beneath the capture window's tags, which win where both name a fact.
+ * Sentry DESKTOP-4Z printed cmd's "cannot find the path" with no `command_head`,
+ * so it could not say whether the missing path was the CLI's own or one the CLI
+ * runs.
  */
 function reportExitedWithNoConversation(
   session: ManagedSession,
@@ -1262,7 +1273,7 @@ function reportExitedWithNoConversation(
     return;
   }
   session.launchFailureNoted = true;
-  const tags = { attempt: attemptOf(session.startPath), ...captureTags, ...exitFactTags(session) };
+  const tags = { ...launchTagsOf(session), ...captureTags, ...exitFactTags(session) };
   void printed.then((output) => {
     if (isShuttingDown()) return;
     const { outputClass, readTags } = 'text' in output

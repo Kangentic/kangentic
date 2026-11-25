@@ -186,7 +186,8 @@ a batch file does not read a line the way a prompt does:
   read or parse, a target that is gone, a target that is not a program, a Node script or a `.ps1`,
   a `.ps1` the shim does not hand to one PowerShell this can start, a chain past the bound, or a
   Node script or `.ps1` whose chain sets `NODE_PATH`. An agent's start is refused before its PTY (`launchRefusal`, `AgentBatchShimUnresolvedError`) with the card reason a command too
-  long for its shell gets, and the report names why the shim gave up (`batch_shim`). Sentry
+  long for its shell gets, and the report names why the shim gave up (`batch_shim`, and for one
+  that did not parse, `batch_shim_shape`, what its program line looked like). Sentry
   DESKTOP-3Q and DESKTOP-3R were such starts, which used to type the refusal below and show a
   working agent for 30 to 60 s. A raw command still types `echo The command line is too long.`,
   which reports like cmd's own refusal.
@@ -222,7 +223,8 @@ a batch file does not read a line the way a prompt does:
   - one that calls the script with no program, as npm's does for a `.ps1` with no shebang (cmd
     hands that to the `.ps1` file association, which is not a PowerShell this can name),
   - one that hands it to another program, or whose lines name two starts (Scoop's picks `pwsh` or
-    `powershell` when it runs, and quotes an absolute path, so it reads as `unparsed` first),
+    `powershell` when it runs, and quotes an absolute path, so it reads as `unparsed` first, with
+    the shape `absolute_path`),
   - a flag that would need quoting or that holds a `/` (Git Bash rewrites a word that starts with
     one, such as `/NoProfile`, into a path), an argument or a second command of the shim's own
     after the script, a script inside a longer quoted string (`-Command "& ... %*"`), or a program
@@ -269,7 +271,8 @@ in a WSL distro too. `commandFitsShell` measures a built command against these, 
 refuses an agent's command that does not fit
 ([A prompt too long for its command line](../architecture/sessions/spawn-flow.md#a-prompt-too-long-for-its-command-line)).
 It asks `launchRefusal`, which also refuses a launch past the typed budget whose `.cmd` shim cannot
-be read past (`AgentBatchShimUnresolvedError`, with the `batch_shim` tag), under any Windows shell.
+be read past (`AgentBatchShimUnresolvedError`, with the `batch_shim` tag, and `batch_shim_shape` for
+one that did not parse), under any Windows shell.
 A raw command has no such refusal and types the named one instead.
 
 `tests/unit/typed-launch-round-trip.test.ts` runs both lines through real shells with a controlled

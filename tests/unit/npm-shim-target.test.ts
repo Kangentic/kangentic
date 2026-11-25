@@ -17,6 +17,7 @@ import {
   missingNpmShimTarget,
   directLaunchOfBatchShim,
   batchShimGiveUpOf,
+  batchShimGiveUpDetailOf,
   MAX_SHIM_HOPS,
 } from '../../src/main/agent/shared/npm-shim-target';
 import {
@@ -29,6 +30,7 @@ import {
   pnpmCmdShim,
   pnpmPs1CmdShim,
   powerShellTrampolineCmdShim,
+  scoopPs1CmdShim,
 } from '../fixtures/npm-shim-fixtures';
 
 const CMD_TARGET = 'node_modules\\@google\\gemini-cli\\bundle\\gemini.js';
@@ -94,6 +96,69 @@ describe('directLaunchOfBatchShim', () => {
     const unreadable = { readFile: (): string => { throw new Error('EACCES'); }, fileExists: () => true };
     expect(directLaunchOfBatchShim(shimPath, unreadable)).toBeNull();
     expect(batchShimGiveUpOf(shimPath, unreadable)).toBe('unreadable');
+  });
+
+  // Sentry DESKTOP-3Y recurred on 0.63.0 as `unparsed`, which named no shape to
+  // support next. The shape is read from the shim's text and is never the text.
+  describe('names the shape of a shim it cannot parse', () => {
+    /** A wrapper with a comment that passes `%*` too, so a comment line is never read as the program line. */
+    function wrapper(programLine: string): string {
+      return ['@echo off', 'rem forwards every argument: %*', programLine, ''].join('\r\n');
+    }
+
+    it.each([
+      ['a quoted program path with a drive', '"C:\\tools\\claude\\claude.exe" %*', 'absolute_path'],
+      ['a quoted program path on a share', '"\\\\server\\share\\claude.exe" %*', 'absolute_path'],
+      ['a quoted script path with a drive behind a bare node', 'node "D:\\apps\\claude\\cli.js" %*', 'absolute_path'],
+      ['a target under another folder variable', '"%LOCALAPPDATA%\\Programs\\claude\\claude.exe" %*', 'env_var_path'],
+      ['the shim folder with no quotes', 'node %~dp0cli.js %*', 'unquoted_shim_folder'],
+      ['a program line with no quotes', 'C:\\tools\\claude.exe %*', 'unquoted_program'],
+      ['a call to another batch file', 'call "%APPDATA%\\npm\\claude.cmd" %*', 'calls_batch'],
+      ['a batch file run with no call', '"C:\\tools\\claude.bat" %*', 'calls_batch'],
+      ['a quoted relative path', '"..\\lib\\claude.exe" %*', 'other'],
+      ['only node.exe beside the shim, which is not in the shim folder family', '"%dp0%\\node.exe" %*', 'other'],
+      ['a call after an ampersand, where only the command after it is read', 'cd /d "C:\\work" & call "C:\\tools\\claude.cmd" %*', 'calls_batch'],
+      ['the shim folder with no quotes after an ampersand', 'cd /d "C:\\work" & node %~dp0cli.js %*', 'unquoted_shim_folder'],
+      ['a batch file behind an echo-off at sign', '@"C:\\tools\\claude.bat" %*', 'calls_batch'],
+      ['a call behind an echo-off at sign', '@call "%APPDATA%\\npm\\claude.cmd" %*', 'calls_batch'],
+      ['a call in upper case', 'CALL "C:\\tools\\claude.cmd" %*', 'calls_batch'],
+      ['the shim folder spelled %dp0% with no quotes', 'node %dp0%\\cli.js %*', 'unquoted_shim_folder'],
+      ['two program lines, where the last one wins', '"C:\\a\\first.exe" %*\r\n"..\\b\\second.exe" %*', 'other'],
+      ['an echo-off before an ampersand, where the program gets the arguments', '@echo off & "C:\\tools\\claude.exe" %*', 'absolute_path'],
+      ['a path with spaces and parentheses behind an echo-off at sign', '@"C:\\Program Files (x86)\\claude\\claude.exe" %*', 'absolute_path'],
+      ['a caret continuation that joins the arguments to the program', '"C:\\tools\\claude.exe" ^\r\n  %*', 'absolute_path'],
+      ['arguments kept in a variable for a later line', 'set "CLAUDE_ARGS=%*"\r\n"C:\\tools\\claude.exe" %CLAUDE_ARGS%', 'other'],
+    ])('%s', (_label, programLine, shape) => {
+      const dependencies = { readFile: () => wrapper(programLine), fileExists: () => true };
+      expect(batchShimGiveUpDetailOf(shimPath, dependencies)).toEqual({ gaveUp: 'unparsed', shape });
+      expect(batchShimGiveUpOf(shimPath, dependencies)).toBe('unparsed');
+    });
+
+    it('says when no line passes the arguments on', () => {
+      const content = '@echo off\r\nrem %*\r\n:: %*\r\necho %*\r\necho(%*\r\n@echo off & rem %*\r\n';
+      const dependencies = { readFile: () => content, fileExists: () => true };
+      expect(batchShimGiveUpDetailOf(shimPath, dependencies)).toEqual({ gaveUp: 'unparsed', shape: 'no_program_line' });
+    });
+
+    it('reads a shim with LF line endings and a shim folder in upper case', () => {
+      const dependencies = { readFile: () => '@echo off\nnode %~DP0cli.js %*\n', fileExists: () => true };
+      expect(batchShimGiveUpDetailOf(shimPath, dependencies)).toEqual({ gaveUp: 'unparsed', shape: 'unquoted_shim_folder' });
+    });
+
+    it('names scoop\'s shim for a PowerShell script as an absolute path and starts nothing', () => {
+      const scoopShim = scoopPs1CmdShim('C:\\Users\\dev\\scoop\\apps\\scoop\\current\\bin\\scoop.ps1');
+      const dependencies = { readFile: () => scoopShim, fileExists: () => true };
+      expect(batchShimGiveUpDetailOf(shimPath, dependencies)).toEqual({ gaveUp: 'unparsed', shape: 'absolute_path' });
+      expect(directLaunchOfBatchShim(shimPath, dependencies)).toBeNull();
+    });
+
+    it('gives no shape for an npm shim, which still parses, or a give-up that is not unparsed', () => {
+      const parsed = { readFile: () => npmCmdShim(CMD_TARGET), fileExists: (candidate: string) => candidate === target };
+      expect(directLaunchOfBatchShim(shimPath, parsed)).toEqual({ program: 'node', script: target });
+      expect(batchShimGiveUpDetailOf(shimPath, parsed)).toBeNull();
+      const gone = { readFile: () => npmCmdShim(CMD_TARGET), fileExists: () => false };
+      expect(batchShimGiveUpDetailOf(shimPath, gone)).toEqual({ gaveUp: 'target_missing' });
+    });
   });
 
   // Sentry DESKTOP-3Y gave up with one word for every such target, so the
@@ -510,9 +575,11 @@ describe('directLaunchOfBatchShim', () => {
     it('passes on why an inner shim gave up', () => {
       const dependencies = filesOf({
         [shimPath]: npmDirectCmdShim('node_modules\\.bin\\claude.cmd'),
-        [innerShimPath]: '@echo hello',
+        [innerShimPath]: '@echo off\r\n"C:\\tools\\claude.exe" %*\r\n',
       });
       expect(batchShimGiveUpOf(shimPath, dependencies)).toBe('unparsed');
+      // The shape is the inner shim's, the one that could not be read past.
+      expect(batchShimGiveUpDetailOf(shimPath, dependencies)).toEqual({ gaveUp: 'unparsed', shape: 'absolute_path' });
     });
 
     it(`gives up on a chain longer than ${MAX_SHIM_HOPS} shims`, () => {

@@ -12,7 +12,7 @@ import {
   toWslPath,
 } from '../../../shared/paths';
 import { quoteCmdExecutable, shellProgramName } from '../../../shared/shell-quote';
-import { isWindowsBatchShim, type BatchShimGiveUp, type BatchShimLaunch } from '../../agent/shared/npm-shim-target';
+import { isWindowsBatchShim, type BatchShimGiveUpDetail, type BatchShimLaunch } from '../../agent/shared/npm-shim-target';
 import {
   AgentBatchShimUnresolvedError,
   AgentCommandTooLongError,
@@ -221,15 +221,16 @@ export function launchRefusal(input: {
   shell: string;
   platform: NodeJS.Platform;
   typedLaunch: TypedLaunch | null;
-  /** Why the shim gave up (`batchShimGiveUpOf`). Production reads the file again; tests inject. */
-  shimGaveUp: (shimPath: string) => BatchShimGiveUp | null;
+  /** Why the shim gave up, and its shape when it did not parse (`batchShimGiveUpDetailOf`). Production reads the file again; tests inject. */
+  shimGiveUpDetailOf: (shimPath: string) => BatchShimGiveUpDetail | null;
 }): AgentStartRefusedError | null {
   if (!commandFitsShell(input)) return new AgentCommandTooLongError();
   const shimPath = input.typedLaunch?.refusedShimPath;
   if (!shimPath) return null;
   // The shim was read moments ago and could not be resolved. Read again only to
   // name why; a file that changed in between names whatever it says now.
-  return new AgentBatchShimUnresolvedError(input.shimGaveUp(shimPath) ?? 'unreadable');
+  const giveUpDetail = input.shimGiveUpDetailOf(shimPath);
+  return new AgentBatchShimUnresolvedError(giveUpDetail?.gaveUp ?? 'unreadable', giveUpDetail?.shape);
 }
 
 /**
