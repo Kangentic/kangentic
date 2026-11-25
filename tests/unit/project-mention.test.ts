@@ -156,6 +156,12 @@ describe('findProjectMentions: linear time on one huge token', () => {
     // INLINE_CODE. A bare run of backticks at the start of a line is read as a
     // fence and never reaches the inline pattern, so a prefix keeps it inline.
     ['a long backtick run inside a line', `x ${'`'.repeat(300_000)}`],
+    // URL: a dotted chain, the other shape the capped scheme pattern guards.
+    ['a long dotted chain', 'a.'.repeat(150_000)],
+    // INLINE_CODE: a single backtick that never closes, from every position.
+    ['many unclosed backticks on one line', 'x ` a '.repeat(50_000)],
+    // Fence scan: every line opens or closes a block.
+    ['a fence marker on every line', '```\n'.repeat(100_000)],
   ];
 
   for (const [label, text] of hugeTokens) {
@@ -167,6 +173,16 @@ describe('findProjectMentions: linear time on one huge token', () => {
       expect(elapsed).toBeLessThan(BUDGET_MS);
     });
   }
+
+  it('finishes fast when the name itself repeats tens of thousands of times', () => {
+    // Each hit is classified from an 80-character window, so the cost grows with
+    // the hit count, not with the text length squared.
+    const startedAt = performance.now();
+    const found = findProjectMentions(projects('Lumen'), '', 'Lumen '.repeat(50_000));
+    const elapsed = performance.now() - startedAt;
+    expect(found).toEqual([{ name: 'Lumen', registeredName: 'Lumen', strength: 'weak', where: 'mention' }]);
+    expect(elapsed).toBeLessThan(BUDGET_MS);
+  });
 });
 
 describe('findProjectMentions: fences and paths', () => {
@@ -285,6 +301,19 @@ describe('findProjectMentions: Unicode', () => {
     expect(isCommonWordName('\u00c9clair')).toBe(true);
     expect(namesIn('ported from \u00e9clair', '\u00c9clair')).toEqual([]);
     expect(namesIn('ported from \u00c9clair', '\u00c9clair')).toEqual(['\u00c9clair']);
+  });
+
+  it('treats a digit or a non-Latin letter next to the name as part of a longer word', () => {
+    expect(namesIn('Ported from Lumen2.', 'Lumen')).toEqual([]);
+    expect(namesIn('Ported from 2Lumen.', 'Lumen')).toEqual([]);
+    // Cyrillic capital Zhe, on each side.
+    expect(namesIn('Ported from Lumen\u0416.', 'Lumen')).toEqual([]);
+    expect(namesIn('Ported from \u0416Lumen.', 'Lumen')).toEqual([]);
+  });
+
+  it('matches an identifier-like name with accented letters in any case', () => {
+    expect(namesIn('Ported from CAF\u00c9-API.', 'caf\u00e9-api')).toEqual(['caf\u00e9-api']);
+    expect(namesIn('Ported from caf\u00e9-api.', 'CAF\u00c9-API')).toEqual(['CAF\u00c9-API']);
   });
 });
 
