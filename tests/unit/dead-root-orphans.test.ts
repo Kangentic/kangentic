@@ -360,6 +360,10 @@ interface FakePty {
   pty: nodePty.IPty;
   exit(exitCode: number): void;
   consoleInput: string[];
+  /** The console input's `destroy`, which node-pty's own kill and exit never call. */
+  destroyInput: ReturnType<typeof vi.fn>;
+  /** Every write to the console input, kill and destroy, in the order they happened. */
+  callOrder: string[];
 }
 
 /**
@@ -370,6 +374,13 @@ interface FakePty {
 function createFakePty(pid: number, beforeExit: () => void = () => undefined): FakePty {
   let exitListener: ((event: { exitCode: number }) => void) | null = null;
   const consoleInput: string[] = [];
+  const callOrder: string[] = [];
+  const inSocket = {
+    writable: true,
+    destroyed: false,
+    write: (data: string) => { consoleInput.push(data); callOrder.push('write'); return true; },
+    destroy: vi.fn(() => { inSocket.destroyed = true; callOrder.push('destroy'); }),
+  };
   const pty = {
     pid,
     cols: 120,
@@ -381,10 +392,10 @@ function createFakePty(pid: number, beforeExit: () => void = () => undefined): F
     },
     write: vi.fn(),
     resize: vi.fn(),
-    kill: vi.fn(),
+    kill: vi.fn(() => { callOrder.push('kill'); }),
     pause: vi.fn(),
     resume: vi.fn(),
-    _agent: { inSocket: { writable: true, destroyed: false, write: (data: string) => { consoleInput.push(data); return true; } } },
+    _agent: { inSocket },
   } as unknown as nodePty.IPty;
   return {
     pty,
@@ -393,6 +404,8 @@ function createFakePty(pid: number, beforeExit: () => void = () => undefined): F
       exitListener?.({ exitCode });
     },
     consoleInput,
+    destroyInput: inSocket.destroy,
+    callOrder,
   };
 }
 
@@ -528,6 +541,30 @@ describe('PtyHostCore: a shell that exits on its own', () => {
     table.exit(600);
     await vi.advanceTimersByTimeAsync(DEAD_ROOT_ORPHAN_EXIT_GRACE_MS * 2);
     expect(rig.fakeFor(ROOT_PID).pty.kill).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes the exited console\'s input only after the cleanup is done writing to it, and after the kill', async () => {
+    const table = new FakeProcessTable([
+      { pid: 600, ppid: ROOT_PID, image: 'claude.exe', startedAtMs: SPAWNED_AT + 2_000 },
+    ]);
+    const rig = makeCore({ table });
+    await spawnPinned(rig);
+    rig.setClock(EXITED_AT);
+    rig.fakeFor(ROOT_PID).exit(1);
+    await vi.advanceTimersByTimeAsync(0);
+
+    const fake = rig.fakeFor(ROOT_PID);
+    // The cleanup has written the ask and is waiting out the grace on the agent.
+    expect(fake.consoleInput).toEqual(CLAUDE_EXIT_SEQUENCE);
+    expect(fake.destroyInput).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(DEAD_ROOT_ORPHAN_POLL_MS * 3);
+    expect(fake.destroyInput).not.toHaveBeenCalled();
+
+    table.exit(600);
+    await vi.advanceTimersByTimeAsync(DEAD_ROOT_ORPHAN_EXIT_GRACE_MS * 2);
+
+    expect(fake.destroyInput).toHaveBeenCalledTimes(1);
+    expect(fake.callOrder).toEqual([...CLAUDE_EXIT_SEQUENCE.map(() => 'write'), 'kill', 'destroy']);
   });
 
   it('asks with the pid node-pty set after spawn() returned, not the 0 it read at the spawn', async () => {

@@ -9,7 +9,7 @@ import { describe, it, expect, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
-import { writeToExitedConsole } from '../../src/main/pty/spawn/exited-console-input';
+import { releaseConsoleInput, writeToExitedConsole } from '../../src/main/pty/spawn/exited-console-input';
 
 function fakeTerminal(input: { writable?: boolean; destroyed?: boolean; throws?: boolean } = {}) {
   const write = vi.fn((_data: string) => {
@@ -59,6 +59,38 @@ describe('writeToExitedConsole', () => {
     // A second ask on the same pipe adds no second listener.
     writeToExitedConsole(terminal, ['/exit\r']);
     expect(inSocket.listenerCount('error')).toBe(1);
+  });
+
+  describe('releaseConsoleInput', () => {
+    it('destroys a live input once, and a second call does not destroy it again', () => {
+      const destroy = vi.fn();
+      const inSocket = { destroyed: false, write: vi.fn(), destroy };
+      const terminal = { _agent: { inSocket } };
+
+      releaseConsoleInput(terminal);
+      expect(destroy).toHaveBeenCalledTimes(1);
+
+      // A real socket reports destroyed once destroy() ran.
+      inSocket.destroyed = true;
+      releaseConsoleInput(terminal);
+      expect(destroy).toHaveBeenCalledTimes(1);
+    });
+
+    it('does nothing for an input that is already destroyed', () => {
+      const destroy = vi.fn();
+      releaseConsoleInput({ _agent: { inSocket: { destroyed: true, write: vi.fn(), destroy } } });
+      expect(destroy).not.toHaveBeenCalled();
+    });
+
+    it('does not throw for an input with no destroy', () => {
+      expect(() => releaseConsoleInput({ _agent: { inSocket: { destroyed: false, write: vi.fn() } } })).not.toThrow();
+    });
+
+    it('does not throw for a PTY with no ConPTY agent or input', () => {
+      expect(() => releaseConsoleInput(null)).not.toThrow();
+      expect(() => releaseConsoleInput({})).not.toThrow();
+      expect(() => releaseConsoleInput({ _agent: {} })).not.toThrow();
+    });
   });
 
   it('matches the private fields of the installed node-pty', () => {
