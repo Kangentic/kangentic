@@ -39,8 +39,10 @@ vi.mock('../../src/main/workflows/workflow-service', () => ({
 }));
 
 vi.mock('../../src/main/workflows/workflow-view-service', () => ({
+  addCardBlocker: vi.fn(),
   addViewTask: vi.fn(),
   createWorkflowForView: vi.fn(),
+  listJoinCandidates: vi.fn(),
   listWorkflowSummaries: vi.fn(),
   listWorkflowSupersessions: vi.fn(),
   readWorkflowDetail: vi.fn(),

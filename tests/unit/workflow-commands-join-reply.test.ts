@@ -31,8 +31,10 @@ vi.mock('../../src/main/workflows/workflow-runtime', async (importOriginal) => {
   return { ...actual, requireWorkflowRuntimeContext: () => ({}) };
 });
 
+import type { ZodType } from 'zod/v4';
 import { commandHandlers } from '../../src/main/agent/commands';
 import type { CommandContext } from '../../src/main/agent/commands/types';
+import { registerWorkflowTools } from '../../src/main/agent/mcp-http/workflow-tools';
 
 const context = { projectId: 'proj-1' } as unknown as CommandContext;
 const workflow = { id: 'wf-1', title: 'Release 0.63.1' };
@@ -103,5 +105,45 @@ describe('kangentic_add_workflow_task waitsFor', () => {
 
     const input = addWorkflowTask.mock.calls[0][3] as { waitsFor: unknown };
     expect(input.waitsFor).toBeNull();
+  });
+});
+
+/**
+ * An agent's call reaches the handler above only through the tool's zod schema
+ * (src/main/agent/mcp-http/workflow-tools.ts), so a schema that took only
+ * strings would refuse a number on another board before the handler saw it.
+ */
+describe('kangentic_add_workflow_task schema for waitsFor', () => {
+  function addTaskSchema(): ZodType {
+    const schemas = new Map<string, ZodType>();
+    const server = {
+      registerTool: (toolName: string, toolConfig: { inputSchema: ZodType }) => {
+        schemas.set(toolName, toolConfig.inputSchema);
+      },
+    };
+    registerWorkflowTools(server as never, {} as never);
+    const schema = schemas.get('kangentic_add_workflow_task');
+    if (!schema) throw new Error('kangentic_add_workflow_task was not registered');
+    return schema;
+  }
+
+  it('accepts a number or id, and a task with or without its project', () => {
+    const parsed = addTaskSchema().safeParse({
+      workflow: 'Release 0.63.1',
+      title: 'Release',
+      waitsFor: ['1208', { task: '5', project: 'kangentic-mobile' }, { task: '6' }],
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it('refuses an entry that names a project but no task', () => {
+    const parsed = addTaskSchema().safeParse({
+      workflow: 'Release 0.63.1',
+      title: 'Release',
+      waitsFor: [{ project: 'kangentic-mobile' }],
+    });
+
+    expect(parsed.success).toBe(false);
   });
 });
