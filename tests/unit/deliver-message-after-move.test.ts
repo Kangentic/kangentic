@@ -43,6 +43,7 @@ vi.mock('../../src/main/held-messages/held-messages', () => ({ holdTaskMessage: 
 vi.mock('../../src/main/workflows/workflow-step', () => ({ workflowStepApplies: hoisted.workflowStepApplies }));
 
 const { deliverMessageAfterMove } = await import('../../src/main/automations/turn-end/deliver-message');
+const { PasteSubmitError } = await import('../../src/main/pty/paste-engine');
 const {
   supersedeTurnEndWork, takeMoveFollowUpMessage, hasMoveFollowUp, hasPendingMessageDelivery,
 } = await import('../../src/main/automations/turn-end/turn-end-passes');
@@ -269,6 +270,26 @@ describe('deliverMessageAfterMove', () => {
 
     expect(hoisted.holdTaskMessage).not.toHaveBeenCalled();
     expect(recordedDetail()).toBe('Moved to Blocked; its message was not delivered: The paste failed.');
+  });
+
+  // Sentry DESKTOP-52: the engine's own message named its internals, and "not
+  // delivered" claims more than the engine knows.
+  it('records a paste with no sign of a submit in the paste\'s own words', async () => {
+    hoisted.deliverAgentMessageAndWait.mockRejectedValue(new PasteSubmitError(
+      'no-submission-evidence',
+      'paste-engine: automation sent paste + \\r (1 retry) but agent emitted no signal in 5012ms',
+      {
+        facts: {
+          reason: 'no-signal', firstWindowTakesData: false, retried: true, pasteModeOff: false,
+          settleOutput: true, firstWindowBytes: '0', retryWindowBytes: '0',
+        },
+      },
+    ));
+
+    await run(makeContext(LIVE).context);
+
+    expect(hoisted.holdTaskMessage).not.toHaveBeenCalled();
+    expect(recordedDetail()).toBe('Moved to Blocked. The message was pasted, but the agent showed no sign of taking it.');
   });
 
   it('logs and records a message the task refuses to hold (a move into Done)', async () => {

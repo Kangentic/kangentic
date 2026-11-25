@@ -21,7 +21,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { createPasteEngine, sanitizeForPaste, PasteSubmitError } from '../../src/main/pty/paste-engine';
+import { createPasteEngine, sanitizeForPaste, PasteSubmitError, pasteFailureDetail } from '../../src/main/pty/paste-engine';
 import { AUTOMATED_KEYS_HOLD_LOG_MS, resetAutomatedKeysGuardForTests } from '../../src/main/pty/automated-keys-guard';
 import type { SubmissionVerifier } from '../../src/shared/types';
 
@@ -998,6 +998,28 @@ describe('PasteEngine.pasteAndSubmit for an automated sender', () => {
     expect((error as PasteSubmitError).code).toBe('held');
     expect((error as PasteSubmitError).message).toContain('the session exited');
     expect(mockSessionManager.writeRawCalls).toHaveLength(0);
+    expect(pasteFailureDetail(error as PasteSubmitError)).toBe('The message was not pasted: the session exited.');
+  });
+
+  // A hold at the Enter comes after the write, so the text is in the prompt.
+  // Red: a sentence that says nothing was pasted.
+  it('says the message was pasted but Enter was not pressed when the hold comes at the Enter', async () => {
+    const promise = engine.pasteAndSubmit('s1', 'hello', { automated: true, source: 'workflow-nudge' });
+    const settled = promise.catch((error: unknown) => error);
+    await tick();
+    mockSessionManager.flushDrain();
+    await tick();
+    expect(mockSessionManager.writeRawCalls).toHaveLength(1);
+
+    mockSessionManager.blocker = 'a permission prompt is open';
+    await settleAfterWrite();
+    mockSessionManager.emit('exit', 's1', 0);
+    await tick();
+
+    const error = await settled;
+    expect(error).toMatchObject({ code: 'held', heldStage: 'enter' });
+    expect(mockSessionManager.writeCalls).toHaveLength(0);
+    expect(pasteFailureDetail(error as PasteSubmitError)).toBe('The message was pasted, but Enter was not pressed: the session exited.');
   });
 
   it('pastes a person\'s own paste whatever is open: the guard is for automated keys', async () => {

@@ -197,8 +197,13 @@ export async function deliverMessageAfterMove(
       return;
     }
     // A paste's own message names engine internals (Sentry DESKTOP-52); the
-    // console line above keeps it.
-    report({ kind: 'failed', reason: userFacingDetailOf(error) ?? (error instanceof Error ? error.message : String(error)) });
+    // console line above keeps it, and the run gets the paste's own sentence.
+    const pasteDetail = userFacingDetailOf(error);
+    if (pasteDetail !== undefined) {
+      report({ kind: 'paste-failed', detail: pasteDetail });
+      return;
+    }
+    report({ kind: 'failed', reason: error instanceof Error ? error.message : String(error) });
   } finally {
     release();
   }

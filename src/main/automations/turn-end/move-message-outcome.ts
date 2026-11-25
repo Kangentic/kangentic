@@ -15,7 +15,13 @@ export type MoveMessageOutcome =
   | { kind: 'not-held'; reason: string }
   | { kind: 'superseded' }
   | { kind: 'sent-by-recovery' }
-  | { kind: 'failed'; reason: string };
+  | { kind: 'failed'; reason: string }
+  /**
+   * A paste that failed, with its own sentence (`pasteFailureDetail`). Not
+   * `failed`: the engine knows only what it saw, so the detail must not also
+   * claim the message was not delivered.
+   */
+  | { kind: 'paste-failed'; detail: string };
 
 /** The run's detail while the message waits for the agent where the task landed. */
 export function moveMessagePendingDetail(columnName: string): string {
@@ -37,5 +43,7 @@ export function moveMessageOutcomeDetail(columnName: string, outcome: MoveMessag
       return `Moved to ${columnName}; workflow recovery sent its message in place of a nudge.`;
     case 'failed':
       return `Moved to ${columnName}; its message was not delivered: ${outcome.reason}`;
+    case 'paste-failed':
+      return `Moved to ${columnName}. ${outcome.detail}`;
   }
 }
