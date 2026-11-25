@@ -8,6 +8,7 @@ import { PAINT_GIVE_UP_MS } from '../../transition-engine/paint-give-up';
 import { trackMessageDelivery } from './turn-end-passes';
 import { AGENT_READY_CEILING_MS } from '../../pty/lifecycle/agent-output-tracker';
 import { isSlashCommand } from '../../pty/slash-command';
+import { userFacingDetailOf } from '../../pty/paste-engine';
 import { RefusalError } from '../../../shared/refusal';
 
 /**
@@ -355,7 +356,9 @@ async function runBackgroundPaste(
     }
     const detail = error instanceof Error ? error.message : String(error);
     console.error(`[agent-message] Paste failed for task ${input.taskId.slice(0, 8)}: ${detail}`);
-    report('failed', `The message could not be pasted: ${detail}`);
+    // The engine's own message names its internals (Sentry DESKTOP-52); the
+    // notice says in plain words what was seen.
+    report('failed', userFacingDetailOf(error) ?? `The message could not be pasted: ${detail}`);
   }
 }
 

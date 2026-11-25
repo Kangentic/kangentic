@@ -21,6 +21,7 @@ import {
   AutomationRetryableError,
 } from '../../src/main/automations/shared/automation-errors';
 import { AUTOMATION_MANIFEST } from '../../src/shared/automation-manifest';
+import { PasteSubmitError } from '../../src/main/pty/paste-engine';
 import type { AutomationAdapter, AutomationContext } from '../../src/main/automations/shared/automation-adapter';
 import type { AutomationRunRepository } from '../../src/main/db/repositories/automation-run-repository';
 import type { ColumnAutomation, Swimlane, Task } from '../../src/shared/types';
@@ -180,6 +181,113 @@ describe('automationRunReporter in a real run', () => {
 
     expect(rejection).toMatchObject({ name: 'AbortError', cause: 'superseded by a newer move' });
     expect(isExpectedFailure(rejection)).toBe(true);
+  });
+});
+
+// Sentry DESKTOP-52: an awaited Send message paste showed no sign of a submit.
+// The run log and the toast carried the engine's own diagnostic (an internal
+// name, an escaped carriage return, a millisecond count), and the report
+// carried only the automation type, so nobody could tell which case it was.
+describe('a send_message row whose paste shows no sign of a submit', () => {
+  const ENGINE_TEXT = 'paste-engine: automation sent paste + \\r (1 retry) but agent emitted no signal in 5012ms';
+  const MESSAGE_ROW: ColumnAutomation = { ...ROW, name: 'Hand off', type: 'send_message', trigger: 'turn_end' };
+
+  beforeEach(() => {
+    reportHandledError.mockClear();
+    automationRunReporter.reset();
+    vi.mocked(runs.finish).mockClear();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  async function runPasteRow(error: PasteSubmitError): Promise<void> {
+    const adapter: AutomationAdapter = {
+      id: 'send_message',
+      manifest: AUTOMATION_MANIFEST.send_message,
+      describe: () => 'test',
+      execute: async () => {
+        throw error;
+      },
+    };
+    const registry = new AutomationRegistry();
+    registry.register(adapter);
+    await runAutomations({
+      automations: [MESSAGE_ROW],
+      // A column that runs an agent, so a row that needs one can run.
+      column: { ...COLUMN, auto_spawn: true, role: null } as Swimlane,
+      context: { ...context(), trigger: 'turn_end' } as unknown as Omit<AutomationContext, 'runId' | 'signal'>,
+      runs,
+      signal: new AbortController().signal,
+      registry,
+    });
+  }
+
+  it('records a plain sentence and reports the original error with the paste facts as tags', async () => {
+    await runPasteRow(new PasteSubmitError('no-submission-evidence', ENGINE_TEXT, {
+      facts: {
+        reason: 'no-signal',
+        firstWindowTakesData: false,
+        retried: true,
+        pasteModeOff: false,
+        settleOutput: true,
+        firstWindowBytes: '1-9',
+        retryWindowBytes: '0',
+      },
+    }));
+
+    const detail = vi.mocked(runs.finish).mock.calls[0][2];
+    expect(detail).toBe('The message was pasted, but the agent showed no sign of taking it.');
+    expect(detail).not.toContain('paste-engine');
+    expect(detail).not.toContain('\\r');
+    expect(detail).not.toMatch(/\d+ms/);
+    // The main log keeps the engine's diagnostic.
+    expect(vi.mocked(console.error).mock.calls[0][0]).toContain(ENGINE_TEXT);
+
+    expect(reportHandledError).toHaveBeenCalledTimes(1);
+    const [copy, tags] = reportHandledError.mock.calls[0];
+    expect(copy.message).toBe('Handled automation_runner failure: PasteSubmitError');
+    expect(tags).toMatchObject({
+      source: 'automation_runner',
+      automation_type: 'send_message',
+      automation_trigger: 'turn_end',
+      error_name: 'PasteSubmitError',
+      paste_code: 'no-submission-evidence',
+      paste_reason: 'no-signal',
+      paste_first_window_data: 'false',
+      paste_retried: 'true',
+      paste_mode_off: 'false',
+      paste_settle_output: 'true',
+      paste_first_bytes: '1-9',
+      paste_retry_bytes: '0',
+    });
+    const sent = JSON.stringify(tags);
+    expect(sent).not.toContain('paste-engine');
+    expect(sent).not.toContain('Hand off');
+  });
+
+  it('says Enter was not pressed again when the agent had a prompt open', async () => {
+    await runPasteRow(new PasteSubmitError(
+      'no-submission-evidence',
+      'paste-engine: automation sent paste but agent disabled bracketed-paste mode (modal/prompt focused). Skipped retry to avoid confirming a destructive action.',
+      {
+        facts: {
+          reason: 'paste-mode-off',
+          firstWindowTakesData: false,
+          retried: false,
+          pasteModeOff: true,
+          settleOutput: true,
+          firstWindowBytes: '0',
+        },
+      },
+    ));
+
+    expect(vi.mocked(runs.finish).mock.calls[0][2]).toBe(
+      'The message was pasted while the agent had a prompt or dialog open, so Enter was not pressed again.',
+    );
+    expect(reportHandledError.mock.calls[0][1]).toMatchObject({ paste_reason: 'paste-mode-off', paste_retried: 'false' });
+    expect(reportHandledError.mock.calls[0][1]).not.toHaveProperty('paste_retry_bytes');
   });
 });
 

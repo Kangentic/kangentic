@@ -43,6 +43,7 @@ import {
 } from '../../src/main/automations/turn-end/agent-message-delivery';
 import { AGENT_NOT_STARTED_REASON } from '../../src/main/transition-engine/terminal-submit-scheduler';
 import { supersedeMessageDeliveries } from '../../src/main/automations/turn-end/turn-end-passes';
+import { PasteSubmitError } from '../../src/main/pty/paste-engine';
 
 const TASK_ID = 'task-paste-0001';
 const SESSION_ID = 'session-live-1';
@@ -308,6 +309,47 @@ describe('deliverAgentMessageInBackground', () => {
     expect(reports[0].outcome).toBe('cancelled');
     expect(reports[0].reason).toBe('The task left the column before the message was sent.');
     expect(context.terminalSubmit.submitContent).not.toHaveBeenCalled();
+  });
+
+  // Sentry DESKTOP-52: the notice carried the engine's own diagnostic.
+  it('reports a paste with no sign of a submit in plain words', async () => {
+    const context = makeContext();
+    context.terminalSubmit.submitContent.mockRejectedValueOnce(new PasteSubmitError(
+      'no-submission-evidence',
+      'paste-engine: automation:task-pas sent paste + \\r (1 retry) but agent emitted no signal in 5012ms',
+      {
+        facts: {
+          reason: 'no-signal',
+          firstWindowTakesData: false,
+          retried: true,
+          pasteModeOff: false,
+          settleOutput: true,
+          firstWindowBytes: '0',
+          retryWindowBytes: '0',
+        },
+      },
+    ));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const reports: InjectionReport[] = [];
+    deliverAgentMessageInBackground(context as never, {
+      taskId: TASK_ID,
+      sessionId: SESSION_ID,
+      message: MULTI_LINE,
+      mode: 'immediate',
+      verifier: null,
+      onOutcome: (report) => reports.push(report),
+    });
+    await settle();
+    turnWaits[0].resolve('completed');
+    await settle();
+
+    expect(reports).toHaveLength(1);
+    expect(reports[0].outcome).toBe('failed');
+    expect(reports[0].reason).toBe('The message was pasted, but the agent showed no sign of taking it.');
+    expect(reports[0].reason).not.toContain('paste-engine');
+    expect(reports[0].reason).not.toContain('\\r');
+    expect(reports[0].reason).not.toMatch(/\d+ms/);
+    consoleError.mockRestore();
   });
 
   it('pastes a multi-line message once the turn ends and the scheduler is done with the task', async () => {
@@ -580,6 +622,31 @@ describe('deliverAgentMessageAndWait', () => {
 
     expect(context.terminalSubmitScheduler.scheduleKeystrokes).toHaveBeenCalledTimes(1);
     expect(context.terminalSubmit.submitContent).not.toHaveBeenCalled();
+  });
+
+  // The runner turns the paste's error into the run's sentence and reports it
+  // (automation-runner-report-behavior.test.ts), so it must arrive as itself.
+  // A RefusalError around it would skip the report.
+  it('rejects a paste with no sign of a submit with the paste error itself, unwrapped', async () => {
+    const context = makeContext();
+    const pasteError = new PasteSubmitError('no-submission-evidence', 'paste-engine: automation sent paste + \\r (1 retry) but agent emitted no signal in 5012ms', {
+      facts: { reason: 'no-signal', firstWindowTakesData: false, retried: true, pasteModeOff: false, settleOutput: true, firstWindowBytes: '0', retryWindowBytes: '0' },
+    });
+    context.terminalSubmit.submitContent.mockRejectedValueOnce(pasteError);
+    const delivery = deliverAgentMessageAndWait(context as never, {
+      taskId: TASK_ID,
+      sessionId: SESSION_ID,
+      message: MULTI_LINE,
+      mode: 'immediate',
+      verifier: null,
+      signal: new AbortController().signal,
+      turnWait: 'always',
+    });
+    const rejection = delivery.then(() => null, (error: unknown) => error);
+    await settle();
+    turnWaits[0].resolve('completed');
+
+    expect(await rejection).toBe(pasteError);
   });
 
   it('on exit, an immediate multi-line message is pasted now, handed the run signal, and awaited', async () => {

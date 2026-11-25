@@ -480,7 +480,7 @@ in one Sentry org, one triage surface.
   message is `Handled <source> failure: <ErrorName>` over the original frames (`pathFreeCopy`),
   never `error.message`, a runtime error's included: V8 quotes the property it could not read and
   Node's `ERR_INVALID_ARG_*` quotes the value it got, either of which can be a title. Tags are `source`,
-  `error_name`, `errno`, `syscall`, `git_cause` and `az_server_code` when the error carries them, and the chokepoint's own short enums.
+  `error_name`, `errno`, `syscall`, `git_cause`, `az_server_code` and the `paste_*` facts when the error carries them, and the chokepoint's own short enums.
   `git_cause` is what a failed git command refused on (below, with the launch report's worktree
   causes), and it is part of the latch key, because every git failure throws from one line.
   `az_server_code` is the Azure DevOps server code (`TF51005`) that refused an az call on the
@@ -488,7 +488,15 @@ in one Sentry org, one triage surface.
   `boards/adapters/azure-devops/client.ts` reads it from az's stderr and keeps only the code, since
   the rest quotes the user's query and project. `azServerCodeOf` sends only a value of that shape.
   It is part of the latch key too. Most WIQL refusals carry no code, so `none` is common: Sentry
-  DESKTOP-47's day-precision refusal had none. It skips what is
+  DESKTOP-47's day-precision refusal had none. The `paste_*` facts are what a paste that failed
+  saw (`PasteSubmitError` in `src/main/pty/paste-engine.ts`, read by `pasteFactsOf`): `paste_code`
+  (`no-submission-evidence`, `timeout`, `held` or `aborted`), `paste_reason` (`no-signal`, or
+  `paste-mode-off` when the agent turned bracketed paste off and Enter was not pressed again),
+  `true` or `false` for `paste_first_window_data` (the first window took output as proof),
+  `paste_retried`, `paste_mode_off` and `paste_settle_output`, and `paste_first_bytes` and
+  `paste_retry_bytes`, the bytes each window saw after its Enter as a bucket (`0`, `1-9`, `10-49`,
+  `50+`), never a count or text. `paste_code` and `paste_reason` are part of the latch key. Sentry
+  DESKTOP-52 was a paste with no sign of a submit that could not say which case it was. It skips what is
   not a defect (`isExpectedFailure`: shutdown, an abort, a `UserConfigurationError` or
   `RefusalError`, the named expected classes, a network errno, `fetch failed` with a network
   cause, a relay dial that never opened as `RelayDialError`), skips an error another reporter
@@ -524,8 +532,11 @@ in one Sentry org, one triage surface.
     `interrupted` and rethrows it. The `turn_end` pass catches the rethrow and skips it. Sentry
     DESKTOP-4X was a Run script a move stopped, rejected as a plain `Error` and reported as a
     defect. The runner rethrows whatever the row threw, so a `TypeError` that lands during the
-    move still reports.
-  - `mobile_verb` (tag `verb`, plus `relay_dial_id`), `automation_runner` (tag `automation_type`), `turn_end`,
+    move still reports. Its tags are `automation_type` and `automation_trigger` (`enter`,
+    `turn_end` or `exit`), plus the `paste_*` facts for a Send message row whose paste failed. The
+    run log and the toast record a failed paste as a plain sentence (`pasteFailureDetail`), not the
+    engine's message, which stays in the main log.
+  - `mobile_verb` (tag `verb`, plus `relay_dial_id`), `automation_runner`, `turn_end`,
     `workflow_engine` (tag `stage`), `pr` (tag `stage`), `git_actions` (tag `stage`:
     `terminal_delivery` or `link_created_pr`), `board-sign-in-keep-alive` (tag `provider`), `browser_driver` (tag `kind`, built-in
     classes and the attach, capture and composite failures only), `browser_passkey_guard` (tag
