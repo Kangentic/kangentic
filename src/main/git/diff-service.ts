@@ -404,6 +404,7 @@ export class DiffService {
    * delegated to the line-count worker so the scan never runs on the main
    * event loop. Falls back to inline counting if the worker is unavailable.
    * Every pass over the paths holds at most LINE_COUNT_CONCURRENCY files at once.
+   * The worker answers in the paths' order, with no path in its entries.
    */
   private async countUntrackedEntries(untrackedPaths: string[]): Promise<GitDiffFileEntry[]> {
     if (untrackedPaths.length === 0) return [];
@@ -417,17 +418,19 @@ export class DiffService {
     }
 
     const absolutePaths = untrackedPaths.map((filePath) => path.join(this.gitDirectory, filePath));
-    const sizes = await mapWithConcurrency(absolutePaths, LINE_COUNT_CONCURRENCY, async (absolutePath) => {
+    // The sizes only choose between counting here and in the worker, so the pass stops
+    // reading them once their total is past the threshold, however many paths are left.
+    let aggregateBytes = 0;
+    await mapWithConcurrency(absolutePaths, LINE_COUNT_CONCURRENCY, async (absolutePath) => {
+      if (aggregateBytes > UNTRACKED_OFFLOAD_THRESHOLD_BYTES) return;
       try {
         const stats = await fs.promises.stat(absolutePath);
-        return stats.size;
+        aggregateBytes += stats.size;
       } catch {
         // report-ok: a size only steers the choice between inline and worker counting. The
         // count that follows meets the same file and reports what is not a missing path.
-        return 0;
       }
     });
-    const aggregateBytes = sizes.reduce((sum, size) => sum + size, 0);
 
     if (aggregateBytes > UNTRACKED_OFFLOAD_THRESHOLD_BYTES) {
       const workerEntries = await lineCountClient.countFiles(absolutePaths);

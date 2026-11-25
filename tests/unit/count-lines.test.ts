@@ -177,4 +177,31 @@ describe('countLinesInFiles', () => {
 
     expect(handedOn).toEqual([firstTableFull, held]);
   });
+
+  it('hands on the same errno under a different error class, since the key is class plus errno', () => {
+    const handedOn: unknown[] = [];
+    const sink = firstOfEachFailure((error) => handedOn.push(error));
+    const plain = Object.assign(new Error('EMFILE: too many open files'), { code: 'EMFILE' });
+    const typed = Object.assign(new TypeError('EMFILE: too many open files'), { code: 'EMFILE' });
+
+    sink(plain);
+    sink(typed);
+
+    expect(handedOn).toHaveLength(2);
+    expect(handedOn[0]).toBe(plain);
+    expect(handedOn[1]).toBe(typed);
+  });
+
+  it('hands on the first of two failures with no errno and drops the second', () => {
+    const handedOn: unknown[] = [];
+    const sink = firstOfEachFailure((error) => handedOn.push(error));
+    const first = new Error('first');
+    const second = new Error('second');
+
+    sink(first);
+    sink(second);
+
+    expect(handedOn).toHaveLength(1);
+    expect(handedOn[0]).toBe(first);
+  });
 });
