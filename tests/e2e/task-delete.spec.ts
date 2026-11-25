@@ -146,8 +146,10 @@ async function waitForSession(taskTitle: string, timeoutMs = 15000): Promise<voi
 /** Open the kebab menu in the task detail dialog and click an action */
 async function clickKebabAction(dialog: ReturnType<Page['locator']>, actionText: string) {
   // Click the kebab (Ellipsis) button scoped to the task-detail window.
+  // 10s like the usage-bar and session waits above: a fixed 3s cap missed this
+  // button on a loaded CI shard (the dialog was up, the header had not settled).
   const kebabButton = dialog.locator('button[aria-label="Actions"]');
-  await kebabButton.waitFor({ state: 'visible', timeout: 3000 });
+  await kebabButton.waitFor({ state: 'visible', timeout: 10000 });
   await kebabButton.click();
 
   // The KebabMenu renders its dropdown via a portal (OverlayPopover portal=true),
@@ -156,7 +158,7 @@ async function clickKebabAction(dialog: ReturnType<Page['locator']>, actionText:
   // portal element is reachable. Filter to exact text match only so "Archive"
   // does not also match a hypothetical "Archive task" button.
   const actionButton = page.locator('button', { hasText: new RegExp(`^${actionText}$`) });
-  await actionButton.waitFor({ state: 'visible', timeout: 3000 });
+  await actionButton.waitFor({ state: 'visible', timeout: 10000 });
   await actionButton.click();
 }
 
@@ -191,7 +193,7 @@ test.describe('Task Delete', () => {
     // the backdrop class .fixed.inset-0 is ambiguous when a confirm dialog
     // briefly coexists with the detail dialog (strict-mode violation on Linux).
     const dialog = page.locator('[data-testid="task-detail-dialog"]');
-    await dialog.waitFor({ state: 'visible', timeout: 3000 });
+    await dialog.waitFor({ state: 'visible', timeout: 10000 });
     await clickKebabAction(dialog, 'Archive');
 
     // Verify the app is still alive (board is visible)
@@ -251,7 +253,7 @@ test.describe('Task Delete', () => {
     // the backdrop class .fixed.inset-0 is ambiguous when a confirm dialog
     // briefly coexists with the detail dialog (strict-mode violation on Linux).
     const dialog = page.locator('[data-testid="task-detail-dialog"]');
-    await dialog.waitFor({ state: 'visible', timeout: 3000 });
+    await dialog.waitFor({ state: 'visible', timeout: 10000 });
     await clickKebabAction(dialog, 'Archive');
 
     // Verify app is still alive
@@ -417,7 +419,7 @@ test.describe('Task Delete', () => {
     // the backdrop class .fixed.inset-0 is ambiguous when a confirm dialog
     // briefly coexists with the detail dialog (strict-mode violation on Linux).
     const dialog = page.locator('[data-testid="task-detail-dialog"]');
-    await dialog.waitFor({ state: 'visible', timeout: 3000 });
+    await dialog.waitFor({ state: 'visible', timeout: 10000 });
     await dialog.locator('button:has-text("Delete")').click();
 
     // Confirm deletion. The window is modeless (stays in the DOM while the
