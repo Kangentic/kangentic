@@ -136,6 +136,25 @@ function writeJumpConfig(keyPath, knownHosts) {
   return configPath;
 }
 
+/**
+ * An empty module in place of the Sentry SDK, for the client bundle only.
+ *
+ * The client runs main-process modules (`PtyHostClient`, `RemoteSessionRelay`) under plain Node,
+ * and both import a failure reporter. `@sentry/electron/main` reads Electron's `app` as it loads,
+ * so the bundle threw before the client ran a line. Nothing here calls `initErrorReporting`, so
+ * every report returns before it touches the SDK and an empty module is all the bundle needs.
+ *
+ * The host bundle takes no such plugin. It runs on the SSH host and must never import the
+ * reporter, and with the SDK left in place a host bundle that did would fail this rig.
+ */
+const emptySentrySdk = {
+  name: 'empty-sentry-sdk',
+  setup(build) {
+    build.onResolve({ filter: /^@sentry\/electron\/main$/ }, () => ({ path: 'empty-sentry-sdk', namespace: 'empty-sentry-sdk' }));
+    build.onLoad({ filter: /.*/, namespace: 'empty-sentry-sdk' }, () => ({ contents: 'module.exports = {};', loader: 'js' }));
+  },
+};
+
 async function buildBundles() {
   const require = createRequire(path.join(repoRoot, 'package.json'));
   const esbuild = require('esbuild');
@@ -158,7 +177,7 @@ async function buildBundles() {
   fs.mkdirSync(clientDirectory, { recursive: true });
   const clientPath = path.join(clientDirectory, 'ssh-link-rig-client.js');
   const clientSource = { removal: 'scripts/ssh-removal-rig.client.ts', mcp: 'scripts/ssh-mcp-rig.client.ts', quit: 'scripts/ssh-quit-rig.client.ts' }[options.client] ?? 'scripts/ssh-link-rig.client.ts';
-  await esbuild.build({ ...common, entryPoints: [path.join(repoRoot, clientSource)], outfile: clientPath });
+  await esbuild.build({ ...common, plugins: [emptySentrySdk], entryPoints: [path.join(repoRoot, clientSource)], outfile: clientPath });
 
   const nodePtySource = fs.realpathSync(path.join(repoRoot, 'node_modules/node-pty'));
   const nodePtyTarget = path.join(stage, 'node_modules/node-pty');
