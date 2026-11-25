@@ -1413,8 +1413,9 @@ in one Sentry org, one triage surface.
   under starts still running. Sentry DESKTOP-4V was a Command Terminal start that an update's
   `quitAndInstall` overtook. In any shell, a launch
   past cmd's typed budget whose `.cmd` shim cannot be read past
-  (`AgentBatchShimUnresolvedError`) is refused the same way, with the same card reason, and goes
-  under the cause `batch_shim_unresolved` whichever path started it, with `batch_shim` naming why
+  (`AgentBatchShimUnresolvedError`) is refused before its PTY with the same card reason as a command
+  too long, but unlike one it is reported, under the cause `batch_shim_unresolved` whichever path
+  started it, because the gap is the launcher's. `batch_shim` names why
   the shim gave up (`unreadable`, `unparsed`, `target_missing`, `target_batch` for a chain of
   shims past `MAX_SHIM_HOPS`, `target_ps1`, `target_extensionless`, `target_other`, `node_path`).
   With `unparsed`, `batch_shim_shape` says what the program line of the shim that gave up looked
