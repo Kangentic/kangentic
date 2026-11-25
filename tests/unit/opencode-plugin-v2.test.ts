@@ -202,6 +202,118 @@ describe('the OpenCode 2 activity plugin', () => {
 });
 
 /**
+ * Sentry DESKTOP-3A came back from OpenCode 2.0.23 and 2.2.5 on macOS with no
+ * plugin line at all. Real 2.0.23, 2.2.5 and 2.4.1 were then run from a project
+ * root and a linked worktree, through the spawn's own `--standalone --prompt`
+ * TUI: each loaded this plugin and wrote the whole turn. The fixtures are those
+ * runs, scrubbed: every top-level `ctx` key, the members the plugin reads, and
+ * each event and tool hook in the order the plugin got them.
+ */
+describe('the OpenCode 2 activity plugin on each recorded version', () => {
+  interface RecordedContext {
+    topLevelKeys: string[];
+    app: Record<string, string>;
+    event: Record<string, string>;
+    tool: Record<string, string>;
+    subscribeReturns: { asyncIterable: boolean; thenable: boolean };
+  }
+  type Recorded = { kind: 'event' | 'execute.before' | 'execute.after'; payload: unknown };
+
+  const contexts = (JSON.parse(fs.readFileSync(path.resolve(__dirname, '../fixtures/opencode-v2-plugin-contexts.json'), 'utf-8')) as {
+    versions: Record<string, RecordedContext>;
+  }).versions;
+
+  function recordsOf(version: string): Recorded[] {
+    const file = version === '2.2.5' ? 'opencode-v2-plugin-events.jsonl' : `opencode-v2-plugin-events-${version}.jsonl`;
+    return fs.readFileSync(path.resolve(__dirname, '../fixtures', file), 'utf-8').split('\n')
+      .filter((line) => line.trim().length > 0).map((line) => JSON.parse(line) as Recorded);
+  }
+
+  /** A ctx with the recorded shape, whose subscription replays the version's records. */
+  function contextFor(version: string, records: Recorded[], onDone: () => void): Record<string, unknown> {
+    const recorded = contexts[version];
+    const hooks = new Map<string, (event: unknown) => void>();
+    const ctx: Record<string, unknown> = {};
+    for (const key of recorded.topLevelKeys) ctx[key] = {};
+    ctx.app = { name: 'opencode', version, channel: 'latest' };
+    ctx.event = {
+      subscribe: () => (async function* () {
+        while (hooks.size < 2) await new Promise((resolve) => setTimeout(resolve, 0));
+        for (const record of records) {
+          if (record.kind === 'event') yield record.payload;
+          else hooks.get(record.kind)?.(record.payload);
+        }
+        onDone();
+      })(),
+    };
+    ctx.tool = { hook: async (name: string, handler: (event: unknown) => void) => { hooks.set(name, handler); } };
+    return ctx;
+  }
+
+  it('recorded the contract the plugin relies on, the same on every version', () => {
+    expect(Object.keys(contexts).sort()).toEqual(['2.0.23', '2.2.5', '2.4.1']);
+    for (const recorded of Object.values(contexts)) {
+      expect(recorded.event.subscribe).toBe('function(1)');
+      expect(recorded.tool.hook).toBe('function(2)');
+      expect(recorded.subscribeReturns).toEqual({ asyncIterable: true, thenable: false });
+      expect(recorded.app.version).toBe('string');
+    }
+  });
+
+  it.each(['2.0.23', '2.4.1'])('writes the whole turn OpenCode %s handed it, from a linked worktree', async (version) => {
+    const plugin = await loadPlugin();
+    let release: () => void = () => undefined;
+    const delivered = new Promise<void>((resolve) => { release = resolve; });
+    const cleanup = await plugin.setup(contextFor(version, recordsOf(version), release));
+    await delivered;
+    cleanup?.();
+
+    const written = fs.readFileSync(eventsPath, 'utf-8').trim().split('\n').map((line) => JSON.parse(line) as PluginEventLine);
+    expect(written.map((line) => line.type)).toEqual(['session_start', 'prompt', 'tool_start', 'tool_end', 'idle']);
+    expect(written[2]).toMatchObject({ tool: 'read', detail: 'README.md' });
+    // The model the run's own step named (2.4.1 ran its turn on OpenCode's free model, not the probe's stub).
+    const step = recordsOf(version).find((record) => (record.payload as { type?: string }).type === 'session.step.started');
+    const model = (step?.payload as { data: { model: { id: string; providerID: string } } }).data.model;
+    expect(JSON.parse(fs.readFileSync(path.join(directory, 'status.json'), 'utf-8')).model).toEqual({ id: `${model.providerID}/${model.id}` });
+  });
+
+  it.each(['2.0.23', '2.2.5', '2.4.1'])('leaves a load marker beside the events file on %s: set up, then its first event', async (version) => {
+    const plugin = await loadPlugin();
+    let release: () => void = () => undefined;
+    const delivered = new Promise<void>((resolve) => { release = resolve; });
+    const before = Date.now();
+    const cleanup = await plugin.setup(contextFor(version, recordsOf(version), release));
+    await delivered;
+    cleanup?.();
+
+    const marker = JSON.parse(fs.readFileSync(path.join(directory, 'opencode-plugin.json'), 'utf-8')) as Record<string, unknown>;
+    expect(marker).toMatchObject({ kangenticOpenCodePlugin: 1, major: 2 });
+    expect(marker.setupAt).toBeGreaterThanOrEqual(before);
+    expect(marker.firstEventAt).toBeGreaterThanOrEqual(marker.setupAt as number);
+  });
+
+  it('marks a setup whose subscription never delivers, so a silent load reads apart from no load', async () => {
+    const plugin = await loadPlugin();
+    const cleanup = await plugin.setup({
+      app: { version: '2.4.1' },
+      event: { subscribe: () => (async function* () { await new Promise(() => undefined); })() },
+      tool: { hook: async () => undefined },
+    });
+    const marker = JSON.parse(fs.readFileSync(path.join(directory, 'opencode-plugin.json'), 'utf-8')) as Record<string, unknown>;
+    cleanup?.();
+    expect(typeof marker.setupAt).toBe('number');
+    expect(marker.firstEventAt).toBeNull();
+  });
+
+  it('writes no marker with no events path, as for an OpenCode started outside a Kangentic session', async () => {
+    delete process.env.KANGENTIC_EVENTS_PATH;
+    const plugin = await loadPlugin();
+    await plugin.setup({ event: { subscribe: vi.fn() }, tool: { hook: vi.fn() } });
+    expect(fs.existsSync(path.join(directory, 'opencode-plugin.json'))).toBe(false);
+  });
+});
+
+/**
  * Subagents, compaction and telemetry, from the 2.2.5 event schema
  * (`packages/schema/src/session-event.ts`, `token-usage.ts`, `model.ts`): a
  * child session's `session.created` carries `parentID`; `session.step.started`

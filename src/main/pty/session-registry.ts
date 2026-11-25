@@ -184,6 +184,12 @@ export interface ManagedSession {
    */
   agentCliPath?: string | null;
   /**
+   * The events file the spawn handed the agent's hooks (`KANGENTIC_EVENTS_PATH`).
+   * Main-side only: the session-id report asks the adapter whether its hook layer
+   * loaded beside it (`sessionId.hookLoadEvidence`), never sends the path.
+   */
+  eventsOutputPath?: string | null;
+  /**
    * What the resume check read before this resume (`SpawnSessionInput.resumeEvidence`).
    * Fixed values only, so a launch report sends it as tags.
    */

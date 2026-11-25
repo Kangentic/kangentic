@@ -1,0 +1,148 @@
+{
+  "note": "What each OpenCode 2 version handed setup(ctx) of a project plugin, recorded from the --standalone TUI in a linked worktree on Windows (2026-11-25): every top-level key, and the members the activity plugin reads. A value is its typeof, and function(n) its arity.",
+  "versions": {
+    "2.0.23": {
+      "topLevelKeys": [
+        "app",
+        "location",
+        "options",
+        "agent",
+        "aisdk",
+        "command",
+        "event",
+        "experimental",
+        "generate",
+        "model",
+        "provider",
+        "integration",
+        "mcp",
+        "permission",
+        "plugin",
+        "reference",
+        "rpc",
+        "skill",
+        "storage",
+        "tool",
+        "vcs",
+        "websearch",
+        "worktree",
+        "session",
+        "shell"
+      ],
+      "app": {
+        "name": "string",
+        "version": "string",
+        "channel": "string"
+      },
+      "event": {
+        "subscribe": "function(1)"
+      },
+      "tool": {
+        "reload": "function(0)",
+        "list": "function(0)",
+        "transform": "function(1)",
+        "hook": "function(2)"
+      },
+      "subscribeReturns": {
+        "asyncIterable": true,
+        "thenable": false
+      }
+    },
+    "2.2.5": {
+      "topLevelKeys": [
+        "app",
+        "location",
+        "options",
+        "agent",
+        "aisdk",
+        "command",
+        "credential",
+        "event",
+        "experimental",
+        "generate",
+        "model",
+        "provider",
+        "integration",
+        "mcp",
+        "permission",
+        "plugin",
+        "reference",
+        "rpc",
+        "skill",
+        "storage",
+        "tool",
+        "vcs",
+        "websearch",
+        "worktree",
+        "session",
+        "shell"
+      ],
+      "app": {
+        "name": "string",
+        "version": "string",
+        "channel": "string"
+      },
+      "event": {
+        "subscribe": "function(1)"
+      },
+      "tool": {
+        "reload": "function(0)",
+        "list": "function(0)",
+        "transform": "function(1)",
+        "hook": "function(2)"
+      },
+      "subscribeReturns": {
+        "asyncIterable": true,
+        "thenable": false
+      }
+    },
+    "2.4.1": {
+      "topLevelKeys": [
+        "app",
+        "location",
+        "options",
+        "agent",
+        "aisdk",
+        "command",
+        "credential",
+        "event",
+        "experimental",
+        "generate",
+        "model",
+        "provider",
+        "integration",
+        "mcp",
+        "permission",
+        "plugin",
+        "reference",
+        "rpc",
+        "skill",
+        "storage",
+        "tool",
+        "vcs",
+        "websearch",
+        "worktree",
+        "session",
+        "shell"
+      ],
+      "app": {
+        "name": "string",
+        "version": "string",
+        "channel": "string"
+      },
+      "event": {
+        "subscribe": "function(1)"
+      },
+      "tool": {
+        "reload": "function(0)",
+        "list": "function(0)",
+        "transform": "function(1)",
+        "hook": "function(2)"
+      },
+      "subscribeReturns": {
+        "asyncIterable": true,
+        "thenable": false
+      }
+    }
+  }
+}

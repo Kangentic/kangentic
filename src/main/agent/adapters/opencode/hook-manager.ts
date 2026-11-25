@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { EventType } from '../../../../shared/types';
+import type { SessionIdHookLoadEvidence } from '../../../../shared/types';
 import { resolvePluginScript } from '../../shared/bridge-utils';
 import { ensureLocalGitExcludes } from '../../shared/git-exclude';
 
@@ -131,6 +132,63 @@ export function packagedPluginScript(openCode2: boolean): string | null {
   return null;
 }
 
+/** The file either plugin writes beside the events file when OpenCode sets it up (`writeLoadMarker` in each). */
+const LOAD_MARKER_FILENAME = 'opencode-plugin.json';
+/** A marker set up this far before the spawn's own clock reading still belongs to it. */
+export const LOAD_MARKER_CLOCK_SLACK_MS = 1_000;
+/**
+ * The same for a plugin in a WSL distro, whose clock is the VM's and can trail
+ * this computer's after a sleep. A resume reuses the session folder, so a wider
+ * slack would read a short earlier run's marker as this one's.
+ */
+export const LOAD_MARKER_DISTRO_CLOCK_SLACK_MS = 30_000;
+
+/**
+ * Whether a session's plugin loaded, from the marker beside its events file:
+ * `events` when it was set up after the spawn and heard an event, `setup` when
+ * it was set up and heard nothing, `none` with no marker or one an earlier run
+ * of the same session folder left, `unknown` for a file it cannot read as one
+ * or a session folder that is gone. Only the two timestamps are read, and the
+ * file holds nothing of the session.
+ */
+export async function readPluginLoadEvidence(
+  eventsOutputPath: string,
+  spawnedAt?: Date,
+  clockSlackMs: number = LOAD_MARKER_CLOCK_SLACK_MS,
+): Promise<SessionIdHookLoadEvidence> {
+  const sessionFolder = path.dirname(eventsOutputPath);
+  let text: string;
+  try {
+    text = await fs.promises.readFile(path.join(sessionFolder, LOAD_MARKER_FILENAME), 'utf-8');
+  } catch (error) {
+    // report-ok: any read failure is a fixed answer. No marker in the session's folder is `none`;
+    // a folder that is gone (a removed session's) says nothing about the plugin, so it is `unknown`.
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return 'unknown';
+    return (await folderExists(sessionFolder)) ? 'none' : 'unknown';
+  }
+  let marker: unknown;
+  try {
+    marker = JSON.parse(text);
+  } catch {
+    // report-ok: a marker cut short or rewritten by hand is the fixed value `unknown`.
+    return 'unknown';
+  }
+  const setupAt = marker && typeof marker === 'object' ? (marker as { setupAt?: unknown }).setupAt : undefined;
+  const firstEventAt = marker && typeof marker === 'object' ? (marker as { firstEventAt?: unknown }).firstEventAt : undefined;
+  if (typeof setupAt !== 'number' || !Number.isFinite(setupAt)) return 'unknown';
+  if (spawnedAt && setupAt < spawnedAt.getTime() - clockSlackMs) return 'none';
+  return typeof firstEventAt === 'number' ? 'events' : 'setup';
+}
+
+async function folderExists(folder: string): Promise<boolean> {
+  try {
+    return (await fs.promises.stat(folder)).isDirectory();
+  } catch {
+    // report-ok: a folder that cannot be read is treated as gone, which answers the fixed value `unknown`.
+    return false;
+  }
+}
+
 /**
  * Copy the Kangentic OpenCode plugin into `<projectRoot>/.opencode/plugins/`.
  * OpenCode auto-discovers plugins in this directory at TUI startup, so no
@@ -140,9 +198,10 @@ export function packagedPluginScript(openCode2: boolean): string | null {
  * env var (exported by the PTY spawn flow); the path is therefore not a
  * parameter of this function. Idempotent: skips the copy when the
  * destination file is byte-identical to the packaged source. Concurrent
- * OpenCode sessions in the same project share one plugin file (held per
- * session in `OpenCodeAdapter.hookHolds`). Also deletes the `.mjs` copy an
- * earlier build installed, when its sentinel says Kangentic wrote it.
+ * OpenCode sessions in the same project share one plugin file, which stays
+ * after they release (OpenCode 2 unloads a plugin whose file goes away; a
+ * rewrite reloads it). Also deletes the `.mjs` copy an earlier build installed,
+ * when its sentinel says Kangentic wrote it.
  *
  * `openCode2` installs OpenCode 2's plugin instead, as
  * `.opencode/plugins/kangentic-activity/index.js`. The OpenCode 1 copy is for a

@@ -213,6 +213,30 @@ describe('opencode-plugin', () => {
       expect(readEvents()).toEqual([]);
     });
 
+    it('leaves a load marker beside the events file when OpenCode loads it, and stamps its first event', async () => {
+      // The session-id report reads it (`hook_load`): a session with no plugin
+      // line is otherwise the same whether the plugin never loaded or loaded and
+      // heard nothing (Sentry DESKTOP-3A).
+      const markerPath = path.join(eventsDirectory, 'opencode-plugin.json');
+      const before = Date.now();
+      const hooks = await loadHooks();
+      const loaded = JSON.parse(fs.readFileSync(markerPath, 'utf-8')) as Record<string, unknown>;
+      expect(loaded).toMatchObject({ kangenticOpenCodePlugin: 1, major: 1, firstEventAt: null });
+      expect(loaded.setupAt).toBeGreaterThanOrEqual(before);
+
+      await hooks.event({ event: fixtures.event_session_unknown });
+      await hooks.event({ event: fixtures.event_session_idle });
+      const heard = JSON.parse(fs.readFileSync(markerPath, 'utf-8')) as Record<string, unknown>;
+      expect(heard.setupAt).toBe(loaded.setupAt);
+      expect(heard.firstEventAt).toBeGreaterThanOrEqual(loaded.setupAt as number);
+    });
+
+    it('writes no marker with no events path, as for an OpenCode started outside a Kangentic session', async () => {
+      delete process.env.KANGENTIC_EVENTS_PATH;
+      await loadHooks();
+      expect(fs.existsSync(path.join(eventsDirectory, 'opencode-plugin.json'))).toBe(false);
+    });
+
     it('writes the prompt, the subagent around its tools, and one root idle, in order', async () => {
       const hooks = await loadHooks();
 
@@ -254,8 +278,9 @@ describe('opencode-plugin', () => {
       await hooks.event({ event: fixtures.event_message_updated_root_2 });
       const status = JSON.parse(fs.readFileSync(statusPath, 'utf-8'));
       expect(status.context).toEqual({ input: 600, output: 900, reasoning: 0, cacheRead: 9600, cacheWrite: 200 });
-      // Written in place, as the reader's watch on the file expects.
-      expect(fs.readdirSync(eventsDirectory).sort()).toEqual(['status.json']);
+      // Written in place, as the reader's watch on the file expects: no temporary file beside it
+      // (the other file is the plugin's load marker).
+      expect(fs.readdirSync(eventsDirectory).sort()).toEqual(['opencode-plugin.json', 'status.json']);
     });
 
     it('writes a compact line when the compacting hook fires, for the root session only', async () => {

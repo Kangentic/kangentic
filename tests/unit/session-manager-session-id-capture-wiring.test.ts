@@ -59,7 +59,15 @@ import { InProcessPtyHostTransport } from '../../src/main/pty/host/pty-host-clie
 import type { ManagedSession } from '../../src/main/pty/session-registry';
 import type { SessionTelemetry } from '../../src/main/activity-engine/session-telemetry';
 import { EventType, PromptReason } from '../../src/shared/types';
-import type { AgentParser, OpeningPromptDelivery, SessionIdLoginEvidence, SessionIdStoreEvidence, StoredCliTarget } from '../../src/shared/types';
+import type {
+  AgentParser,
+  OpeningPromptDelivery,
+  SessionIdHookLoadEvidence,
+  SessionIdHookLoadEvidenceOptions,
+  SessionIdLoginEvidence,
+  SessionIdStoreEvidence,
+  StoredCliTarget,
+} from '../../src/shared/types';
 
 const WINDOW_MS = 30_000;
 /**
@@ -74,6 +82,7 @@ let tmpDir: string;
 let nextPid = 700;
 let storeEvidence: ReturnType<typeof vi.fn<(options: { cwd: string; cliTarget?: unknown }) => Promise<SessionIdStoreEvidence>>>;
 let loginEvidence: ReturnType<typeof vi.fn<(options: { cliPath: string | null; cliTarget?: unknown; accountHome?: string | null }) => Promise<SessionIdLoginEvidence>>>;
+let hookLoadEvidence: ReturnType<typeof vi.fn<(options: SessionIdHookLoadEvidenceOptions) => Promise<SessionIdHookLoadEvidence>>>;
 
 function createMockPty() {
   nextPid += 1;
@@ -96,7 +105,7 @@ function makeAgentParser(): AgentParser {
     removeHooks: vi.fn(),
     runtime: {
       activity: { kind: 'pty' as const, detectIdle: () => false },
-      sessionId: { fromOutput: () => null, storeEvidence, loginEvidence },
+      sessionId: { fromOutput: () => null, storeEvidence, loginEvidence, hookLoadEvidence },
     },
   } as unknown as AgentParser;
 }
@@ -164,6 +173,7 @@ beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-id-capture-'));
   storeEvidence = vi.fn(async () => 'absent' as SessionIdStoreEvidence);
   loginEvidence = vi.fn(async () => 'signed_in' as SessionIdLoginEvidence);
+  hookLoadEvidence = vi.fn(async () => 'none' as SessionIdHookLoadEvidence);
   reportHandledError.mockClear();
   resetLaunchReports();
 });
@@ -240,6 +250,38 @@ describe('a session whose id the capture window did not see', () => {
       claimedSessionIds: new Set(),
     });
     expect(reportsNamed('AgentSessionIdCapturedLateError')[0].tags.id_store).toBe('present');
+  });
+
+  it('asks the adapter whether its hook layer loaded, at the window and at the outcome, about this session\'s events file', async () => {
+    const manager = makeManager();
+    const eventsOutputPath = path.join(tmpDir, 'session-dir', 'events.jsonl');
+    fs.mkdirSync(path.dirname(eventsOutputPath), { recursive: true });
+    const session = await manager.spawn({
+      taskId: 'task-1',
+      projectId: 'project-1',
+      command: 'agent',
+      cwd: tmpDir,
+      agentParser: makeAgentParser(),
+      agentName: 'opencode',
+      eventsOutputPath,
+    });
+    hookLoadEvidence.mockResolvedValueOnce('none').mockResolvedValue('setup');
+
+    await passTheWindow();
+    // Asked at the window, while the session's folder surely exists, and again at the outcome,
+    // whose answer wins: a hook layer that loads after the window still counts.
+    expect(hookLoadEvidence).toHaveBeenCalledTimes(1);
+    manager.remove(session.id);
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(hookLoadEvidence).toHaveBeenCalledTimes(2);
+    expect(hookLoadEvidence).toHaveBeenLastCalledWith({
+      cwd: tmpDir,
+      eventsOutputPath,
+      cliTarget: null,
+      spawnedAt: new Date(session.startedAt),
+    });
+    expect(reportsNamed('AgentSessionIdNotCapturedError')[0].tags.hook_load).toBe('setup');
   });
 
   it("forwards the row's stored CLI target to the adapter's store check", async () => {

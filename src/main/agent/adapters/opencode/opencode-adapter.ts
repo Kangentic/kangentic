@@ -19,7 +19,12 @@ import { migrateOpenCodeProjectData } from './project-relocation';
 import { parseOpenCodeStatus } from './status-parser';
 import { readOpenCodeToolCountsAtPath, readOpenCodeToolResultTokensAtPath, readOpenCodeTranscriptUsageAtPath } from './transcript-usage';
 import { readOpenCodeSubagentUsageAtPath, statOpenCodeSubagentsAtPath } from './subagent-usage';
-import { removeHooks as removeOpenCodeHooks } from './hook-manager';
+import {
+  LOAD_MARKER_CLOCK_SLACK_MS,
+  LOAD_MARKER_DISTRO_CLOCK_SLACK_MS,
+  readPluginLoadEvidence,
+  removeHooks as removeOpenCodeHooks,
+} from './hook-manager';
 import { discoverOpenCodeCapabilities, discoverOpenCodeModels, type OpenCodeModelInventory } from './capability-discovery';
 import { probeOpenCodeServer, fetchOpenCodeSessionMessages } from './remote-client';
 import { buildSummarizePrompt, titleFromAnswer } from '../../shared/auto-name';
@@ -196,9 +201,9 @@ export function openCodeAnswerConfig(server: KangenticMcpServer | null, openCode
  *    checked-in `opencode.json` is never touched. The activity-stream
  *    plugin is a separate file. OpenCode 1 is given its URL in the same
  *    variable and nothing is copied. OpenCode 2's is copied into the
- *    project-shared `.opencode/plugins/` directory at spawn (held per session
- *    via `hookHolds` since concurrent sessions share the file), and a host
- *    over SSH gets a copy of either.
+ *    project-shared `.opencode/plugins/` directory at spawn and kept there
+ *    (OpenCode 2 unloads a plugin whose file goes away), and a host over SSH
+ *    gets a copy of either, held per session via `hookHolds`.
  *  - No trust dialog. Modes map to `--agent` on a fresh spawn, and Build
  *    (Auto-approve) adds the TUI's own `--auto` (auto-approve what is not
  *    explicitly denied) on a CLI that has it (1.17.12 and later, and
@@ -276,14 +281,17 @@ export class OpenCodeAdapter implements AgentAdapter {
 
   private readonly detector = new OpenCodeDetector();
   private readonly commandBuilder = new OpenCodeCommandBuilder();
-  // Sessions holding an installed activity plugin, per project root
-  // (`installsActivityPlugin`: OpenCode 2, and a host over SSH). OpenCode 2
-  // auto-loads plugins from a project-shared `.opencode/plugins/` directory,
-  // so concurrent sessions in the same project share one plugin file, and
-  // it is deleted only when the root's last session releases. A hold records
-  // the project root, so a worktree session's release (which arrives with
-  // the worktree path) removes the plugin the build installed. An OpenCode 1
-  // session here installs nothing and takes no hold. See SharedFolderHolds.
+  // Sessions holding the plugin copy on a host over SSH, per working folder.
+  // That copy is one of the host files the session pulls and restores
+  // (`remoteFiles`), so it goes when the folder's last session releases.
+  //
+  // A copy on this machine (OpenCode 2's, in the project root) takes no hold and
+  // stays when a session releases. OpenCode 2 watches its plugin files, and a
+  // copy deleted under a running session unloads the plugin for the rest of it
+  // (measured on 2.0.23 and 2.2.5: every later turn wrote nothing). The copy does
+  // nothing in a run without `KANGENTIC_EVENTS_PATH`, which is any OpenCode started
+  // outside a Kangentic session.
+  // Project delete still removes it (`removeHooks` with no session id).
   private readonly hookHolds = new SharedFolderHolds();
 
   // Keyed by spawn cwd, populated in buildCommand whenever a spawn resolves
@@ -498,12 +506,11 @@ export class OpenCodeAdapter implements AgentAdapter {
     // disabled (remote and local both use projectPath as cwd).
     this.remoteTargetsByCwd.delete(options.cwd);
 
-    // buildOpenCodeCommand copies the activity plugin into
-    // `<projectRoot>/.opencode/plugins/` when `installsActivityPlugin` says so.
-    // Hold the project root until this session releases, so concurrent
-    // sessions serialize their cleanup in `removeHooks`. Remote mode never
-    // runs the plugin, and OpenCode 1 here is given its URL (command-builder.ts).
-    if (installsActivityPlugin({ ...options, cliVersion })) {
+    // buildOpenCodeCommand copies the activity plugin when `installsActivityPlugin`
+    // says so. Only a host's copy is held, until the folder's last session there
+    // releases (see `hookHolds`). Remote mode never runs the plugin, and OpenCode 1
+    // here is given its URL (command-builder.ts).
+    if (options.cliTarget?.kind === 'ssh' && installsActivityPlugin({ ...options, cliVersion })) {
       this.hookHolds.retain(options.ptySessionId, activityPluginRoot(options));
     }
     return command;
@@ -620,22 +627,36 @@ export class OpenCodeAdapter implements AgentAdapter {
         if (options.cliTarget || this.remoteTargetsByCwd.has(options.cwd)) return Promise.resolve('unknown');
         return OpenCodeSessionHistoryParser.storeEvidence({ cwd: options.cwd, spawnedAt: options.spawnedAt });
       },
+      // The marker either plugin leaves beside the events file. A host over SSH
+      // publishes into its hook folder instead, and remote mode runs no plugin.
+      // A distro's plugin writes the same file through `/mnt`, so it is read here.
+      hookLoadEvidence: (options) => {
+        if (!options.eventsOutputPath || options.cliTarget?.kind === 'ssh' || this.remoteTargetsByCwd.has(options.cwd)) {
+          return Promise.resolve('unknown');
+        }
+        const clockSlackMs = options.cliTarget?.kind === 'wsl' ? LOAD_MARKER_DISTRO_CLOCK_SLACK_MS : LOAD_MARKER_CLOCK_SLACK_MS;
+        return readPluginLoadEvidence(options.eventsOutputPath, options.spawnedAt, clockSlackMs);
+      },
     },
   };
 
   /**
-   * Remove the activity plugin from a project's `.opencode/plugins/`.
+   * Release a session's plugin copy, or remove every copy from a folder.
    *
-   * `sessionId` identifies which session is releasing its hold. When
-   * supplied, the plugin file is deleted from the project root that session
-   * held, once the root's last holder releases. When omitted, the call
-   * drops every hold on `directory` and deletes the file - intended only
-   * for forced cleanup paths (project delete) where every session is being
-   * torn down anyway.
+   * With `sessionId`: only a host's copy is removed, from the folder that
+   * session held, once that folder's last holder there releases. A copy on this
+   * machine stays, because OpenCode 2 unloads a plugin whose file is deleted
+   * under a running session (see `hookHolds`). Without it (project delete, once
+   * every session is torn down): every hold on `directory` is dropped and every
+   * Kangentic copy in it is removed. A session that took no hold in this run
+   * removes nothing, a host's session taken back after a restart included: its
+   * copy may serve that folder's other sessions, and it does nothing outside a
+   * Kangentic session.
    */
   removeHooks(directory: string, sessionId?: string): void {
+    if (sessionId !== undefined && !this.hookHolds.holds(sessionId)) return;
     const folder = this.hookHolds.release(sessionId, directory);
-    // Null while another session in this project still needs the plugin.
+    // Null while another session on the host still needs the plugin.
     if (folder) removeOpenCodeHooks(folder);
   }
 
