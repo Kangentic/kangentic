@@ -94,10 +94,16 @@ vi.mock('../../src/main/utility-process/paths', () => ({ unpacked: (target: stri
 vi.mock('../../src/main/analytics/analytics', () => ({ trackEvent: vi.fn() }));
 vi.mock('../../src/main/analytics/error-reporting', () => ({ reportHandledError: vi.fn() }));
 vi.mock('../../src/main/diagnostics/event-loop-lag', () => ({ recordRelayedSyncSpan: vi.fn(), relayLagRecord: vi.fn() }));
+// Everything else passes through; only the mark the give-up sets is a spy.
+vi.mock('../../src/main/diagnostics/descriptor-table', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/diagnostics/descriptor-table')>();
+  return { ...actual, markPtyHostRunningInMain: vi.fn() };
+});
 
 import { WATCHDOG_CHECK_INTERVAL_MS, WATCHDOG_HELD_CHECKS } from '../../src/main/utility-process/event-loop-watchdog';
 import { HEARTBEAT_LATE_TIMER_MS, LATE_BEAT_SETTLE_MS, UtilityPtyHostTransport, ptyHostEntryPath, ptyHostSpawnWorkerPath } from '../../src/main/pty/host/utility-pty-host-transport';
 import { reportHandledError } from '../../src/main/analytics/error-reporting';
+import { markPtyHostRunningInMain } from '../../src/main/diagnostics/descriptor-table';
 import { recordRelayedSyncSpan, relayLagRecord } from '../../src/main/diagnostics/event-loop-lag';
 import type { PtyHostTransport } from '../../src/main/pty/host/pty-host-client';
 import type { MessagePortMain } from 'electron';
@@ -150,6 +156,7 @@ describe('UtilityPtyHostTransport', () => {
     resetPtyHostReports();
     stderrTails.length = 0;
     vi.mocked(reportHandledError).mockClear();
+    vi.mocked(markPtyHostRunningInMain).mockClear();
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
@@ -402,11 +409,15 @@ describe('UtilityPtyHostTransport', () => {
       for (let crash = 0; crash < 5; crash++) {
         latestChild().emit('exit', 1);
         await vi.advanceTimersByTimeAsync(16_000);
+        // Restarting is not giving up: descriptors are still the host's until the fallback.
+        if (crash < 4) expect(markPtyHostRunningInMain).not.toHaveBeenCalled();
       }
       const port = fakePort('renderer-9');
       transport.attachRendererPort(9, port);
 
       expect(fallbackAttach).toHaveBeenCalledWith(9, port);
+      // The give-up tells the descriptor report that terminals are main's now, once.
+      expect(markPtyHostRunningInMain).toHaveBeenCalledTimes(1);
     });
   });
 
