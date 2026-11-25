@@ -20,10 +20,10 @@ import { reportHandledError, type ErrorReportContexts } from './error-reporting'
 import { isShuttingDown } from '../shutdown-state';
 import { isAbortError } from '../../shared/abort-utils';
 import { isUserConfigurationError } from '../../shared/user-configuration-error';
-import { errorCodeOf, errorNameOf, framesOf, isRuntimeDefect, pathFreeCopy } from '../../shared/handled-error-copy';
+import { errorCodeOf, errorNameOf, framesOf, isRuntimeDefect, pathFreeCopy, syscallOf } from '../../shared/handled-error-copy';
 import type { PasteFailureFacts, PasteOutputBucket, PasteSubmitError } from '../pty/paste-engine';
 
-export { errorCodeOf, errorNameOf, pathFreeCopy } from '../../shared/handled-error-copy';
+export { errorCodeOf, errorNameOf, pathFreeCopy, syscallOf } from '../../shared/handled-error-copy';
 
 /**
  * True for a failure that is ours or the machine's: a runtime defect (`TypeError`,
@@ -172,12 +172,6 @@ export function markReported(error: unknown): void {
  */
 export function isReported(error: unknown): boolean {
   return inSetOrCause(reportedErrors, error);
-}
-
-/** The syscall of a Node system error (`open`, `rename`), else undefined. */
-export function syscallOf(error: unknown): string | undefined {
-  const syscall = (error as { syscall?: unknown } | null | undefined)?.syscall;
-  return typeof syscall === 'string' && /^[a-z_]{1,32}$/.test(syscall) ? syscall : undefined;
 }
 
 /** A short lowercase word, so nothing but a fixed cause can ride the tag. */

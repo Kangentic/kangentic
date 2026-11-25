@@ -35,6 +35,12 @@ export function errorCodeOf(error: unknown): string | undefined {
   return typeof code === 'string' && ERROR_CODE.test(code) ? code : undefined;
 }
 
+/** The syscall of a Node system error (`open`, `rename`), else undefined. */
+export function syscallOf(error: unknown): string | undefined {
+  const syscall = (error as { syscall?: unknown } | null | undefined)?.syscall;
+  return typeof syscall === 'string' && /^[a-z_]{1,32}$/.test(syscall) ? syscall : undefined;
+}
+
 /** True for an error the runtime raised for a code defect: a `TypeError`, `RangeError` or `ReferenceError`. */
 export function isRuntimeDefect(error: unknown): boolean {
   return error instanceof Error && RUNTIME_DEFECT_NAMES.has(error.name);

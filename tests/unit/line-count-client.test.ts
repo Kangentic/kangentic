@@ -9,14 +9,20 @@ import { EventEmitter } from 'node:events';
  * (never throw) so diff-service.ts falls back to inline counting.
  */
 
-const { mockFork } = vi.hoisted(() => ({ mockFork: vi.fn() }));
+const { mockFork, mockReportHandledError } = vi.hoisted(() => ({ mockFork: vi.fn(), mockReportHandledError: vi.fn() }));
 
 vi.mock('electron', () => ({
   app: { isPackaged: false },
   utilityProcess: { fork: mockFork },
 }));
 
+// What main sends to error reporting for a file the worker could not count.
+vi.mock('../../src/main/analytics/error-reporting', () => ({
+  reportHandledError: mockReportHandledError,
+}));
+
 import { LineCountClient } from '../../src/main/git/line-count/line-count-client';
+import { gitWorktreeReporter } from '../../src/main/git/git-worktree-report';
 import { UtilityRestartPolicy } from '../../src/main/utility-process/restart-policy';
 
 // Mirrors the private IDLE_SHUTDOWN_MS in line-count-client.ts.
@@ -407,6 +413,70 @@ describe('LineCountClient', () => {
     } finally {
       stderrWrite.mockRestore();
     }
+  });
+
+  describe('a file the worker could not count', () => {
+    /** The reports sent for the worker's relay, apart from any the restart policy sends. */
+    function workerCountReports(): Array<[Error, Record<string, string>]> {
+      return mockReportHandledError.mock.calls
+        .map((call) => call as [Error, Record<string, string>])
+        .filter(([, tags]) => tags.stage === 'untracked_count_worker');
+    }
+
+    beforeEach(() => {
+      // The reporter sends each failure once per run, and one module instance serves the file.
+      gitWorktreeReporter.reset();
+    });
+
+    it('is reported from the fixed code the worker relayed, and the request still resolves on its result', async () => {
+      // The worker cannot report. Before the relay a full descriptor table in
+      // the worker read as files with no lines, and nothing reached main.
+      const client = new LineCountClient();
+      const promise = client.countFiles(['/mock/a.txt']);
+      const child = lastChild();
+
+      child.emit('message', { type: 'handledError', code: 'count_file', errorName: 'Error', errorCode: 'EMFILE', syscall: 'open' });
+
+      const reports = workerCountReports();
+      expect(reports).toHaveLength(1);
+      const [sent, tags] = reports[0];
+      expect(sent.message).toBe('Handled git_worktree failure: Error');
+      expect(tags).toMatchObject({ source: 'git_worktree', stage: 'untracked_count_worker', errno: 'EMFILE', syscall: 'open' });
+
+      const entries = [{ path: '/mock/a.txt', insertions: 0, binary: false }];
+      child.emit('message', { type: 'result', id: 1, entries });
+      await expect(promise).resolves.toBe(entries);
+      client.dispose();
+    });
+
+    it('sends no text from a relay whose fields are not a class name, an errno and a syscall', async () => {
+      // A type does not survive the wire. Whatever arrives in these fields must
+      // never become a tag, since a real failure's text names the user's file.
+      const client = new LineCountClient();
+      const promise = client.countFiles(['/mock/a.txt']);
+      const child = lastChild();
+
+      child.emit('message', {
+        type: 'handledError',
+        code: 'count_file',
+        errorName: 'not a class name',
+        errorCode: "EMFILE: too many open files, open '/mock/payroll.txt'",
+        syscall: '/mock/payroll.txt',
+      });
+
+      const reports = workerCountReports();
+      expect(reports).toHaveLength(1);
+      const [sent, tags] = reports[0];
+      expect(sent.message).toBe('Handled git_worktree failure: Error');
+      expect(tags.error_name).toBe('Error');
+      expect(tags.errno).toBeUndefined();
+      expect(tags.syscall).toBeUndefined();
+      expect(`${sent.message}\n${sent.stack}\n${Object.values(tags).join(' ')}`).not.toContain('payroll');
+
+      child.emit('message', { type: 'result', id: 1, entries: [] });
+      await promise;
+      client.dispose();
+    });
   });
 
   it('degrades to null and records the crash with no stderr tail when utilityProcess.fork() itself throws', async () => {

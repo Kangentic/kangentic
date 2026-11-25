@@ -44,9 +44,18 @@ vi.mock('../../src/main/git/git-object-reader', () => ({
   readGitObject: mockReadGitObject,
 }));
 
+// What a failed line count sends to error reporting (the untracked-count cases).
+const { mockReportHandledError } = vi.hoisted(() => ({ mockReportHandledError: vi.fn() }));
+
+vi.mock('../../src/main/analytics/error-reporting', () => ({
+  reportHandledError: mockReportHandledError,
+}));
+
 import fs from 'node:fs';
 import path from 'node:path';
 import { DiffService, RACY_FINGERPRINT_SUFFIX, RECENT_WRITE_WINDOW_MS } from '../../src/main/git/diff-service';
+import { gitWorktreeReporter } from '../../src/main/git/git-worktree-report';
+import { LINE_COUNT_CONCURRENCY } from '../../src/main/git/line-count/count-lines';
 import type { GitObjectRead, GitObjectReadOptions } from '../../src/main/git/git-object-reader';
 import { IMAGE_PREVIEW_MAX_BYTES } from '../../src/shared/image-preview';
 
@@ -104,6 +113,8 @@ describe('DiffService', () => {
     // fs.promises.stat/open) would otherwise silently leak into the next test
     // that never configures those mocks itself.
     vi.resetAllMocks();
+    // The reporter sends each failure once per run, and one module instance serves the file.
+    gitWorktreeReporter.reset();
     service = new DiffService('/project');
     // Default merge-base mock - tests can override as needed
     mockGit.raw.mockResolvedValue('abc123\n');
@@ -483,11 +494,13 @@ describe('DiffService', () => {
       expect(result.files[0].status).toBe('A');
     });
 
-    it('handles untracked file read failure gracefully', async () => {
+    it('lists a file deleted between git status and the read with no lines, and reports nothing', async () => {
       mockGit.diffSummary.mockResolvedValue(makeDiffSummary([]));
       mockGit.diff.mockResolvedValue('');
       mockGit.status.mockResolvedValue({ not_added: ['deleted-before-read.ts'] });
-      vi.mocked(fs.promises.stat).mockRejectedValue(new Error('ENOENT'));
+      vi.mocked(fs.promises.stat).mockRejectedValue(
+        Object.assign(new Error('ENOENT: no such file or directory, stat'), { code: 'ENOENT', syscall: 'stat' }),
+      );
 
       const result = await service.getDiffFiles({
         projectPath: '/project',
@@ -501,6 +514,106 @@ describe('DiffService', () => {
         insertions: 0,
         deletions: 0,
         binary: false,
+      });
+      expect(mockReportHandledError).not.toHaveBeenCalled();
+    });
+
+    // Sentry DESKTOP-5A. One folder missing from .gitignore lists every file
+    // under it, and the Changes panel then failed to load at all.
+    describe('a very large untracked set', () => {
+      /** Resolves on a later turn of the event loop, the way a real file call does. */
+      function nextTurn(): Promise<void> {
+        return new Promise((resolve) => setImmediate(resolve));
+      }
+
+      it('returns every entry for 200,000 untracked paths', async () => {
+        // Spreading the list as call arguments threw RangeError past about
+        // 125,000 entries, so the handler rejected and the panel showed an error.
+        const untrackedCount = 200_000;
+        const untrackedPaths = Array.from({ length: untrackedCount }, (_unused, index) => `vendor/file-${index}.txt`);
+        mockGit.diffSummary.mockResolvedValue(makeDiffSummary([{ file: 'src/tracked.ts', insertions: 4, deletions: 1 }]));
+        mockGit.diff.mockResolvedValue('M\tsrc/tracked.ts\n');
+        mockGit.status.mockResolvedValue({ not_added: untrackedPaths });
+        // Far past the offload threshold in total, so the counts come from the
+        // worker client's mock and the test reads no file.
+        vi.mocked(fs.promises.stat).mockResolvedValue({ size: 1024 } as never);
+        mockCountFiles.mockImplementation(async (absolutePaths: string[]) =>
+          absolutePaths.map((absolutePath) => ({ path: absolutePath, insertions: 2, binary: false })));
+
+        const result = await service.getDiffFiles({ projectPath: '/project', baseBranch: 'main' });
+
+        expect(result.files).toHaveLength(untrackedCount + 1);
+        expect(result.files[1]).toEqual({ path: 'vendor/file-0.txt', status: 'U', insertions: 2, deletions: 0, binary: false });
+        expect(result.files[untrackedCount]).toEqual({
+          path: `vendor/file-${untrackedCount - 1}.txt`, status: 'U', insertions: 2, deletions: 0, binary: false,
+        });
+        expect(result.totalInsertions).toBe(4 + untrackedCount * 2);
+        expect(result.totalDeletions).toBe(1);
+      }, 30_000);
+
+      it('holds at most LINE_COUNT_CONCURRENCY files open while it counts inline', async () => {
+        // One open per file at once held a descriptor for every untracked file.
+        const untrackedPaths = Array.from({ length: 200 }, (_unused, index) => `notes/file-${index}.txt`);
+        mockGit.diffSummary.mockResolvedValue(makeDiffSummary([]));
+        mockGit.diff.mockResolvedValue('');
+        mockGit.status.mockResolvedValue({ not_added: untrackedPaths });
+        const content = Buffer.from('line1\nline2\n');
+        vi.mocked(fs.promises.stat).mockResolvedValue({ size: content.length } as never);
+        let openHandles = 0;
+        let peakOpenHandles = 0;
+        vi.mocked(fs.promises.open).mockImplementation((async () => {
+          openHandles += 1;
+          peakOpenHandles = Math.max(peakOpenHandles, openHandles);
+          await nextTurn();
+          return {
+            read: async (buffer: Buffer, offset: number, length: number, position: number) => {
+              await nextTurn();
+              content.copy(buffer, offset, position, position + length);
+              return { bytesRead: length, buffer };
+            },
+            close: async () => {
+              await nextTurn();
+              openHandles -= 1;
+            },
+          };
+        }) as never);
+
+        const result = await service.getDiffFiles({ projectPath: '/project', baseBranch: 'main' });
+
+        // Under the offload threshold, so main counted these itself.
+        expect(mockCountFiles).not.toHaveBeenCalled();
+        expect(result.files).toHaveLength(200);
+        expect(result.totalInsertions).toBe(400);
+        // Above 1, so a count that went serial does not pass as bounded.
+        expect(peakOpenHandles).toBeGreaterThan(1);
+        expect(peakOpenHandles).toBeLessThanOrEqual(LINE_COUNT_CONCURRENCY);
+        expect(openHandles).toBe(0);
+      });
+
+      it('reports a count that failed on a full descriptor table, and still lists the file', async () => {
+        // An EMFILE used to read as a file with no lines, and nothing said the
+        // table was full.
+        mockGit.diffSummary.mockResolvedValue(makeDiffSummary([]));
+        mockGit.diff.mockResolvedValue('');
+        mockGit.status.mockResolvedValue({ not_added: ['notes/unreadable.txt'] });
+        vi.mocked(fs.promises.stat).mockResolvedValue({ size: 12 } as never);
+        vi.mocked(fs.promises.open).mockRejectedValue(Object.assign(
+          new Error("EMFILE: too many open files, open '/project/notes/unreadable.txt'"),
+          { code: 'EMFILE', syscall: 'open' },
+        ));
+
+        const result = await service.getDiffFiles({ projectPath: '/project', baseBranch: 'main' });
+
+        expect(result.files).toEqual([
+          { path: 'notes/unreadable.txt', status: 'U', insertions: 0, deletions: 0, binary: false },
+        ]);
+        expect(mockReportHandledError).toHaveBeenCalledTimes(1);
+        const [sent, tags] = mockReportHandledError.mock.calls[0] as [Error, Record<string, string>];
+        expect(sent.message).toBe('Handled git_worktree failure: Error');
+        expect(tags).toMatchObject({ source: 'git_worktree', stage: 'untracked_count', errno: 'EMFILE', syscall: 'open' });
+        // Neither the message nor the stack's header carries the file's path.
+        expect(`${sent.message}\n${sent.stack}`).not.toContain('unreadable.txt');
+        expect(Object.values(tags).join(' ')).not.toContain('unreadable.txt');
       });
     });
 

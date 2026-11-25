@@ -1,8 +1,8 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { countFileLines } from '../../src/main/git/line-count/count-lines';
+import { countFileLines, countLinesInFiles, firstOfEachFailure } from '../../src/main/git/line-count/count-lines';
 
 /** countFileLines' bounded read/scan contract: exact counts for normal files,
  *  binary detection, and a floor (not a throw) for a file over the size cap. */
@@ -102,5 +102,79 @@ describe('countFileLines', () => {
       statSpy.mockRestore();
       openSpy.mockRestore();
     }
+  });
+});
+
+/** The batch count main and the line-count worker both run, on real files. */
+describe('countLinesInFiles', () => {
+  let directory: string;
+
+  beforeEach(() => {
+    directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-count-batch-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+
+  it('counts a folder and a deleted path as no lines, and hands neither to the caller', async () => {
+    // git lists an untracked nested repository as one folder entry, and a file
+    // can go between git status and the read. Both are the state of the user's
+    // own tree. Handed on, each would file an error report for every project
+    // that holds one. The folder reads differently per platform (an EISDIR on
+    // Linux and macOS, an empty read on Windows), and must count the same.
+    const textFile = path.join(directory, 'notes.txt');
+    fs.writeFileSync(textFile, 'a\nb\n');
+    const nestedFolder = path.join(directory, 'nested');
+    fs.mkdirSync(nestedFolder);
+    const deletedFile = path.join(directory, 'deleted.txt');
+    const uncounted: unknown[] = [];
+
+    const counts = await countLinesInFiles([textFile, nestedFolder, deletedFile], (error) => uncounted.push(error));
+
+    expect(counts).toEqual([
+      { insertions: 2, binary: false, truncated: false },
+      { insertions: 0, binary: false, truncated: false },
+      { insertions: 0, binary: false, truncated: false },
+    ]);
+    expect(uncounted).toEqual([]);
+  });
+
+  it('hands the caller a failure that is not a missing path, and still counts the rest', async () => {
+    const textFile = path.join(directory, 'notes.txt');
+    fs.writeFileSync(textFile, 'a\nb\nc\n');
+    const heldFile = path.join(directory, 'held.txt');
+    fs.writeFileSync(heldFile, 'x\n');
+    const held = Object.assign(new Error(`EBUSY: resource busy or locked, open '${heldFile}'`), { code: 'EBUSY', syscall: 'open' });
+    const realOpen = fs.promises.open.bind(fs.promises);
+    const openSpy = vi.spyOn(fs.promises, 'open').mockImplementation(async (filePath, flags) => {
+      if (filePath === heldFile) throw held;
+      return realOpen(filePath, flags);
+    });
+    const uncounted: unknown[] = [];
+
+    try {
+      const counts = await countLinesInFiles([heldFile, textFile], (error) => uncounted.push(error));
+
+      expect(counts.map((count) => count.insertions)).toEqual([0, 3]);
+      expect(uncounted).toEqual([held]);
+    } finally {
+      openSpy.mockRestore();
+    }
+  });
+
+  it('hands on only the first of each failure, so a full descriptor table is one report', () => {
+    const handedOn: unknown[] = [];
+    const sink = firstOfEachFailure((error) => handedOn.push(error));
+    const tableFull = (): Error => Object.assign(new Error('EMFILE: too many open files'), { code: 'EMFILE' });
+    const firstTableFull = tableFull();
+    const held = Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' });
+
+    sink(firstTableFull);
+    sink(tableFull());
+    sink(held);
+    sink(tableFull());
+
+    expect(handedOn).toEqual([firstTableFull, held]);
   });
 });

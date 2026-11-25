@@ -3,14 +3,15 @@
  * newlines across a large set of untracked files never blocks the main event
  * loop (which owns better-sqlite3, the PTYs, and IPC).
  *
- * A deliberately dumb translation layer: for each requested path, run the
- * same bounded count-lines helper the main process uses inline for small
- * batches, and post the results back.
+ * A deliberately dumb translation layer: run the same bounded count-lines
+ * helper the main process uses inline for small batches over the requested
+ * paths, and post the results back.
  *
  * Bundled by esbuild as its own entry (`.vite/build/line-count-worker.js`).
  */
 
-import { countFileLines } from './count-lines';
+import { countLinesInFiles, firstOfEachFailure } from './count-lines';
+import { errorCodeOf, errorNameOf, syscallOf } from '../../../shared/handled-error-copy';
 
 interface CountMessage {
   type: 'count';
@@ -28,25 +29,39 @@ export interface LineCountEntry {
   binary: boolean;
 }
 
+/**
+ * A file the worker could not count for a reason other than being gone, by a
+ * fixed code. A worker cannot report, so main does (`line-count-client.ts`).
+ * Only the failure's class, errno and syscall cross: its message names the
+ * file, and stays here.
+ */
+export interface LineCountHandledError {
+  type: 'handledError';
+  code: 'count_file';
+  errorName: string;
+  errorCode?: string;
+  syscall?: string;
+}
+
 const parentPort = process.parentPort;
 
 function post(message: unknown): void {
   parentPort.postMessage(message);
 }
 
+/** Sent once per class and errno for the worker's run. Main reports each once a run too. */
+const relayUncountedFile = firstOfEachFailure((error) => {
+  const relay: LineCountHandledError = { type: 'handledError', code: 'count_file', errorName: errorNameOf(error) };
+  const errorCode = errorCodeOf(error);
+  if (errorCode) relay.errorCode = errorCode;
+  const syscall = syscallOf(error);
+  if (syscall) relay.syscall = syscall;
+  post(relay);
+});
+
 async function countPaths(paths: string[]): Promise<LineCountEntry[]> {
-  return Promise.all(
-    paths.map(async (absolutePath): Promise<LineCountEntry> => {
-      try {
-        const result = await countFileLines(absolutePath);
-        return { path: absolutePath, insertions: result.insertions, binary: result.binary };
-      } catch {
-        // report-ok: the file may have been deleted or moved between the caller's stat and
-        // this read, and it then counts as no lines, as main's inline count does.
-        return { path: absolutePath, insertions: 0, binary: false };
-      }
-    }),
-  );
+  const counts = await countLinesInFiles(paths, relayUncountedFile);
+  return counts.map((count, index) => ({ path: paths[index], insertions: count.insertions, binary: count.binary }));
 }
 
 parentPort.on('message', (event: Electron.MessageEvent) => {
