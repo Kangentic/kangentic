@@ -574,10 +574,11 @@ deletes its copy. A copy that fails to delete is skipped for the rest of that ru
 the next open.
 
 A link that will not come out refuses the removal. When a `node_modules` junction or symlink, or a
-linked folder the record names, cannot be removed, `clearWorktreeLinks` answers false and
-`tryGitRemoval` stops before `git worktree remove --force` and the recursive delete: the worktree
-stays where it is, with its links, and the removal is reported as refused. A worktree is never
-removed through a live link, since that delete would empty the project's own `node_modules`.
+linked folder the record names, cannot be removed, or the link record itself cannot be read,
+`clearWorktreeLinks` answers false and `tryGitRemoval` stops before `git worktree remove --force`
+and the recursive delete: the worktree stays where it is, with its links. The removal then fails
+like any other (`removed: false`), and its failure report carries `refused: true`. A worktree is
+never removed through a live link, since that delete would empty the project's own `node_modules`.
 
 ### On Project Open
 
