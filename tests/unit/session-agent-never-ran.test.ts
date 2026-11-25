@@ -124,6 +124,54 @@ describe('SessionRepository.markAgentNeverRan', () => {
   });
 });
 
+// A crash runs no exit listener and no quit path, so the orphan sweeps are not a
+// place the mark is written or lost. They only change the status.
+describe('the crash recovery orphan sweeps', () => {
+  function statusOf(database: ReturnType<typeof openProjectDatabase>, id: string): string {
+    return (database.prepare('SELECT status FROM sessions WHERE id = ?').get(id) as { status: string }).status;
+  }
+
+  it('keep the mark a queued record was written with, so a crash leaves it never-ran', () => {
+    const database = openProjectDatabase();
+    const repository = new SessionRepository(database);
+    repository.insert({ ...BASE_ROW, id: 'session-queued', status: 'queued' });
+    repository.markAgentNeverRan('session-queued');
+    const stamp = readNeverRanAt(database, 'session-queued');
+
+    repository.markAllRunningAsOrphaned();
+
+    expect(statusOf(database, 'session-queued')).toBe('orphaned');
+    expect(readNeverRanAt(database, 'session-queued')).toBe(stamp);
+  });
+
+  it('do not mark a running record, whose CLI may have run before the crash', () => {
+    const database = openProjectDatabase();
+    const repository = new SessionRepository(database);
+    repository.insert({ ...BASE_ROW, id: 'session-running' });
+
+    repository.markAllRunningAsOrphaned();
+
+    expect(statusOf(database, 'session-running')).toBe('orphaned');
+    expect(readNeverRanAt(database, 'session-running')).toBeNull();
+  });
+
+  it('do not mark through the exclusion form either, and keep a mark already there', () => {
+    const database = openProjectDatabase();
+    const repository = new SessionRepository(database);
+    repository.insert({ ...BASE_ROW, id: 'session-running' });
+    database.prepare(`INSERT INTO tasks (id, display_id, title, description, swimlane_id, position, created_at, updated_at) VALUES ('task-2', 2, 'Other', '', 'lane-1', 1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`).run();
+    repository.insert({ ...BASE_ROW, id: 'session-queued', task_id: 'task-2', status: 'queued' });
+    repository.markAgentNeverRan('session-queued');
+
+    repository.markRunningAsOrphanedExcluding(new Set(['task-3']));
+
+    expect(statusOf(database, 'session-running')).toBe('orphaned');
+    expect(readNeverRanAt(database, 'session-running')).toBeNull();
+    expect(statusOf(database, 'session-queued')).toBe('orphaned');
+    expect(readNeverRanAt(database, 'session-queued')).not.toBeNull();
+  });
+});
+
 describe('the resume check over real rows', () => {
   let projectPath: string;
 
