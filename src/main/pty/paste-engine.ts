@@ -129,16 +129,19 @@ export class PasteSubmitError extends Error {
   readonly facts?: PasteFailureFacts;
   /** Set on a `held` throw: why the session could not take the keys, in plain words. */
   readonly heldReason?: string;
+  /** Set on a `held` throw: `enter` once the text is already in the prompt. */
+  readonly heldStage?: 'writing' | 'enter';
   constructor(
     code: PasteSubmitError['code'],
     message: string,
-    details: { facts?: PasteFailureFacts; heldReason?: string } = {},
+    details: { facts?: PasteFailureFacts; heldReason?: string; heldStage?: 'writing' | 'enter' } = {},
   ) {
     super(message);
     this.name = 'PasteSubmitError';
     this.code = code;
     if (details.facts) this.facts = details.facts;
     if (details.heldReason) this.heldReason = details.heldReason;
+    if (details.heldStage) this.heldStage = details.heldStage;
   }
 }
 
@@ -147,30 +150,33 @@ export class PasteSubmitError extends Error {
  * the engine saw, never what to try, and names nothing internal. `message`
  * stays the engine's own diagnostic, for the main log.
  */
-export function pasteFailureDetail(error: Pick<PasteSubmitError, 'code' | 'facts' | 'heldReason'>): string {
+export function pasteFailureDetail(error: Pick<PasteSubmitError, 'code' | 'facts' | 'heldReason' | 'heldStage'>): string {
   switch (error.code) {
     case 'no-submission-evidence':
       return error.facts?.reason === 'paste-mode-off'
         ? 'The message was pasted while the agent had a prompt or dialog open, so Enter was not pressed again.'
         : 'The message was pasted, but the agent showed no sign of taking it.';
     case 'timeout':
-      return 'The message was pasted, but the paste did not finish in time.';
-    case 'held':
-      return error.heldReason
-        ? `The message was not pasted: ${error.heldReason}.`
-        : 'The message was not pasted: the session could not take keys.';
+      // The timer can fire before the write as well as after it.
+      return 'The paste did not finish in time.';
+    case 'held': {
+      const reason = error.heldReason ?? 'the session could not take keys';
+      // Held before an Enter, the text is already in the prompt.
+      return error.heldStage === 'enter'
+        ? `The message was pasted, but Enter was not pressed: ${reason}.`
+        : `The message was not pasted: ${reason}.`;
+    }
     case 'aborted':
       return 'The message was not pasted because it was stopped.';
   }
 }
 
-/** The plain sentence for a `PasteSubmitError`, or one it wraps, else undefined. */
+/**
+ * The plain sentence for a `PasteSubmitError`, else undefined. The error
+ * itself only: a wrapper (a refusal on an abort) carries its own reason.
+ */
 export function userFacingDetailOf(error: unknown): string | undefined {
-  const wrapped = (error as { cause?: unknown } | null | undefined)?.cause;
-  for (const candidate of [error, wrapped]) {
-    if (candidate instanceof PasteSubmitError) return pasteFailureDetail(candidate);
-  }
-  return undefined;
+  return error instanceof PasteSubmitError ? pasteFailureDetail(error) : undefined;
 }
 
 const BRACKETED_PASTE_START = '\x1b[200~';
@@ -460,7 +466,10 @@ export function createPasteEngine(sessionManager: SessionManager): PasteEngine {
         const reason = cleared === 'exited'
           ? 'the session exited'
           : (sessionManager.automatedKeysBlocker(sessionId) ?? 'the session could not take keys in time');
-        throw new PasteSubmitError('held', `paste-engine: ${source} held before ${stage}: ${reason}`, { heldReason: reason });
+        throw new PasteSubmitError('held', `paste-engine: ${source} held before ${stage}: ${reason}`, {
+          heldReason: reason,
+          heldStage: stage === 'writing' ? 'writing' : 'enter',
+        });
       };
       await awaitClearance('writing', options.signal, options.clearanceTimeoutMs ?? null);
 
