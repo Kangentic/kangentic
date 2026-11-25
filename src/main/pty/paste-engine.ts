@@ -92,14 +92,85 @@ export interface PasteEngine {
   pasteAndSubmit(sessionId: string, text: string, options?: PasteOptions): Promise<void>;
 }
 
+/** How many bytes a submit window saw after its Enter, as a bucket. Never a count. */
+export type PasteOutputBucket = '0' | '1-9' | '10-49' | '50+';
+
+export function pasteOutputBucket(bytes: number): PasteOutputBucket {
+  if (bytes <= 0) return '0';
+  if (bytes < 10) return '1-9';
+  if (bytes < POST_ENTER_DATA_FLOOR_BYTES) return '10-49';
+  return '50+';
+}
+
+/**
+ * What the engine saw when a paste showed no sign of a submit. Short enums
+ * only: Sentry reads them as tags (`pasteFactsOf` in `analytics/handled-report.ts`).
+ */
+export interface PasteFailureFacts {
+  /** `paste-mode-off`: the agent turned bracketed paste off, so Enter was not pressed again. */
+  reason: 'paste-mode-off' | 'no-signal';
+  /** Whether the first window took output after the Enter as proof of a submit. */
+  firstWindowTakesData: boolean;
+  /** Whether the retry Enter ran. */
+  retried: boolean;
+  /** Whether the agent had bracketed paste mode off. */
+  pasteModeOff: boolean;
+  /** Whether the settle after the paste saw any output. */
+  settleOutput: boolean;
+  firstWindowBytes: PasteOutputBucket;
+  /** Absent when no retry ran. */
+  retryWindowBytes?: PasteOutputBucket;
+}
+
 export class PasteSubmitError extends Error {
   /** `held`: an automated paste the session could not take (see `PasteOptions.automated`). */
   readonly code: 'aborted' | 'timeout' | 'no-submission-evidence' | 'held';
-  constructor(code: PasteSubmitError['code'], message: string) {
+  /** Set on a `no-submission-evidence` throw. */
+  readonly facts?: PasteFailureFacts;
+  /** Set on a `held` throw: why the session could not take the keys, in plain words. */
+  readonly heldReason?: string;
+  constructor(
+    code: PasteSubmitError['code'],
+    message: string,
+    details: { facts?: PasteFailureFacts; heldReason?: string } = {},
+  ) {
     super(message);
     this.name = 'PasteSubmitError';
     this.code = code;
+    if (details.facts) this.facts = details.facts;
+    if (details.heldReason) this.heldReason = details.heldReason;
   }
+}
+
+/**
+ * The run log's and the toast's sentence for a paste that failed. It says what
+ * the engine saw, never what to try, and names nothing internal. `message`
+ * stays the engine's own diagnostic, for the main log.
+ */
+export function pasteFailureDetail(error: Pick<PasteSubmitError, 'code' | 'facts' | 'heldReason'>): string {
+  switch (error.code) {
+    case 'no-submission-evidence':
+      return error.facts?.reason === 'paste-mode-off'
+        ? 'The message was pasted while the agent had a prompt or dialog open, so Enter was not pressed again.'
+        : 'The message was pasted, but the agent showed no sign of taking it.';
+    case 'timeout':
+      return 'The message was pasted, but the paste did not finish in time.';
+    case 'held':
+      return error.heldReason
+        ? `The message was not pasted: ${error.heldReason}.`
+        : 'The message was not pasted: the session could not take keys.';
+    case 'aborted':
+      return 'The message was not pasted because it was stopped.';
+  }
+}
+
+/** The plain sentence for a `PasteSubmitError`, or one it wraps, else undefined. */
+export function userFacingDetailOf(error: unknown): string | undefined {
+  const wrapped = (error as { cause?: unknown } | null | undefined)?.cause;
+  for (const candidate of [error, wrapped]) {
+    if (candidate instanceof PasteSubmitError) return pasteFailureDetail(candidate);
+  }
+  return undefined;
 }
 
 const BRACKETED_PASTE_START = '\x1b[200~';
@@ -389,7 +460,7 @@ export function createPasteEngine(sessionManager: SessionManager): PasteEngine {
         const reason = cleared === 'exited'
           ? 'the session exited'
           : (sessionManager.automatedKeysBlocker(sessionId) ?? 'the session could not take keys in time');
-        throw new PasteSubmitError('held', `paste-engine: ${source} held before ${stage}: ${reason}`);
+        throw new PasteSubmitError('held', `paste-engine: ${source} held before ${stage}: ${reason}`, { heldReason: reason });
       };
       await awaitClearance('writing', options.signal, options.clearanceTimeoutMs ?? null);
 
@@ -470,6 +541,7 @@ export function createPasteEngine(sessionManager: SessionManager): PasteEngine {
         const firstWindowTakesData = allowAnyDataFallback
           && (isSlashCommand(safeText) || !sessionManager.expectsTurnAfterSubmit(sessionId));
         const firstWindowOutput = { bytes: 0 };
+        const retryWindowOutput = { bytes: 0 };
         let evidenceResult = await waitForSubmissionEvidence(
           sessionManager, sessionId, EVIDENCE_FIRST_WAIT_MS, linkedSignal,
           verifier, tWriteEnter, firstWindowTakesData, firstWindowOutput,
@@ -483,6 +555,16 @@ export function createPasteEngine(sessionManager: SessionManager): PasteEngine {
             throw new PasteSubmitError(
               'no-submission-evidence',
               `paste-engine: ${source} sent paste but agent disabled bracketed-paste mode (modal/prompt focused). Skipped retry to avoid confirming a destructive action.`,
+              {
+                facts: {
+                  reason: 'paste-mode-off',
+                  firstWindowTakesData,
+                  retried: false,
+                  pasteModeOff: true,
+                  settleOutput: settle.observedOutput,
+                  firstWindowBytes: pasteOutputBucket(firstWindowOutput.bytes),
+                },
+              },
             );
           }
           await awaitClearance('the retry Enter', linkedSignal, totalTimeoutMs);
@@ -492,7 +574,7 @@ export function createPasteEngine(sessionManager: SessionManager): PasteEngine {
           await sessionManager.drain(sessionId);
           evidenceResult = await waitForSubmissionEvidence(
             sessionManager, sessionId, EVIDENCE_RETRY_WAIT_MS, linkedSignal,
-            verifier, tRetryEnter, allowAnyDataFallback,
+            verifier, tRetryEnter, allowAnyDataFallback, retryWindowOutput,
           );
           // The first window's output still counts once the retry has gone. A
           // hooks session whose hooks never fire answers a submit with output
@@ -513,6 +595,17 @@ export function createPasteEngine(sessionManager: SessionManager): PasteEngine {
           throw new PasteSubmitError(
             'no-submission-evidence',
             `paste-engine: ${source} sent paste + \\r (1 retry) but agent emitted no signal in ${evidenceMs}ms`,
+            {
+              facts: {
+                reason: 'no-signal',
+                firstWindowTakesData,
+                retried,
+                pasteModeOff,
+                settleOutput: settle.observedOutput,
+                firstWindowBytes: pasteOutputBucket(firstWindowOutput.bytes),
+                ...(retried ? { retryWindowBytes: pasteOutputBucket(retryWindowOutput.bytes) } : {}),
+              },
+            },
           );
         }
 

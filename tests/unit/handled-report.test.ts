@@ -181,6 +181,42 @@ describe('sendHandledFailure', () => {
     expect(JSON.stringify(reportHandledError.mock.calls.map((call) => [(call[0] as Error).message, call[1]]))).not.toContain('Acme');
   });
 
+  // Sentry DESKTOP-52: a paste with no sign of a submit could not say which case
+  // it was. Its facts ride as tags, read by shape, and only values from the
+  // fixed sets leave.
+  it('adds the paste facts an error or its cause carries, and drops any value outside the fixed sets', () => {
+    const facts = {
+      reason: 'no-signal', firstWindowTakesData: false, retried: true, pasteModeOff: false,
+      settleOutput: true, firstWindowBytes: '1-9', retryWindowBytes: '0',
+    };
+    const pasteError = (code: string, extra: Record<string, unknown> = {}): Error => Object.assign(
+      new Error('paste-engine: automation sent paste for Fix Acme billing'),
+      { name: 'PasteSubmitError', code, ...extra },
+    );
+    sendHandledFailure('automation_runner', pasteError('no-submission-evidence', { facts }));
+    sendHandledFailure('automation_runner', new Error('wrapped', { cause: pasteError('no-submission-evidence', { facts }) }));
+    sendHandledFailure('automation_runner', pasteError('no-submission-evidence', {
+      facts: { ...facts, reason: 'Fix Acme billing', firstWindowBytes: '7', retried: 'yes' },
+    }));
+    sendHandledFailure('automation_runner', pasteError('Fix Acme billing', { facts }));
+    sendHandledFailure('automation_runner', Object.assign(new Error('x'), { code: 'timeout', facts }));
+
+    const tagsOf = (call: number): Record<string, string> => reportHandledError.mock.calls[call][1] as Record<string, string>;
+    const expected = {
+      paste_code: 'no-submission-evidence', paste_reason: 'no-signal', paste_first_window_data: 'false',
+      paste_retried: 'true', paste_mode_off: 'false', paste_settle_output: 'true', paste_first_bytes: '1-9', paste_retry_bytes: '0',
+    };
+    expect(tagsOf(0)).toMatchObject(expected);
+    expect(tagsOf(1)).toMatchObject(expected);
+    expect(tagsOf(2)).toMatchObject({ paste_code: 'no-submission-evidence', paste_first_window_data: 'false' });
+    expect(tagsOf(2)).not.toHaveProperty('paste_reason');
+    expect(tagsOf(2)).not.toHaveProperty('paste_first_bytes');
+    expect(tagsOf(2)).not.toHaveProperty('paste_retried');
+    expect(tagsOf(3)).not.toHaveProperty('paste_code');
+    expect(tagsOf(4)).not.toHaveProperty('paste_code');
+    expect(JSON.stringify(reportHandledError.mock.calls.map((call) => [(call[0] as Error).message, call[1]]))).not.toContain('Acme');
+  });
+
   it.each([
     ['a V8 TypeError naming the property it read', new TypeError("Cannot read properties of undefined (reading 'Fix Acme billing')")],
     ['a Node ERR_INVALID_ARG_TYPE quoting its value', Object.assign(

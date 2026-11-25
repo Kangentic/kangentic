@@ -203,6 +203,51 @@ export function azServerCodeOf(error: unknown): string | undefined {
   return undefined;
 }
 
+/** The codes and facts a `PasteSubmitError` carries (`pty/paste-engine.ts`), kept here so this module imports no pty code. */
+const PASTE_CODES: ReadonlySet<string> = new Set(['aborted', 'timeout', 'no-submission-evidence', 'held']);
+const PASTE_REASONS: ReadonlySet<string> = new Set(['paste-mode-off', 'no-signal']);
+const PASTE_OUTPUT_BUCKETS: ReadonlySet<string> = new Set(['0', '1-9', '10-49', '50+']);
+const PASTE_FLAG_TAGS = [
+  ['firstWindowTakesData', 'paste_first_window_data'],
+  ['retried', 'paste_retried'],
+  ['pasteModeOff', 'paste_mode_off'],
+  ['settleOutput', 'paste_settle_output'],
+] as const;
+const PASTE_BUCKET_TAGS = [
+  ['firstWindowBytes', 'paste_first_bytes'],
+  ['retryWindowBytes', 'paste_retry_bytes'],
+] as const;
+
+/**
+ * What a paste that failed saw (`PasteSubmitError.code` and `.facts`), as tags,
+ * on the error or one level down its `cause`. Read by shape, and only values in
+ * the fixed sets above leave: byte counts go as buckets, never text. Sentry
+ * DESKTOP-52 was a paste with no sign of a submit that could not say which case
+ * it was.
+ */
+export function pasteFactsOf(error: unknown): Record<string, string> {
+  const wrapped = (error as { cause?: unknown } | null | undefined)?.cause;
+  for (const candidate of [error, wrapped]) {
+    if (!(candidate instanceof Error) || candidate.name !== 'PasteSubmitError') continue;
+    const code = (candidate as { code?: unknown }).code;
+    if (typeof code !== 'string' || !PASTE_CODES.has(code)) continue;
+    const tags: Record<string, string> = { paste_code: code };
+    const facts = (candidate as { facts?: unknown }).facts;
+    if (facts === null || typeof facts !== 'object') return tags;
+    const record = facts as Record<string, unknown>;
+    if (typeof record.reason === 'string' && PASTE_REASONS.has(record.reason)) tags.paste_reason = record.reason;
+    for (const [field, tag] of PASTE_FLAG_TAGS) {
+      if (typeof record[field] === 'boolean') tags[tag] = String(record[field]);
+    }
+    for (const [field, tag] of PASTE_BUCKET_TAGS) {
+      const bucket = record[field];
+      if (typeof bucket === 'string' && PASTE_OUTPUT_BUCKETS.has(bucket)) tags[tag] = bucket;
+    }
+    return tags;
+  }
+  return {};
+}
+
 /**
  * True for the user's connection, not our code: a network errno, a stream torn down
  * by its peer, or `fetch failed` (Node's `TypeError`) whose cause is one of those.
@@ -263,8 +308,9 @@ export function firstFrameOf(error: unknown): string {
 
 /**
  * Send one handled failure from `source`, path-free, with the tags every report
- * carries (`source`, `error_name`, and `errno`, `syscall`, `git_cause` and
- * `az_server_code` when the error has them) plus the caller's own short enums.
+ * carries (`source`, `error_name`, and `errno`, `syscall`, `git_cause`,
+ * `az_server_code` and the `paste_*` facts when the error has them) plus the
+ * caller's own short enums.
  * Marks the original reported, and sent when Sentry took the report. Returns
  * whether it did.
  * Does not latch and does not filter: a caller that wants either uses
@@ -286,6 +332,7 @@ export function sendHandledFailure(
   if (gitCause) allTags.git_cause = gitCause;
   const azServerCode = azServerCodeOf(error);
   if (azServerCode) allTags.az_server_code = azServerCode;
+  Object.assign(allTags, pasteFactsOf(error));
   markReported(error);
   const sent = reportHandledError(pathFreeCopy(source, error), allTags, contexts, fingerprint);
   if (sent) markSent(error);
@@ -346,6 +393,7 @@ export function createChokepointReporter(source: string, options: ChokepointRepo
         if (isExpectedFailure(error) || isReported(error)) return false;
         if (options.shouldReport && !options.shouldReport(error)) return false;
         const tags = reportOptions.tags ?? {};
+        const pasteFacts = pasteFactsOf(error);
         const key = [
           Object.entries(tags).map(([tagKey, value]) => `${tagKey}=${value}`).join(','),
           errorNameOf(error),
@@ -354,6 +402,8 @@ export function createChokepointReporter(source: string, options: ChokepointRepo
           gitCauseOf(error) ?? '',
           // Every az import failure throws from one line too.
           azServerCodeOf(error) ?? '',
+          // Every paste failure is one error class; its code and reason tell the cases apart.
+          `${pasteFacts.paste_code ?? ''},${pasteFacts.paste_reason ?? ''}`,
           firstFrameOf(error),
         ].join('|');
         if (reportedKeys.has(key)) {

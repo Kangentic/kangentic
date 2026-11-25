@@ -6,6 +6,7 @@ import type { AutomationRunStatus, AutomationType, ColumnAutomation, Swimlane } 
 import type { AutomationRunRepository, RunConditionAnswer } from '../db/repositories/automation-run-repository';
 import { automationRegistry, type AutomationRegistry } from './automation-registry';
 import { createChokepointReporter } from '../analytics/handled-report';
+import { userFacingDetailOf } from '../pty/paste-engine';
 import type { ConditionCheckLimits } from './condition-check/condition-check';
 import { interpolateAutomationConfig, interpolateTextMatch } from './interpolate-config';
 import { hasCondition, hasFinalLine, hasFrequencyLimit, rowMatchesTaskFilter, textMatchSourceOf } from './row-guards';
@@ -589,15 +590,21 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
     }
 
     if (lastError !== null) {
-      const detail = messageOf(lastError);
+      // The run log and the toast get a sentence a person can read; a paste's
+      // own message names engine internals (Sentry DESKTOP-52). The main log
+      // keeps that message.
+      const detail = userFacingDetailOf(lastError) ?? messageOf(lastError);
       runs.finish(runId, 'failed', detail, attempt);
       record('failed', detail);
       // And the loop continues. This is the isolate-and-continue rule.
-      console.error(`[automations] "${automation.name}" on ${column.name} failed: ${detail}`);
+      console.error(`[automations] "${automation.name}" on ${column.name} failed: ${messageOf(lastError)}`);
       // An adapter's classified outcome (Automation*Error, the user's endpoint
       // or script) is skipped by the reporter; anything else is a defect. The
-      // automation's and column's names are the user's, so only the type goes.
-      automationRunReporter.report(lastError, { tags: { automation_type: automation.type } });
+      // automation's and column's names are the user's, so only the type and
+      // the trigger go.
+      automationRunReporter.report(lastError, {
+        tags: { automation_type: automation.type, automation_trigger: context.trigger },
+      });
       continue;
     }
 

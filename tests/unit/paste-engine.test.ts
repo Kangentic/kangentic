@@ -569,6 +569,49 @@ describe('PasteEngine.pasteAndSubmit', () => {
 
     await expect(promise).rejects.toBeInstanceOf(PasteSubmitError);
     await expect(promise).rejects.toMatchObject({ code: 'no-submission-evidence' });
+    // Sentry DESKTOP-52 could not say which case it was. The facts ride the
+    // report as tags. Red: a throw without them.
+    await expect(promise).rejects.toMatchObject({
+      facts: {
+        reason: 'no-signal',
+        firstWindowTakesData: true,
+        retried: true,
+        pasteModeOff: false,
+        settleOutput: false,
+        firstWindowBytes: '0',
+        retryWindowBytes: '0',
+      },
+    });
+  });
+
+  it('counts the retry window\'s output toward its bucket', async () => {
+    const promise = engine.pasteAndSubmit('s1', 'hello', { timeoutMs: 30000 });
+    promise.catch(() => undefined);
+
+    await tick();
+    mockSessionManager.flushDrain();
+    await tick();
+    vi.advanceTimersByTime(1100);
+    await tick();
+    mockSessionManager.flushDrain();
+    await tick();
+    vi.advanceTimersByTime(3001);
+    await tick();
+    expect(mockSessionManager.writeCalls).toHaveLength(2);
+
+    // A cursor blip after the retry Enter, under the 50-byte floor.
+    mockSessionManager.flushDrain();
+    await tick();
+    vi.advanceTimersByTime(10);
+    mockSessionManager.emitData('s1', 'x'.repeat(12));
+    await tick();
+    vi.advanceTimersByTime(2001);
+    await tick();
+
+    await expect(promise).rejects.toMatchObject({
+      code: 'no-submission-evidence',
+      facts: { firstWindowBytes: '0', retryWindowBytes: '10-49' },
+    });
   });
 
   it('accepts data event during evidence wait (non-hooked agent fallback)', async () => {
@@ -745,6 +788,11 @@ describe('PasteEngine.pasteAndSubmit', () => {
     expect(mockSessionManager.writeCalls).toHaveLength(1);
     await expect(promise).rejects.toBeInstanceOf(PasteSubmitError);
     await expect(promise).rejects.toMatchObject({ code: 'no-submission-evidence' });
+    await expect(promise).rejects.toMatchObject({
+      facts: { reason: 'paste-mode-off', retried: false, pasteModeOff: true, settleOutput: true, firstWindowBytes: '0' },
+    });
+    // The Browser pane's toast keys on this text (`translatePasteSubmitError`).
+    await expect(promise).rejects.toThrow('bracketed-paste mode');
   });
 
   it('detects mode-off when enable + disable appear in a single data chunk (correct order wins)', async () => {

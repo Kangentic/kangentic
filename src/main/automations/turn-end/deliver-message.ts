@@ -14,6 +14,7 @@ import {
   trackTurnEndFollowUp,
 } from './turn-end-passes';
 import { deliverAgentMessageAndWait } from './agent-message-delivery';
+import { userFacingDetailOf } from '../../pty/paste-engine';
 import { holdMoveMessage } from './hold-move-message';
 import { workflowStepApplies } from '../../workflows/workflow-step';
 import { moveMessageOutcomeDetail, type MoveMessageOutcome } from './move-message-outcome';
@@ -195,7 +196,9 @@ export async function deliverMessageAfterMove(
       hold(`The agent in ${columnName} ended before the message reached it`);
       return;
     }
-    report({ kind: 'failed', reason: error instanceof Error ? error.message : String(error) });
+    // A paste's own message names engine internals (Sentry DESKTOP-52); the
+    // console line above keeps it.
+    report({ kind: 'failed', reason: userFacingDetailOf(error) ?? (error instanceof Error ? error.message : String(error)) });
   } finally {
     release();
   }
