@@ -1521,8 +1521,9 @@ msgid "Font size"
 msgstr "Velikost písma"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "For a failed automation, its trigger and, for a pasted message, fixed codes for what the paste saw and a size range for the output after it (never the output)"
-msgstr ""
+msgstr "U neúspěšné automatizace její spouštěč a u vložené zprávy pevné kódy toho, co vložení zaznamenalo, a rozsah velikosti výstupu po něm (nikdy samotný výstup)"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
 msgid "For a handled error, its type, a fixed failure code and, for an interface crash, the names of the components it was in (never the error's own text)"
