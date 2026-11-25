@@ -18,11 +18,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { OpenCodeAdapter } from '../../src/main/agent/adapters/opencode';
 import { resolvePluginScript } from '../../src/main/agent/shared/bridge-utils';
-import { settleHostFiles } from '../../src/main/remote/host-file-sync';
+import { pullHostFilesFor, rememberHostFileSync, settleHostFiles } from '../../src/main/remote/host-file-sync';
 import { prepareWslHookTransport, wslHookPaths } from '../../src/main/agent/shared/wsl-hook-transport';
 import { WslHookInbox } from '../../src/main/pty/readers/wsl-hook-inbox';
 import { makeFakeSshWorkspace, type FakeSshWorkspace } from './helpers/fake-ssh-host';
-import { MCP_TOKEN, MCP_URL, SESSION_ID, expectNoLocalPaths, sessionFolders, spawnOnHost, type HostSpawn } from './ssh-adapter-spawn-harness';
+import { MCP_TOKEN, MCP_URL, SESSION_ID, expectNoLocalPaths, sessionFolders, spawnOnHost, spawnOptions, type HostSpawn } from './ssh-adapter-spawn-harness';
 
 const workspaces: FakeSshWorkspace[] = [];
 const temporaryDirectories: string[] = [];
@@ -102,6 +102,43 @@ describe('an OpenCode 1 session on a remote host', () => {
     adapter.removeHooks(workspace.projectFolder, SESSION_ID);
     await settleHostFiles(SESSION_ID);
     expect(workspace.host.files.has(v1PluginPath(workspace))).toBe(false);
+  });
+
+  it('keeps the host copy until the last session on the folder releases, and ignores a session that held nothing', async () => {
+    const workspace = await newWorkspace('1.18.31');
+    const adapter = new OpenCodeAdapter();
+    await spawnOnOpenCodeHost(adapter, workspace);
+    // A second session on the same host folder takes its own hold.
+    const secondSessionId = 'session-2';
+    const secondSync = await pullHostFilesFor(adapter, workspace.projectFolder, workspace.place);
+    if (!secondSync) throw new Error('the adapter declared no host files');
+    adapter.buildCommand({ ...spawnOptions(workspace, 'opencode', OPENCODE_OVERRIDES), ptySessionId: secondSessionId });
+    await secondSync.push();
+    rememberHostFileSync(secondSessionId, secondSync);
+    expect(workspace.host.files.has(v1PluginPath(workspace))).toBe(true);
+
+    adapter.removeHooks(workspace.projectFolder, 'never-held-id');
+    await settleHostFiles(SESSION_ID);
+    expect(workspace.host.files.has(v1PluginPath(workspace))).toBe(true);
+
+    adapter.removeHooks(workspace.projectFolder, SESSION_ID);
+    await settleHostFiles(SESSION_ID);
+    expect(workspace.host.files.has(v1PluginPath(workspace))).toBe(true);
+
+    adapter.removeHooks(workspace.projectFolder, secondSessionId);
+    await settleHostFiles(secondSessionId);
+    expect(workspace.host.files.has(v1PluginPath(workspace))).toBe(false);
+  });
+
+  it('leaves the host copy when a session that took no hold in this run releases', async () => {
+    const workspace = await newWorkspace('1.18.31');
+    await spawnOnOpenCodeHost(new OpenCodeAdapter(), workspace);
+    expect(workspace.host.files.has(v1PluginPath(workspace))).toBe(true);
+
+    // A fresh adapter holds nothing, as after an app restart that took the host's sessions back.
+    new OpenCodeAdapter().removeHooks(workspace.projectFolder, 'never-held-id');
+    await settleHostFiles(SESSION_ID);
+    expect(workspace.host.files.has(v1PluginPath(workspace))).toBe(true);
   });
 
   it('starts with OpenCode 1 flags when the host\'s version cannot be read', async () => {
