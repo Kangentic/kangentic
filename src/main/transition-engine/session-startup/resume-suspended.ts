@@ -688,6 +688,7 @@ export async function resumeSuspendedSessions(
           // The recap, when there is one, was built into the command.
           openingPrompt: input.prompt ? 'command_line' : 'none',
           sessionIdCreation: input.sessionIdCreation,
+          mintedAgentSessionId: input.mintedAgentSessionId,
           agentCliVersion: input.agentCliVersion,
           agentCliPath: input.agentCliPath,
           resumeEvidence: input.resumeEvidence,
@@ -738,7 +739,9 @@ export async function resumeSuspendedSessions(
           cwd: input.cwd,
           permission_mode: input.permissionMode,
           prompt: input.prompt ?? null,
-          status: 'running',
+          // A recovery that waits for a slot is queued, as the board path writes
+          // it, so a quit settles it as a queued record and its promotion finds it.
+          status: newSession.status === 'queued' ? 'queued' : 'running',
           exit_code: null,
           started_at: now,
           suspended_at: null,
@@ -749,6 +752,9 @@ export async function resumeSuspendedSessions(
           start_head_sha: input.record.start_head_sha ?? null,
           account_id: input.accountId ?? null,
         });
+        // A fresh start whose CLI has not run yet (queued, or its terminal
+        // failed to start) names no conversation (Sentry DESKTOP-2M).
+        if (input.mintedAgentSessionId && newSession.status !== 'running') sessionRepo.markAgentNeverRan(newSession.id);
         // A turn the restart cut off before its Stop still has the owner's
         // message in it: the new record's first turn end reads from where it
         // began (`carried-owner-turn.ts`). Never moves anything here.

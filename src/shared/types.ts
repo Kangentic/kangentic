@@ -1875,6 +1875,17 @@ export interface SessionRecord {
    * included: its conversation is still there to resume.
    */
   launch_failed_at: string | null;
+  /**
+   * When the fresh launch that minted this record's `agent_session_id` ended
+   * with its CLI never run (UTC ISO): no typed line ran and no sign the agent
+   * started, or it was still queued, or its terminal never started. No
+   * conversation exists under that id, so a resume of it starts fresh with the
+   * lineage's prompt. Set only on the record that minted the id
+   * (`SessionRepository.markAgentNeverRan`), never on a resume. Unlike
+   * `launch_failed_at` it is no failure: a person moving a task on before its
+   * agent booted sets it too, so it blocks no idle-pause lift.
+   */
+  agent_never_ran_at: string | null;
   /** Why this record's start never reached an agent, so a restart can still show it. */
   start_blocked_reason: StartBlockedReason | null;
   total_cost_usd: number | null;
@@ -8704,6 +8715,13 @@ export interface SpawnSessionInput {
   openingPrompt?: OpeningPromptDelivery;
   /** How the launch got the agent's conversation id before it ran, where the spawn knows. Read only by the session-id report. */
   sessionIdCreation?: SessionIdCreationOutcome;
+  /**
+   * True when this is a fresh launch and `agentSessionId` was minted for it
+   * before it ran (`resolveFreshAgentSessionId`), never for a resume. A launch
+   * that ends with its CLI never run then names no conversation, which its
+   * record says (`SessionRecord.agent_never_ran_at`).
+   */
+  mintedAgentSessionId?: boolean;
   /**
    * The agent CLI's version as detection read it. Raw detector text, so
    * `cliVersionTag` vets it before it reaches an event.

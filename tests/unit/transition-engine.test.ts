@@ -707,6 +707,30 @@ describe('TransitionEngine - raw/sanitized description split', () => {
     const [appliedSessionId] = sessionRepo.updateAppliedSettings.mock.calls[0] as [string, unknown];
     expect(appliedSessionId).toBe(insertedId);
   });
+
+  // Sentry DESKTOP-2M: a fresh launch that minted its id names no conversation
+  // until its CLI runs. A quit or a crash can end one that is still queued, or
+  // whose terminal failed to start, and a resume of its id would find nothing.
+  it.each([
+    { status: 'queued', marked: true },
+    { status: 'exited', marked: true },
+    { status: 'running', marked: false },
+  ])('hands spawn the minted id, and marks a $status record as not run yet: $marked', async ({ status, marked }) => {
+    const sessionManager = makeSessionManager();
+    sessionManager.spawn.mockImplementation(async (options: { command: string }) => {
+      sessionManager.spawnedSessions.push({ command: options.command });
+      return { id: 'pty-session-1', status };
+    });
+    const sessionRepo = Object.assign(makeSessionRepo(), { markAgentNeverRan: vi.fn(() => true) });
+
+    const { runSpawn } = makeEngine({ sessionManager, sessionRepo });
+    await runSpawn(makeTask());
+
+    expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ mintedAgentSessionId: true, resuming: false }));
+    const insertedId = (sessionRepo.insert.mock.calls[0][0] as { id: string }).id;
+    if (marked) expect(sessionRepo.markAgentNeverRan).toHaveBeenCalledWith(insertedId);
+    else expect(sessionRepo.markAgentNeverRan).not.toHaveBeenCalled();
+  });
 });
 
 describe('TransitionEngine - permission_mode resolution precedence', () => {
@@ -1892,6 +1916,9 @@ describe('TransitionEngine - a resume prompt that does not ride the command line
     expect(outcome).toEqual({ startOver: null, recapOnly: false, unsentPrompt: null });
     // The prompt starts a real turn, so the session is not asserted idle.
     expect(sessionManager.markIdleAuthoritative).not.toHaveBeenCalled();
+    // A resume's id names an earlier launch's conversation: an end before this
+    // CLI runs must never mark it as never run (Sentry DESKTOP-2M).
+    expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ resuming: true, mintedAgentSessionId: false }));
   });
 
   it('asserts idle on a resume whose prompt it kept off, so the typed delivery is not held back', async () => {

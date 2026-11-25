@@ -332,6 +332,26 @@ describe('prepareAgentSpawn downgrades a resume to fresh when the conversation w
     expect(result.data.prompt).toBe('Fix the login redirect');
   });
 
+  // Sentry DESKTOP-2M: the mark reaches the real resume check through the lineage
+  // the spawn chokepoint reads, with no transcript path, no turns and no session folder.
+  it('starts a minting record marked never ran fresh, replaying the prompt of its own lineage', async () => {
+    const { result } = await runPrepare({
+      taskRecords: [makeSessionRecord({
+        id: RECORD_ID,
+        agent_session_id: STORED_ID,
+        prompt: 'Fix the login redirect',
+        agent_never_ran_at: '2026-11-24T23:40:19.000Z',
+      })],
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.startOver).toBe('never-started');
+    expect(result.data.resumed).toBe(false);
+    expect(result.data.prompt).toBe('Fix the login redirect');
+    expect(result.data.agentSessionId).not.toBe(STORED_ID);
+  });
+
   describe('a never-turned session whose report a quit deleted (DESKTOP-2M)', () => {
     // No session folder, so no status or hook report: only the path the row kept
     // from the status line, at a projects folder that holds no copy of it.
@@ -393,6 +413,9 @@ describe('prepareAgentSpawn downgrades a resume to fresh when the conversation w
       expect(result.data.startOver).toBeNull();
       expect(result.data.resumed).toBe(true);
       expect(result.data.agentSessionId).toBe(STORED_ID);
+      // A resume's id names an earlier launch's conversation: an end before
+      // this CLI runs must never mark it (`agent_never_ran_at`).
+      expect(result.data.mintedAgentSessionId).toBe(false);
     });
   });
 
@@ -446,6 +469,8 @@ describe('prepareAgentSpawn downgrades a resume to fresh when the conversation w
     expect(result.data.prompt).toBeNull();
     expect(result.data.startOver).toBe('never-started');
     expect(result.data.resumed).toBe(false);
+    // The downgrade mints a new id for its fresh launch.
+    expect(result.data.mintedAgentSessionId).toBe(true);
   });
 
   it('does NOT downgrade a resume whose conversation actually has turns, even though the same record id is probed', async () => {

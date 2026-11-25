@@ -803,6 +803,88 @@ describe('SessionManager agent-absence wiring', () => {
     });
   });
 
+  // Sentry DESKTOP-2M: a fresh launch Kangentic ended in its first second kept
+  // its minted id on a resumable record, and the next resume printed "No
+  // conversation found". The end of such a launch is announced whoever ended it.
+  describe('a fresh launch that ended with its CLI never run', () => {
+    const MINTED = { mintedAgentSessionId: true, agentSessionId: '935a5611-0f79-4f34-a5ea-62f2a4bd7894' };
+
+    function ended(session: ManagedSession, exit: { exitCode?: number; intentional: boolean }): void {
+      (manager as unknown as {
+        noteLaunchEnded(row: ManagedSession, ending: { exitCode: number; signal: number | null; intentional: boolean }): void;
+      }).noteLaunchEnded(session, { exitCode: exit.exitCode ?? 1, signal: null, intentional: exit.intentional });
+    }
+
+    function announced(): ReturnType<typeof vi.fn> {
+      const listener = vi.fn();
+      manager.on('launch-ended-before-agent-ran', listener);
+      return listener;
+    }
+
+    beforeEach(() => {
+      reportHandledError.mockClear();
+    });
+
+    it.each([
+      { label: 'a Pause or a move in its first second, before the terminal printed', overrides: {}, intentional: true },
+      { label: 'a shell that died on its own before it printed', overrides: {}, intentional: false },
+      { label: 'a typed line that never ran, for an adapter that reports its start', overrides: { firstOutputAt: Date.now(), reportsAgentStart: true }, intentional: true },
+    ])('is announced, with the ids off the session itself, for $label', ({ overrides, intentional }) => {
+      const listener = announced();
+      const session = seedSession({ ...MINTED, ...overrides });
+      ended(session, { intentional });
+      expect(listener).toHaveBeenCalledWith('session-1', 'project-1', 'task-1');
+      expect(manager.agentNeverRan('session-1')).toBe(true);
+    });
+
+    it.each([
+      { label: 'a resume, whose conversation an earlier launch wrote', overrides: { mintedAgentSessionId: false } },
+      { label: 'a launch that minted no id', overrides: { agentSessionId: undefined } },
+      { label: 'a typed line that ran', overrides: { firstOutputAt: Date.now(), agentOutputAt: Date.now(), reportsAgentStart: true } },
+      // A shell whose clear the handoff test does not know never shows the line run.
+      { label: 'a printed terminal under an adapter whose silence proves nothing', overrides: { firstOutputAt: Date.now(), reportsAgentStart: false } },
+      { label: 'an agent that started', overrides: { agentStartObservedAt: Date.now() } },
+      { label: 'an agent that entered its alt screen', overrides: { altScreenEnteredAt: Date.now() } },
+      { label: 'an agent that reported its own id', overrides: { agentIdReportedAt: Date.now() } },
+      { label: 'a Command Terminal', overrides: { transient: true } },
+      { label: 'a workflow agent', overrides: { transient: true, workflowId: 'workflow-1' } },
+      // The same session as the local positive above (no firstOutputAt), differing only by its host:
+      // a remote pty has no local pid and its output starts later, so silence proves nothing.
+      { label: 'a launch on an SSH host', overrides: { hostId: 'host-1' } },
+      { label: 'a launch whose pty has no pid, as a remote one has none', overrides: { pty: hostPty() } },
+    ])('is not announced for $label', ({ overrides }) => {
+      const listener = announced();
+      ended(seedSession({ ...MINTED, ...overrides }), { intentional: true });
+      expect(listener).not.toHaveBeenCalled();
+      expect(manager.agentNeverRan('session-1')).toBe(false);
+    });
+
+    it('is not announced for a session hidden until adopted', () => {
+      const listener = announced();
+      const session = seedSession(MINTED);
+      (manager as unknown as { hiddenUntilAdopted: Set<string> }).hiddenUntilAdopted.add('session-1');
+      ended(session, { intentional: true });
+      expect(listener).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { label: 'a quit, which marks the record itself', exitCode: 1, quitting: true },
+      { label: 'a host loss', exitCode: PTY_HOST_LOST_EXIT_CODE, quitting: false },
+    ])('is not announced during $label', ({ exitCode, quitting }) => {
+      shutdown.active = quitting;
+      const listener = announced();
+      ended(seedSession(MINTED), { exitCode, intentional: false });
+      expect(listener).not.toHaveBeenCalled();
+    });
+
+    it('still answers for the quit\'s own synchronous read, and false for an unknown id', () => {
+      seedSession(MINTED);
+      shutdown.active = true;
+      expect(manager.agentNeverRan('session-1')).toBe(true);
+      expect(manager.agentNeverRan('no-such-session')).toBe(false);
+    });
+  });
+
   describe('whether a launch still owes a sign its agent ran', () => {
     it('is pending for an adapter that reports its start, until the agent shows it', () => {
       seedSession({ reportsAgentStart: true });

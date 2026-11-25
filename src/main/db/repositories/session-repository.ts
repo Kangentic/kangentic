@@ -19,7 +19,7 @@ import { writeTransaction } from '../transaction';
  * fillTranscriptPath the SessionStart hook's.
  */
 type SessionInsertInput = Omit<SessionRecord,
-  'total_cost_usd' | 'total_input_tokens' | 'total_output_tokens' | 'model_id' | 'model_display_name' | 'used_percentage' | 'applied_model' | 'applied_effort' | 'total_duration_ms' | 'tool_call_count' | 'lines_added' | 'lines_removed' | 'files_changed' | 'tool_breakdown' | 'compaction_count' | 'last_pty_cols' | 'last_pty_rows' | 'result_tokens_read_at' | 'transcript_path' | 'cli_target' | 'start_head_sha' | 'launch_failed_at' | 'start_blocked_reason' | 'open_turn' | 'carried_owner_turn'
+  'total_cost_usd' | 'total_input_tokens' | 'total_output_tokens' | 'model_id' | 'model_display_name' | 'used_percentage' | 'applied_model' | 'applied_effort' | 'total_duration_ms' | 'tool_call_count' | 'lines_added' | 'lines_removed' | 'files_changed' | 'tool_breakdown' | 'compaction_count' | 'last_pty_cols' | 'last_pty_rows' | 'result_tokens_read_at' | 'transcript_path' | 'cli_target' | 'start_head_sha' | 'launch_failed_at' | 'agent_never_ran_at' | 'start_blocked_reason' | 'open_turn' | 'carried_owner_turn'
 > & { cli_target?: string | null; start_head_sha?: string | null; transcript_path?: string | null };
 
 /**
@@ -287,6 +287,7 @@ export class SessionRepository {
       tool_breakdown: null,
       compaction_count: 0,
       launch_failed_at: null,
+      agent_never_ran_at: null,
       start_blocked_reason: null,
       last_pty_cols: null,
       last_pty_rows: null,
@@ -460,6 +461,42 @@ export class SessionRepository {
     this.db.prepare(
       `UPDATE sessions SET status = 'orphaned' WHERE status IN ('running', 'queued') AND ${clauses.join(' AND ')}`
     ).run(...taskIds, ...sessionIds);
+  }
+
+  /**
+   * Mark a record whose fresh launch ended, or waits queued, with its CLI never
+   * run (`SessionRecord.agent_never_ran_at`).
+   *
+   * The caller must first know that this launch minted the record's agent
+   * session id (`SpawnSessionInput.mintedAgentSessionId`). This method checks
+   * only the row, which must hold an id that no other row of its task holds. A
+   * fresh launch mints its id and every resume of that conversation takes the
+   * same id, so the minting row is the only one until a resume exists. A resume
+   * that never ran proves nothing about the conversation an earlier launch
+   * wrote. Session rows are deleted only with their task.
+   *
+   * A row already marked keeps its first time. True when the row was marked.
+   */
+  markAgentNeverRan(id: string): boolean {
+    const result = this.db.prepare(
+      `UPDATE sessions SET agent_never_ran_at = ?
+        WHERE id = ?
+          AND agent_never_ran_at IS NULL
+          AND agent_session_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM sessions other
+                           WHERE other.task_id = sessions.task_id
+                             AND other.agent_session_id = sessions.agent_session_id
+                             AND other.id <> sessions.id)`
+    ).run(new Date().toISOString(), id);
+    return result.changes > 0;
+  }
+
+  /**
+   * Take the mark off a queued record whose CLI is starting now (its promotion
+   * to running). Its launch ending again before the CLI runs marks it again.
+   */
+  clearAgentNeverRan(id: string): void {
+    this.db.prepare('UPDATE sessions SET agent_never_ran_at = NULL WHERE id = ?').run(id);
   }
 
   /**

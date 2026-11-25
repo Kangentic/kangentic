@@ -28,7 +28,7 @@ export type StartOverReason = Exclude<ResumeConversationVerdict, 'unknown'>;
 export type ResumeLineageRecord = Pick<
   SessionRecord,
   'id' | 'transcript_path' | 'total_input_tokens' | 'total_output_tokens' | 'total_cost_usd'
-> & Partial<Pick<SessionRecord, 'cli_target' | 'launch_failed_at' | 'prompt'>>;
+> & Partial<Pick<SessionRecord, 'cli_target' | 'launch_failed_at' | 'prompt' | 'agent_session_id' | 'agent_never_ran_at' | 'started_at'>>;
 
 /**
  * A transcript path an agent reported, as Kangentic can open it: a Linux path
@@ -108,8 +108,15 @@ export function resolveResumeLineage(params: {
  *    knows its layout can give. `never-started` needs no turns and one of:
  *    the agent's own report that nothing happened, naming a transcript that
  *    fails with ENOENT; a launch check's mark (`launch_failed_at`), since that
- *    check saw no agent, no start and no turn; or, when no report is left, the
- *    row's path failing with ENOENT AND the adapter's proof.
+ *    check saw no agent, no start and no turn; a mark on the record that
+ *    minted the id (`agent_never_ran_at`), since Kangentic saw its launch end
+ *    with no typed line run and no sign of the agent; or, when no report is
+ *    left, the row's path failing with ENOENT AND the adapter's proof.
+ *  - The two marks are Kangentic's own launch observations, never a path it
+ *    computed or a file it failed to find. `agent_never_ran_at` is read only on
+ *    the record that minted the id: a fresh `--session-id` launch that never
+ *    ran leaves no conversation under that id, and no `--resume` can make one.
+ *    A resume that never ran proves nothing, so it is never marked.
  *  - That last case is the restart case (Sentry DESKTOP-2M). A quit deletes
  *    the session folder (`detachAndDelete`), so a restored never-turned
  *    session has no report left, and it used to resume into "No conversation
@@ -151,8 +158,9 @@ export interface ResumeConversationAssessment {
   verdict: ResumeConversationVerdict;
   evidence: ResumeEvidenceSummary | null;
   /**
-   * Set on a `never-started` decided from a row's path and the adapter's proof.
-   * No record shows a turn, so the fresh start replays the lineage's prompt
+   * Set on a `never-started` decided from a row's path and the adapter's proof,
+   * or from the minting record's `agent_never_ran_at`. No record shows a turn,
+   * so the fresh start replays the lineage's prompt
    * (`owedPromptOf`). That is where `markResumeMiss` and its retry ended before
    * this check could decide without the dead launch, on the same rows-only turn
    * evidence (`lineageHadTurns`). A `launch_failed_at` record owes its prompt
@@ -213,6 +221,13 @@ export async function assessResumeConversationWithEvidence(params: ResumeConvers
 
   if (!hadTurns) {
     if (records.find(Boolean)?.launch_failed_at) return withEvidence('never-started');
+    // The launch that minted this id ended with its CLI never run, by
+    // Kangentic's own observation (Sentry DESKTOP-2M). No CLI ever ran
+    // `--session-id` with it, so no conversation exists under it, and no later
+    // `--resume` of it could have made one.
+    if (mintingRecordOf(records, agentSessionId)?.agent_never_ran_at) {
+      return { ...withEvidence('never-started'), promptOwed: true };
+    }
     // The agent's own report says nothing ever happened, and the transcript it
     // named is not on disk. `missing` is ENOENT and nothing else (`fileStateOf`).
     if (firstAgentReport && firstAgentReport.transcriptPath && transcript === 'missing') {
@@ -378,6 +393,29 @@ export function lineageHadTurns(params: {
  */
 export function owedPromptOf(lineage: ReadonlyArray<ResumeLineageRecord | null | undefined>): string | null {
   return lineage.filter((record) => record !== null && record !== undefined).at(-1)?.prompt ?? null;
+}
+
+/**
+ * The record that minted `agentSessionId`, which is the oldest record of the
+ * lineage that holds it. Only that record's `agent_never_ran_at` says anything
+ * about the conversation, since a resume that never ran leaves an earlier
+ * launch's conversation where it was.
+ *
+ * The oldest is read from `started_at`, because the lineage puts the retiring
+ * record first wherever it sits in time (`resolveResumeLineage`). A record with
+ * no start time falls back to the lineage order, where a later record is older.
+ */
+function mintingRecordOf(
+  records: ReadonlyArray<ResumeLineageRecord | null | undefined>,
+  agentSessionId: string,
+): ResumeLineageRecord | null {
+  let minting: ResumeLineageRecord | null = null;
+  for (const record of records) {
+    if (record?.agent_session_id !== agentSessionId) continue;
+    const startedNoLater = !record.started_at || !minting?.started_at || record.started_at <= minting.started_at;
+    if (minting === null || startedNoLater) minting = record;
+  }
+  return minting;
 }
 
 function rowHadTurns(record: ResumeLineageRecord): boolean {

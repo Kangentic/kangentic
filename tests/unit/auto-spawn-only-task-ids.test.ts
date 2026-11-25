@@ -33,6 +33,7 @@ const mockCappedColumnTasks = vi.fn((): unknown[] => []);
 /** The spawn pass's writes: the task's new session, and the session row. */
 const mockTaskUpdate = vi.fn();
 const mockSessionInsert = vi.fn();
+const mockMarkAgentNeverRan = vi.fn(() => true);
 
 vi.mock('node:fs', () => ({ default: { existsSync: vi.fn(() => true) } }));
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));
@@ -60,6 +61,7 @@ vi.mock('../../src/main/db/repositories/session-repository', () => ({
     getLatestForTask = vi.fn(() => ({ id: 'record-earlier', status: 'exited' }));
     getHeldPausedTaskIds = () => new Set<string>();
     insert = (...args: unknown[]) => mockSessionInsert(...args);
+    markAgentNeverRan = (...args: unknown[]) => mockMarkAgentNeverRan(...args);
     updateAppliedSettings = vi.fn();
   },
 }));
@@ -353,6 +355,34 @@ describe('autoSpawnTasks: the spawn re-checks its task under the task lock', () 
     );
 
     expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ openingPrompt: expected }));
+  });
+
+  // Sentry DESKTOP-2M: a fresh start that waited for a slot was written
+  // `running`, so a quit suspended it with its minted id and the next launch
+  // resumed a conversation no CLI wrote.
+  it.each([
+    { label: 'queued', status: 'queued', inserted: 'queued', minted: true, marked: true },
+    { label: 'running', status: 'running', inserted: 'running', minted: true, marked: false },
+    { label: 'queued with no minted id', status: 'queued', inserted: 'queued', minted: false, marked: false },
+    // A terminal that failed to start returns 'exited': the row is written running, and marked.
+    { label: 'exited (terminal failed to start)', status: 'exited', inserted: 'running', minted: true, marked: true },
+  ])('writes a $label fresh start as the spawn left it, and marks it only while its minted id never ran', async ({ status, inserted, minted, marked }) => {
+    mockPrepareAgentSpawn.mockImplementationOnce(async () => {
+      const prepared = preparedSpawn('task-lost');
+      return { ...prepared, data: { ...prepared.data, mintedAgentSessionId: minted } } as never;
+    });
+
+    const sessionManager = await runScopedAutoSpawn(
+      [{ id: 'session-lost', taskId: 'task-lost', status: 'exited' }],
+      new Set(['task-lost']),
+      new Set(['session-lost']),
+      async (input) => ({ id: input.id, status }),
+    );
+
+    expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ mintedAgentSessionId: minted }));
+    expect(mockSessionInsert).toHaveBeenCalledWith(expect.objectContaining({ id: 'session-new-task-lost', status: inserted }));
+    if (marked) expect(mockMarkAgentNeverRan).toHaveBeenCalledWith('session-new-task-lost');
+    else expect(mockMarkAgentNeverRan).not.toHaveBeenCalled();
   });
 
   // The session-id report's create_chat tag reads the outcome off the session row.

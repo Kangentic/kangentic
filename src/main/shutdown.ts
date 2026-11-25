@@ -233,6 +233,10 @@ export function syncShutdownCleanup(dependencies: ShutdownDependencies): PtyKill
               // resume path. Suspended here, the next launch would resume a second agent beside the live one.
               if (hostOfRecord(record) !== null) continue;
               markRecordSuspended(sessionRepo, record.id, 'system');
+              // A fresh launch quit before its CLI ran leaves no conversation
+              // under its minted id, so the next launch must not resume it
+              // (Sentry DESKTOP-2M). The exit's own mark does not run in a quit.
+              if (sessionManager.agentNeverRan(session.id)) sessionRepo.markAgentNeverRan(record.id);
               taskRepo.update({ id: session.taskId, session_id: null });
             } else if (record && record.status === 'queued') {
               // A queued fresh start never ran, so it exits with nothing to

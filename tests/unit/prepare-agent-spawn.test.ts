@@ -987,5 +987,19 @@ describe('prepareAgentSpawn - the id of a fresh agent session', () => {
     expect(result.data.agentSessionId).not.toBe('chat-created');
     expect(capturedCommandOptions[0].sessionId).toBe(result.data.agentSessionId);
     expect(capturedCommandOptions[0].resume).toBe(false);
+    // Minted for this launch, so its record names no conversation until the CLI runs.
+    expect(result.data.mintedAgentSessionId).toBe(true);
+  });
+
+  it('reports no minted id for a fresh start that has none', async () => {
+    const { adapter } = makeChatAdapter({ reportsLaunchSession: true, chat: 'chat-created' });
+    agentRegistryGetMock.mockReturnValue(adapter);
+
+    const result = await prepareAgentSpawn(makeSpawnInput());
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('Expected ok:true');
+    expect(result.data.agentSessionId).toBeNull();
+    expect(result.data.mintedAgentSessionId).toBe(false);
   });
 });

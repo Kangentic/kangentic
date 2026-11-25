@@ -204,6 +204,19 @@ describe('launchEarlyAgent', () => {
     expect((sessionManager.spawned[0] as SpawnInput & { sessionIdCreation?: string }).sessionIdCreation).toBe('not_asked');
   });
 
+  // Sentry DESKTOP-2M: an early agent is a fresh launch, so once adopted, an end
+  // before its CLI ran must mark its record as naming no conversation.
+  it('hands spawn the id it minted for this fresh launch as minted', async () => {
+    const sessionManager = makeSessionManager();
+    const { engine } = makeEngine(sessionManager, makeSessionRepo());
+
+    await engine.launchEarlyAgent({ task: makeTask() as never, worktreePath: WORKTREE, agentOverride: 'claude' });
+
+    const spawned = sessionManager.spawned[0] as SpawnInput & { mintedAgentSessionId?: boolean; agentSessionId?: string | null };
+    expect(spawned.agentSessionId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(spawned.mintedAgentSessionId).toBe(true);
+  });
+
   it('reads as a board start when nothing named another', async () => {
     const sessionManager = makeSessionManager();
     const { engine } = makeEngine(sessionManager, makeSessionRepo());

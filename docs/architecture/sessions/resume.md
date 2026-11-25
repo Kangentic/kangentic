@@ -33,6 +33,10 @@ sources:
   - resource: src/main/transition-engine/return-recap.ts
   - resource: src/main/automations/turn-end/carried-owner-turn.ts
     title: the turn a restart cut off, carried by startup recovery
+  - resource: src/main/db/repositories/session-repository.ts
+    title: markAgentNeverRan, the never-ran mark's freshness rule
+  - resource: src/main/transition-engine/session-lifecycle.ts
+    title: a queued record's promotion takes the never-ran mark off
 ---
 # Resume
 
@@ -283,22 +287,59 @@ session manager announces it (`'transcript-path'`) and `persistHookTranscriptPat
   path at insert: `commitSessionRecord` asks `SessionManager.getAgentReportedTranscriptPath`.
 - Only an adapter whose `parseSessionStart` reports a `transcriptPath` takes part, which is Claude.
 
-- **`never-started`** needs no turns anywhere in the lineage and one of three things:
+- **`never-started`** needs no turns anywhere in the lineage and one of four things:
   - The agent's own report (status or hook) says nothing happened, and the path it names fails
     with ENOENT.
   - A launch check marked the record (`launch_failed_at`).
+  - The record that minted the resumed id, the oldest of the lineage holding it, is marked
+    `agent_never_ran_at`: its fresh launch ended, or still waits queued, with its CLI never run.
   - No report is left, the path a row kept fails with ENOENT, and the adapter's
     `proveConversationGone` proves the conversation gone.
 
-  The third is the restart case (Sentry DESKTOP-2M). A quit deletes the session folder, so every
+  The last is the restart case (Sentry DESKTOP-2M). A quit deletes the session folder, so every
   never-turned session that startup recovery restored used to resume into "No conversation found".
   The row's path is still the agent's own, copied from its status line or its SessionStart hook,
-  and the proof is the adapter's, so a moved project still resumes. A row with no path proves
-  nothing and still resumes, and the post-failure heal is its only way out. That is now a session
-  whose agent reported neither way: a CLI that died before its SessionStart hook, a hook payload
+  and the proof is the adapter's, so a moved project still resumes.
+
+  The third covers the rows with no path at all (DESKTOP-2M again, on 0.63.0, both events
+  `resume_transcript=not_reported`). A fresh launch mints its id and its record carries it before
+  the CLI runs, so a launch Kangentic ended in its first second, one a quit suspended, or one still
+  queued at a quit or a crash, left a resumable record naming a conversation no CLI wrote. Now the
+  record is marked from Kangentic's own launch observation, never a path:
+
+  - **At its end.** `noteLaunchEnded` emits `'launch-ended-before-agent-ran'` for a fresh launch
+    that minted its id and shows no sign its agent started (no start hook, no alt screen, no end
+    signal, no other hook, no id of its own), when its terminal printed nothing at all, or its
+    adapter reports its start and the shell never ran the typed line (`SessionManager.agentNeverRan`).
+    The listener in `ipc/handlers/sessions.ts` writes it, whoever ended the launch and whether or
+    not a pause or a park lands after: those decline when a person's start overtook them. The
+    0.63.0 Ubuntu event fits that shape, a session that spawned and exited in one second with no
+    output, then the resume. Its breadcrumbs do not say which record that resume retired.
+  - **At a quit.** `markSessionsSuspended` marks a running record by the same test, since no exit
+    listener runs during a quit.
+  - **At its insert.** A spawn that queued, or whose terminal failed to start, is marked as it is
+    written, on both chokepoints, and its promotion to running takes the mark off. So a queued
+    record a quit or a crash orphans still reads as never run. Startup recovery and auto-spawn now
+    write a queued spawn's record `queued`, as the board path does, where they wrote `running`.
+
+  Freshness comes from the spawn itself, never from a row's shape alone: only a launch that minted
+  the id (`SpawnSessionInput.mintedAgentSessionId`) is marked, and only when no other row of its
+  task holds the id (`SessionRepository.markAgentNeverRan`). A resume can hold an id no other row
+  holds, after the reconcile follows a background session, so the row rule alone could mark one.
+  Both tests are Kangentic's own facts, so the ground stays inside the #255 rule. The typed-line
+  test needs the start report beside it because a shell whose clear the handoff test does not know
+  never shows its line run (`AgentOutputTracker`). A session on an SSH host is never marked. Its
+  output crosses the link late, so a terminal silent here may hold a CLI that already ran on the
+  host, and only the host proves a conversation absent. Its resume's own miss still marks it
+  (`markResumeMiss`). It is a separate column from `launch_failed_at`
+  because a person moving a task on before its agent booted is no failed launch: it holds no idle
+  pause and changes no held-message commit.
+
+  A row with no path and no mark proves nothing and still resumes, and the post-failure heal is its
+  only way out: a CLI that ran its typed line and died before its SessionStart hook, a hook payload
   the event bridge cut short, or an agent whose adapter reports no hook path.
 
-  The third case ends where `markResumeMiss` and its retry used to end, without the dead launch.
+  The last two cases end where `markResumeMiss` and its retry used to end, without the dead launch.
   The verdict carries `promptOwed`, and two starts read it. Both rest on the same rows-only turn
   evidence as a marked launch:
 

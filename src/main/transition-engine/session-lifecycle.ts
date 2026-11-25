@@ -169,13 +169,17 @@ export function retireRecord(
 }
 
 /**
- * Atomically promote a queued session record to running.
+ * Atomically promote a queued session record to running. Its CLI is starting
+ * now, so a queued fresh launch's never-ran mark comes off (`agent_never_ran_at`).
+ * A launch that ends before that CLI runs is marked again at its end.
  */
 export function promoteRecord(
   sessionRepo: SessionRepository,
   recordId: string,
 ): boolean {
-  return sessionRepo.compareAndUpdateStatus(recordId, 'queued', 'running');
+  const promoted = sessionRepo.compareAndUpdateStatus(recordId, 'queued', 'running');
+  if (promoted) sessionRepo.clearAgentNeverRan(recordId);
+  return promoted;
 }
 
 /**

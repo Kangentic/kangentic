@@ -174,6 +174,8 @@ export interface ManagedSession {
   openingPrompt?: OpeningPromptDelivery;
   /** How the launch got the agent's conversation id before it ran (`SpawnSessionInput.sessionIdCreation`), where the spawn knew. */
   sessionIdCreation?: SessionIdCreationOutcome;
+  /** This fresh launch minted its `agentSessionId` before it ran (`SpawnSessionInput.mintedAgentSessionId`). */
+  mintedAgentSessionId?: boolean;
   /** The agent CLI's version as detection read it; `cliVersionTag` vets it. */
   agentCliVersion?: string | null;
   /**

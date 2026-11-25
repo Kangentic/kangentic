@@ -877,6 +877,23 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
     if (!session.resuming) sessionRepository.markLaunchFailed(sessionId);
   };
 
+  // A fresh launch that minted its agent session id ended with its CLI never
+  // run, whoever ended it (Sentry DESKTOP-2M). Its record would otherwise be
+  // resumed with `--resume <id>`, and no conversation exists under that id.
+  // Written here, not behind a pause or a park that a newer start can decline,
+  // and from the ids the event carries, since the row may have left the registry.
+  context.sessionManager.on('launch-ended-before-agent-ran', (sessionId: string, projectId: string, taskId: string) => {
+    if (isShuttingDown()) return;
+    try {
+      if (new SessionRepository(getProjectDb(projectId)).markAgentNeverRan(sessionId)) {
+        console.log(`[AGENT-LAUNCH] session=${sessionId.slice(0, 8)} task=${taskId.slice(0, 8)} ended before its agent ran, so a resume of it starts fresh`);
+      }
+    } catch (error) {
+      // The record resumes as before, and the resume's own miss still marks it (`markResumeMiss`).
+      sessionHandlersReporter.report(error, { tags: { stage: 'agent_never_ran_mark' } });
+    }
+  });
+
   // The agent-absence sweep found a running session whose CLI is gone and is
   // about to retire it through kill(). That kill is intentional by design, so
   // this is the only moment the CLI's own account of its end can be read.

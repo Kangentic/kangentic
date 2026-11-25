@@ -1239,6 +1239,9 @@ export class TransitionEngine {
           place: cliTarget,
         });
     const agentSessionId = canResume ? resumedAgentSessionId : freshId?.agentSessionId ?? null;
+    // This launch minted the id, so its record names a conversation only once
+    // its CLI runs (`SessionRecord.agent_never_ran_at`).
+    const mintedAgentSessionId = !canResume && agentSessionId !== null;
     launch.commandOptions.sessionId = agentSessionId ?? undefined;
     // A move that aborted this spawn while the chat was being created stops
     // here, before the session directory and the command exist.
@@ -1284,6 +1287,7 @@ export class TransitionEngine {
       startPath: spawnOverrides?.startPath ?? (canResume ? 'resume' : 'board'),
       openingPrompt: launch.openingPrompt,
       sessionIdCreation: freshId?.sessionIdCreation ?? 'not_asked',
+      mintedAgentSessionId,
       agentCliVersion: spawnCli.version,
       agentCliPath: launch.commandOptions.agentPath,
       resumeEvidence: canResume && resumeEvidence ? { ...resumeEvidence, account: launch.resumeAccount } : null,
@@ -1322,6 +1326,8 @@ export class TransitionEngine {
       // The id the spawn was given, which `sessionManager.spawn` keeps.
       sessionId: ptySessionId,
       status: session.status as 'running' | 'queued',
+      // Queued, or a terminal that failed to start: the CLI has not run.
+      agentNotRunYet: mintedAgentSessionId && session.status !== 'running',
       retireRecordId: intent.retireRecordId,
       isolatedSwimlaneId,
       agentSessionId: agentSessionId ?? null,
@@ -1416,6 +1422,12 @@ export class TransitionEngine {
     adapter: AgentAdapter;
     sessionId: string;
     status: 'running' | 'queued';
+    /**
+     * A fresh launch that minted its agent session id and whose CLI has not run
+     * yet: it is queued, or its terminal failed to start. Its record is marked
+     * (`agent_never_ran_at`) until the CLI starts. Absent for an adoption.
+     */
+    agentNotRunYet?: boolean;
     retireRecordId: string | null;
     isolatedSwimlaneId: string | null;
     agentSessionId: string | null;
@@ -1470,6 +1482,9 @@ export class TransitionEngine {
       // not fire again.
       transcript_path: this.sessionManager.getAgentReportedTranscriptPath?.(record.sessionId) ?? null,
     });
+    // A quit or a crash can end it before its CLI starts, and a resume of the
+    // minted id would print "No conversation found" (Sentry DESKTOP-2M).
+    if (record.agentNotRunYet) this.sessionRepo.markAgentNeverRan(record.sessionId);
     // The prompt is Kangentic's own text, whether it rides the command line or
     // is typed in later (#1078). A resume's first turn is anchored, so without
     // this its prompt (a column message naming "signed off") would read as the
@@ -1689,6 +1704,9 @@ export class TransitionEngine {
       startPath: input.startPath ?? 'board',
       // An early agent takes a caller id or none: it never asks the CLI to create one.
       sessionIdCreation: 'not_asked',
+      // A fresh launch: an id it was given is minted for it, so once adopted, an
+      // end before its CLI ran marks its record (`agent_never_ran_at`).
+      mintedAgentSessionId: agentSessionId !== null,
       agentCliVersion: detection.version,
       agentCliPath: launch.commandOptions.agentPath,
       env: extraEnv ?? undefined,
