@@ -430,6 +430,28 @@ describe('performSpawn - a command too long to type', () => {
     expect(fs.existsSync(path.join(root, 'sessions', 'session-cmd', 'launch.cmd'))).toBe(false);
   });
 
+  it('carries the shape of a .cmd shim that does not parse onto the refusal, read from the shim on disk', async () => {
+    // The link no other test pins: performSpawn hands launchRefusal the real
+    // batchShimGiveUpDetailOf, so a shim's shape reaches the batch_shim_shape tag.
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    const shimPath = path.join(root, 'npm', 'claude.cmd');
+    fs.mkdirSync(path.dirname(shimPath), { recursive: true });
+    // A wrapper that is not npm's: a quoted program path with a drive, no shim-relative target.
+    fs.writeFileSync(shimPath, ['@echo off', '"C:\\tools\\claude\\claude.exe" %*', ''].join('\r\n'));
+    const command = `"${shimPath}" --session-id abc "${'x'.repeat(7500)}"`;
+
+    const refusal = performSpawn(makeInput({
+      id: 'sess-shape',
+      command,
+      shell: 'cmd.exe',
+      agentParser: makeAdapter({}),
+      statusOutputPath: path.join(root, 'sessions', 'session-shape', 'status.json'),
+    }), makeContext());
+
+    await expect(refusal).rejects.toBeInstanceOf(AgentBatchShimUnresolvedError);
+    await expect(refusal).rejects.toMatchObject({ shimGaveUp: 'unparsed', shimShape: 'absolute_path' });
+  });
+
   it.skipIf(process.platform === 'win32')('writes the launcher readable by its owner alone', async () => {
     const sessionDirectory = path.join(root, 'sessions', 'session-mode');
 
