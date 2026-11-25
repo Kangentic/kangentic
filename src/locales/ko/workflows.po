@@ -311,6 +311,10 @@ msgstr "모든 경로는 {name}에서 시작됨"
 msgid "Failed to load the workflows"
 msgstr "워크플로를 불러오지 못했습니다."
 
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgid "Find a task"
+msgstr ""
+
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
 msgid "Find in terminal"
 msgstr ""
@@ -424,6 +428,10 @@ msgstr "아직 대화 없음"
 #, fuzzy
 msgid "No task matches the search."
 msgstr "검색과 일치하는 작업이 없습니다."
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgid "No task matches."
+msgstr ""
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
 #, fuzzy

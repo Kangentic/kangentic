@@ -311,6 +311,10 @@ msgstr "すべてのルートは {name} から始まります"
 msgid "Failed to load the workflows"
 msgstr "ワークフローを読み込めませんでした"
 
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgid "Find a task"
+msgstr ""
+
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
 msgid "Find in terminal"
 msgstr ""
@@ -424,6 +428,10 @@ msgstr "まだ会話はありません"
 #, fuzzy
 msgid "No task matches the search."
 msgstr "検索に一致するタスクはありません。"
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgid "No task matches."
+msgstr ""
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
 #, fuzzy

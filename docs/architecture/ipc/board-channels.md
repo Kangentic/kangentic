@@ -203,6 +203,8 @@ The Workflows view. Every call names the workflow's home project; a task is addr
 | `workflow:updateTask` | invoke | Edit a planned task before Start |
 | `workflow:removeTask` | invoke | Remove a task from the workflow (a planned one is gone; a created one stays on its board) |
 | `workflow:setLink` | invoke | Link or unlink two tasks (one waits for the other to reach Done) |
+| `workflow:listJoinCandidates` | invoke | A board's tasks that can join the workflow (not in Done, not archived, in no workflow), for Add blocker |
+| `workflow:addCardBlocker` | invoke | Make a task wait for a board task outside the workflow, which joins it where it is |
 | `workflow:setRoute` | invoke | A task's route, as the column ids it visits |
 | `workflow:setPositions` | invoke | Where hands placed cards, or null for the automatic layout; any other payload is refused; changes no plan revision |
 | `workflow:agentOpen` | invoke | The pane shows the workflow agent: an existing session as it is (a paused one stays paused), else a start that resumes its conversation by id, or continues from the saved plan when one is saved (`buildWorkflowAgentContinueMessage`), or sends the first message (`src/main/workflows/workflow-agent.ts`). A workflow with tasks and no agent ever recorded is checked first, before the setting. A start with the Workflow agent setting incomplete spawns nothing and answers `setupNeeded`, and the pane asks for the setting. A workflow with tasks and no agent ever recorded (another session created it over MCP) spawns nothing and answers `startsOnRequest`, and the pane offers Ask for changes |

@@ -135,12 +135,12 @@ export function unlinkRefusal(detail: WorkflowDetail, blockerKey: string, blocke
 
 /**
  * Why the task cannot get a new blocker, or null while it can: it has not
- * started, and some task is left that it could wait for. With none left, Add
- * blocker is disabled rather than opening an empty list.
+ * started. Add blocker also lists the board's tasks outside the workflow,
+ * which only the open menu reads, so a workflow with no task left to wait
+ * for still opens it; the menu says when both lists are empty.
  */
-export function addBlockerRefusal(detail: WorkflowDetail, task: WorkflowViewTask): string | null {
-  if (!canWait(task)) return translateText(WORKFLOW_REFUSAL_MESSAGES.cannotWait(taskLabel(task)));
-  return blockerCandidates(detail, task.key).length === 0 ? translateText(WORKFLOW_REFUSAL_MESSAGES.noBlockerCandidates) : null;
+export function addBlockerRefusal(task: WorkflowViewTask): string | null {
+  return canWait(task) ? null : translateText(WORKFLOW_REFUSAL_MESSAGES.cannotWait(taskLabel(task)));
 }
 
 /** Why the task cannot be taken out of its workflow, or null while it can. */

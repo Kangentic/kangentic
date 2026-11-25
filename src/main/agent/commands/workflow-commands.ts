@@ -29,6 +29,7 @@ import {
   setTaskRoute,
   startWorkflow,
   unlinkTasks,
+  type LinkEndSelector,
   type NeverStartedDeletion,
   type PlannedTaskInput,
   type ReleasedWorkflowTask,
@@ -94,6 +95,27 @@ function stringListParam(params: Record<string, unknown>, key: string): string[]
     throw new WorkflowRequestError(`${key} must be a list of names.`);
   }
   return value as string[];
+}
+
+/**
+ * waitsFor: each entry a number or id, or { task, project } for a number on
+ * another board. Checked here, since the phone path reaches the handler
+ * without zod.
+ */
+function waitsForParam(params: Record<string, unknown>): LinkEndSelector[] | null {
+  const value = params.waitsFor;
+  if (value === undefined || value === null) return null;
+  const refusal = 'waitsFor must be a list of task numbers or ids, or { task, project } entries.';
+  if (!Array.isArray(value)) throw new WorkflowRequestError(refusal);
+  return value.map((entry: unknown): LinkEndSelector => {
+    if (typeof entry === 'string') return entry;
+    if (!entry || typeof entry !== 'object') throw new WorkflowRequestError(refusal);
+    const { task, project } = entry as { task?: unknown; project?: unknown };
+    if (typeof task !== 'string' || (project !== undefined && project !== null && typeof project !== 'string')) {
+      throw new WorkflowRequestError(refusal);
+    }
+    return { task, project: project ?? null };
+  });
 }
 
 function workflowParam(params: Record<string, unknown>, context: CommandContext): Workflow {
@@ -449,7 +471,7 @@ export const handleAddWorkflowTask: CommandHandler = async (params, context) => 
     // The run settings kangentic_save_workflow takes, through the same checks
     // and refusals, labelled as addWorkflowTask labels its own.
     const label = `"${title.trim()}"`;
-    const input: PlannedTaskInput & { waitsFor: string[] | null } = {
+    const input: PlannedTaskInput & { waitsFor: LinkEndSelector[] | null } = {
       key: '',
       title,
       description: stringParam(params, 'description'),
@@ -457,7 +479,7 @@ export const handleAddWorkflowTask: CommandHandler = async (params, context) => 
       routeStart: stringParam(params, 'routeStart'),
       routeLast: stringParam(params, 'routeLast'),
       skip: stringListParam(params, 'skip'),
-      waitsFor: stringListParam(params, 'waitsFor'),
+      waitsFor: waitsForParam(params),
       ...runSettingsParams(params, label),
       planApproval: planApprovalParam(params, label),
     };
@@ -496,8 +518,11 @@ export const handleLinkWorkflowTasks: CommandHandler = (params, context) => {
   try {
     const workflow = workflowParam(params, context);
     const input = linkInput(params);
-    linkTasks(requireWorkflowRuntimeContext(), context.projectId, workflow.id, input);
-    return { success: true, message: `Linked: ${input.blocked} now waits for ${input.blocker} to reach Done.` };
+    const { joined } = linkTasks(requireWorkflowRuntimeContext(), context.projectId, workflow.id, input);
+    const joinedSentence = joined.length > 0
+      ? ` ${joined.map((task) => `#${task.display_id}`).join(' and ')} joined "${workflow.title}" where ${joined.length === 1 ? 'it is' : 'they are'}.`
+      : '';
+    return { success: true, message: `Linked: ${input.blocked} now waits for ${input.blocker} to reach Done.${joinedSentence}` };
   } catch (error) {
     return reportWorkflowCommandFailure('link_workflow_tasks', error);
   }

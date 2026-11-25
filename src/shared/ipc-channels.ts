@@ -527,6 +527,8 @@ export const IPC = {
   WORKFLOW_UPDATE_TASK: 'workflow:updateTask',
   WORKFLOW_REMOVE_TASK: 'workflow:removeTask',
   WORKFLOW_SET_LINK: 'workflow:setLink',
+  WORKFLOW_LIST_JOIN_CANDIDATES: 'workflow:listJoinCandidates',
+  WORKFLOW_ADD_CARD_BLOCKER: 'workflow:addCardBlocker',
   WORKFLOW_SET_ROUTE: 'workflow:setRoute',
   WORKFLOW_SET_POSITIONS: 'workflow:setPositions',
   // The workflow's own agent, in the view's left pane (src/main/workflows/workflow-agent.ts).

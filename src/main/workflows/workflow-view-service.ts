@@ -9,6 +9,7 @@ import type {
   WorkflowDetail,
   WorkflowDraft,
   WorkflowDraftTask,
+  WorkflowJoinCandidate,
   WorkflowRouteStep,
   WorkflowSummary,
   WorkflowSupersession,
@@ -40,10 +41,12 @@ import {
   WorkflowRequestError,
   addWorkflowTask,
   createWorkflow,
+  joinRefusal,
   linkTasks,
   mergeRunSettings,
   parseRunSettingsInput,
   plannedPlanApproval,
+  plannedWaitRefusal,
   removeFromWorkflow,
   requireProfileOnBoard,
   requireWorkflow,
@@ -323,6 +326,20 @@ function requireCreated(context: IpcContext, homeProjectId: string, workflowId: 
   return found;
 }
 
+/** A task the view adds to a plan: the board's whole route, and no hand-placed spot yet. */
+function plannedTask(
+  fields: Omit<WorkflowDraftTask, 'route_start_swimlane_id' | 'route_last_swimlane_id' | 'skipped_swimlane_ids' | 'canvas_x' | 'canvas_y'>,
+): WorkflowDraftTask {
+  return {
+    ...fields,
+    route_start_swimlane_id: null,
+    route_last_swimlane_id: null,
+    skipped_swimlane_ids: [],
+    canvas_x: null,
+    canvas_y: null,
+  };
+}
+
 function nextPlannedKey(draft: WorkflowDraft): string {
   const used = new Set(draft.tasks.map((task) => task.key));
   let index = draft.tasks.length + 1;
@@ -375,22 +392,17 @@ export function addViewTask(context: IpcContext, homeProjectId: string, workflow
       throw new WorkflowRequestError(`A workflow plans at most ${MAX_WORKFLOW_TASKS} tasks.`);
     }
     key = nextPlannedKey(draft);
-    draft.tasks.push({
+    draft.tasks.push(plannedTask({
       key,
       title,
       description: input.description ?? '',
       project_id: projectId === homeProjectId ? null : projectId,
       existing_task_id: null,
-      route_start_swimlane_id: null,
-      route_last_swimlane_id: null,
-      skipped_swimlane_ids: [],
       labels: input.labels ?? [],
       priority: input.priority ?? 0,
-      canvas_x: null,
-      canvas_y: null,
       plan_approval: null,
       ...runSettings,
-    });
+    }));
   });
   return key;
 }
@@ -467,13 +479,15 @@ export function setViewLink(
   if (workflow.state === 'draft') {
     editDraft(homeProjectId, workflowId, (draft) => {
       requirePlanned(draft, blockerKey);
-      requirePlanned(draft, blockedKey);
+      const blocked = requirePlanned(draft, blockedKey);
       const exists = draft.links.some((link) => link.blocker === blockerKey && link.blocked === blockedKey);
       if (!linked) {
         draft.links = draft.links.filter((link) => !(link.blocker === blockerKey && link.blocked === blockedKey));
         return;
       }
       if (exists) return;
+      const waitRefusal = plannedWaitRefusal(blocked, homeProjectId);
+      if (waitRefusal) throw new WorkflowRequestError(waitRefusal);
       const asCore = draft.links.map((link) => ({ blockerTaskId: link.blocker, blockedTaskId: link.blocked }));
       if (wouldCreateCycle(asCore, blockerKey, blockedKey)) {
         throw new WorkflowRequestError(WORKFLOW_REFUSALS.loop);
@@ -487,6 +501,103 @@ export function setViewLink(
   const selectors = { blocker: blocker.task.id, blockerProject: blocker.projectId, blocked: blocked.task.id, blockedProject: blocked.projectId };
   if (linked) linkTasks(context, homeProjectId, workflowId, selectors);
   else unlinkTasks(context, homeProjectId, workflowId, selectors);
+}
+
+/**
+ * Add blocker's cards from outside the workflow: a board's tasks that can
+ * join it (`joinRefusal`), newest first. One board, read once.
+ */
+export function listJoinCandidates(context: IpcContext, homeProjectId: string, workflowId: string, boardProjectId: string): WorkflowJoinCandidate[] {
+  const workflow = requireWorkflow(homeProjectId, workflowId);
+  const projectId = resolveProjectId(context, homeProjectId, boardProjectId);
+  const db = getExistingProjectDb(projectId);
+  if (!db) return [];
+  const lanes = safeLanes(projectId);
+  // A draft takes a task in at Start, so a task its plan already names is not offered twice.
+  const planned = new Set((workflow.draft?.tasks ?? []).map((task) => task.existing_task_id).filter(Boolean));
+  return new TaskRepository(db).list()
+    .filter((task) => !planned.has(task.id) && joinRefusal(task, lanes, projectId) === null)
+    .sort((first, second) => second.display_id - first.display_id)
+    .map((task): WorkflowJoinCandidate => {
+      const lane = lanes.find((candidate) => candidate.id === task.swimlane_id);
+      return {
+        projectId,
+        taskId: task.id,
+        displayId: task.display_id,
+        title: task.title,
+        place: lane?.role === 'todo' ? 'todo' : 'working',
+        column: { name: lane?.name ?? '', color: lane?.color ?? null, icon: lane?.icon ?? null },
+      };
+    });
+}
+
+/**
+ * Add blocker with a card from outside the workflow: `blockedKey` waits for
+ * it, and it joins the workflow where it is. Before Start it joins the plan as
+ * a task taken in at Start; after, `linkTasks` takes it in now.
+ */
+export function addCardBlocker(
+  context: IpcContext,
+  homeProjectId: string,
+  workflowId: string,
+  blockedKey: string,
+  cardProjectId: string,
+  cardTaskId: string,
+): void {
+  const workflow = requireWorkflow(homeProjectId, workflowId);
+  requireViewMayChange(workflow);
+  const projectId = resolveProjectId(context, homeProjectId, cardProjectId);
+  const db = getExistingProjectDb(projectId);
+  const card = db ? new TaskRepository(db).getById(cardTaskId) : undefined;
+  if (!card) throw new WorkflowRequestError('That task is no longer on its board.');
+  const lanes = safeLanes(projectId);
+  const refusal = joinRefusal(card, lanes, projectId);
+  if (refusal) throw new WorkflowRequestError(refusal);
+
+  if (workflow.state !== 'draft') {
+    const blocked = requireCreated(context, homeProjectId, workflowId, blockedKey);
+    linkTasks(context, homeProjectId, workflowId, {
+      blocker: card.id,
+      blockerProject: projectId,
+      blocked: blocked.task.id,
+      blockedProject: blocked.projectId,
+    });
+    return;
+  }
+
+  editDraft(homeProjectId, workflowId, (draft) => {
+    const waitRefusal = plannedWaitRefusal(requirePlanned(draft, blockedKey), homeProjectId);
+    if (waitRefusal) throw new WorkflowRequestError(waitRefusal);
+    if (draft.tasks.some((task) => task.existing_task_id === card.id)) {
+      throw new WorkflowRequestError(`#${card.display_id} is already in this plan.`);
+    }
+    if (draft.tasks.length >= MAX_WORKFLOW_TASKS) {
+      throw new WorkflowRequestError(`A workflow plans at most ${MAX_WORKFLOW_TASKS} tasks.`);
+    }
+    const key = nextPlannedKey(draft);
+    const boardProjectId = projectId === homeProjectId ? null : projectId;
+    draft.tasks.push(plannedTask({
+      key,
+      title: card.title,
+      description: '',
+      project_id: boardProjectId,
+      existing_task_id: card.id,
+      labels: [],
+      priority: 0,
+      // Its own plan approval, read as linkTasks reads it for a card that joins after Start.
+      plan_approval: plannedPlanApproval(context, homeProjectId, {
+        key,
+        project_id: boardProjectId,
+        route_start_swimlane_id: null,
+        route_last_swimlane_id: null,
+        skipped_swimlane_ids: [],
+        profile_id: card.profile_id,
+        agent_override: card.agent_override,
+      }, card.plan_approval ?? null, lanes),
+      ...DEFAULT_RUN_SETTINGS,
+    }));
+    draft.links.push({ blocker: key, blocked: blockedKey });
+  });
 }
 
 /** The route switches: the task visits exactly these columns of its board. */

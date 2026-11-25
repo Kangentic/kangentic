@@ -7119,6 +7119,20 @@ export interface WorkflowBoardEnds {
 export type WorkflowTaskPlace = 'planned' | 'todo' | 'working' | 'done';
 
 /**
+ * A board task outside the workflow that Add blocker offers: picking it makes
+ * the task wait for it, and it joins the workflow where it is.
+ */
+export interface WorkflowJoinCandidate {
+  projectId: string;
+  taskId: string;
+  displayId: number;
+  title: string;
+  place: 'todo' | 'working';
+  /** The column it is in. */
+  column: { name: string; color: string | null; icon: string | null };
+}
+
+/**
  * One task of a workflow as the Workflows view reads it. `key` is the node id:
  * the draft key before Start, the task id after.
  */
@@ -10520,6 +10534,10 @@ export interface ElectronAPI {
     updateTask: (projectId: string, workflowId: string, key: string, input: Partial<WorkflowTaskInput>) => Promise<void>;
     removeTask: (projectId: string, workflowId: string, key: string) => Promise<void>;
     setLink: (projectId: string, workflowId: string, blockerKey: string, blockedKey: string, linked: boolean) => Promise<void>;
+    /** A board's tasks that can join the workflow: not in Done, not archived, in no workflow. */
+    listJoinCandidates: (projectId: string, workflowId: string, boardProjectId: string) => Promise<WorkflowJoinCandidate[]>;
+    /** Make `blockedKey` wait for a board task outside the workflow, which joins it where it is. */
+    addCardBlocker: (projectId: string, workflowId: string, blockedKey: string, cardProjectId: string, cardTaskId: string) => Promise<void>;
     /** The columns of the task's route, by swimlane id; every other column is skipped. */
     setRoute: (projectId: string, workflowId: string, key: string, swimlaneIds: string[]) => Promise<void>;
     /** Where hands placed cards; null puts every card back in the automatic layout. */

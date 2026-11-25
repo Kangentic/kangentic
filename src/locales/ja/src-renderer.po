@@ -693,6 +693,10 @@ msgstr "タイトルを生成できませんでした"
 msgid "Couldn't link the tasks"
 msgstr "タスクをリンクできませんでした"
 
+#: src/renderer/stores/workflow-store.ts
+msgid "Couldn't list the board's tasks"
+msgstr ""
+
 #: src/renderer/pop-out/roots/PopOutCommandTerminalRoot.tsx
 #, fuzzy
 msgid "Couldn't load the terminals for this window."

@@ -108,7 +108,9 @@ export interface WorkflowTaskView {
   title: string;
   /**
    * Where it is: a column name, or for a planned task "To Do (created at Start)",
-   * or "To Do (#921, taken in at Start)" when it takes in a board task.
+   * or "Code Review (#921, taken in at Start)" when it takes in a board task (the
+   * column that task is in now), or "no column, gone from its board (taken in at
+   * Start)" when that task's row is gone.
    */
   column: string;
   place: 'planned' | 'todo' | 'working' | 'done';
@@ -180,6 +182,57 @@ function projectRepos(projectId: string): { db: Database.Database; tasks: TaskRe
 
 export { workflowTasks };
 
+/**
+ * Why a board task cannot join a workflow, or null when it can. Any task not
+ * yet in Done can join, in To Do or already started: a link or a plan's
+ * existingTask takes it in where it is, and from then on the workflow drives
+ * it as it drives every task it holds. One in Done or the archive has nothing
+ * left to run, and one already in a workflow belongs to that one.
+ */
+export function joinRefusal(task: Task, lanes: Swimlane[], projectId: string): string | null {
+  const label = `#${task.display_id}`;
+  const lane = lanes.find((candidate) => candidate.id === task.swimlane_id);
+  if (task.archived_at || lane?.role === 'done') return WORKFLOW_REFUSALS.cannotJoinDone(label);
+  if (isInWorkflow(task, projectId)) return WORKFLOW_REFUSALS.inAnotherWorkflow(label);
+  if (!todoColumn(lanes) || !doneColumn(lanes)) return `${label} is on a board with no To Do or no Done column, which a workflow needs.`;
+  return null;
+}
+
+/**
+ * Why a started task a plan takes in cannot have this route, or null when it
+ * can: the column it is in must be on it. A route that ends before that
+ * column, starts after it, or skips it would leave the step check to move the
+ * task on from a column its route never visits.
+ */
+function startedRouteRefusal(
+  task: Task,
+  lanes: Swimlane[],
+  route: Pick<Task, 'route_start_swimlane_id' | 'route_last_swimlane_id' | 'skipped_swimlane_ids'>,
+): string | null {
+  const lane = lanes.find((candidate) => candidate.id === task.swimlane_id);
+  if (!lane || lane.role === 'todo' || lane.role === 'done') return null;
+  if (routeColumns(lanes, route).some((column) => column.id === lane.id)) return null;
+  return `#${task.display_id} is in ${lane.name}, so its route must include ${lane.name}.`;
+}
+
+/**
+ * Why a board task taken in at Start cannot wait for another, or null when it
+ * can. Only a task in To Do waits: the engine reads a link only to hold a start
+ * from To Do, so a link that makes a started task wait would never hold it.
+ */
+function takenInWaitRefusal(task: Task, lanes: Swimlane[]): string | null {
+  const lane = lanes.find((candidate) => candidate.id === task.swimlane_id);
+  return lane?.role === 'todo' ? null :WORKFLOW_REFUSALS.cannotWait(`#${task.display_id}`);
+}
+
+/** `takenInWaitRefusal` for a planned task, read from its board now; null for a task Start creates. */
+export function plannedWaitRefusal(planned: WorkflowDraftTask, homeProjectId: string): string | null {
+  if (!planned.existing_task_id) return null;
+  const projectId = planned.project_id ?? homeProjectId;
+  const task = boardTask(projectId, planned.existing_task_id);
+  return task ? takenInWaitRefusal(task, safeLanes(projectId)) : null;
+}
+
 export function readWorkflow(context: IpcContext, homeProjectId: string, workflowId: string): WorkflowView {
   const workflow = adoptLegacyPlanApproval(context, homeProjectId, requireWorkflow(homeProjectId, workflowId));
   // Asked once per task and once per link, of a few boards: each board's name
@@ -202,8 +255,10 @@ export function readWorkflow(context: IpcContext, homeProjectId: string, workflo
       // A task taken in at Start is named, so the read shows the take-in held.
       const takenIn = planned.existing_task_id ? boardTask(projectId, planned.existing_task_id) : null;
       let column = 'To Do (created at Start)';
-      if (takenIn) column = `To Do (#${takenIn.display_id}, taken in at Start)`;
-      else if (planned.existing_task_id) column = 'To Do (taken in at Start)';
+      if (takenIn) {
+        const takenInColumn = lanes.find((lane) => lane.id === takenIn.swimlane_id)?.name ?? 'its column';
+        column = `${takenInColumn} (#${takenIn.display_id}, taken in at Start)`;
+      } else if (planned.existing_task_id) column = 'no column, gone from its board (taken in at Start)';
       return {
         key: planned.key,
         taskId: planned.existing_task_id,
@@ -686,6 +741,8 @@ function validatePlan(context: IpcContext, homeProjectId: string, previous: Work
 
   const keys = new Set<string>();
   const takenExisting = new Set<string>();
+  // A planned task that takes in a started board task, by key: it cannot be a link's blocked end.
+  const cannotWaitByKey = new Map<string, string>();
   const planned: WorkflowDraftTask[] = input.tasks.map((entry, index) => {
     const label = `Task ${index + 1}${typeof entry?.key === 'string' ? ` ("${entry.key}")` : ''}`;
     if (!entry || typeof entry.key !== 'string' || !entry.key.trim()) throw new WorkflowRequestError(`${label} needs a key.`);
@@ -697,24 +754,27 @@ function validatePlan(context: IpcContext, homeProjectId: string, previous: Work
     const projectId = resolveProjectId(context, homeProjectId, entry.project);
     const { tasks, lanes } = projectRepos(projectId);
 
-    let existingTaskId: string | null = null;
+    let existing: Task | undefined;
     if (entry.existingTask) {
-      const existing = resolveTask(tasks, String(entry.existingTask));
+      existing = resolveTask(tasks, String(entry.existingTask));
       if (!existing) throw new WorkflowRequestError(`${label}: no task "${entry.existingTask}" on that board.`);
-      const lane = lanes.find((candidate) => candidate.id === existing.swimlane_id);
-      if (lane?.role !== 'todo' || existing.archived_at) {
-        throw new WorkflowRequestError(`${label}: #${existing.display_id} is in ${lane?.name ?? 'another column'}. Only a task in To Do can join a workflow.`);
-      }
-      if (isInWorkflow(existing, projectId)) throw new WorkflowRequestError(`${label}: #${existing.display_id} is already in a workflow.`);
+      const refusal = joinRefusal(existing, lanes, projectId);
+      if (refusal) throw new WorkflowRequestError(`${label}: ${refusal}`);
       if (takenExisting.has(existing.id)) throw new WorkflowRequestError(`${label}: #${existing.display_id} is in the plan twice.`);
       takenExisting.add(existing.id);
-      existingTaskId = existing.id;
     }
+    const existingTaskId = existing?.id ?? null;
 
     const routeStart = routeColumnId(lanes, entry.routeStart, 'routeStart', label);
     const routeLast = routeColumnId(lanes, entry.routeLast, 'routeLast', label);
     const skipped = (entry.skip ?? []).map((name) => routeColumnId(lanes, name, 'skip', label)!).filter(Boolean);
     refuseReversedRoute(lanes, routeStart, routeLast, label);
+    if (existing) {
+      const routeRefusal = startedRouteRefusal(existing, lanes, { route_start_swimlane_id: routeStart, route_last_swimlane_id: routeLast, skipped_swimlane_ids: skipped });
+      if (routeRefusal) throw new WorkflowRequestError(`${label}: ${routeRefusal}`);
+      const waitRefusal = takenInWaitRefusal(existing, lanes);
+      if (waitRefusal) cannotWaitByKey.set(key, waitRefusal);
+    }
 
     const runSettings = resolvePlannedRunSettings(context, projectId, entry, `${label}: `);
     // A task taken in keeps the settings it has on its board; Start only adds it to the workflow.
@@ -769,6 +829,8 @@ function validatePlan(context: IpcContext, homeProjectId: string, previous: Work
     if (!keys.has(link.blocker)) throw new WorkflowRequestError(`A link names "${link.blocker}", which is not a task key in this plan.`);
     if (!keys.has(link.blocked)) throw new WorkflowRequestError(`A link names "${link.blocked}", which is not a task key in this plan.`);
     if (links.some((existing) => existing.blocker === link.blocker && existing.blocked === link.blocked)) continue;
+    const waitRefusal = cannotWaitByKey.get(link.blocked);
+    if (waitRefusal) throw new WorkflowRequestError(`"${link.blocked}" cannot wait for "${link.blocker}": ${waitRefusal}`);
     const asCore = links.map((existing) => ({ blockerTaskId: existing.blocker, blockedTaskId: existing.blocked }));
     if (wouldCreateCycle(asCore, link.blocker, link.blocked)) {
       throw new WorkflowRequestError(`Linking "${link.blocked}" to wait for "${link.blocker}" closes a loop. A workflow's links cannot go in a circle.`);
@@ -806,6 +868,8 @@ export async function startWorkflow(context: IpcContext, homeProjectId: string, 
   // Re-check everything the plan assumed, now: a board task it takes in may
   // have moved since the plan was saved.
   const byProject = new Map<string, WorkflowDraftTask[]>();
+  // A taken-in task that left To Do since the plan was saved cannot wait for another.
+  const cannotWaitByKey = new Map<string, string>();
   for (const planned of draft.tasks) {
     const projectId = planned.project_id ?? homeProjectId;
     // A plan outlives a board deleted after it was saved. Checked against the
@@ -819,14 +883,26 @@ export async function startWorkflow(context: IpcContext, homeProjectId: string, 
     }
     if (planned.existing_task_id) {
       const existing = tasks.getById(planned.existing_task_id);
-      const lane = existing ? lanes.find((candidate) => candidate.id === existing.swimlane_id) : undefined;
-      if (!existing || existing.archived_at || lane?.role !== 'todo' || isInWorkflow(existing, projectId)) {
-        throw new WorkflowRequestError(`"${planned.title}" takes in a board task that is no longer in To Do. Save the plan again without it.`);
+      if (!existing) {
+        throw new WorkflowRequestError(`"${planned.title}" takes in a board task that is gone. Save the plan again without it.`);
       }
+      const refusal = joinRefusal(existing, lanes, projectId);
+      if (refusal) throw new WorkflowRequestError(`"${planned.title}" takes in a board task that can no longer join: ${refusal} Save the plan again without it.`);
+      // It may have moved on since the plan was saved.
+      const routeRefusal = startedRouteRefusal(existing, lanes, routeOfDraft(planned));
+      if (routeRefusal) throw new WorkflowRequestError(`"${planned.title}": ${routeRefusal} Save the plan again with a route that does.`);
+      const waitRefusal = takenInWaitRefusal(existing, lanes);
+      if (waitRefusal) cannotWaitByKey.set(planned.key, waitRefusal);
     }
     const group = byProject.get(projectId) ?? [];
     group.push(planned);
     byProject.set(projectId, group);
+  }
+  for (const link of draft.links) {
+    const waitRefusal = cannotWaitByKey.get(link.blocked);
+    if (!waitRefusal) continue;
+    const titleOf = (key: string): string => draft.tasks.find((task) => task.key === key)?.title ?? key;
+    throw new WorkflowRequestError(`"${titleOf(link.blocked)}" cannot wait for "${titleOf(link.blocker)}": ${waitRefusal} Save the plan again without that link.`);
   }
 
   // Create, one transaction per board. Start is not one transaction: a board's
@@ -1283,15 +1359,101 @@ function resolveWorkflowTask(context: IpcContext, homeProjectId: string, workflo
   return { projectId, task, lanes };
 }
 
+/** One end of a link: a task of the workflow, or a board task the link takes in (`joins`). */
+interface LinkEnd extends ResolvedWorkflowTask {
+  joins: boolean;
+}
+
+/** How a caller names one end of a link: a number or id, on a project or not. */
+export type LinkEndSelector = string | { task: string; project?: string | null };
+
 /**
- * A task a new one waits for: a task id of the workflow's on any of its boards,
- * else a number or id on the home board. A number alone cannot name a task on
- * another board, since numbers count per board; its id can.
+ * One end of a link, by number or id. A task of the workflow comes first, by
+ * its id on any of its boards. Anything else is a board task the link takes
+ * into the workflow, refused when it cannot join (`joinRefusal`). With no
+ * project, a number names a task on the home board and an id names one on any
+ * board; a number alone cannot name a task on another board, since numbers
+ * count per board.
  */
-function resolveBlocker(context: IpcContext, homeProjectId: string, workflow: Workflow, selector: string): ResolvedWorkflowTask {
-  const member = workflowTasks(context, homeProjectId, workflow.id).find((entry) => entry.task.id === selector);
-  if (!member) return resolveWorkflowTask(context, homeProjectId, workflow, selector);
-  return { projectId: member.projectId, task: member.task, lanes: projectRepos(member.projectId).lanes };
+function resolveLinkEnd(context: IpcContext, homeProjectId: string, workflow: Workflow, selector: string, project?: string | null): LinkEnd {
+  if (!project) {
+    const member = workflowTasks(context, homeProjectId, workflow.id).find((entry) => entry.task.id === selector);
+    if (member) return { projectId: member.projectId, task: member.task, lanes: projectRepos(member.projectId).lanes, joins: false };
+  }
+  const found = findBoardTask(context, homeProjectId, selector, project);
+  if (!found) throw new WorkflowRequestError(`No task "${selector}" on that board.`);
+  if (found.task.workflow_id === workflow.id) return { ...found, joins: false };
+  const refusal = joinRefusal(found.task, found.lanes, found.projectId);
+  if (refusal) throw new WorkflowRequestError(refusal);
+  return { ...found, joins: true };
+}
+
+/** A board task by number or id on `project` (the home board when omitted), else by id on any board. */
+function findBoardTask(context: IpcContext, homeProjectId: string, selector: string, project?: string | null): ResolvedWorkflowTask | null {
+  const projectId = resolveProjectId(context, homeProjectId, project);
+  const { tasks, lanes } = projectRepos(projectId);
+  const task = resolveTask(tasks, selector);
+  if (task) return { projectId, task, lanes };
+  if (project) return null;
+  for (const candidate of context.projectRepo.list()) {
+    if (candidate.id === homeProjectId) continue;
+    const onBoard = boardTask(candidate.id, selector.trim());
+    if (onBoard) return { projectId: candidate.id, task: onBoard, lanes: safeLanes(candidate.id) };
+  }
+  return null;
+}
+
+/**
+ * Take a board task into a started workflow, where it is: in To Do, or already
+ * started. It follows its board's route and keeps its own run settings, as a
+ * task a plan takes in does. Joining lifts its automations pause
+ * (`setWorkflowMembership`). Its links are the caller's to write, after this.
+ */
+function takeIntoWorkflow(context: IpcContext, homeProjectId: string, workflowId: string, end: ResolvedWorkflowTask): void {
+  const membership = workflowMembership(context, homeProjectId, workflowId, {
+    key: `#${end.task.display_id}`,
+    projectId: end.projectId,
+    route: { route_start_swimlane_id: null, route_last_swimlane_id: null, skipped_swimlane_ids: [] },
+    runSettings: end.task,
+    planApproval: end.task.plan_approval ?? null,
+    lanes: end.lanes,
+  });
+  new TaskRepository(getProjectDb(end.projectId)).setWorkflowMembership(end.task.id, membership);
+  announceBoardChange(context, end.projectId);
+}
+
+/**
+ * The membership a task gets when it joins a started workflow, created or
+ * taken in: its route, no hand-placed spot, and its plan approval read as a
+ * planned task with the same board, route and agent settings would read it.
+ */
+function workflowMembership(
+  context: IpcContext,
+  homeProjectId: string,
+  workflowId: string,
+  member: {
+    key: string;
+    projectId: string;
+    route: Pick<TaskWorkflowMembership, 'route_start_swimlane_id' | 'route_last_swimlane_id' | 'skipped_swimlane_ids'>;
+    runSettings: Pick<PlannedPlanSource, 'profile_id' | 'agent_override'>;
+    planApproval: Parameters<typeof plannedPlanApproval>[3];
+    lanes: Swimlane[];
+  },
+): TaskWorkflowMembership {
+  return {
+    workflow_id: workflowId,
+    workflow_project_id: homeProjectId,
+    ...member.route,
+    canvas_x: null,
+    canvas_y: null,
+    plan_approval: plannedPlanApproval(context, homeProjectId, {
+      key: member.key,
+      project_id: member.projectId === homeProjectId ? null : member.projectId,
+      ...member.route,
+      profile_id: member.runSettings.profile_id,
+      agent_override: member.runSettings.agent_override,
+    }, member.planApproval, member.lanes),
+  };
 }
 
 function placeOf(resolved: ResolvedWorkflowTask): 'todo' | 'working' | 'done' {
@@ -1300,17 +1462,20 @@ function placeOf(resolved: ResolvedWorkflowTask): 'todo' | 'working' | 'done' {
   return lane?.role === 'todo' ? 'todo' : 'working';
 }
 
-/** Make `blocked` wait for `blocker`. Only a task in To Do can wait, and not on one already done. */
+/**
+ * Make `blocked` wait for `blocker`. Only a task in To Do can wait, and not on
+ * one already done. An end outside the workflow joins it (`resolveLinkEnd`).
+ */
 export function linkTasks(
   context: IpcContext,
   homeProjectId: string,
   workflowId: string,
   input: { blocker: string; blockerProject?: string | null; blocked: string; blockedProject?: string | null },
-): TaskLink {
+): { link: TaskLink; joined: Task[] } {
   const workflow = requireWorkflow(homeProjectId, workflowId);
   requireStarted(workflow, 'linking tasks');
-  const blocker = resolveWorkflowTask(context, homeProjectId, workflow, input.blocker, input.blockerProject);
-  const blocked = resolveWorkflowTask(context, homeProjectId, workflow, input.blocked, input.blockedProject);
+  const blocker = resolveLinkEnd(context, homeProjectId, workflow, input.blocker, input.blockerProject);
+  const blocked = resolveLinkEnd(context, homeProjectId, workflow, input.blocked, input.blockedProject);
   if (blocker.task.id === blocked.task.id) throw new WorkflowRequestError(WORKFLOW_REFUSALS.selfLink);
   if (placeOf(blocked) !== 'todo') {
     throw new WorkflowRequestError(WORKFLOW_REFUSALS.cannotWait(`#${blocked.task.display_id}`));
@@ -1323,6 +1488,11 @@ export function linkTasks(
   if (wouldCreateCycle(existing, blocker.task.id, blocked.task.id)) {
     throw new WorkflowRequestError(WORKFLOW_REFUSALS.loop);
   }
+  // Two databases, so two writes: the take-in first. A failure after it leaves
+  // a member with no link, which the user can remove; the other order would
+  // leave a link to a task outside the workflow, which reads as gone.
+  const joined = [blocker, blocked].filter((end) => end.joins);
+  for (const end of joined) takeIntoWorkflow(context, homeProjectId, workflowId, end);
   const link = repository.insert({
     workflow_id: workflowId,
     blocker_project_id: blocker.projectId,
@@ -1332,8 +1502,10 @@ export function linkTasks(
   });
   new WorkflowRepository(getProjectDb(homeProjectId)).bumpRevision(workflowId);
   announceBoardChange(context, blocked.projectId);
+  // A task that joined started is the workflow's to drive now.
+  if (joined.length > 0) wakeWorkflowEngine();
   notifyWorkflowChanged(homeProjectId, workflowId);
-  return link;
+  return { link, joined: joined.map((end) => end.task) };
 }
 
 /** Remove a link. A task in To Do whose last blocker this was starts as soon as a slot is free. */
@@ -1436,7 +1608,8 @@ function applyTaskRoute(
 
 /**
  * Add a task to a started workflow. It lands in To Do, on its own board, and
- * starts when nothing it waits for is left. `runSettings` is what the
+ * starts when nothing it waits for is left. A `waitsFor` task outside the
+ * workflow joins it where it is (`resolveLinkEnd`). `runSettings` is what the
  * Workflows view's Add task already checked; without it the settings are read
  * from the input's agent-facing fields.
  */
@@ -1444,7 +1617,7 @@ export function addWorkflowTask(
   context: IpcContext,
   homeProjectId: string,
   workflowId: string,
-  input: PlannedTaskInput & { waitsFor?: string[] | null; runSettings?: WorkflowTaskRunSettings },
+  input: PlannedTaskInput & { waitsFor?: LinkEndSelector[] | null; runSettings?: WorkflowTaskRunSettings },
 ): Task {
   const workflow = requireWorkflow(homeProjectId, workflowId);
   requireStarted(workflow, 'adding a task');
@@ -1461,22 +1634,29 @@ export function addWorkflowTask(
   };
   refuseReversedRoute(lanes, route.route_start_swimlane_id, route.route_last_swimlane_id, label);
   const runSettings = input.runSettings ?? resolvePlannedRunSettings(context, projectId, input, `${label}: `);
-  const membership: TaskWorkflowMembership = {
-    workflow_id: workflowId,
-    workflow_project_id: homeProjectId,
-    ...route,
-    canvas_x: null,
-    canvas_y: null,
-    plan_approval: plannedPlanApproval(context, homeProjectId, {
-      key: label,
-      project_id: projectId === homeProjectId ? null : projectId,
-      ...route,
-      profile_id: runSettings.profile_id,
-      agent_override: runSettings.agent_override,
-    }, input.planApproval ?? null, lanes),
-  };
-  // Resolve the blockers before anything is written.
-  const blockers = (input.waitsFor ?? []).map((selector) => resolveBlocker(context, homeProjectId, workflow, selector));
+  const membership = workflowMembership(context, homeProjectId, workflowId, {
+    key: label,
+    projectId,
+    route,
+    runSettings,
+    planApproval: input.planApproval ?? null,
+    lanes,
+  });
+  // Resolve the blockers before anything is written. A board task outside the
+  // workflow joins it, so it must be one that can (not in Done). A task named
+  // twice, by number and by id, is one blocker.
+  const blockersById = new Map<string, LinkEnd>();
+  for (const selector of input.waitsFor ?? []) {
+    const { task: taskSelector, project } = typeof selector === 'string' ? { task: selector, project: null } : selector;
+    const blocker = resolveLinkEnd(context, homeProjectId, workflow, taskSelector, project);
+    if (!blockersById.has(blocker.task.id)) blockersById.set(blocker.task.id, blocker);
+  }
+  const blockers = [...blockersById.values()];
+  // Separate databases, so separate writes, and the take-ins go first, as in
+  // linkTasks: a failure after them leaves members with nothing waiting on
+  // them, which the user can remove, where the other order would leave a new
+  // task with no link to hold it and it would start at once.
+  for (const blocker of blockers) if (blocker.joins) takeIntoWorkflow(context, homeProjectId, workflowId, blocker);
   const created = writeTransaction(db, () => tasks.create({
     title: input.title.trim(),
     description: typeof input.description === 'string' ? input.description : '',
@@ -1488,6 +1668,7 @@ export function addWorkflowTask(
   }))();
   const linkRepository = new TaskLinkRepository(getProjectDb(homeProjectId));
   for (const blocker of blockers) {
+    // A task of the workflow already in Done is left out: waiting for it changes nothing.
     if (placeOf(blocker) === 'done') continue;
     linkRepository.insert({
       workflow_id: workflowId,

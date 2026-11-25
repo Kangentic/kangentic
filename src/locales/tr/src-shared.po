@@ -42,6 +42,10 @@ msgid "{label} has started. Removing the link changes nothing."
 msgstr "{label} başladı. Bağlantıyı kaldırmak hiçbir şeyi değiştirmez."
 
 #: src/shared/workflow-refusals.ts
+msgid "{label} is already in a workflow."
+msgstr ""
+
+#: src/shared/workflow-refusals.ts
 #, fuzzy
 msgid "{label} is done and stays with its workflow."
 msgstr "{label} tamamlandı ve iş akışında kalır."
@@ -50,6 +54,10 @@ msgstr "{label} tamamlandı ve iş akışında kalır."
 #, fuzzy
 msgid "{label} is done. Its plan approval can no longer change."
 msgstr "{label} tamamlandı. Plan onayı artık değiştirilemez."
+
+#: src/shared/workflow-refusals.ts
+msgid "{label} is done. Only a task not yet in Done can join a workflow."
+msgstr ""
 
 #: src/shared/workflow-refusals.ts
 #, fuzzy

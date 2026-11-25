@@ -12,6 +12,7 @@ import type {
   WorkflowDeleteFailure,
   WorkflowDeleteOptions,
   WorkflowDetail,
+  WorkflowJoinCandidate,
   WorkflowSummary,
   WorkflowSupersession,
   WorkflowTaskInput,
@@ -86,6 +87,10 @@ interface WorkflowStore {
    * user acts (project-scoped-ipc.md).
    */
   setLinkIn: (homeProjectId: string, workflowId: string, blockerKey: string, blockedKey: string, linked: boolean) => Promise<boolean>;
+  /** A board's tasks that can join the workflow, for Add blocker; none when the read fails. */
+  listJoinCandidates: (homeProjectId: string, workflowId: string, boardProjectId: string) => Promise<WorkflowJoinCandidate[]>;
+  /** `blockedKey` waits for a board task outside the workflow, which joins it where it is. */
+  addCardBlockerIn: (homeProjectId: string, workflowId: string, blockedKey: string, card: Pick<WorkflowJoinCandidate, 'projectId' | 'taskId'>) => Promise<boolean>;
   setRouteIn: (homeProjectId: string, workflowId: string, key: string, swimlaneIds: string[]) => Promise<boolean>;
   setTaskPlanApprovalIn: (homeProjectId: string, workflowId: string, key: string, planApproval: PlanApproval | null) => Promise<boolean>;
   removeTaskIn: (homeProjectId: string, workflowId: string, key: string) => Promise<boolean>;
@@ -826,6 +831,19 @@ const workflowStoreInitializer: StateCreator<WorkflowStore> = (set, get) => {
     setLinkIn: (homeProjectId, workflowId, blockerKey, blockedKey, linked) =>
       onWorkflow(linked ? msg`Couldn't link the tasks` : msg`Couldn't remove the link`, () =>
         window.electronAPI.workflows.setLink(homeProjectId, workflowId, blockerKey, blockedKey, linked)),
+
+    listJoinCandidates: async (homeProjectId, workflowId, boardProjectId) => {
+      let found: WorkflowJoinCandidate[] = [];
+      const ok = await onWorkflow(msg`Couldn't list the board's tasks`, async () => {
+        found = await window.electronAPI.workflows.listJoinCandidates(homeProjectId, workflowId, boardProjectId);
+      });
+      return ok ? found : [];
+    },
+
+    // The WORKFLOW_CHANGED push that follows reloads the detail with the card in it.
+    addCardBlockerIn: (homeProjectId, workflowId, blockedKey, card) =>
+      onWorkflow(msg`Couldn't link the tasks`, () =>
+        window.electronAPI.workflows.addCardBlocker(homeProjectId, workflowId, blockedKey, card.projectId, card.taskId)),
 
     setRouteIn: (homeProjectId, workflowId, key, swimlaneIds) =>
       onWorkflow(msg`Couldn't change the route`, () => window.electronAPI.workflows.setRoute(homeProjectId, workflowId, key, swimlaneIds)),

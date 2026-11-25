@@ -693,6 +693,10 @@ msgstr "Не удалось создать название"
 msgid "Couldn't link the tasks"
 msgstr "Не удалось связать задачи"
 
+#: src/renderer/stores/workflow-store.ts
+msgid "Couldn't list the board's tasks"
+msgstr ""
+
 #: src/renderer/pop-out/roots/PopOutCommandTerminalRoot.tsx
 #, fuzzy
 msgid "Couldn't load the terminals for this window."

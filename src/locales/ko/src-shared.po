@@ -42,6 +42,10 @@ msgid "{label} has started. Removing the link changes nothing."
 msgstr "{label}이(가) 시작되었습니다. 연결을 제거해도 달라지는 것이 없습니다."
 
 #: src/shared/workflow-refusals.ts
+msgid "{label} is already in a workflow."
+msgstr ""
+
+#: src/shared/workflow-refusals.ts
 #, fuzzy
 msgid "{label} is done and stays with its workflow."
 msgstr "{label}은(는) 완료되었으며 워크플로에 그대로 남습니다."
@@ -50,6 +54,10 @@ msgstr "{label}은(는) 완료되었으며 워크플로에 그대로 남습니�
 #, fuzzy
 msgid "{label} is done. Its plan approval can no longer change."
 msgstr "{label}이(가) 완료되었습니다. 계획 승인을 더 이상 변경할 수 없습니다."
+
+#: src/shared/workflow-refusals.ts
+msgid "{label} is done. Only a task not yet in Done can join a workflow."
+msgstr ""
 
 #: src/shared/workflow-refusals.ts
 #, fuzzy

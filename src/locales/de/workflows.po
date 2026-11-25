@@ -311,6 +311,10 @@ msgstr "Jede Route beginnt in {name}"
 msgid "Failed to load the workflows"
 msgstr "Workflows konnten nicht geladen werden"
 
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgid "Find a task"
+msgstr ""
+
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
 msgid "Find in terminal"
 msgstr ""
@@ -424,6 +428,10 @@ msgstr "Noch keine Unterhaltung"
 #, fuzzy
 msgid "No task matches the search."
 msgstr "Keine Aufgabe entspricht der Suche."
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgid "No task matches."
+msgstr ""
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
 #, fuzzy

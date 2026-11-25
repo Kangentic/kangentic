@@ -570,6 +570,10 @@ msgstr "Couldn't generate title"
 msgid "Couldn't link the tasks"
 msgstr "Couldn't link the tasks"
 
+#: src/renderer/stores/workflow-store.ts
+msgid "Couldn't list the board's tasks"
+msgstr "Couldn't list the board's tasks"
+
 #: src/renderer/pop-out/roots/PopOutCommandTerminalRoot.tsx
 msgid "Couldn't load the terminals for this window."
 msgstr "Couldn't load the terminals for this window."

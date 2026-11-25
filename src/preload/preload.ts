@@ -896,6 +896,10 @@ const api: ElectronAPI = {
     removeTask: (projectId, workflowId, key) => ipcRenderer.invoke(IPC.WORKFLOW_REMOVE_TASK, projectId, workflowId, key),
     setLink: (projectId, workflowId, blockerKey, blockedKey, linked) =>
       ipcRenderer.invoke(IPC.WORKFLOW_SET_LINK, projectId, workflowId, blockerKey, blockedKey, linked),
+    listJoinCandidates: (projectId, workflowId, boardProjectId) =>
+      ipcRenderer.invoke(IPC.WORKFLOW_LIST_JOIN_CANDIDATES, projectId, workflowId, boardProjectId),
+    addCardBlocker: (projectId, workflowId, blockedKey, cardProjectId, cardTaskId) =>
+      ipcRenderer.invoke(IPC.WORKFLOW_ADD_CARD_BLOCKER, projectId, workflowId, blockedKey, cardProjectId, cardTaskId),
     setRoute: (projectId, workflowId, key, swimlaneIds) =>
       ipcRenderer.invoke(IPC.WORKFLOW_SET_ROUTE, projectId, workflowId, key, swimlaneIds),
     setPositions: (projectId, workflowId, positions) =>

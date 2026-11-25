@@ -210,6 +210,72 @@ describe('the Workflows view operations', () => {
     expect(view.readWorkflowDetail(context, 'home', workflow.id).links).toEqual([]);
   });
 
+  // #1211: Add blocker's tasks outside the workflow, and picking one.
+  describe('a board task outside the workflow', () => {
+    const boardTask = (projectId: string, title: string, laneName: string) =>
+      new TaskRepository(harness.dbs.get(projectId) as Database.Database).create({ title, description: '', swimlane_id: laneId(projectId, laneName) });
+
+    it('lists the board\'s tasks that can join, newest first: not Done, not archived, in no workflow, not already planned', async () => {
+      const other = service.createWorkflow('home', {});
+      service.savePlan(context, 'home', other.id, { tasks: [{ key: 'x', title: 'Theirs' }], links: [] });
+      await service.startWorkflow(context, 'home', other.id);
+      const toDo = boardTask('home', 'Waiting', 'To Do');
+      const inReview = boardTask('home', 'In review', 'Code Review');
+      boardTask('home', 'Shipped', 'Done');
+      const archived = boardTask('home', 'Archived', 'Executing');
+      homeDb().prepare('UPDATE tasks SET archived_at = ? WHERE id = ?').run(new Date().toISOString(), archived.id);
+      const planned = boardTask('home', 'Already planned', 'Executing');
+      const workflow = service.createWorkflow('home', {});
+      const key = view.addViewTask(context, 'home', workflow.id, { title: 'Release' });
+      view.addCardBlocker(context, 'home', workflow.id, key, 'home', planned.id);
+
+      const candidates = view.listJoinCandidates(context, 'home', workflow.id, 'home');
+
+      expect(candidates.map((candidate) => candidate.taskId)).toEqual([inReview.id, toDo.id]);
+      expect(candidates[0]).toMatchObject({ projectId: 'home', displayId: inReview.display_id, place: 'working', column: { name: 'Code Review' } });
+      expect(candidates[1]).toMatchObject({ place: 'todo', column: { name: 'To Do' } });
+      // Another board's tasks are that board's list, not this one's.
+      boardTask('mobile', 'On the phone board', 'Executing');
+      expect(view.listJoinCandidates(context, 'home', workflow.id, 'mobile').map((candidate) => candidate.title)).toEqual(['On the phone board']);
+    });
+
+    it('before Start, adds the task to the plan as one taken in at Start, linked as the blocker', () => {
+      const workflow = service.createWorkflow('home', {});
+      const key = view.addViewTask(context, 'home', workflow.id, { title: 'Release' });
+      const inFlight = boardTask('mobile', 'Bump the protocol', 'Executing');
+
+      view.addCardBlocker(context, 'home', workflow.id, key, 'mobile', inFlight.id);
+
+      const draft = new WorkflowRepository(homeDb()).getById(workflow.id)!.draft!;
+      const takenIn = draft.tasks.find((task) => task.existing_task_id === inFlight.id)!;
+      expect(takenIn).toMatchObject({ title: 'Bump the protocol', project_id: 'mobile', route_start_swimlane_id: null });
+      expect(draft.links).toEqual([{ blocker: takenIn.key, blocked: key }]);
+      expect(() => view.addCardBlocker(context, 'home', workflow.id, key, 'mobile', inFlight.id)).toThrow(/already in this plan/);
+    });
+
+    it('after Start, takes the task in where it is and makes the task wait for it', async () => {
+      const workflow = service.createWorkflow('home', {});
+      service.savePlan(context, 'home', workflow.id, { tasks: [{ key: 'release', title: 'Release' }], links: [] });
+      await service.startWorkflow(context, 'home', workflow.id);
+      const release = new TaskRepository(homeDb()).listByWorkflow(workflow.id)[0];
+      const inReview = boardTask('home', 'Fix the notes link', 'Code Review');
+
+      view.addCardBlocker(context, 'home', workflow.id, release.id, 'home', inReview.id);
+
+      const detail = view.readWorkflowDetail(context, 'home', workflow.id);
+      expect(detail.tasks.find((task) => task.key === inReview.id)).toMatchObject({ place: 'working' });
+      expect(detail.links).toEqual([{ blockerKey: inReview.id, blockedKey: release.id }]);
+    });
+
+    it('refuses a task in Done', () => {
+      const workflow = service.createWorkflow('home', {});
+      const key = view.addViewTask(context, 'home', workflow.id, { title: 'Release' });
+      const shipped = boardTask('home', 'Shipped', 'Done');
+      expect(() => view.addCardBlocker(context, 'home', workflow.id, key, 'home', shipped.id)).toThrow(/is done/);
+      expect(new WorkflowRepository(homeDb()).getById(workflow.id)!.draft!.tasks).toHaveLength(1);
+    });
+  });
+
   it('edits a planned task, and moving it to another board resets its route', () => {
     const workflow = service.createWorkflow('home', {});
     const key = view.addViewTask(context, 'home', workflow.id, { title: 'Phone' });

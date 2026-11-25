@@ -25,6 +25,10 @@ export const WORKFLOW_REFUSAL_MESSAGES = {
   noBlockerCandidates: msg`No task it can wait for.`,
   /** A link from a task already in Done. */
   blockerDone: (label: string) => withValues(msg({ message: '{label} is done. Waiting for it changes nothing.' }), { label }),
+  /** A card outside the workflow, in Done or archived, that a link or a plan would take in. */
+  cannotJoinDone: (label: string) => withValues(msg({ message: '{label} is done. Only a task not yet in Done can join a workflow.' }), { label }),
+  /** A card a link or a plan would take in that is already in a workflow. */
+  inAnotherWorkflow: (label: string) => withValues(msg({ message: '{label} is already in a workflow.' }), { label }),
   selfLink: msg`A task cannot wait for itself.`,
   alreadyWaits: (blockedLabel: string, blockerLabel: string) =>
     withValues(msg({ message: '{blockedLabel} already waits for {blockerLabel}.' }), { blockedLabel, blockerLabel }),

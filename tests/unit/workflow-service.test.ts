@@ -88,6 +88,7 @@ import {
   setRecoveryEntry,
 } from '../../src/main/workflows/workflow-recovery-state';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
+import { WORKFLOW_REFUSALS } from '../../src/shared/workflow-refusals';
 
 describe('workflow operations', () => {
   let context: IpcContext;
@@ -815,6 +816,56 @@ describe('workflow operations', () => {
     await expect(service.startWorkflow(context, 'home', workflow.id)).rejects.toThrow(/already started/);
   });
 
+  // #1211: existingTask takes in a task already started, so a plan can wait on work in flight.
+  it('takes in a board task already started, where it is, and Start refuses one that reached Done since', async () => {
+    const executing = lanesOf('home').find((lane) => lane.name === 'Executing')!;
+    const done = lanesOf('home').find((lane) => lane.role === 'done')!;
+    const inFlight = tasksOf('home').create({ title: 'In flight', description: '', swimlane_id: executing.id });
+    const landed = tasksOf('home').create({ title: 'Landed later', description: '', swimlane_id: executing.id });
+    const workflow = service.createWorkflow('home', {});
+    service.savePlan(context, 'home', workflow.id, {
+      tasks: [{ key: 'flight', title: 'In flight', existingTask: String(inFlight.display_id) }, { key: 'next', title: 'Release' }],
+      links: [{ blocker: 'flight', blocked: 'next' }],
+    });
+    const other = service.createWorkflow('home', {});
+    service.savePlan(context, 'home', other.id, {
+      tasks: [{ key: 'landed', title: 'Landed later', existingTask: landed.id }],
+      links: [],
+    });
+    (harness.dbs.get('home') as Database.Database).prepare('UPDATE tasks SET swimlane_id = ? WHERE id = ?').run(done.id, landed.id);
+
+    await service.startWorkflow(context, 'home', workflow.id);
+    expect(tasksOf('home').getById(inFlight.id)).toMatchObject({ workflow_id: workflow.id, swimlane_id: executing.id });
+    await expect(service.startWorkflow(context, 'home', other.id)).rejects.toThrow(/can no longer join/);
+    expect(() => service.savePlan(context, 'home', other.id, {
+      tasks: [{ key: 'landed', title: 'Landed later', existingTask: landed.id }],
+      links: [],
+    })).toThrow(WORKFLOW_REFUSALS.cannotJoinDone(`#${landed.display_id}`));
+  });
+
+  // A started task the plan takes in must be on its route, or the step check
+  // would move it on from a column its route never visits.
+  it('refuses a route for a started task taken in that leaves out the column it is in, at save and at Start', async () => {
+    const lane = (name: string) => lanesOf('home').find((candidate) => candidate.name === name)!;
+    const inReview = tasksOf('home').create({ title: 'In review', description: '', swimlane_id: lane('Code Review').id });
+    const workflow = service.createWorkflow('home', {});
+    const takeIn = (route: Partial<service.PlannedTaskInput>) => service.savePlan(context, 'home', workflow.id, {
+      tasks: [{ key: 'review', title: 'In review', existingTask: inReview.id, ...route }],
+      links: [],
+    });
+    const refusal = `#${inReview.display_id} is in Code Review, so its route must include Code Review.`;
+
+    expect(() => takeIn({ routeLast: 'Executing' })).toThrow(refusal);
+    expect(() => takeIn({ skip: ['Code Review'] })).toThrow(refusal);
+    // A route that keeps its column is fine, earlier columns skipped or not.
+    expect(() => takeIn({ routeStart: 'Code Review' })).not.toThrow();
+
+    // Moved on past the end of its saved route before Start.
+    takeIn({ routeLast: 'Code Review' });
+    (harness.dbs.get('home') as Database.Database).prepare('UPDATE tasks SET swimlane_id = ? WHERE id = ?').run(lane('Testing').id, inReview.id);
+    await expect(service.startWorkflow(context, 'home', workflow.id)).rejects.toThrow(/is in Testing, so its route must include Testing/);
+  });
+
   it('takes in a board task in To Do instead of creating one', async () => {
     const todo = lanesOf('home').find((lane) => lane.role === 'todo')!;
     const existing = tasksOf('home').create({ title: 'Already here', description: '', swimlane_id: todo.id });
@@ -1275,16 +1326,126 @@ describe('workflow operations', () => {
       expect(linksInto(workflow.id, created.id)).toMatchObject([{ blocker_task_id: api.id, blocker_project_id: 'home' }]);
     });
 
-    it('refuses the id of a task on another board that is not in the workflow, creating no task', async () => {
+    // #1211: a task on any board that is not in the workflow joins it, so the
+    // added task can wait on work already in flight.
+    it('takes in a task on another board named by its id, and waits for it', async () => {
       const { workflow } = await startedAcrossBoards();
       const mobileTodo = lanesOf('mobile').find((lane) => lane.role === 'todo')!;
-      const outsider = tasksOf('mobile').create({ title: 'Not in the workflow', description: '', swimlane_id: mobileTodo.id });
+      const outsider = tasksOf('mobile').create({ title: 'Not in the workflow yet', description: '', swimlane_id: mobileTodo.id });
+
+      const created = service.addWorkflowTask(context, 'home', workflow.id, { key: 'docs', title: 'Budgets docs', waitsFor: [outsider.id] });
+
+      expect(tasksOf('mobile').getById(outsider.id)?.workflow_id).toBe(workflow.id);
+      expect(linksInto(workflow.id, created.id)).toMatchObject([{ blocker_task_id: outsider.id, blocker_project_id: 'mobile' }]);
+    });
+
+    it('takes in a started task named by its number and project', async () => {
+      const { workflow } = await startedAcrossBoards();
+      const executing = lanesOf('mobile').find((lane) => lane.name === 'Executing')!;
+      const inFlight = tasksOf('mobile').create({ title: 'In flight', description: '', swimlane_id: executing.id });
+
+      const created = service.addWorkflowTask(context, 'home', workflow.id, {
+        key: 'docs', title: 'Budgets docs', waitsFor: [{ task: String(inFlight.display_id), project: 'kangentic-mobile' }],
+      });
+
+      expect(tasksOf('mobile').getById(inFlight.id)).toMatchObject({ workflow_id: workflow.id, swimlane_id: executing.id });
+      expect(linksInto(workflow.id, created.id)).toMatchObject([{ blocker_task_id: inFlight.id, blocker_project_id: 'mobile' }]);
+    });
+
+    it('refuses a task in Done that is not in the workflow, creating no task', async () => {
+      const { workflow } = await startedAcrossBoards();
+      const done = lanesOf('mobile').find((lane) => lane.role === 'done')!;
+      const shipped = tasksOf('mobile').create({ title: 'Shipped', description: '', swimlane_id: done.id });
       const titlesBefore = tasksOf('home').listByWorkflow(workflow.id).map((task) => task.title).sort();
 
-      expect(() => service.addWorkflowTask(context, 'home', workflow.id, { key: 'docs', title: 'Budgets docs', waitsFor: [outsider.id] }))
-        .toThrow(/No task/);
+      expect(() => service.addWorkflowTask(context, 'home', workflow.id, { key: 'docs', title: 'Budgets docs', waitsFor: [shipped.id] }))
+        .toThrow(WORKFLOW_REFUSALS.cannotJoinDone(`#${shipped.display_id}`));
 
       expect(tasksOf('home').listByWorkflow(workflow.id).map((task) => task.title).sort()).toEqual(titlesBefore);
+      expect(tasksOf('mobile').getById(shipped.id)?.workflow_id).toBeNull();
+    });
+  });
+
+  // #1211: a link to a task outside the workflow takes it in where it is, as
+  // a full member: To Do or started, on any board. Done and another workflow's
+  // tasks cannot join.
+  describe('linking a task outside the workflow', () => {
+    async function startedWithApi() {
+      const workflow = planAcrossBoards(service, context);
+      await service.startWorkflow(context, 'home', workflow.id);
+      const api = tasksOf('home').listByWorkflow(workflow.id).find((task) => task.title === 'Budgets API')!;
+      return { workflow, api };
+    }
+    const lane = (projectId: string, name: string) => lanesOf(projectId).find((candidate) => candidate.name === name)!;
+    const workflowLinks = (workflowId: string) =>
+      new TaskLinkRepository(harness.dbs.get('home') as Database.Database).listForWorkflow(workflowId);
+
+    it('takes in a started task with its automations paused, lifts the pause, and links it', async () => {
+      const { workflow, api } = await startedWithApi();
+      const inReview = tasksOf('mobile').create({ title: 'Release notes', description: '', swimlane_id: lane('mobile', 'Code Review').id, automations_disabled: true });
+
+      const result = service.linkTasks(context, 'home', workflow.id, {
+        blocker: String(inReview.display_id), blockerProject: 'kangentic-mobile', blocked: api.id,
+      });
+
+      expect(result.joined.map((task) => task.id)).toEqual([inReview.id]);
+      expect(tasksOf('mobile').getById(inReview.id)).toMatchObject({
+        workflow_id: workflow.id, workflow_project_id: 'home', swimlane_id: lane('mobile', 'Code Review').id, automations_disabled: false,
+      });
+      expect(workflowLinks(workflow.id)).toContainEqual(expect.objectContaining({
+        blocker_task_id: inReview.id, blocker_project_id: 'mobile', blocked_task_id: api.id,
+      }));
+    });
+
+    it('finds a task on another board by its id alone', async () => {
+      const { workflow, api } = await startedWithApi();
+      const inFlight = tasksOf('mobile').create({ title: 'In flight', description: '', swimlane_id: lane('mobile', 'Executing').id });
+
+      const result = service.linkTasks(context, 'home', workflow.id, { blocker: inFlight.id, blocked: api.id });
+
+      expect(result.joined.map((task) => task.id)).toEqual([inFlight.id]);
+      expect(tasksOf('mobile').getById(inFlight.id)?.workflow_id).toBe(workflow.id);
+    });
+
+    it('joins nothing when both ends are already in the workflow', async () => {
+      const { workflow, api } = await startedWithApi();
+      const ui = tasksOf('home').listByWorkflow(workflow.id).find((task) => task.title === 'Budgets UI')!;
+      service.unlinkTasks(context, 'home', workflow.id, { blocker: api.id, blocked: ui.id });
+
+      expect(service.linkTasks(context, 'home', workflow.id, { blocker: api.id, blocked: ui.id }).joined).toEqual([]);
+    });
+
+    it('refuses a task in Done, archived, or in another workflow, writing nothing', async () => {
+      const { workflow, api } = await startedWithApi();
+      const other = service.createWorkflow('home', {});
+      service.savePlan(context, 'home', other.id, { title: 'Other', tasks: [{ key: 'x', title: 'Theirs' }], links: [] });
+      await service.startWorkflow(context, 'home', other.id);
+      const theirs = tasksOf('home').listByWorkflow(other.id)[0];
+      const shipped = tasksOf('home').create({ title: 'Shipped', description: '', swimlane_id: lane('home', 'Done').id });
+      const archived = tasksOf('home').create({ title: 'Archived', description: '', swimlane_id: lane('home', 'Executing').id });
+      (harness.dbs.get('home') as Database.Database).prepare('UPDATE tasks SET archived_at = ? WHERE id = ?').run(new Date().toISOString(), archived.id);
+      const linksBefore = workflowLinks(workflow.id).length;
+
+      expect(() => service.linkTasks(context, 'home', workflow.id, { blocker: shipped.id, blocked: api.id }))
+        .toThrow(WORKFLOW_REFUSALS.cannotJoinDone(`#${shipped.display_id}`));
+      expect(() => service.linkTasks(context, 'home', workflow.id, { blocker: archived.id, blocked: api.id }))
+        .toThrow(WORKFLOW_REFUSALS.cannotJoinDone(`#${archived.display_id}`));
+      expect(() => service.linkTasks(context, 'home', workflow.id, { blocker: theirs.id, blocked: api.id }))
+        .toThrow(WORKFLOW_REFUSALS.inAnotherWorkflow(`#${theirs.display_id}`));
+
+      expect(workflowLinks(workflow.id)).toHaveLength(linksBefore);
+      expect(tasksOf('home').getById(shipped.id)?.workflow_id).toBeNull();
+      expect(tasksOf('home').getById(theirs.id)?.workflow_id).toBe(other.id);
+    });
+
+    it('takes in nothing when the link is refused for the task that would wait', async () => {
+      const { workflow, api } = await startedWithApi();
+      tasksOf('home').move({ taskId: api.id, targetSwimlaneId: lane('home', 'Executing').id, targetPosition: 0 }, { origin: 'workflow' });
+      const inFlight = tasksOf('home').create({ title: 'In flight', description: '', swimlane_id: lane('home', 'Executing').id });
+
+      expect(() => service.linkTasks(context, 'home', workflow.id, { blocker: inFlight.id, blocked: api.id })).toThrow(/has started/);
+
+      expect(tasksOf('home').getById(inFlight.id)?.workflow_id).toBeNull();
     });
   });
 
@@ -1511,7 +1672,7 @@ describe('workflow operations', () => {
     const [takenIn, created] = service.readWorkflow(context, 'home', workflow.id).tasks;
 
     // The plan still holds the take-in, so the read names it though the board task cannot be read.
-    expect(takenIn).toMatchObject({ taskId: existing.id, column: 'To Do (taken in at Start)', displayId: null });
+    expect(takenIn).toMatchObject({ taskId: existing.id, column: 'no column, gone from its board (taken in at Start)', displayId: null });
     expect(created).toMatchObject({ taskId: null, column: 'To Do (created at Start)', displayId: null });
   });
 
