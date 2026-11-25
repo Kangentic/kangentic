@@ -129,6 +129,8 @@ async function pictureOf(frame: HTMLElement): Promise<string | null> {
       timeout,
     ]);
   } catch {
+    // report-ok: main's IPC wrap reports a handler's rejection, and the float shows the
+    // terminal's title over its background.
     return null;
   } finally {
     if (timer) clearTimeout(timer);

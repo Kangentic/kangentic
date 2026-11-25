@@ -3,6 +3,7 @@ import { getExistingProjectDb } from '../db/database';
 import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
 import { TaskRepository } from '../db/repositories/task-repository';
 import { WorkflowRepository } from '../db/repositories/workflow-repository';
+import { workflowEngineReporter } from './workflow-report';
 
 /**
  * The workflow a task is in, read in its home project's database, where a
@@ -12,8 +13,9 @@ import { WorkflowRepository } from '../db/repositories/workflow-repository';
  * again (`getExistingProjectDb`). Throws only when a home that exists cannot be
  * read, which each caller already handles its own way.
  *
- * A leaf module, importing only the database layer, so the lock check, the
- * step check, the board's notifications and the phone's wire can all use it.
+ * A leaf module, importing only the database layer and the workflow reporter
+ * (itself a leaf), so the lock check, the step check, the board's notifications
+ * and the phone's wire can all use it.
  */
 export function workflowOfTask(task: Pick<Task, 'workflow_id' | 'workflow_project_id'>, projectId: string): Workflow | null {
   if (!task.workflow_id) return null;
@@ -36,7 +38,10 @@ export function isInWorkflow(task: Pick<Task, 'workflow_id' | 'workflow_project_
   if (!task.workflow_id) return false;
   try {
     return workflowOfTask(task, projectId) !== null;
-  } catch {
+  } catch (error) {
+    // Fails closed: a task whose workflow is gone is then refused a Backlog demote, a
+    // move to another project and a place in another workflow.
+    workflowEngineReporter.report(error, { tags: { stage: 'membership_read' } });
     return true;
   }
 }
@@ -50,7 +55,10 @@ export function taskWorkflowState(task: Pick<Task, 'workflow_id' | 'workflow_pro
   if (!task.workflow_id) return null;
   try {
     return workflowOfTask(task, projectId)?.state ?? null;
-  } catch {
+  } catch (error) {
+    // Fails open: a paused workflow then reads as not paused, so the startup pass or a
+    // workflow's own move starts an agent the Pause was meant to hold.
+    workflowEngineReporter.report(error, { tags: { stage: 'workflow_state_read' } });
     return null;
   }
 }
@@ -80,7 +88,10 @@ export function isRunningWorkflowStepTask(projectId: string, taskId: string): bo
     const role = new SwimlaneRepository(db).getById(task.swimlane_id)?.role;
     if (role === 'todo' || role === 'done') return false;
     return workflowOfTask(task, projectId)?.state === 'running';
-  } catch {
+  } catch (error) {
+    // A workflow task then gets the generic idle notice on every turn end, and the hang
+    // check stops watching its turns.
+    workflowEngineReporter.report(error, { tags: { stage: 'step_task_read' } });
     return false;
   }
 }

@@ -93,6 +93,8 @@ export class FileWatcher {
         const stat = await fsPromises.stat(this.filePath);
         return stat.mtimeMs > this.lastWatcherFireTime;
       } catch {
+        // report-ok: the file is not there yet, so nothing is stale, and the next poll
+        // looks again.
         return false;
       }
     });
@@ -182,7 +184,8 @@ export class FileWatcher {
       this.watcher = watcher;
       this.nativeEventCount = 0;
     } catch {
-      // Can't watch directory either - polling fallback will still work
+      // report-ok: the directory cannot be watched either, a missing folder, and the
+      // poll still finds every change.
     }
   }
 
@@ -205,6 +208,8 @@ export class FileWatcher {
       this.nativeEventCount = 0;
       return true;
     } catch {
+      // report-ok: fs.watch throws when the file is absent or its directory is gone.
+      // False is the answer, and the directory watch or the poll covers it.
       return false;
     }
   }
@@ -221,7 +226,7 @@ export class FileWatcher {
    */
   private attachErrorHandler(watcher: fs.FSWatcher): void {
     watcher.on('error', () => {
-      try { watcher.close(); } catch { /* already released */ }
+      try { watcher.close(); } catch { /* report-ok: already released, which is the goal. */ }
       if (this.watcher !== watcher) return;
       this.watcher = null;
       this.nativeEventCount = 0;
@@ -242,7 +247,7 @@ export class FileWatcher {
    */
   private disarmWatcher(): void {
     if (this.watcher) {
-      try { this.watcher.close(); } catch { /* already released */ }
+      try { this.watcher.close(); } catch { /* report-ok: already released, which is the goal. */ }
       this.watcher = null;
       console.warn(
         `[file-watcher] released a flooding fs.watch handle for ${this.filePath} - falling back to polling`,
@@ -268,6 +273,7 @@ export class FileWatcher {
     try {
       await fsPromises.access(this.filePath);
     } catch {
+      // report-ok: the file does not exist yet, so there is nothing to watch this tick.
       return;
     }
     if (this.closed || this.watcher) return;

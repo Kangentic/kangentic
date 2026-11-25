@@ -4,6 +4,7 @@ import fs from './original-fs';
 import { ensureLocalGitExcludes, resolveGitDir } from '../agent/shared/git-exclude';
 import { renameWithRetry } from '../fs/directory-move';
 import { gitAt } from './git-client';
+import { gitWorktreeReporter } from './git-worktree-report';
 import { hasLinkOnPath, mayBeLink } from './link-check';
 import { removeLinkOnly, removeNodeModulesPath } from './node-modules-link';
 import type { RemoveWithRetryOptions } from './rm-with-retry';
@@ -50,6 +51,8 @@ async function readLinkRecord(worktreePath: string): Promise<string[] | null> {
   try {
     text = await fs.promises.readFile(path.join(gitDir, LINK_RECORD_FILE), 'utf8');
   } catch (error) {
+    // report-ok: ENOENT means no folder was recorded. Any other read failure answers null,
+    // the cannot-tell value, on which a removal refuses and a link step links nothing.
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return null;
     return (await pathExists(gitDir)) ? [] : null;
   }
@@ -61,6 +64,8 @@ async function readLinkRecord(worktreePath: string): Promise<string[] | null> {
       return folder ? [folder] : [];
     });
   } catch {
+    // report-ok: a record that does not parse answers null, the cannot-tell value, on which
+    // a removal refuses and a link step links nothing.
     return null;
   }
 }
@@ -71,6 +76,8 @@ async function writeLinkRecord(recordPath: string, folders: string[]): Promise<v
     await fs.promises.writeFile(temporaryPath, JSON.stringify(folders, null, 2));
     await renameWithRetry(temporaryPath, recordPath);
   } catch (error) {
+    // report-ok: cleanup of a temporary file that may not exist. The write's own error is
+    // rethrown below.
     await fs.promises.rm(temporaryPath, { force: true }).catch(() => undefined);
     throw error;
   }
@@ -80,6 +87,7 @@ async function isDirectory(target: string): Promise<boolean> {
   try {
     return (await fs.promises.stat(target)).isDirectory();
   } catch {
+    // report-ok: ENOENT when the project has no such folder, which is the answer.
     return false;
   }
 }
@@ -89,6 +97,7 @@ async function pathExists(target: string): Promise<boolean> {
     await fs.promises.lstat(target);
     return true;
   } catch {
+    // report-ok: ENOENT when nothing is at the path, which is the answer.
     return false;
   }
 }
@@ -102,6 +111,8 @@ async function isIgnoredInProject(rootPath: string, folder: string): Promise<boo
   try {
     return (await gitAt(rootPath).raw(['check-ignore', '--', folder])).trim().length > 0;
   } catch {
+    // report-ok: a git failure reads as not ignored, the safe direction: the folder stays
+    // unlinked and the skip is logged.
     return false;
   }
 }
@@ -158,6 +169,9 @@ export async function linkWorktreeFolders(worktreePath: string, rootPath: string
   try {
     await writeLinkRecord(recordPath, [...new Set([...recorded, ...folders])]);
   } catch (error) {
+    // No record, no link: the worktree runs without the folders the project shares into
+    // it, and only this log line says so.
+    gitWorktreeReporter.report(error, { tags: { stage: 'link_record' } });
     console.warn('[WORKTREE] Could not record the linked folders, so they stay unlinked:', error);
     return;
   }
@@ -171,6 +185,9 @@ export async function linkWorktreeFolders(worktreePath: string, rootPath: string
       await fs.promises.symlink(absolutePath(rootPath, folder), destination, linkType);
       console.log(`[WORKTREE] Linked ${folder}: ${linkType}`);
     } catch (error) {
+      // The worktree still runs, without this shared folder, so a build or a test that
+      // reads it fails for a reason nothing on screen names.
+      gitWorktreeReporter.report(error, { tags: { stage: 'link_create' } });
       console.warn(`[WORKTREE] Failed to link ${folder} (non-fatal):`, error);
     }
   }
@@ -195,7 +212,10 @@ async function removeLinks(worktreePath: string, folders: string[]): Promise<boo
  * recorded links, then its node_modules in whatever form it takes. Every removal
  * of a worktree goes through this. Returns false when a link would not come out
  * or the record cannot be read, and the caller then leaves the worktree where it
- * is. Never throws.
+ * is. The node_modules link counts as one: left in place, a recursive delete
+ * walks through it into the main checkout's node_modules. A real node_modules
+ * directory that would not delete does not, since nothing leads out of it.
+ * Never throws.
  */
 export async function clearWorktreeLinks(
   worktreePath: string,
@@ -204,8 +224,9 @@ export async function clearWorktreeLinks(
   const recorded = await readLinkRecord(worktreePath);
   if (!recorded) console.warn(`[WORKTREE] Could not read the link record of ${worktreePath}`);
   const cleared = recorded !== null && await removeLinks(worktreePath, recorded);
-  await removeNodeModulesPath(path.join(worktreePath, 'node_modules'), options);
-  return cleared;
+  const nodeModulesLinkLeft = await removeNodeModulesPath(path.join(worktreePath, 'node_modules'), options);
+  if (nodeModulesLinkLeft) console.warn(`[WORKTREE] The node_modules link of ${worktreePath} would not come out`);
+  return cleared && !nodeModulesLinkLeft;
 }
 
 /**

@@ -164,12 +164,13 @@ export async function loadOrCreateBridgeIdentity(): Promise<BridgeIdentity> {
 }
 
 export function clearBridgeIdentity(): void {
-  // rmSync with force ignores a missing file (no existsSync TOCTOU); the
-  // try/catch swallows a transient Windows lock (AV/backup holding a handle)
-  // so a best-effort clear never throws into the caller.
+  // rmSync with force ignores a missing file (no existsSync TOCTOU).
   try {
     fs.rmSync(identityPath(), { force: true });
   } catch (error) {
+    // report-ok: a transient Windows lock (antivirus or backup holding a handle)
+    // leaves the file in place and the clear does not throw into the caller.
+    // Nothing in the app calls this clear yet, only tests, so no flow depends on it.
     console.warn('[mobile-bridge/identity] failed to clear identity:', error);
   }
 }

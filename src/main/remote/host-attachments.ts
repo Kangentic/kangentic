@@ -35,6 +35,8 @@ function reasonOf(error: unknown): string {
 }
 
 async function localSize(localPath: string): Promise<number | null> {
+  // report-ok: a local file that cannot be read has no size to match, so the copy goes on and its
+  // own read failure is noted in the prompt.
   return (await fs.stat(localPath).catch(() => null))?.size ?? null;
 }
 
@@ -59,6 +61,8 @@ export async function copyAttachmentsToHost(
   try {
     sizesOnHost = await hostFileSizes(access, hostPaths);
   } catch (error) {
+    // report-ok: the host could not say what it holds, so every attachment goes back as a failure
+    // and the prompt names each with this reason in place of its path.
     return hostPaths.map((hostPath) => ({ hostPath, reason: reasonOf(error) }));
   }
 
@@ -70,6 +74,8 @@ export async function copyAttachmentsToHost(
       await writeHostBytes(access, hostPath, await fs.readFile(localPath), stop);
       return null;
     } catch (error) {
+      // report-ok: an attachment that cannot be copied keeps the spawn going, and the prompt names
+      // it with this reason in place of its path.
       return { hostPath, reason: reasonOf(error) };
     }
   });

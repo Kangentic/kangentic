@@ -1066,6 +1066,10 @@ msgstr "Не удалось добавить учётную запись"
 msgid "Couldn't clear browser data"
 msgstr "Не удалось очистить данные браузера"
 
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "Couldn't rebuild the index"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
 #, fuzzy
 msgid "Couldn't restart"
@@ -3950,6 +3954,10 @@ msgstr "Окна"
 #, fuzzy
 msgid "Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the Kangentic browser. Saved URLs are kept."
 msgstr "Удалить cookie, localStorage, IndexedDB, service workers и кэши HTTP/авторизации браузера Kangentic. Сохранённые URL останутся."
+
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "With an error, the app's state as fixed ranges: time running, time since the computer woke, which window it came from, whether the window was showing or focused, and whether the processor was slowed"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy

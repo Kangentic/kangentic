@@ -75,6 +75,7 @@ export function isStopScriptRunning(taskId: string): boolean {
 /** Where a task's script runs: its worktree while that exists, else the project folder. */
 export async function stopScriptFolder(worktreePath: string | null, projectPath: string): Promise<string> {
   if (!worktreePath) return projectPath;
+  // report-ok: a worktree that is gone is the answer, and the script runs in the project folder.
   return fsPromises.access(worktreePath).then(() => worktreePath, () => projectPath);
 }
 
@@ -135,6 +136,9 @@ export function runStopScript(input: RunStopScriptInput): Promise<StopScriptOutc
       return { status: 'ok' };
     },
     (error: unknown): StopScriptOutcome => {
+      // report-ok: the project's own script exited non-zero, ran out its time, was cancelled or
+      // could not start. That is the outcome this returns, and both callers show a failed one
+      // to the user through reportStopScriptFailure's toast.
       const classified = classifyStopScriptError(error, input.timeoutMs, signal);
       if (classified.status === 'failed') {
         console.warn(`[STOP-SCRIPT] task ${input.taskId.slice(0, 8)}: failed after ${Date.now() - startedAt} ms:`, classified.failure);

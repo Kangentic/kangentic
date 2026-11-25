@@ -5,6 +5,7 @@ import { translateText } from '../i18n/main-i18n';
 import { PATHS } from '../config/paths';
 import { IPC } from '../../shared/ipc-channels';
 import { getGlobalDb, resetGlobalDb } from './database';
+import { dbReporter } from './db-report';
 import { describeSqliteFailure } from './sqlite-error';
 import { dataDirFailureOf, type DataDirFailure, type DataDirState } from '../config/data-dir-failure';
 
@@ -130,6 +131,8 @@ export async function ensureGlobalDbReadable(): Promise<GlobalDbReadyResult> {
       getGlobalDb();
       return { ok: true };
     } catch (error) {
+      // report-ok: getGlobalDb reports the failed open through notifyOpenFailure, and the
+      // dialog below shows it to the user.
       console.error('[db] Global database is unreadable at startup:', error);
       if (dialogsSuppressed()) return { ok: false, error };
       if (!await askRetryOrQuit(error, null)) return { ok: false, error };
@@ -199,10 +202,13 @@ export function notifyGlobalDbUnavailable(
         parent.webContents.send(IPC.PROJECT_LIST_CHANGED);
       }
     } catch (retryError) {
+      // report-ok: getGlobalDb reports the failed reopen through notifyOpenFailure.
       console.error('[db] Retry failed; the global database is still unreadable.', retryError);
     }
-  })().catch((dialogError) => {
-    // A dialog that cannot open must not become the crash it was reporting.
+  })().catch((dialogError: unknown) => {
+    // A dialog that cannot open must not become the crash it was reporting. A user
+    // whose database cannot be read then sees no dialog, and no Retry or Quit.
+    dbReporter.report(dialogError, { tags: { stage: 'dialog_show' } });
     console.error('[db] Failed to show the unreadable-database dialog:', dialogError);
   });
 }

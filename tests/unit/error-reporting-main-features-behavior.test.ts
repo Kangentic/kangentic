@@ -20,6 +20,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import Database from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
+import { reportedText as sharedReportedText } from './helpers/reported-failures';
 
 const reportHandledError = vi.hoisted(() => vi.fn());
 vi.mock('../../src/main/analytics/error-reporting', () => ({ reportHandledError }));
@@ -170,7 +171,9 @@ describe('idle pause', () => {
 
     await vi.waitFor(() => expect(reportHandledError).toHaveBeenCalledTimes(1));
     expect(onlyReportTags()).toMatchObject({ source: 'session_handlers', stage: 'idle_pause', error_name: 'TypeError' });
-  });
+    // The session handlers pull in most of main, and this is the first import of them in the
+    // file. On a loaded machine that import alone passed the default 5 s once.
+  }, 30_000);
 });
 
 describe('metrics snapshot timer', () => {
@@ -244,10 +247,7 @@ describe('session transcript path', () => {
   }
 
   /** Everything one report carried, as text, so a leaked path cannot hide in any field. */
-  function reportedText(): string {
-    const [reportedError, tags, contexts] = reportHandledError.mock.calls[0] as [Error, unknown, unknown];
-    return JSON.stringify({ message: reportedError.message, tags, contexts });
-  }
+  const reportedText = (): string => sharedReportedText(reportHandledError);
 
   it('reports a status line write that fails, under source session_transcript_path and stage status_line, with no path in it', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});

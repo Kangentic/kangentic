@@ -573,6 +573,12 @@ that lands while the deleter is stopping starts no new one inside that folder; t
 deletes its copy. A copy that fails to delete is skipped for the rest of that run and retried at
 the next open.
 
+A link that will not come out refuses the removal. When a `node_modules` junction or symlink, or a
+linked folder the record names, cannot be removed, `clearWorktreeLinks` answers false and
+`tryGitRemoval` stops before `git worktree remove --force` and the recursive delete: the worktree
+stays where it is, with its links, and the removal is reported as refused. A worktree is never
+removed through a live link, since that delete would empty the project's own `node_modules`.
+
 ### On Project Open
 
 Every pass below takes a `VerifiedOwnership`, so an instance that does not own the folder runs none of them (`.claude/rules/project-folder-ownership.md`). On 2026-11-05 a second instance with a copy of `index.db` and empty per-project databases read every folder as orphaned and deleted 23 worktrees, 1,811 session folders and 113 task folders across 16 projects.
@@ -596,12 +602,12 @@ With no valid marker (every project before this shipped, a copied folder, a move
 ### On Project Close/Delete
 
 - **`stripKangenticHooks()`** -- Removes all Kangentic hooks from `.claude/settings.local.json`. Backs up the file before modification, restores on error. Removes empty settings files and `.claude/` directories if they only contained our hooks.
-- **`cleanupProject()`** -- Kills all PTYs, closes each task's pop-out windows and offscreen browser lane (`closeTaskWindows`, or `closeProjectTaskWindows` when the task list cannot be read), reaps their leftover processes (`reapTaskLeftovers`), detaches worktrees, strips hooks, deletes the worktrees a Done move set aside (`deleteRemovedWorktreesNow`, without the init-script gate; not for a project that is itself a worktree), removes `.kangentic/` directory and DB files, removes `.kangentic/` from `.gitignore`.
+- **`cleanupProject()`** -- Kills all PTYs, closes each task's pop-out windows and offscreen browser lane (`closeTaskWindows`, or `closeProjectTaskWindows` when the task list cannot be read), reaps their leftover processes (`reapTaskLeftovers`), detaches worktrees, strips hooks, deletes the worktrees a Done move set aside (`deleteRemovedWorktreesNow`, without the init-script gate; not for a project that is itself a worktree), removes `.kangentic/` directory and DB files, removes `.kangentic/` from `.gitignore`. `.kangentic/` stays on disk, and the log says so, when a link may still be live under it: a worktree's link would not come out, the worktree folders could not be listed, or a set-aside copy still holds a link (`deleteRemovedWorktreesNow` answers true). The recursive delete would follow that link into the main checkout.
 - **`detachProjectFromWorkflows()`** runs first in `cleanupProject()`, before any PTY is killed and whether or not the folder still exists. It takes the project's tasks out of every workflow, drops links in other homes that name them, and releases the tasks on other boards of a workflow the project was home to. A running or paused workflow homed elsewhere that is left with no task is deleted, but only when every board could be read. `cleanupProject()` ends the project's workflow agents (`endWorkflowAgentsOfProject`) on both paths, before the project's database closes.
 
 ### On Task Delete
 
-- **`cleanupTaskResources()`** - Ends the sessions and closes the task's pop-out windows and offscreen browser lane and ends the agent's control of its Browser (`closeTaskWindows`, inside `cleanupTaskSession`, which also drops the passkey guard's mark) before the reap. Kills PTY, removes the session directories of every session the task ever had (`removeSessionFolders`), deletes session DB records, removes worktree (after `prepareWorktreeForRemoval` waits out any creation holding the path, then serialized via `withLock`), prunes stale worktree metadata, optionally deletes branch.
+- **`cleanupTaskResources()`** - Ends the sessions and closes the task's pop-out windows and offscreen browser lane and ends the agent's control of its Browser (`closeTaskWindows`, inside `cleanupTaskSession`, which also drops the passkey guard's mark) before the reap. Kills PTY, removes the session directories of every session the task ever had (`removeSessionFolders`), deletes session DB records, removes worktree (after `prepareWorktreeForRemoval` waits out any creation holding the path, then serialized via `withLock`), prunes stale worktree metadata, optionally deletes branch. A link that will not come out refuses this removal too, as at a Done move, and the folder stays.
 - **`removeSessionFolders()`** (`src/main/ipc/helpers/session-folders.ts`) - Runs on every path that deletes a task's session records, with the ids read before the records go: `cleanupTaskSession`, the MCP delete and a move to another project (`onTaskDeleted`, after the exit and the reap), and the cold-open To Do pass (once that task's lock is released; inside it the pass waits for the session's exit before it removes the worktree). A live session's directory is spared. Nothing names the directories once the records are gone, and `pruneOrphanedDirectories()` refuses to clear many of them (Sentry DESKTOP-50).
 
 ## Safety

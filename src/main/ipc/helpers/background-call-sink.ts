@@ -1,6 +1,7 @@
 import type { BackgroundCallSink } from '../../background-calls/record-background-call';
 import type { IpcContext } from '../ipc-context';
 import { getProjectRepos } from './project-repos';
+import { handlerStepReporter } from './handler-step-report';
 
 /**
  * Writes a finished background call to its project's ledger.
@@ -17,7 +18,10 @@ export function backgroundCallSink(context: IpcContext): BackgroundCallSink {
     let exists: boolean;
     try {
       exists = context.projectRepo.getById(projectId) != null;
-    } catch {
+    } catch (error) {
+      // The project list could not be read, so this background call is not written to
+      // its project's ledger and Stats never shows it.
+      handlerStepReporter.report(error, { tags: { area: 'projects', step: 'background_call_project_read' } });
       exists = false;
     }
     if (!exists) return;

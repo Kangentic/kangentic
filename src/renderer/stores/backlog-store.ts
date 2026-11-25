@@ -14,6 +14,7 @@ import { useBoardStore } from './board-store';
 import { useProjectStore } from './project-store';
 import { useToastStore } from './toast-store';
 import { ipcFailureToastFields } from '../lib/ipc-error';
+import { reportRendererFailure } from '../utils/renderer-failure';
 
 interface BacklogState {
   items: BacklogTask[];
@@ -115,6 +116,9 @@ const backlogStoreInitializer: StateCreator<BacklogState> = (set, get) => ({
       set({ items, loading: false, hydrated: true });
     } catch (error) {
       console.error('[backlog-store] Failed to load backlog:', error);
+      // The Backlog shows empty. A rejected IPC call already reported from
+      // main; anything the renderer threw itself reports here, as board/load does.
+      reportRendererFailure('backlog', 'load', error);
       set({ loading: false, hydrated: true });
     }
   },
@@ -160,6 +164,8 @@ const backlogStoreInitializer: StateCreator<BacklogState> = (set, get) => ({
     try {
       await window.electronAPI.backlog.reorder(ids, movedId);
     } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the reload below puts
+      // main's order back on screen.
       console.error('[backlog-store] Reorder failed, reloading:', error);
       get().loadBacklog();
     }

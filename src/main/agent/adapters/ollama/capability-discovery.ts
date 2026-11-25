@@ -123,8 +123,12 @@ export interface OllamaDiscovery {
  */
 export async function discoverOllama(cliPath: string, target?: CliTarget | null): Promise<OllamaDiscovery> {
   const [models, thinkLevels] = await Promise.all([
+    // report-ok: `ollama list` did not answer (daemon down, CLI missing). No model list is the
+    // outcome, and the renderer offers its free-form model input.
     readCliOutput(cliPath, ['list'], LIST_TIMEOUT_MS, target).then(parseOllamaModelList, () => [] as string[]),
     // `run --help` is answered by the CLI itself, so it works with the daemon down.
+    // report-ok: a CLI that did not answer reads as null, and the adapter keeps the levels an
+    // earlier read reported.
     readCliOutput(cliPath, ['run', '--help'], HELP_TIMEOUT_MS, target).then(parseOllamaThinkLevels, () => null),
   ]);
   return {

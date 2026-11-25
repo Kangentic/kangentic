@@ -70,6 +70,7 @@ export function useCommandTerminalRename(sessionId: string | null, slot: string)
         if (!changed) setPending(null);
       })
       .catch((error: unknown) => {
+        // report-ok: main's IPC wrap reports a handler's rejection, and the toast shows the reason.
         setPending(null);
         useToastStore.getState().addToast({
           title: i18n._(msg`Couldn't rename terminal`),

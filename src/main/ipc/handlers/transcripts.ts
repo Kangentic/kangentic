@@ -17,6 +17,7 @@ import type {
   TranscriptTimelineResponse,
 } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
+import { handlerStepReporter } from '../helpers/handler-step-report';
 
 const PAGE_DIRECTIONS: ReadonlySet<TranscriptPageDirection> = new Set(['before', 'after', 'around']);
 
@@ -43,7 +44,12 @@ function validPageRequest(request: TranscriptPageRequest): Omit<TranscriptPageRe
   };
 }
 
-/** A failed worker call as an answer, so a viewer's edge row offers Retry instead of throwing. */
+/**
+ * A failed worker call as an answer, so a viewer's edge row offers Retry instead of throwing.
+ * The cause collapses to `read_failed` there, so each caller reports the failure first. The
+ * retrieval client reports a defect or a SQLite failure itself and the reporter skips a
+ * worker that is down, so that adds a plain error a worker handler threw.
+ */
 function unavailableAnswer(error: unknown): { status: 'unavailable'; reason: 'worker_unavailable' | 'read_failed' } {
   return { status: 'unavailable', reason: error instanceof RetrievalUnavailableError ? 'worker_unavailable' : 'read_failed' };
 }
@@ -117,6 +123,8 @@ export function registerTranscriptHandlers(context: IpcContext): void {
           remoteTargets: collectRemoteTargets(agentRegistry),
         });
       } catch (error) {
+        // The Conversation viewer shows Retry in place of the older or newer turns.
+        handlerStepReporter.report(error, { tags: { area: 'transcripts', step: 'page_read' } });
         return JSON.stringify(unavailableAnswer(error) satisfies TranscriptPageResponse);
       }
     },
@@ -142,6 +150,8 @@ export function registerTranscriptHandlers(context: IpcContext): void {
           remoteTargets: collectRemoteTargets(agentRegistry),
         });
       } catch (error) {
+        // A search hit cannot be found in its conversation, so the viewer opens without it.
+        handlerStepReporter.report(error, { tags: { area: 'transcripts', step: 'locate_read' } });
         return JSON.stringify(unavailableAnswer(error) satisfies TranscriptLocateResponse);
       }
     },
@@ -161,6 +171,8 @@ export function registerTranscriptHandlers(context: IpcContext): void {
           remoteTargets: collectRemoteTargets(agentRegistry),
         });
       } catch (error) {
+        // The Conversation viewer's scrollbar has no timeline to draw.
+        handlerStepReporter.report(error, { tags: { area: 'transcripts', step: 'timeline_read' } });
         return unavailableAnswer(error);
       }
     },

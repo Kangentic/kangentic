@@ -1,6 +1,7 @@
 import { parseCapabilityRequestPayload, type CapabilityRequestMessage, type CapabilityResponseMessage, type StartSessionResponsePayload } from '@kangentic/protocol';
 import { openTaskSession, startTaskSession } from '../../ipc/handlers/session-start';
 import { resolveKnownProject } from './known-project';
+import { mobileBridgeReporter } from '../mobile-bridge-report';
 import { toWireJson } from './wire-mappers';
 import type { IpcContext } from '../../ipc/ipc-context';
 
@@ -24,6 +25,9 @@ export async function handleStartSession(
     const opened = await openTaskSession(context, projectId, payload.taskId);
     if (opened.outcome === 'starting') {
       opened.settled.catch((error: unknown) => {
+        // The phone was told the agent is starting. The resume reports its own
+        // failures and marks them, so this sends only what nothing else did.
+        mobileBridgeReporter.report(error, { tags: { stage: 'open_after_accept' } });
         console.error(`[mobile-bridge] start-session open ${payload.taskId.slice(0, 8)} failed after accept:`, error);
       });
     }
@@ -61,6 +65,9 @@ export async function handleStartSession(
     // SAME synchronous turn as the call, so a rejection that lands before the
     // next tick is already handled.
     result.settled.catch((error: unknown) => {
+      // The phone shows "starting" and no agent arrives. What the spawn
+      // chokepoint already reported is marked and skipped here.
+      mobileBridgeReporter.report(error, { tags: { stage: 'start_after_accept' } });
       console.error(`[mobile-bridge] start-session ${payload.taskId.slice(0, 8)} failed after accept:`, error);
     });
   }

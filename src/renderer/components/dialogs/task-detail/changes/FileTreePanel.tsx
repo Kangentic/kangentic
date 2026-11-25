@@ -767,6 +767,7 @@ function FileHistoryPopover({
         if (!cancelled) setFetchedHistory({ key: historyKey, commits: result.commits });
       })
       .catch(() => {
+        // report-ok: main's IPC wrap reports a handler's rejection, and the popover lists no commits.
         if (!cancelled) setFetchedHistory({ key: historyKey, commits: [] });
       });
     return () => {

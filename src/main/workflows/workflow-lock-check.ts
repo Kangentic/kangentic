@@ -10,6 +10,7 @@ import { workflowMoveRefusal, type WorkflowMoveOrigin } from '../../shared/workf
 import { isMoveByAPerson } from '../../shared/task-move-origin';
 import { WORKFLOW_REFUSALS } from '../../shared/workflow-refusals';
 import { workflowOfTask } from './workflow-home';
+import { workflowEngineReporter } from './workflow-report';
 
 /**
  * Gather what `workflowMoveRefusal` needs for one move, from the databases and
@@ -44,7 +45,9 @@ export function checkWorkflowMove(
     // Fails open on purpose. A home database that cannot be read cannot run
     // the workflow either, so nothing moves the task on, and refusing every
     // hand move would leave it stuck where it is. Logged, so the allow is
-    // never silent.
+    // never silent. Reported, since the lock then protects none of the workflow's tasks:
+    // any hand or agent move goes through.
+    workflowEngineReporter.report(error, { tags: { stage: 'lock_read' } });
     console.warn(`[WORKFLOW-LOCK] Could not read workflow ${task.workflow_id} for task ${task.id.slice(0, 8)}, so the move is allowed:`, error);
     return null;
   }
@@ -95,10 +98,11 @@ export function checkWorkflowMoveForAgent(
       taskStopped: false,
     });
   } catch {
-    // Fails open on purpose: the move path asks again inside the task lock,
-    // with the same rule, and refuses there. The cost is that an agent hears
-    // "Moving" for a move that is then refused, and the refusal is only logged;
-    // that needs the databases to fail between the two reads.
+    // report-ok: fails open on purpose. The move path asks again inside the task lock
+    // (checkWorkflowMove), with the same rule, and refuses there or reports its own
+    // failed read. The cost is that an agent hears "Moving" for a move that is then
+    // refused, and the refusal is only logged; that needs the databases to fail between
+    // the two reads.
     return null;
   }
 }
@@ -108,7 +112,10 @@ export function workflowTitleOf(task: Pick<Task, 'workflow_id' | 'workflow_proje
   if (!task.workflow_id) return 'its workflow';
   try {
     return workflowOfTask(task, projectId)?.title ?? 'its workflow';
-  } catch {
+  } catch (error) {
+    // The refusal then names "its workflow" in place of the title, so the user cannot
+    // tell which workflow to remove the task from.
+    workflowEngineReporter.report(error, { tags: { stage: 'lock_title_read' } });
     return 'its workflow';
   }
 }
@@ -131,7 +138,10 @@ export function taskHoldRefusal(task: Pick<Task, 'display_id' | 'workflow_id' | 
     const workflow = workflowOfTask(task, projectId);
     if (workflow?.state !== 'running' && workflow?.state !== 'paused') return null;
     return WORKFLOW_REFUSALS.noTaskHold(label, workflow.title);
-  } catch {
+  } catch (error) {
+    // Fails closed: a task whose workflow finished or is gone is then refused the switch
+    // too, with a refusal that names no workflow.
+    workflowEngineReporter.report(error, { tags: { stage: 'hold_refusal_read' } });
     return WORKFLOW_REFUSALS.noTaskHold(label, 'its workflow');
   }
 }
@@ -146,6 +156,8 @@ export function readTaskForWorkflowPrecheck(projectId: string, taskId: string): 
   try {
     return new TaskRepository(getProjectDb(projectId)).getById(taskId) ?? null;
   } catch {
+    // report-ok: the pre-check only spares in-flight work from a move that will be refused,
+    // and handleTaskMove reads the task and asks again inside the task lock.
     return null;
   }
 }

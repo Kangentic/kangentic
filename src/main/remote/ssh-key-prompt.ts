@@ -114,8 +114,12 @@ export async function captureKeyPrompt(args: readonly string[], deps: KeyPromptD
     const unique = [...new Set(lines)];
     return unique.length > 0 ? unique.join('\n') : null;
   } catch {
+    // report-ok: no prompt file means ssh asked for nothing (a wrong key, an ssh older than 8.4),
+    // and a run that could not start reads the same. The caller keeps ssh's plain refusal.
     return null;
   } finally {
+    // report-ok: a scratch folder that will not delete holds only the helper script and ssh's
+    // prompt line, and stays in the temp folder for the system to clear.
     await fs.rm(scratch, { recursive: true, force: true }).catch(() => undefined);
   }
 }

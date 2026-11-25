@@ -144,6 +144,8 @@ export function createWriteQueue(
     try {
       pty.write(chunk);
     } catch (error) {
+      // report-ok: the write hit a PTY that just exited, and the keys still pending have
+      // nowhere to go. The owner drops this queue through onAutoDispose.
       // pty.write can throw if the underlying handle was torn down between
       // our null check and the call. Stop the loop and drop pending bytes
       // rather than re-entering and looping on the same failure. Notify

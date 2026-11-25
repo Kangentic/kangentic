@@ -408,6 +408,7 @@ export class PtyHostCore {
         if (__KANGENTIC_DEV__ && !wasPaused && this.backpressure.isPaused(sessionId)) noteRoundTripStage(sessionId, 'pause', '');
         this.armStalePauseCheck(sessionId);
       },
+      handledErrors: this.handledErrors,
     });
     this.transcriptWriter = new TranscriptWriter(
       (sessionId) => {
@@ -482,6 +483,8 @@ export class PtyHostCore {
       refuseOwnExecutable(params.file);
       pty = this.spawnSessionPty(params);
     } catch (error) {
+      // report-ok: handed to main as the spawn's result, where handleSpawnFailure
+      // reports it through recordSpawnFailure.
       return { ok: false, error: toPtyHostError(error), previousScrollback };
     }
 
@@ -588,6 +591,8 @@ export class PtyHostCore {
         try {
           entry.pty = this.spawnSessionPty(attempt.params);
         } catch (error) {
+          // report-ok: failGatedSpawn hands it to main as the spawn's result, where
+          // handleSpawnFailure reports it through recordSpawnFailure.
           return this.failGatedSpawn(entry, error, attempt.previousScrollback);
         }
         entry.spawnedAtMs = this.now();
@@ -680,7 +685,8 @@ export class PtyHostCore {
       try {
         previous.close();
       } catch {
-        // Already closed with the page that held it.
+        // report-ok: already closed with the page that held it, and it is being
+        // replaced either way.
       }
     }
     this.rendererPorts.set(rendererId, port);
@@ -968,9 +974,9 @@ export class PtyHostCore {
         try {
           entry.pty.resize(command.cols, command.rows);
         } catch (error) {
-          // node-pty throws once the child has exited but before its exit
+          // report-ok: node-pty throws once the child has exited but before its exit
           // callback ran (up to ~1 s on Windows, where the exit waits on the
-          // conout flush). Main already reported the resize; the exit path
+          // conout flush). Main already answered the resize; the exit path
           // owns the cleanup, so record it for the terminal forensics.
           traceTerminal(entry.sessionId, 'resize-failed', {
             cols: command.cols,
@@ -1013,7 +1019,7 @@ export class PtyHostCore {
         try {
           port?.close();
         } catch {
-          // Closed with its page already.
+          // report-ok: closed with its page already, and the renderer is being forgotten.
         }
         return;
       }
@@ -1181,6 +1187,10 @@ export class PtyHostCore {
         return api;
       },
       (error: unknown) => {
+        // Without the API no Windows PTY root is pinned, so a shell that exits on
+        // its own leaves its agent running with no session, and a reap cannot
+        // wait for an agent that is still exiting.
+        this.handledErrors.report('orphan_api_load', error);
         this.orphanApiLoad = null;
         if (!this.orphanApiLoadFailureLogged) {
           this.orphanApiLoadFailureLogged = true;
@@ -1243,13 +1253,17 @@ export class PtyHostCore {
     try {
       return pin.readExitedAtMs();
     } catch (error) {
+      // Without the exit time the orphan cleanup does not run, so the agent a
+      // shell that exited on its own left behind keeps running with no session.
+      this.handledErrors.report('root_exit_read', error);
       console.warn('[pty-host] could not read a PTY root\'s exit time:', error instanceof Error ? error.message : String(error));
       return null;
     } finally {
       try {
         pin.release();
       } catch {
-        // The handle is the host's own; nothing else holds it.
+        // report-ok: the handle is the host's own and its root has exited. A close that
+        // fails leaves at most that one handle open until the host exits.
       }
     }
   }
@@ -1269,6 +1283,7 @@ export class PtyHostCore {
         reader,
         liveRootPids: () => this.liveRootPids(),
         onBatchStart: (kind) => this.deps.onBatchStarted?.(QUEUED_METHOD_OF[kind]),
+        handledErrors: this.handledErrors,
       });
     }
     return this.taggedReaper;
@@ -1327,6 +1342,8 @@ export class PtyHostCore {
         env: params.env,
       }));
     } catch (error) {
+      // report-ok: handed back as the request's answer, and PtyHostClient.spawnRaw
+      // throws it to the probe's caller.
       return { ok: false, error: toPtyHostError(error) };
     }
     const { ptyId } = params;
@@ -1376,7 +1393,8 @@ export class PtyHostCore {
     try {
       action(raw.pty);
     } catch {
-      // Exited, its exit callback still to come.
+      // report-ok: the raw PTY exited with its exit callback still to come, which
+      // tells the probe.
     }
     return true;
   }
@@ -1390,7 +1408,7 @@ export class PtyHostCore {
     try {
       raw.pty.kill();
     } catch {
-      // Already gone.
+      // report-ok: the raw PTY is already gone, which is what the kill wanted.
     }
     return true;
   }
@@ -1401,7 +1419,7 @@ export class PtyHostCore {
     try {
       action(entry);
     } catch {
-      // node-pty throws once the child has exited but before its exit
+      // report-ok: node-pty throws once the child has exited but before its exit
       // callback ran; the exit path owns the cleanup.
     }
   }
@@ -1459,6 +1477,8 @@ export class PtyHostCore {
     const rootPid = entry.pty.pid;
     // Kills that arrive together (a quit, several To Do moves) share one `ps`.
     this.preKillListing ??= list().finally(() => { this.preKillListing = null; });
+    // report-ok: a listing that failed is treated like one past the cap below. The kill
+    // goes ahead, with no pids for a reap's agent-exit wait to poll.
     const listed = this.preKillListing.then((rows) => agentDescendantsOf(rows, rootPid)).catch(() => [] as RootDescendant[]);
     const capped = new Promise<RootDescendant[]>((resolve) => {
       const timer = setTimeout(() => resolve([]), KILL_SNAPSHOT_CAP_MS);
@@ -1481,13 +1501,15 @@ export class PtyHostCore {
     this.processTable ??= new HostProcessTable({
       platform: this.deps.platform,
       createFallbackProbe: () => this.spawnService.processTableProbe(),
+      handledErrors: this.handledErrors,
     });
     const listing = this.processTable.list();
     if (this.deps.listProcessesBeforeKill && !this.onWindows && !this.preKillListing && !this.shuttingDown) {
       const shared: Promise<ProcessInfo[]> = listing.finally(() => {
         if (this.preKillListing === shared) this.preKillListing = null;
       });
-      // A kill may never read it; its failure is the requester's to see.
+      // report-ok: a kill may never read this copy, so its rejection is quieted here.
+      // The requester holds the listing itself and gets the same failure.
       shared.catch(() => undefined);
       this.preKillListing = shared;
     }
@@ -1626,7 +1648,8 @@ export class PtyHostCore {
       try {
         disposable.dispose();
       } catch {
-        // Best effort.
+        // report-ok: detaching a listener from a PTY that has just exited. One that will
+        // not detach stays on an emitter that has ended.
       }
     }
     this.ptys.delete(entry.ptyId);
@@ -1699,7 +1722,8 @@ export class PtyHostCore {
     try {
       pty.kill();
     } catch {
-      // Nothing left to free.
+      // report-ok: the PTY already exited and this kill only frees its conout worker.
+      // A throw means there was nothing left to free.
     }
   }
 

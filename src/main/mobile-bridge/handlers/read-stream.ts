@@ -18,6 +18,7 @@ import { agentRegistry } from '../../agent/agent-registry';
 import { retrievalClient } from '../../retrieval/retrieval-client';
 import { collectRemoteTargets } from '../../retrieval/remote-targets';
 import type { IpcContext } from '../../ipc/ipc-context';
+import { mobileBridgeReporter } from '../mobile-bridge-report';
 import type { BridgeSession } from '../session/bridge-session';
 import { SERIALIZED_SCROLLBACK_LINES } from '../../pty/host/protocol';
 import type { SubscriptionRegistry } from '../session/subscription-registry';
@@ -117,8 +118,9 @@ function resolveProjectIdForSession(context: IpcContext, sessionId: string): str
     try {
       if (new SessionRepository(getProjectDb(project.id)).findByAnyId(sessionId)) return project.id;
     } catch {
-      // A project whose database will not open cannot own the session as far
-      // as this read is concerned; keep looking rather than failing the request.
+      // report-ok: getProjectDb reports a database that will not open. Such a
+      // project cannot own the session as far as this read is concerned, so the
+      // scan keeps looking rather than failing the request.
     }
   }
   return null;
@@ -157,6 +159,9 @@ function isSessionResumable(context: IpcContext, session: Session): boolean {
     return isResumeOffered({ hasPausedSession, task, laneRole: lane?.role });
   } catch (error) {
     // Logged because the false is silent on the phone: Resume just never shows.
+    // Reported for the same reason. A database that will not open was already
+    // reported where it failed and is skipped here as marked.
+    mobileBridgeReporter.report(error, { tags: { stage: 'resumable' } });
     console.warn(`[mobile-bridge] could not read task ${session.taskId.slice(0, 8)} for resumable:`, error);
     return false;
   }
@@ -180,6 +185,9 @@ async function probePromptOptions(context: IpcContext, sessionId: string): Promi
     const frame = await context.sessionManager.getSerializedFrame(sessionId);
     return extractPromptOptions(frame, context.sessionManager.getDimensions(sessionId) ?? undefined);
   } catch {
+    // report-ok: the pty host exited or timed out on the frame read, and the
+    // phone then answers the prompt without option labels. A subscribe runs the
+    // same serialize and parser uncaught, where the capability router reports.
     return null;
   }
 }
@@ -281,8 +289,16 @@ function subscribeReadStream(
         sendEvent(session, { kind: 'transcript', sessionId, taskId, payload });
       }
       pushMessagePreviewIfChanged(preview);
-    } catch {
-      // Best-effort; a transcript-read failure should not tear down the subscription.
+    } catch (error) {
+      // A transcript-read failure should not tear down the subscription, but
+      // the phone's transcript then stops following the session with no sign.
+      // A retrieval worker that is down is an expected class the reporter
+      // skips, and a runtime defect or SQLite failure in the worker's handler
+      // arrives marked, because retrievalClient.call reports those itself. What
+      // is left is any other error the handler threw. A read that fails after
+      // the subscription ended (its session or project went away mid-read) has
+      // no phone left to miss it, so it is not reported.
+      if (!disposed) mobileBridgeReporter.report(error, { tags: { stage: 'transcript_read' } });
     } finally {
       transcriptReadInFlight = false;
       if (transcriptRereadWanted && !disposed) {
@@ -679,9 +695,15 @@ function subscribeReadStream(
       // the session's next change: an idle session may never change again,
       // and its card would otherwise have nothing to show.
       if (!disposed) pushMessagePreviewIfChanged(preview);
-    } catch {
-      // Best-effort: an unseeded sync just means the first post-subscribe
-      // change diffs against nothing and streams as plain appends.
+    } catch (error) {
+      // An unseeded sync just means the first post-subscribe change diffs
+      // against nothing and streams as plain appends. An idle session's card
+      // also loses its one preview line, and may never get another change to
+      // retry on, so a read the worker's handler failed is reported. A worker
+      // that is down is an expected class the reporter skips, a failure
+      // retrievalClient.call already reported arrives marked, and a seed that
+      // fails after the subscription ended has no phone left to miss it.
+      if (!disposed) mobileBridgeReporter.report(error, { tags: { stage: 'transcript_seed' } });
     }
   })();
 }

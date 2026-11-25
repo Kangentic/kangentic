@@ -48,6 +48,7 @@ import {
 import { endCommandTerminalBrowserIfSlotEmpty } from '../helpers/command-terminal-browser';
 import type { CommandTerminalLeftoverTask } from '../helpers/command-terminal-leftovers';
 import { reapTaskLeftovers } from '../helpers/task-cleanup';
+import { handlerStepReporter } from '../helpers/handler-step-report';
 import type { IpcContext } from '../ipc-context';
 import { CommandTerminalStartError, startCommandTerminal } from './transient-sessions';
 
@@ -136,6 +137,9 @@ export function claimCommandTerminalRestore(context: IpcContext, projectId: stri
       }
     }
   } catch (error) {
+    // The terminals that were running at the quit do not come back, and their
+    // conversations are left to the Earlier list.
+    handlerStepReporter.report(error, { tags: { area: 'command_terminal', step: 'restore_claim' } });
     console.warn('[COMMAND_TERMINAL] restore claim failed (non-fatal):', error instanceof Error ? error.message : String(error));
   }
   if (pass.claimed.length === 0) {
@@ -329,6 +333,8 @@ async function reapLostCommandTerminal(context: IpcContext, lost: LostCommandTer
     await stopEndedCommandTerminalBackgroundSession(context, lost.ended);
     await reapTaskLeftovers(context, lost.ended.cwd, [lost.task], { wslDistros: lost.wslDistros, skipStopScript: true });
   } catch (error) {
+    // report-ok: both calls catch their own failures, and reapTaskProcesses reports a failed
+    // reap through reportTaskReapFailure, so nothing unreported reaches this catch.
     console.warn('[COMMAND_TERMINAL] leftover reap failed (non-fatal):', error instanceof Error ? error.message : String(error));
   }
 }
@@ -395,6 +401,8 @@ async function restoreConversation(
     console.log(`[COMMAND_TERMINAL] restored ${agentSessionId.slice(0, 8)} in ${result.slot}`);
     return true;
   } catch (error) {
+    // report-ok: a refused restore is an answer, and the conversation stays in Earlier.
+    // startCommandTerminal reports any other failed start itself (reportPreflightFailure).
     context.commandTerminalHistory?.settleResume(projectId, agentSessionId, null);
     const reason = error instanceof CommandTerminalStartError ? error.code : (error instanceof Error ? error.message : String(error));
     console.log(`[COMMAND_TERMINAL] did not restore ${agentSessionId.slice(0, 8)}, it stays in Earlier: ${reason}`);

@@ -108,6 +108,8 @@ parentPort.on('message', (event: Electron.MessageEvent) => {
     extractorPromise.catch(() => {});
     initPromise.then(
       (result) => post({ type: 'ready', device: result.device }),
+      // report-ok: a worker cannot report. The init failure is posted to main, where
+      // EmbedClient reports it through reportEmbedInitFailure.
       (error: unknown) => post({ type: 'error', message: String(error) }),
     );
     return;

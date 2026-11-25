@@ -38,7 +38,8 @@ export function findExecutableSpawnHelper(): string | null {
       fs.accessSync(candidate, fs.constants.X_OK);
       return candidate;
     } catch {
-      // Missing or not executable. Try the next one.
+      // report-ok: this candidate is missing or not executable, which is the probe's
+      // answer. The next one is tried, and none means a direct spawn.
     }
   }
   return null;

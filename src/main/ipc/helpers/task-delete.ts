@@ -70,6 +70,8 @@ export function drainAutoNameAskedIds(context: IpcContext, taskIds: string[]): v
   try {
     config = configManager.load();
   } catch {
+    // report-ok: ConfigManager.load degrades an unreadable config to defaults itself, and
+    // a drain that does not run only leaves stale ids in the asked set.
     return;
   }
   const current = config.autoNameAskedTaskIds ?? [];

@@ -2,6 +2,7 @@ import type { BrowserWindow } from 'electron';
 import { IPC } from '../../shared/ipc-channels';
 import type { Task, WorkflowChangedEvent } from '../../shared/types';
 import { sendToRenderer } from '../ipc/send-to-renderer';
+import { workflowEngineReporter } from './workflow-report';
 
 /**
  * Tell an open Workflows view that a workflow changed, whoever changed it: the
@@ -68,6 +69,9 @@ function flush(): void {
     try {
       listener();
     } catch (error) {
+      // That listener missed the change: the Agent Monitor's rows keep a workflow's old
+      // title, color or route until something else refreshes them.
+      workflowEngineReporter.report(error, { tags: { stage: 'changed_listener' } });
       console.error('[workflow-changed] Main listener threw:', error);
     }
   }

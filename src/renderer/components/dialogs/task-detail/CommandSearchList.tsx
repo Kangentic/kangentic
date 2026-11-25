@@ -36,6 +36,7 @@ export function CommandSearchList({ cwd, onSelect, onClose }: CommandSearchListP
           setLoading(false);
         }
       } catch {
+        // report-ok: main's IPC wrap reports a handler's rejection, and the list shows no commands.
         if (!cancelled) setLoading(false);
       }
     })();

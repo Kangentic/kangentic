@@ -117,6 +117,7 @@ async function readClaudeJsonForWrite(filePath: string): Promise<Record<string, 
  */
 async function writeClaudeJson(filePath: string, data: Record<string, unknown>): Promise<void> {
   const targetPath = await fsPromises.realpath(filePath).catch(() => filePath);
+  // report-ok: no file yet on a first run. The new one holds auth, so it is written owner-only.
   const mode = await fsPromises.stat(targetPath).then((stats) => stats.mode & 0o777, () => 0o600);
   const temporaryPath = `${targetPath}.kangentic-${process.pid}.tmp`;
   const text = JSON.stringify(data, null, 2);

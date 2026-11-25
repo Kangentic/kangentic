@@ -86,6 +86,11 @@ function asJsonValue(value: unknown): JsonValue {
   try {
     return JSON.parse(JSON.stringify(value)) as JsonValue;
   } catch {
+    // report-ok: a tool input that will not serialize (a cycle, a BigInt), which
+    // a transcript parsed from JSON cannot hold. It reaches the phone as null, a
+    // tool card with no input. This mapper runs in the retrieval worker, through
+    // transcript-sync, whose bundle must stay free of analytics and Sentry
+    // (retrieval-out-of-process.md), so it cannot import a reporter.
     return null;
   }
 }

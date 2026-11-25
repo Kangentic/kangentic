@@ -35,6 +35,7 @@ export function isInsideWorktree(projectPath: string): boolean {
   try {
     return fs.statSync(dotGit).isFile();
   } catch {
+    // report-ok: ENOENT when the folder has no .git entry, which is the answer.
     return false;
   }
 }
@@ -70,6 +71,7 @@ export async function isFileTracked(projectPath: string, filePath: string): Prom
     });
     return true;
   } catch {
+    // report-ok: git exits 1 when the file is not tracked, which is the answer.
     return false;
   }
 }
@@ -91,6 +93,7 @@ export async function isInsideGitRepo(projectPath: string): Promise<boolean> {
     });
     return true;
   } catch {
+    // report-ok: git exits non-zero outside a repository, which is the answer.
     return false;
   }
 }
@@ -116,6 +119,7 @@ export async function hasCommits(projectPath: string): Promise<boolean> {
     });
     return true;
   } catch {
+    // report-ok: git exits non-zero for an unborn HEAD, which is the answer.
     return false;
   }
 }
@@ -154,6 +158,8 @@ export async function ensureGitRepo(projectPath: string): Promise<EnsureGitRepoR
       return { ok: false, created: false, error: 'That folder no longer exists.' };
     }
   } catch {
+    // report-ok: a locked or just-deleted folder cannot be read, and the failure returns as
+    // a value that Add project shows as its Git setup failed toast.
     return { ok: false, created: false, error: 'That folder could not be read.' };
   }
   if (isGitRepo(projectPath)) {
@@ -173,12 +179,15 @@ export async function ensureGitRepo(projectPath: string): Promise<EnsureGitRepoR
     try {
       await execFileAsync('git', ['init', '-b', 'main'], { cwd: projectPath, windowsHide: true });
     } catch {
-      // `-b` needs git >= 2.28. On anything older, take the repo git gives us rather than
-      // leaving the folder with no repo at all.
+      // report-ok: `-b` needs git >= 2.28. On anything older, take the repo git gives us
+      // rather than leaving the folder with no repo at all. A failure of the plain init
+      // below reaches the outer catch.
       await execFileAsync('git', ['init'], { cwd: projectPath, windowsHide: true });
     }
     return { ok: true, created: true, error: null };
   } catch (error) {
+    // report-ok: git init fails when git is not installed or the folder is not writable,
+    // and the failure returns as a value that Add project shows as its Git setup failed toast.
     const reason = error instanceof Error ? error.message : 'Unknown error';
     return { ok: false, created: false, error: `Could not set up git. ${reason}` };
   }

@@ -8,6 +8,7 @@ import { withoutSessionsForTasks } from '../session-store/session-index';
 import { useToastStore } from '../toast-store';
 import { useProjectStore } from '../project-store';
 import { ipcFailureToastFields } from '../../lib/ipc-error';
+import { reportRendererFailure } from '../../utils/renderer-failure';
 import { openTaskFromNotification } from '../../utils/open-task-from-notification';
 import { applyStructuralSharing } from './structural-sharing';
 import { applyTaskListPayload } from './lane-pins';
@@ -276,6 +277,9 @@ export const createArchivedTasksSlice: StateCreator<BoardStore, [], [], Archived
         });
       }
     } catch (err) {
+      // Reports a throw from this function's own work after the restore landed
+      // (the list apply, the toasts); a rejection main saw is dropped there.
+      reportRendererFailure('board', 'unarchive', err);
       // Snapshot restore for immediate visual revert, then loadBoard() to
       // reconcile against concurrent ops that may have mutated either array
       // during the await window. Matches the pattern in bulkUnarchiveTasks.
@@ -324,6 +328,9 @@ export const createArchivedTasksSlice: StateCreator<BoardStore, [], [], Archived
       // Also clean up sessions in session store
       useSessionStore.setState((s) => withoutSessionsForTasks(s.sessions, id));
     } catch (err) {
+      // Reports a throw from the session scrub after main deleted the task, which
+      // the revert below would otherwise hide; a rejection main saw is dropped there.
+      reportRendererFailure('board', 'archived_delete', err);
       // Revert optimistic removal so stale tasks don't reappear on next load
       set({ archivedTasks: prevArchived, archivedTotalCount: prevArchivedTotalCount });
       useToastStore.getState().addToast({
@@ -380,6 +387,10 @@ export const createArchivedTasksSlice: StateCreator<BoardStore, [], [], Archived
         });
       }
     } catch (error) {
+      // Reports a throw from this function's own work after main deleted the
+      // batch (the session scrub, the partial-failure toast); a rejection main
+      // saw is dropped there.
+      reportRendererFailure('board', 'archived_bulk_delete', error);
       // Hard failure (IPC threw - e.g. no project open). Revert optimistic
       // removal since we can't trust any partial state.
       set({ archivedTasks: prevArchived, archivedTotalCount: prevArchivedTotalCount });
@@ -429,6 +440,9 @@ export const createArchivedTasksSlice: StateCreator<BoardStore, [], [], Archived
         variant: 'success',
       });
     } catch (error) {
+      // Reports a throw from the list apply or the toast after the restore
+      // landed; a rejection main saw is dropped there.
+      reportRendererFailure('board', 'bulk_unarchive', error);
       set({ archivedTasks: prevArchived, archivedTotalCount: prevArchivedTotalCount });
       await get().loadBoard();
       // Same rollback gap as the singular path: the eviction ran before the IPC

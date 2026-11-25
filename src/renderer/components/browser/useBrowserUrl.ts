@@ -66,7 +66,10 @@ export function useBrowserUrl(taskId: string, projectId: string | null, refreshT
         setProjectDefault(result.projectDefault);
         setTaskOverride(result.taskOverride);
       })
-      .catch(() => { /* leave defaults; UI shows empty state */ })
+      .catch(() => {
+        // report-ok: main's IPC wrap reports a handler's rejection. A showing pane keeps its
+        // page, and a new one shows the empty state.
+      })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [taskId, projectId, refreshToken]);
@@ -104,7 +107,8 @@ export function useBrowserUrl(taskId: string, projectId: string | null, refreshT
     // Always update the task URL on navigation - it tracks "what this task
     // was last looking at" so resume opens the same page.
     saveForTask(url).catch(() => {
-      // Sidecar write failure is non-fatal; navigation already succeeded.
+      // report-ok: main's IPC wrap reports a handler's rejection. The page already loaded,
+      // and only the URL this task reopens on stays as it was.
     });
 
     // A task navigation deliberately does NOT seed the project default any more.

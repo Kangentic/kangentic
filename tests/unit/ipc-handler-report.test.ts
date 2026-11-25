@@ -11,7 +11,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const reportHandledError = vi.fn();
 vi.mock('../../src/main/analytics/error-reporting', () => ({ reportHandledError }));
 
-const { installIpcHandlerReporting, resetIpcHandlerReportingForTests, rejectionToRethrow, IPC_HANDLER_KEY_CAP } = await import('../../src/main/analytics/ipc-handler-report');
+const {
+  installIpcHandlerReporting,
+  onReported,
+  resetIpcHandlerReportingForTests,
+  rejectionToRethrow,
+  runReportedListener,
+  IPC_HANDLER_KEY_CAP,
+} = await import('../../src/main/analytics/ipc-handler-report');
 const { markReported, sendHandledFailure } = await import('../../src/main/analytics/handled-report');
 const { REPORTED_FAILURE_MARKER } = await import('../../src/shared/reported-failure-marker');
 const { RefusalError } = await import('../../src/shared/refusal');
@@ -110,6 +117,26 @@ describe('installIpcHandlerReporting', () => {
     await expect(target.registered.get('config:get')?.({}, 'theme')).resolves.toEqual({ key: 'theme' });
   });
 
+  // A throw on entry and a handler that waited seven seconds on something read
+  // the same by name. `ran_for` tells them apart on the first event.
+  it('says how long the handler ran before it failed, and spends no second key on a slower repeat', async () => {
+    const target = fakeIpcMain();
+    installIpcHandlerReporting(target as never);
+    target.handle('git:diffFiles', () => { throw new TypeError('defect'); });
+    const clock = vi.spyOn(Date, 'now');
+    try {
+      clock.mockReturnValueOnce(1_000).mockReturnValueOnce(8_000);
+      await expect(target.registered.get('git:diffFiles')?.({})).rejects.toBeInstanceOf(TypeError);
+      clock.mockReturnValueOnce(10_000).mockReturnValueOnce(10_010);
+      await expect(target.registered.get('git:diffFiles')?.({})).rejects.toBeInstanceOf(TypeError);
+    } finally {
+      clock.mockRestore();
+    }
+    expect(reportHandledError).toHaveBeenCalledTimes(1);
+    const [, tags] = reportHandledError.mock.calls[0] as [Error, Record<string, string>];
+    expect(tags).toMatchObject({ channel: 'git:diffFiles', ran_for: '5-30s' });
+  });
+
   // #1188: the renderer's failure toast says the issue was reported only when
   // the rejection carries the marker, and the marker means Sentry took it.
   it('marks a rejection whose report Sentry took, its latched repeat too, and nothing else', async () => {
@@ -156,6 +183,80 @@ describe('installIpcHandlerReporting', () => {
     expect(String(rejection)).toBe(`TypeError: sent by the workflow reporter${REPORTED_FAILURE_MARKER}`);
     expect(inner.message).toBe('sent by the workflow reporter');
     expect(reportHandledError).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A fire-and-forget listener has no caller to reject to. Registered bare, its
+ * throw was an uncaught exception: it reached Sentry with the error's own text
+ * and nothing naming the channel. `onReported` reports it like a handler's.
+ */
+describe('onReported', () => {
+  type OnListener = (event: { returnValue?: unknown }, ...listenerArguments: unknown[]) => unknown;
+
+  function fakeIpcMainOn(): { on: (channel: string, listener: OnListener) => void; registered: Map<string, OnListener> } {
+    const registered = new Map<string, OnListener>();
+    return { on: (channel, listener) => { registered.set(channel, listener); }, registered };
+  }
+
+  beforeEach(() => {
+    reportHandledError.mockReset();
+    resetIpcHandlerReportingForTests();
+  });
+
+  it('reports a throw with its channel and no user text, and lets nothing escape the listener', async () => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const target = fakeIpcMainOn();
+      onReported(target as never, 'window:minimize', () => {
+        throw new TypeError("Cannot read properties of undefined (reading 'Fix Acme billing')");
+      });
+      expect(() => target.registered.get('window:minimize')?.({})).not.toThrow();
+      await runReportedListener('window:close', () => { throw new RangeError('second listener'); }, {} as never, []);
+
+      expect(reportHandledError).toHaveBeenCalledTimes(2);
+      const [sent, tags] = reportHandledError.mock.calls[0] as [Error, Record<string, string>];
+      expect(sent.message).toBe('Handled ipc_handler failure: TypeError');
+      expect(tags).toMatchObject({ source: 'ipc_handler', channel: 'window:minimize', kind: 'listener', error_name: 'TypeError' });
+      expect(JSON.stringify([sent.message, sent.stack, tags])).not.toContain('Acme');
+      expect(errorLog).toHaveBeenCalledTimes(2);
+    } finally {
+      errorLog.mockRestore();
+    }
+  });
+
+  it('reports an async listener that rejects', async () => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      await expect(
+        runReportedListener('transcription:audioChunk', async () => { throw new TypeError('ingest failed'); }, {} as never, []),
+      ).resolves.toBeUndefined();
+      const [, tags] = reportHandledError.mock.calls[0] as [Error, Record<string, string>];
+      expect(tags).toMatchObject({ channel: 'transcription:audioChunk', kind: 'listener' });
+    } finally {
+      errorLog.mockRestore();
+    }
+  });
+
+  it('skips a refusal and an abort, as a handler does', async () => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      await runReportedListener('notification:show', () => { throw new RefusalError('Notifications are off.'); }, {} as never, []);
+      await runReportedListener('git:diffSubscribe', () => { throw new DOMException('aborted', 'AbortError'); }, {} as never, []);
+      expect(reportHandledError).not.toHaveBeenCalled();
+    } finally {
+      errorLog.mockRestore();
+    }
+  });
+
+  // `config:setSync` answers a `sendSync` through `event.returnValue`. A wrapper
+  // that deferred the listener would leave the renderer's call with no answer.
+  it('runs the listener in the same tick, with its arguments, so a sendSync answer still lands', () => {
+    const target = fakeIpcMainOn();
+    onReported(target as never, 'config:setSync', (event, value) => { event.returnValue = { saved: value }; });
+    const event: { returnValue?: unknown } = {};
+    target.registered.get('config:setSync')?.(event, 'dark');
+    expect(event.returnValue).toEqual({ saved: 'dark' });
   });
 });
 
@@ -227,6 +328,36 @@ describe('the production install', () => {
     expect(offenders).toEqual([]);
     const firstTopLevelHandle = indexSource.search(/^ipcMain\.handle\(/m);
     expect(firstTopLevelHandle).toBeGreaterThan(indexSource.indexOf('installIpcHandlerReporting(ipcMain);'));
+  });
+
+  // `handle` is patched once, so a new handler is wrapped by registering. `on`
+  // is not patched (a wrapper would break `removeListener`), so a listener is
+  // only covered when it registers through `onReported`. A bare `ipcMain.on`
+  // that throws is an uncaught exception: it reaches Sentry with the error's
+  // own text and nothing that names the channel.
+  it('registers every fire-and-forget listener through onReported, never a bare ipcMain.on', () => {
+    const bare: string[] = [];
+    let reportedListeners = 0;
+    const walk = (directory: string): void => {
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        const full = path.join(directory, entry.name);
+        if (entry.isDirectory()) { walk(full); continue; }
+        if (!/\.tsx?$/.test(entry.name)) continue;
+        const text = fs.readFileSync(full, 'utf8');
+        reportedListeners += [...text.matchAll(/^\s*onReported\(ipcMain,/gm)].length;
+        // The helper's own module registers on the target it is handed, and names `ipcMain.on` in prose.
+        if (full.endsWith(path.join('analytics', 'ipc-handler-report.ts'))) continue;
+        // At the start of a statement, so a comment that mentions it does not count.
+        for (const match of text.matchAll(/^\s*ipcMain\.on\(/gm)) {
+          const line = text.slice(0, match.index).split('\n').length;
+          bare.push(`${path.relative(path.join(__dirname, '../..'), full).replace(/\\/g, '/')}:${line}`);
+        }
+      }
+    };
+    walk(path.join(__dirname, '../../src/main'));
+    expect(bare, 'Register it with onReported(ipcMain, channel, listener) from analytics/ipc-handler-report.ts.').toEqual([]);
+    // Not vacuous: the listeners this guards exist and register through the helper.
+    expect(reportedListeners).toBeGreaterThan(10);
   });
 });
 

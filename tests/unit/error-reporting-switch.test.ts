@@ -1289,10 +1289,44 @@ describe('tagTruncatedStack', () => {
     expect(returned?.tags?.stack_truncated).toBe('true');
   });
 
-  it('beforeSendEvent passes an ordinary event through unchanged', () => {
+  it('beforeSendEvent leaves an ordinary event untagged as truncated', () => {
     const returned = beforeSendEvent(eventWithFrameCount(3), {});
     expect(returned).not.toBeNull();
     expect(returned?.tags?.stack_truncated).toBeUndefined();
+  });
+});
+
+/**
+ * Sentry DESKTOP-46 took three releases to learn whether the machine had just
+ * woken, the window was covered and the CPU was held down, one tag at a time on
+ * one reporter. `beforeSendEvent` is the one hook every main and renderer event
+ * passes, so the state rides every event from here (`run-state-tags.ts`, whose
+ * own values `run-state-tags.test.ts` pins).
+ */
+describe('beforeSendEvent: the run-state tags', () => {
+  const RUN_STATE_TAGS = ['since_wake', 'cpu_speed_limit', 'run_uptime', 'main_window', 'app_focused'];
+
+  it('puts all five on an ordinary event, handled or not', () => {
+    const returned = beforeSendEvent({ message: 'Handled ipc_handler failure: TypeError', tags: { source: 'ipc_handler' } }, {});
+    for (const tag of RUN_STATE_TAGS) expect(returned?.tags, tag).toHaveProperty(tag);
+    expect(returned?.tags?.source).toBe('ipc_handler');
+    expect(Object.keys(beforeSendEvent({ message: 'uncaught' }, {})?.tags ?? {})).toEqual(expect.arrayContaining(RUN_STATE_TAGS));
+  });
+
+  it('keeps the value a reporter read itself, at the moment its failure happened', () => {
+    const returned = beforeSendEvent({ message: 'x', tags: { source: 'browser_driver', since_wake: 'under_30s', cpu_speed_limit: '<50' } }, {});
+    expect(returned?.tags).toMatchObject({ since_wake: 'under_30s', cpu_speed_limit: '<50' });
+  });
+
+  // A dump can be one the next launch found, so the state read now would
+  // describe the uploading run, not the crashed one.
+  it('leaves a native crash event without them', () => {
+    const hint = {
+      attachments: [{ attachmentType: 'event.minidump', filename: 'crash.dmp', data: buildMinidump({ modules: OUR_APP_MODULES }) }],
+    };
+    const returned = beforeSendEvent({ platform: 'native', release: 'Kangentic@0.39.0' }, hint);
+    expect(returned).not.toBeNull();
+    for (const tag of RUN_STATE_TAGS) expect(returned?.tags ?? {}, tag).not.toHaveProperty(tag);
   });
 });
 

@@ -41,12 +41,16 @@ function rowToItem(row: BacklogTaskRow): BacklogTask {
   let labels: string[] = [];
   try {
     labels = JSON.parse(row.labels);
-  } catch { /* default to empty */ }
+  } catch {
+    // report-ok: malformed labels JSON in a column only Kangentic writes reads as no labels.
+  }
   let externalMetadata: Record<string, unknown> | null = null;
   if (row.external_metadata) {
     try {
       externalMetadata = JSON.parse(row.external_metadata);
-    } catch { /* default to null */ }
+    } catch {
+      // report-ok: malformed metadata JSON in a column only Kangentic writes reads as none.
+    }
   }
   return {
     ...row,
@@ -208,6 +212,8 @@ export class BacklogRepository {
     writeTransaction(this.db, () => {
       for (const row of allItems) {
         let labels: string[];
+        // report-ok: a row whose labels are not JSON, in a column only Kangentic writes, holds
+        // no label to rename.
         try { labels = JSON.parse(row.labels); } catch { continue; }
         const index = labels.indexOf(oldName);
         if (index === -1) continue;
@@ -237,6 +243,8 @@ export class BacklogRepository {
     writeTransaction(this.db, () => {
       for (const row of allItems) {
         let labels: string[];
+        // report-ok: a row whose labels are not JSON, in a column only Kangentic writes, holds
+        // no label to remove.
         try { labels = JSON.parse(row.labels); } catch { continue; }
         const filtered = labels.filter((label) => label !== name);
         if (filtered.length === labels.length) continue;

@@ -178,11 +178,15 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
               saved: true,
             });
           } catch (error) {
+            // report-ok: main's IPC wrap reports a handler's rejection, and that attachment
+            // is left out of the dialog's list.
             console.error('[NewBacklogTaskDialog] Failed to load attachment preview:', error);
           }
         }
         setAttachments((previous) => [...displayAttachments, ...previous]);
       } catch (error) {
+        // report-ok: main's IPC wrap reports a handler's rejection, and the dialog opens
+        // without the task's saved attachments.
         console.error('[NewBacklogTaskDialog] Failed to load attachments:', error);
       }
     })();
@@ -214,7 +218,15 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
         reader.readAsDataURL(file);
       });
     } catch (error) {
+      // report-ok: a file the page cannot read (moved, locked, or a folder) is the user's own
+      // file, and the toast names it.
       console.error('[NewBacklogTaskDialog] Failed to read attachment:', error);
+      const fileName = file.name;
+      useToastStore.getState().addToast({
+        title: t`Couldn't attach file`,
+        message: t`"${fileName}" could not be read.`,
+        variant: 'warning',
+      });
       return;
     }
     const base64 = dataUrl.split(',')[1];
@@ -233,6 +245,7 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
       window.electronAPI.backlogAttachments.remove(id).then(() => {
         setAttachments((previous) => previous.filter((attachment) => attachment.id !== id));
       }).catch((error: unknown) => {
+        // report-ok: main's IPC wrap reports a handler's rejection, and the toast shows the reason.
         console.error('[NewBacklogTaskDialog] Failed to remove saved attachment:', error);
         useToastStore.getState().addToast({
           title: t`Couldn't remove attachment`,
@@ -350,7 +363,8 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
       });
       onClose();
     } catch (error) {
-      // Previously unhandled: a rejected create/update (including a pending
+      // report-ok: main's IPC wrap reports a handler's rejection, and the toast shows the
+      // reason. Previously unhandled: a rejected create/update (including a pending
       // attachment write failing inside it) reached only the global
       // unhandledrejection analytics listener, with nothing shown to the
       // user. The dialog stays open so the title/description/attachments
@@ -381,6 +395,7 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
       setConfirmDelete(false);
       onClose();
     } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the toast shows the reason.
       console.error('[NewBacklogTaskDialog] Failed to delete backlog task:', error);
       useToastStore.getState().addToast({
         title: t`Couldn't delete backlog task`,

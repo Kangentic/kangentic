@@ -168,6 +168,8 @@ export function drainPtyExitCallbacks(options: PtyExitDrainOptions): Promise<Pty
       try {
         return options.isProcessAlive(pid);
       } catch {
+        // report-ok: a pid that cannot be probed reads as gone, so the quit's drain
+        // never waits on it. The settle ticks and the deadline still bound the drain.
         return false;
       }
     };

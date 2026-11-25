@@ -47,8 +47,16 @@ import { HEX_LABEL_COLOR } from '../../../shared/label-palette';
  * task names another project by name to go on that board.
  */
 
-function fail(error: unknown): CommandResponse {
+/**
+ * Answer a failed workflow command. A `WorkflowRequestError` is a refusal the
+ * agent acts on. Anything else is a defect, and it is reported here: a handler
+ * that answers `{ success: false }` never throws, so the command wrap
+ * (`runHandler`), which reports only a throw, would not see it. The reporter
+ * skips the refusals and the expected classes itself.
+ */
+function reportWorkflowCommandFailure(command: string, error: unknown): CommandResponse {
   if (error instanceof WorkflowRequestError) return { success: false, error: error.message };
+  mcpCommandReporter.report(error, { tags: { command } });
   const message = error instanceof Error ? error.message : String(error);
   return { success: false, error: `The workflow could not be changed: ${message}` };
 }
@@ -113,7 +121,7 @@ export const handleListWorkflows: CommandHandler = (params, context) => {
     });
     return { success: true, message: lines.join('\n'), data: workflows.map((workflow) => ({ id: workflow.id, title: workflow.title, state: workflow.state })) };
   } catch (error) {
-    return fail(error);
+    return reportWorkflowCommandFailure('list_workflows', error);
   }
 };
 
@@ -123,7 +131,7 @@ export const handleGetWorkflow: CommandHandler = (params, context) => {
     const view = readWorkflow(requireWorkflowRuntimeContext(), context.projectId, workflow.id);
     return { success: true, message: formatWorkflow(view), data: view };
   } catch (error) {
-    return fail(error);
+    return reportWorkflowCommandFailure('get_workflow', error);
   }
 };
 
@@ -352,7 +360,7 @@ export const handleSaveWorkflow: CommandHandler = async (params, context) => {
       data: { id: saved.id, revision: saved.revision },
     };
   } catch (error) {
-    return fail(error);
+    return reportWorkflowCommandFailure('save_workflow', error);
   }
 };
 
@@ -373,7 +381,7 @@ export const handleStartWorkflow: CommandHandler = async (params, context) => {
       data: { id: result.workflow.id },
     };
   } catch (error) {
-    return fail(error);
+    return reportWorkflowCommandFailure('start_workflow', error);
   }
 };
 
@@ -385,7 +393,8 @@ function controlSource(context: CommandContext): string {
       const caller = new TaskRepository(context.getProjectDb()).getById(context.callerTaskId);
       if (caller) return `the agent of #${caller.display_id}`;
     } catch {
-      // The caller's board may be another project's: the id still names it.
+      // report-ok: the caller's board may be another project's, whose row this
+      // database does not hold; the log line falls back to the id, which still names it.
     }
     return `the agent of task ${context.callerTaskId.slice(0, 8)}`;
   }
@@ -414,7 +423,7 @@ export const handlePauseWorkflow: CommandHandler = async (params, context) => {
       data: report,
     };
   } catch (error) {
-    return fail(error);
+    return reportWorkflowCommandFailure('pause_workflow', error);
   }
 };
 
@@ -428,7 +437,7 @@ export const handleResumeWorkflow: CommandHandler = async (params, context) => {
       data: report,
     };
   } catch (error) {
-    return fail(error);
+    return reportWorkflowCommandFailure('resume_workflow', error);
   }
 };
 
@@ -470,7 +479,7 @@ export const handleAddWorkflowTask: CommandHandler = async (params, context) => 
       data: { id: created.id, displayId: created.display_id },
     };
   } catch (error) {
-    return fail(error);
+    return reportWorkflowCommandFailure('add_workflow_task', error);
   }
 };
 
@@ -490,7 +499,7 @@ export const handleLinkWorkflowTasks: CommandHandler = (params, context) => {
     linkTasks(requireWorkflowRuntimeContext(), context.projectId, workflow.id, input);
     return { success: true, message: `Linked: ${input.blocked} now waits for ${input.blocker} to reach Done.` };
   } catch (error) {
-    return fail(error);
+    return reportWorkflowCommandFailure('link_workflow_tasks', error);
   }
 };
 
@@ -506,7 +515,7 @@ export const handleUnlinkWorkflowTasks: CommandHandler = (params, context) => {
         : `${input.blocked} was not waiting for ${input.blocker}. Nothing changed.`,
     };
   } catch (error) {
-    return fail(error);
+    return reportWorkflowCommandFailure('unlink_workflow_tasks', error);
   }
 };
 
@@ -525,7 +534,7 @@ export const handleSetTaskRoute: CommandHandler = (params, context) => {
     const route = view.tasks.find((task) => task.taskId === updated.id)?.route ?? [];
     return { success: true, message: `#${updated.display_id}'s route is now ${route.length > 0 ? route.join(' > ') : 'straight to Done'}.` };
   } catch (error) {
-    return fail(error);
+    return reportWorkflowCommandFailure('set_task_route', error);
   }
 };
 
@@ -538,7 +547,7 @@ export const handleRemoveFromWorkflow: CommandHandler = (params, context) => {
     });
     return { success: true, message: `Removed #${removed.display_id} from "${workflow.title}". It stays where it is, as an ordinary task.` };
   } catch (error) {
-    return fail(error);
+    return reportWorkflowCommandFailure('remove_from_workflow', error);
   }
 };
 
@@ -559,7 +568,7 @@ export const handleRequestProjectAccess: CommandHandler = (params, context) => {
     };
     return { success: true, message: messages[access.when], data: { projectId, path: access.path, location: agentPathsOf(context).location } };
   } catch (error) {
-    return fail(error);
+    return reportWorkflowCommandFailure('request_project_access', error);
   }
 };
 
@@ -613,6 +622,6 @@ export const handleDeleteWorkflow: CommandHandler = async (params, context) => {
       },
     };
   } catch (error) {
-    return fail(error);
+    return reportWorkflowCommandFailure('delete_workflow', error);
   }
 };

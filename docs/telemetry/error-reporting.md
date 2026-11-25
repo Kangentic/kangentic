@@ -67,6 +67,28 @@ sources:
   - resource: src/renderer/lib/ipc-error.ts
   - resource: src/main/analytics/crash-notice.ts
   - resource: src/renderer/utils/crash-notice.ts
+  - resource: src/main/analytics/run-state-tags.ts
+  - resource: src/main/analytics/run-uptime.ts
+  - resource: src/main/ipc/helpers/handler-step-report.ts
+  - resource: src/main/pty/session-manager-report.ts
+  - resource: src/main/git/git-worktree-report.ts
+  - resource: src/main/workflows/workflow-report.ts
+  - resource: src/main/db/db-report.ts
+  - resource: src/main/remote/remote-report.ts
+  - resource: src/main/remote/link/host-request-unanswered-error.ts
+  - resource: src/main/mobile-bridge/mobile-bridge-report.ts
+  - resource: src/main/retrieval/retrieval-client.ts
+    title: reportFailedCall's retrieval_call report
+  - resource: src/main/boards/shared/unclassified-defect.ts
+  - resource: src/main/config/board-config-manager.ts
+    title: doWriteBack's board_config report
+  - resource: src/main/pty/readers/wsl-transport-report.ts
+  - resource: src/main/pty/host/host-transcript-sink.ts
+  - resource: src/main/pty/host/protocol.ts
+    title: PtyHostHandledErrorCode, the codes the host relays
+  - resource: src/main/transcription/models/download-model.ts
+    title: ModelDownloadUnavailableError
+  - resource: src/renderer/components/settings/tabs/PrivacyTab.tsx
 ---
 # Error reporting (Sentry)
 
@@ -377,6 +399,29 @@ in one Sentry org, one triage surface.
   the handled report's `call_site` context (see the monaco bullet above). The tag makes "no app
   frames survived" distinguishable from "no app frames" without counting by hand. Tagging is
   annotation, not filtering: it never drops an event.
+- **Run state rides every event.** `tagRunState` runs in the same hook and puts five fixed-enum
+  tags on every event that is not a native crash (`src/main/analytics/run-state-tags.ts`):
+  `since_wake` (`none`, `under_30s`, `under_2m`, `under_10m`, `over_10m`, the time since the last
+  `unlock-screen` or `resume`), `cpu_speed_limit` (`100`, `75-99`, `50-74`, `<50`, `unknown`),
+  `run_uptime` (`<1m`, `1-5m`, `5-30m`, `30m-2h`, `2-8h`, `8h+`, or `unknown` before the app is
+  ready), `main_window` (`visible`, `minimized`, `hidden`, `none` when there is no window, `unknown`
+  when it could not be read) and `app_focused` (`yes`, `no`, `unknown`). Sentry DESKTOP-46 took
+  three releases to collect three of these for one reporter, one tag at a time, because its first
+  event could not say whether the machine had just woken, the window was covered or the CPU was
+  held down. They are read when the event is sent, and renderer events get them too, since the SDK
+  re-captures a renderer event through main's client. An event's own tag of the same name wins, so
+  a reporter that read the state at the moment its failure happened (`browser_driver`) keeps its
+  value. A native crash event gets none: its dump can be one the next launch found, and the state
+  read then would describe the uploading run, not the crashed one. A throw while reading is caught,
+  since a throwing `beforeSend` drops the event. Each renderer also stamps `window_kind` on the
+  events it captures (`src/renderer/error-reporting.ts`): `main`, the pop-out's `PopOutKind`, or
+  `unknown`. A pop-out is its own process with its own stores, so an event that cannot say which
+  window sent it reads like a main-window bug. It is stamped in the renderer's own `beforeSend`
+  and never set on the scope: the SDK's ScopeToMain integration copies a renderer's scope into
+  main's, so a scope tag set in a renderer rode every main-process event as whichever window
+  started last. A preview showed exactly that, `window_kind: main` on an `ipc_handler` event
+  from main. Nothing in the renderer writes to the scope, and
+  `tests/unit/error-reporting-renderer.test.ts` fails a file under `src/renderer` that does.
 - **Errors only:** release-health session tracking (the SDK's `MainProcessSession` integration,
   on by default) is filtered out, and tracing and session replay are never enabled.
 - **Breadcrumbs are filtered at the source, in both processes.** Every event carries the trail
@@ -474,6 +519,29 @@ in one Sentry org, one triage surface.
   board, sidebar, title bar, terminal panel, backlog, status bar, settings, search and the Command
   Terminal layer), and so does each task window, so one throw no longer unmounts every terminal.
   `ErrorBoundary` and `PanelErrorBoundary` also keep the Aptabase funnel.
+- **A first event answers four questions.** Sentry DESKTOP-36, 43, 46, 48, 4J and 4Q each needed
+  a later release whose only job was to add tags, and what they lacked had one shape. Each
+  question is now answered where every report passes, so a new reporter inherits it:
+  - Why, as a fixed word. An error that wraps another program's text has that text withheld, so
+    something must stand in for it. `git_cause` and `az_server_code` do for git and az. For any
+    failed child process, the shared send (`sendHandledFailure`) adds `exit_code` (the integer),
+    `exit_signal` (a `SIG*` name) and `timed_out` (`true`, `false`), read by shape from
+    `spawnWithAbort`'s `exitCode`, `signal` and `timedOut` or from Node's `execFile` rejection
+    (whose numeric `code` is read only beside its `killed` field, which keeps another class's
+    numeric code out). For a wrapper it adds `cause_name` and `cause_errno`, the class and errno of
+    the error one level down its `cause`. A caller's own tag of the same name wins. None is in a
+    latch key or a fingerprint, so no issue regroups.
+  - Which path delivered. A dispatcher's tag names it (`channel`, `tool`, `verb`, `stage`), and
+    where one failure can arrive several ways the report says which: `automation_runner` carries
+    `automation_trigger`, `mcp_tool` carries `caller`.
+  - How long, as a bucket. The two dispatch wraps time the call they already wrap and tag
+    `ran_for` (`<1s`, `1-5s`, `5-30s`, `30s+`), which tells a throw on entry from a call that
+    waited on something.
+  - What the machine and the window were doing: the run-state tags above.
+
+  A tag that describes one occurrence (`ran_for`, `caller`, `attempts`) goes in as a `detailTags`
+  entry, which is sent but kept out of the latch key, like a `correlationTags` entry. In the key,
+  one defect that fails fast once and slow once would report twice.
 - **Handled failures report at their chokepoints**
   (`src/main/analytics/handled-report.ts`, rule `.claude/rules/error-reporting.md`). Each
   chokepoint holds a `createChokepointReporter(source)`, which sends a copy of the error whose
@@ -512,9 +580,16 @@ in one Sentry org, one triage surface.
     of the same rejection (`Error invoking remote method '<channel>': ...`) is dropped by main's
     `ignoreErrors` (`IPC_REJECTION_DUPLICATE_PATTERN`), except `No handler registered for` and an
     uncloneable result, which only the renderer sees. The channel is never in a fingerprint. Its
-    cap is 100 keys, not 25, because a defect past it would reach Sentry from neither process. An
-    `ipcMain.on` listener is not wrapped: it has no caller to reject to, so its throw is uncaught
-    and Sentry's own handler reports it. When the error's report reached Sentry in this run (see
+    cap is 100 keys, not 25, because a defect past it would reach Sentry from neither process. A
+    report also carries `ran_for`, how long the handler ran before it failed. An `ipcMain.on`
+    listener has no caller to reject to, so it is not patched. It registers through `onReported`
+    in the same module, which reports its throw or rejection the same path-free way with `channel`
+    and `kind: listener`, logs it, and rethrows nothing. Registered bare, a listener that threw was
+    an uncaught exception: it reached Sentry with the error's own text and nothing that named the
+    channel. A helper and not a patch of `ipcMain.on`, because a patched `on` registers a wrapper
+    and a later `removeListener` would find nothing to remove.
+    `tests/unit/ipc-handler-report.test.ts` fails a bare `ipcMain.on(` under `src/main`.
+    When the error's report reached Sentry in this run (see
     What the user sees below), the wrap rethrows a copy whose message ends in
     `REPORTED_FAILURE_MARKER`, leaving the original untouched for anything else that holds it; the
     marker is a suffix, so `IPC_REJECTION_DUPLICATE_PATTERN` still matches the renderer's copy.
@@ -522,7 +597,27 @@ in one Sentry org, one triage surface.
     the HTTP request layer of the MCP server (`src/main/agent/mcp-http/tool-reporting.ts`). A
     `mcp_command` report from a workflow reply carries `command` (`save_workflow`,
     `add_workflow_task` or `start_workflow`) and `stage` `reply_clause`: the plan approval clause read
-    after a committed write threw, so the write stands and the reply omits the clause.
+    after a committed write threw, so the write stands and the reply omits the clause. A
+    `mcp_tool` report also carries `caller`, the kind of session that asked (`task`,
+    `command_terminal`, `workflow_agent`, `answer_agent`, or `external` for a connection that
+    named no session Kangentic knows), and `ran_for`. A server is built per request, so one caller
+    covers every tool on it. The workflow commands (`workflow-commands.ts`) answer a failure as
+    `{ success: false }` and never throw, so the command wrap, which reports only a throw, did not
+    see a defect in one. `reportWorkflowCommandFailure` reports it there, tagged with its
+    `command`, and a `WorkflowRequestError` stays a refusal. The task report command answers a
+    failed read of the task's git changes as text in its reply for the same reason, so it
+    reports that read itself, with `command: get_task_report` and `stage: changes`.
+  - `mcp_server_start`: the MCP HTTP server failed to start (`src/main/index.ts`). Every agent
+    then runs with no Kangentic tools, and before this the failure only fed the Settings check.
+  - `retrieval_call` (tag `method`, a fixed `RetrievalMethod`): a call the retrieval worker
+    answered with a failure (`reportFailedCall` in `retrieval-client.ts`). Every caller catches
+    that rejection and degrades, and the worker cannot report, so a defect in a worker handler
+    reached nobody. It is sent for a runtime defect (`TypeError`, `RangeError`, `ReferenceError`)
+    and for a SQLite failure, the two classes that are never an expected answer. A plain `Error` a
+    handler throws on purpose is left to the call site, and a worker that is down rejects with
+    `RetrievalUnavailableError`, an expected class. The error is rebuilt in main from the reply,
+    so every failure has the same frames: it is fingerprinted `['retrieval-call', method, name,
+    code or 'none']`, the same exception the relayed worker failure below takes.
   - `automation_runner` reports a row's error once its retries are spent, and only a defect: an
     adapter's classified outcome (`AutomationRetryableError`, `AutomationPermanentError`,
     `AutomationTimeoutError`) is the user's endpoint or script answering. A Run script row whose
@@ -533,11 +628,12 @@ in one Sentry org, one triage surface.
     DESKTOP-4X was a Run script a move stopped, rejected as a plain `Error` and reported as a
     defect. The runner rethrows whatever the row threw, so a `TypeError` that lands during the
     move still reports. Its tags are `automation_type` and `automation_trigger` (`enter`,
-    `turn_end` or `exit`), plus the `paste_*` facts for a Send message row whose paste failed. The
+    `turn_end` or `exit`), plus `attempts`, how many attempts the row took, and the `paste_*` facts
+    for a Send message row whose paste failed. The
     run log and the toast record a failed paste as a plain sentence (`pasteFailureDetail`), not the
     engine's message, which stays in the main log.
   - `mobile_verb` (tag `verb`, plus `relay_dial_id`), `automation_runner`, `turn_end`,
-    `workflow_engine` (tag `stage`), `pr` (tag `stage`), `git_actions` (tag `stage`:
+    `workflow_engine` (tag `stage`), `pr` (tag `stage`, and `provider` on a read's report, below), `git_actions` (tag `stage`:
     `terminal_delivery` or `link_created_pr`), `board-sign-in-keep-alive` (tag `provider`), `browser_driver` (tag `kind`, built-in
     classes and the attach, capture and composite failures only), `browser_passkey_guard` (tag
     `surface`: `lane`, `drive` or `created`, for a virtual passkey authenticator a guest refused;
@@ -585,6 +681,206 @@ in one Sentry org, one triage surface.
     arrived on, so the event can be joined to the relay's log of that dial. It goes in as a
     `correlationTags` entry, which is sent but kept out of the latch key. In the key, one defect
     would report again on every dial until the cap was spent.
+  - A `pr` report from a provider CLI read carries `provider` (`github`, `azure_devops`) and the
+    read as `stage` (`pr_by_branch`, `pr_by_number`, `pr_checks`, `job_log`, `pr_by_commit`,
+    `build_read`). Each read ends in a catch that sorts what the CLI said: missing or signed out,
+    a transient failure that keeps the link, and everything else, which reads as "no PR here" and
+    returns empty. That last branch also held what the CLI never said, output that will not parse
+    and a throw of the client's own, and read as "no PR" those unlink a PR the task has. The scan
+    passed the catch because its other branch throws. `reportUnclassifiedDefect`
+    (`src/main/boards/shared/unclassified-defect.ts`) now runs first on that branch and reports a
+    runtime defect or a `SyntaxError` only. The CLI's own refusal stays an expected outcome. `az`
+    already sorts an unreadable response as unavailable, which keeps the link, so on that client
+    only a throw of its own code reaches the report.
+  - `board_config` (tag `stage`: `write_back`): the export of the board to `kangentic.json` after
+    an edit or a project open threw (`doWriteBack` in `board-config-manager.ts`). Its callers are
+    a debounce timer and the open path, and both drop the line it returns, so a board edit that
+    never reached the shared file told nobody. A skipped write-back (a conflicted or newer file,
+    automations this build cannot read) is a decision, not a throw, and reports nothing.
+  - `remote_session_relay` (tag `stage`): the copy of a host agent's files into this computer's
+    session folder (`remote-session-relay.ts`). `watch_files` (the transcript is not copied, so
+    the viewer, search and token count stay empty), `resume_seed` (a resumed agent starts with
+    none of its earlier conversation), `deliver` (a status line or record never reached the
+    session folder), `hook_write` (a hook record is not stored, so the board misses an activity
+    change or never shows a permission prompt), `transcript_write`, `transcript_promote` and
+    `index_read`. `deliver` and `transcript_promote` skip a rename onto a file another process
+    holds (`EPERM`, `EACCES`, `EBUSY` on Windows): the next status replaces a lost one, and
+    `retryPromotion` exists for a held export.
+  - `remote_host` (tag `stage`): main's own work for an SSH host. `worktree_path`,
+    `rejoin_snapshot` and `rejoin_adopt` (an agent a host kept running is not taken back),
+    `sign_in_rollback` (a failed sign-in change could not be undone, so the host's keys sit
+    aside), `reveal_projects`, `home_mirror_remove`, `shell_folder_remove`, `restore_files`,
+    `port_forward_plan`, `install_identity_write` and `connect_install`. A drop is not a defect:
+    a request the host never answered rejects with `HostRequestUnansweredError`
+    (`remote/link/host-request-unanswered-error.ts`) and an unreachable host with
+    `HostUnreachableError`, both expected classes, so a report fires only for a helper's failed
+    answer and for Kangentic's own errors. Before the first class existed, a dropped link
+    rejected its pending requests with a plain `Error`, and any reporter here would have filed
+    every drop. `connect_install` reports what only Kangentic can fix: a host program that is
+    missing or fails its checksum (`HostProgramMissingError`, `HostProgramMismatchError`), an
+    install script that exits with a status other than ssh's own 255, and a runtime defect. A
+    failed probe, exit 255, a stopped run and an unsupported host report nothing.
+    `HostInstallError` carries the `step` (`asset`, `probe`, `install`) and the exit status that
+    decision reads. Nothing under `remote/helper/**` reports, since it runs on the host and its
+    reply carries the failure, and `remote/link/**` and `remote/protocol/**` run in the pty host
+    and relay a code.
+  - `mobile_bridge` (tag `stage`, `src/main/mobile-bridge/mobile-bridge-report.ts`): what the
+    phone bridge does outside a verb's own handler, which `mobile_verb` never sees because the
+    router reports a handler's throw and nothing else. After a verb answered OK:
+    `move_after_commit`, `pause_after_accept`, `open_after_accept`, `start_after_accept`,
+    `command_terminal_start` and `resumable` (the phone was told it worked and the rest failed).
+    The feeds: `transcript_read`, `transcript_seed`, `queue_feed`, `spawn_feed`, and
+    `event_oversize` with `event_kind` (the closed `BridgeEvent` kind of an event built past the
+    frame cap). Stored state: `roster_load` and `push_registrations_load` (a file that is there
+    and will not read or parse, so every phone reads as unpaired or gets no notifications),
+    `secure_storage` and `pairing_write`. Push: `push_send`, `push_clear`, `push_key` and
+    `push_resolve`. The wire: `decode` (a frame a paired phone sealed would not decode),
+    `response_encode` with `verb`, `roster_dial`, `relay_socket_build` and `relay_url`. A board
+    read: `workflow_facts` (a home project's workflows opened and then would not read, so the
+    phone's cards go without their strip; a home database that will not open is the `db_open`
+    report and is skipped here). A relay dial that never opened (`RelayDialError`), a socket
+    that dropped mid-send, bytes nothing authenticated on a public relay slot, and a read that
+    failed after its subscription ended report nothing. `wire-mappers.ts` runs in the retrieval
+    worker and cannot report.
+
+    A roster or registrations file that is there and cannot be read may be whole, so nothing is
+    written over it on the strength of that read. The change that would have been saved (a
+    pairing, a revoke, a rename, a capability change, a registration) is not, and it is reported
+    as the write it is to the
+    user: the `mobile_bridge_roster` or `mobile_push_registrations` write-failure report with
+    `stage: read_before_write`, and the "Change not saved to disk" toast. Before this the read
+    fell back to an empty list, and the next save replaced the file with it, which unpaired
+    every other phone.
+  - `workflow_engine` gained a `stage` for each step that used to fail to a log line. Recovery:
+    `recovery_verdict`, `recovery_hold_move`, `recovery_drained`, `recovery_record`,
+    `recovery_resume`, `recovery_arm`, `recovery_mark_failed`, `recovery_attempt`,
+    `siblings_read` and `stall_notice`. The board reads every evaluation rests on: `unread`
+    (reported once, inside `noteUnread`), `tasks_read`, `task_hold`, `lanes_read`,
+    `membership_read`, `workflow_state_read`, `step_task_read`, `stalls_read`, `take_in_read`,
+    `never_started_read`, `view_read`, `open_workflows_read`, `hidden_project_read` and
+    `hidden_project_pause`. The lock: `lock_read` (which fails open), `lock_title_read` and
+    `hold_refusal_read`. A step: `step_applies_read`, `step_record` and `step_move`. Start,
+    pause and delete: `start_done_move`, `start_undo`, `start_failure_notice`, `pause_member`,
+    `delete_end_agent`, `project_delete_detach`, `project_delete_workflows` and
+    `plan_approval_adopt`. The workflow's own agent: `agent_access_restart`,
+    `agent_pause_mid_start`, `agent_conversation_record`, `agent_forget_session`,
+    `agent_turn_index`, `agent_db_read` and `agent_db_write`. Its prompt: `plan_read`,
+    `columns_read`, `columns_history_read`, `brief_source_read`, `prompt_facts` and
+    `prompt_link_read`. The hang check: `hang_check` and `hang_record`. Listeners:
+    `board_listener` and `changed_listener`. Three catches rethrow a defect and used to return
+    silently on a SQLite failure (`tasks_read`, `task_hold`, `plan_approval_adopt`); that branch
+    now reports, grouped as an environment failure. The agent's database stages skip a
+    connection a project delete closed under them (`isClosedConnectionError`). A `plan_read`
+    failure no longer answers "no plan saved": that gave the workflow's agent a new workflow's
+    first message, it planned from the brief again, and its save replaced every task the user
+    had shaped. The agent is told a plan may be saved and to read it with
+    `kangentic_get_workflow` before it saves anything. A workflow that is gone still answers
+    null.
+  - `db` (tag `stage`, `src/main/db/db-report.ts`): `soft_read` (a `softly()` access that asks
+    for no dialog fell back with nobody told), `dialog_show` (the unreadable-database dialog
+    itself failed), `automation_config_parse`, `draft_parse` (a stored workflow plan that will
+    not parse reads as an empty one) and `dev_port_listener`. No writer replaces a stored plan
+    that will not parse (`storedPlanIsUnreadable` in `workflow-repository.ts`): a save is
+    refused with the reason and the two layout writes are skipped, so the text a person shaped
+    stays in the row.
+  - `retrieval_service` (tag `stage`): `job`, a runtime defect in main's own index job, and
+    `model_download`, an embedding model that never reached disk. A model file the host or the
+    network did not serve rejects with `ModelDownloadUnavailableError`
+    (`transcription/models/download-model.ts`: a timeout, or a 408, 429 or 5xx answer), an
+    expected class, so neither this stage nor dictation's `download` files it. Any other status
+    stays a plain `Error` and reports: an address this build ships is wrong or gone.
+  - `git_worktree` (tag `stage`, `src/main/git/git-worktree-report.ts`): the worktree work that
+    is not a removal (`worktree_removal` keeps those). `base_branch_write` (the worktree has no
+    recorded base, so merge-back and `/pull-request` target `main` whatever it was cut from),
+    `branch_rename`, `branch_remove`, `removed_listener`, `removing_listener`. Linked folders:
+    `link_record`, `link_create`, `link_remove` and `link_precheck`. The set-aside folder:
+    `removed_deleter` (the background deleter stopped, so `removed-worktrees/` grows without
+    bound) and `removed_delete`. Spares: `spare_discard` and `spare_check`. `reap_walk` (the
+    removal-failure reap's own walk threw). The Changes panel: `diff_watch`,
+    `changes_commits_in_clone`, `changes_branch_log` and `changes_commit_files`. PR reads:
+    `head_read` and `refs_read`. `fetch_outcome_listener` and `auto_fetch_config`. Each carries
+    the shared `git_cause`, `exit_code` and `timed_out` when git failed. What is skipped, each
+    with its own test: a rename onto a branch that exists or from one that is gone, and a remove
+    of a branch that is gone or checked out (git's own refusals, read from its English text as
+    `gitFailureCause` does, so a git in another language reports them once a run), a job the
+    project's close cleared from the queue, a missing folder, and a watch the OS refused for
+    want of watches or handles (`ENOSPC`, `EMFILE`, `ENFILE`: Linux answers `ENOSPC` once the
+    user's inotify limit is spent). `zombie-reaper.ts` takes its reporter as an argument, since
+    the E2E janitor imports that file in the Playwright process.
+
+  - `handler_step` (tags `area` and `step`, `src/main/ipc/helpers/handler-step-report.ts`): a
+    step inside an IPC handler or one of its helpers that failed after the handler had already
+    answered, or that the handler caught so it could go on. The IPC wrap reports a handler's
+    rejection and nothing a handler swallows, so each of these used to end in a log line.
+    `area` names the handler family and `step` the step:
+    - `archive`: `session_reset`, `unarchive_spawn`
+    - `auto_spawn`: `toggle_suspend`, `toggle_spawn`
+    - `backlog`: `promote_attachment_missing`, `promote_spawn`, `demote_attachment_missing`,
+      `import_prune`
+    - `browser`: `terminal_slot_lookup`, `task_exists_read`, `live_session_lookup`,
+      `annotation_capture_copy`, `jar_seed`
+    - `command_terminal`: `restore_claim`, `browser_slot_lookup`, `browser_end`,
+      `annotation_draft_remove`, `history_list`, `history_find`, `history_write`,
+      `history_read`, `history_locate`
+    - `git_diff`: `local_only_count`, `linked_commits_read`
+    - `git_stats`: `churn_write`, `churn_capture`
+    - `handoff`: `handoff_record`, `handoff_prepare`, `handoff_start`, `handoff_finalize`
+    - `mcp_watch`: `connection_check`, `session_start_check`
+    - `monitor`: `snapshot_fetch`, `snapshot_push`
+    - `projects`: `mcp_config_write`, `mcp_config_remove`, `workflow_detach`,
+      `delete_tasks_read`, `worktree_detach`, `delete_links_unreadable`,
+      `delete_kangentic_folder`, `shell_folder_remove`, `tool_breakdown_repair`,
+      `background_call_project_read`, `hide_suspend`
+    - `relocate`: `terminal_kill`, `worktree_repair`, `adapter_relocate`
+    - `search`: `answer`, `project_summaries_read`
+    - `session_metrics`: `metrics_capture`, `workflow_usage_capture`, `pty_grid_write`,
+      `transcript_tokens`, `transcript_tool_counts`, `live_result_tokens`,
+      `earlier_result_tokens`, `earlier_runs_fill`, `earlier_run_read`, `earlier_run_write`,
+      `tool_breakdown_batch`, `tool_breakdown_flag`
+    - `session_reconcile`: `settings_suspend`, `settings_respawn`, `reconcile_read`
+    - `session_resume`: `resume_on_open`, `on_decided_hook`, `caller_hook`, `resume_miss_mark`
+    - `spares`: `sweep_inputs_read`, `startup_sweep`, `referenced_folders_read`
+    - `spawn`: `opening_prompt`, `from_column_read`, `return_recap_read`,
+      `auto_command_record`, `expired_notice_filter`, and `agent_spawn` / `return_recap` from
+      the transition engine's recap budget
+    - `ssh_connect`: `connect_all`
+    - `system`: `summarize`, `branch_list`, `open_path_rejected`, `notification_task_title`,
+      `notification_workflow_title`
+    - `task_branch`: `carry_changes`, `base_branch_write`
+    - `task_cleanup`: `leftover_reap`, `leftover_report_send`, `wsl_distros_read`,
+      `annotation_draft_remove`, `worktree_cleanup`, `done_worktree_delete`
+    - `task_crud`: `bulk_delete_item`, `automation_run_again`
+    - `task_git`: `same_directory_check`, `setup_failure_notice`
+    - `task_windows`: `close_windows`
+    - `transcripts`: `page_read`, `locate_read`, `timeline_read`, `task_report_index_read`,
+      `task_last_message_read`
+    - `announce`: `board_listener`, `renderer_send`
+
+    Four of them sit on a catch whose common failure is another program's plain `Error` (an
+    agent CLI that exited, timed out or was not signed in): `search` / `answer`, `system` /
+    `summarize` and both `mcp_watch` steps. They report only a runtime defect or an errno
+    (`isDefectOrEnvironmentFailure`). `task_move` gained the stages `exit_automations`,
+    `enter_automations` (a column's rows never ran), `pr_forget`, `commit_push`,
+    `settle_announce` and `on_committed` (phones miss the move). `session_handlers` gained
+    `message_trail_facts`, `session_db_write`, `queue_snapshot`, `idle_pause`,
+    `stale_session_id`, `startup_failure_notice`, `startup_failure_read`,
+    `start_blocked_record`, `agent_never_ran_mark`, `refused_start_pause`,
+    `pushed_branch_record` and `plan_exit_move`. A PR candidate that failed to link reports as
+    `pr` with `stage: link`. `accounts` gained `usage_record`, `turn_failure_report`,
+    `login_start` and `login_complete`.
+
+    Four of the catches used to go on to a destructive step. A Backlog promote or demote whose
+    attachment copy fails while the source file is still on disk now undoes the half-made row
+    and rethrows, so the originals are never deleted. A project delete that cannot read its
+    worktree links, or whose set-aside copies may still hold one, leaves `.kangentic` on disk
+    instead of deleting through a live link. An Earlier conversation whose transcript lookup
+    threw keeps its row. A local-only commit count that failed on a real HEAD reads as "may
+    have changes", not zero.
+
+    A `node_modules` link that will not come out now refuses the removal: `clearWorktreeLinks`
+    answers false, and `tryGitRemoval` stops before `git worktree remove --force` and the
+    recursive delete, which would otherwise have gone through the live link into the main
+    checkout's `node_modules`.
   - `task_move` (a rollback that failed), `exit_message_carry` (an exit message held for a
     restarted agent whose hold or run-detail write threw; tag `stage`: `hold`, `record`), `project_recovery` (tag `pass`: `resource_cleanup`,
     `session_recovery`, `session_reconcile`, `host_connected`, `cold_open`,
@@ -600,8 +896,36 @@ in one Sentry org, one triage surface.
     `idle_pause_lift` (a workflow that could not be read while deciding whether an open or an
     owner's move lifts an idle pause, and the pause stays held; or the enter rows that run with the
     agent paused after `spawnAgent` declined that lift, which could not run at all).
+  - `session_manager` (tag `stage`, `src/main/pty/session-manager-report.ts`): main's side of a
+    session, for what used to fail to a log line. The queue: `queue_gate` (a column's agent
+    limit is off), `queue_loop`, `queued_spawn` (a queued agent never starts and its card can
+    stay Queued) and `queued_command_rebuild`. Listeners: `turn_ended_listener`,
+    `turn_ended_held_listener` (a column's turn-end rows and the workflow step check never run
+    for that turn) and `session_resumed_listener`. The history tail: `history_attach`,
+    `history_locate` (a defect or an errno only: a locator also runs other programs, whose
+    failure is theirs), `history_parse` and `earlier_run_totals`. The status and events files:
+    `status_parse`, `status_usage_dispatch`, `events_dispatch` and `events_flush`. A consumer
+    that throws while the reader hands it an event used to be swallowed with the file-read
+    errors, and is now caught on its own. A WSL distro's hook transport: `wsl_hook_append`,
+    `wsl_hook_drain`, `wsl_hook_remove`, `wsl_hook_response` and `wsl_mcp_relay`. Those two
+    files are bundled into the pty host and the SSH helper as well, so they import no reporter
+    and report through a slot main fills (`readers/wsl-transport-report.ts`). An MCP answer
+    whose body is lost on a 2xx now ends the agent's call with a JSON-RPC error for its own id.
+    The relay used to print nothing there, and the call waited with no reply. And
+    `launcher_write`, `hooks_release`, `typed_text_record`, `message_trail_read`,
+    `task_tree_probe` (a project's Stop script never runs after an idle pause),
+    `project_close`, `host_lost_exit`, `late_reap_answer` and `heartbeat_ping`. The source has
+    more stage values than the 25 keys a chokepoint reports in a run, which is the cap doing its
+    job: one run never files them all.
   - `pty_host`: a fixed code the host relays as a `handledError` event (`root_pin`, `cli_pin`,
-    `orphan_cleanup`, `pty_kill`, `transcript_flush`, `spawn_worker_fallback`, `uncaught`), and a
+    `orphan_cleanup`, `pty_kill`, `transcript_flush`, `spawn_worker_fallback`, `uncaught`, and,
+    added with the stages above, `transcript_open` (every transcript chunk of a project's
+    sessions is dropped), `root_exit_read`, `orphan_api_load`, `task_tree_probe`,
+    `process_table_fallback`, `drain_listener` (a phone's stream misses bytes), and for an SSH
+    link, which runs in the host too, `remote_rebind`, `remote_reconcile`, `remote_handler`,
+    `remote_frame` and `port_forward_poll`). The link's codes skip a drop
+    (`isLinkDrop`), and `remote_frame` is relayed only for a frame that passed its checksums and
+    still broke the protocol, since a damaged frame is the designed drop path. Also a
     heartbeat stall, once per run, fingerprinted `['pty-host', 'heartbeat-stall']`. The stall is
     sent when it ends, not at the 11 s threshold, because DESKTOP-43 could not tell a late answer
     from none. Its `outcome` tag is `answered` (with `answeredAfterMs`), `host_exited`,
@@ -843,11 +1167,54 @@ in one Sentry org, one triage surface.
     [GPU process failures](../platforms/gpu-failures.md)). The same feature-status class already
     ships in the GPU process report's `featureStatusOnReport`.
 
+    The stores report their own work as `area` and `op`: `board` (`move`, `reorder`, `complete`,
+    `unarchive`, `archived_delete`, `archived_bulk_delete`, `bulk_unarchive`, `archived_refresh`,
+    `shortcuts`), `task_detail` (`view_state_parse`), `projects` (`open_missing_row`,
+    `open_not_found_listed`), `workflows` (`action`, `agent_open`, `agent_resume`, `agent_pause`,
+    `create`, `home_summaries`), `config` (`dismiss_announcement`, `seen_release_notes`),
+    `monitor` (`subscribe`, `snapshot`), `knowledge_graph` (`snapshot`, `scope_snapshot`),
+    `backlog` (`load`), `session_sync` (`reconcile_after_refused_suspend`) and
+    `command_terminal` (`project_cleanup`). Each is a `try` that runs renderer code after an IPC
+    call answered: a list apply, a `JSON.parse`, a store listener. A `try` that holds only the
+    IPC call reports nothing from the renderer, because main's wrap already reported or refused
+    its rejection and `reportRendererFailure` drops it. The two `projects` operations send a new
+    `Error` with no `cause`, never the rejection, whose text holds the folder's path.
+
+    Components and hooks report the same way: `browser` (`inspect`, `send_to_agent`,
+    `annotations_save`, `annotations_load`, `stroke_end`), `board_manager` (`save`, `reorder`,
+    `profiles`), `command_terminal` (`spawn`, `branch_switch`, `resume_in_place`,
+    `start_after_refused_resume`, `stop`), `task_detail` (`toggle_session`, `archive`,
+    `send_to_backlog`), `new_task` (`create`), `changes` (`pixel_diff_worker`,
+    `pixel_diff_compare`), `conversation` (`live_poll`), `description` (`paste_markdown`),
+    `markdown` (`pipeline_load`, `code_colorize`, `image_load`), `language` (`suggestion`),
+    `knowledge_graph` (`scene_build`), `icon_picker` (`catalog_load`) and `settings` (`write`).
+    Two hooks: `projects` / `switch_load` (a project opens with none of its windows restored)
+    and `terminal` / `frame_hold_answer`.
+    The pixel diff runs in a web worker, which cannot report: a failed comparison relays the
+    error's class name alone, and the client reports it under that name. A Knowledge Graph scene
+    that cannot get a WebGL context throws `WebglRendererUnavailableError` and reports nothing,
+    since that is the machine and not a defect.
+
+    Three classes never report from the renderer. An `AbortError`. A `RefusalError` the renderer
+    raised itself, such as a Command Terminal start whose project closed under it. And the
+    renderer's own network (`Failed to fetch`, `NetworkError`, `Load failed`). A lazy chunk that
+    did not load opens with the same words (`Failed to fetch dynamically imported module`) and
+    does report: the app's chunks are files in its own package, so a missing one is a broken
+    build or install.
+
   Settings > Privacy names this data: an error's type, a fixed failure code and, for an interface
   crash, the names of the components it was in. It also names the relay dial id, the one value
   here that another system keeps too: the relay logs it for about a week, so for that long an
   event can be matched to the relay's record of that connection. It carries no slot, key or
-  content.
+  content. And it names the run-state tags, in their own line: how long the app had been
+  running, how recently the computer woke, whether its window was showing and focused, and whether
+  the processor was being slowed, each as a fixed range. Those rode one reporter's events before
+  (`browser_driver`); on every event they are a class of their own, so they are listed. The same
+  line names `window_kind`, which window an event came from: it describes the app and not the
+  failure, as the run-state tags do. What a failed step adds about itself (`exit_code`,
+  `exit_signal`, `timed_out`, `cause_name`, `cause_errno`, `ran_for`, `attempts`, `caller`) is
+  part of the fixed failure code the list already names. A failed automation's
+  `automation_trigger` and the `paste_*` facts have a line of their own.
 - **Grouping a defect reached through a dispatcher.** The dispatcher frames (the IPC wrap,
   `runHandler`, the `registerTool` proxy, `capability-router`'s dispatch) are the same for every
   handler, so they cannot split an issue and stay in the stack. If one ever groups unrelated

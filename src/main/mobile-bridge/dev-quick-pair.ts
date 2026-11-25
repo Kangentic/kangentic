@@ -83,6 +83,8 @@ export class DevQuickPair {
       this.adoptPhoneFile();
       this.startWatching();
     } catch (error) {
+      // report-ok: dev builds only. The service constructs this class behind __KANGENTIC_DEV__,
+      // so no packaged build runs it, and the developer reads this warning.
       console.warn('[mobile-bridge/dev-quick-pair] reconcile failed:', error);
     }
   }
@@ -117,6 +119,8 @@ export class DevQuickPair {
         return parsed as PhoneFilePayload;
       }
     } catch (error) {
+      // report-ok: dev builds only. The rig's phone.json is half written or malformed, and the
+      // watcher reads it again on the rig's next write.
       console.warn('[mobile-bridge/dev-quick-pair] unreadable phone.json:', error);
     }
     return null;
@@ -159,6 +163,8 @@ export class DevQuickPair {
         }
       });
     } catch (error) {
+      // report-ok: dev builds only. With no watch, a phone.json written later is adopted on the
+      // next bridge reconcile, which reads the file again.
       console.warn('[mobile-bridge/dev-quick-pair] could not watch the pairing directory:', error);
     }
   }

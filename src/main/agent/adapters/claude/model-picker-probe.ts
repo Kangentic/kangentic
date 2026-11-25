@@ -1035,9 +1035,10 @@ export async function probeModelPickerModels(
       return cache?.scan;
     },
     () => {
-      // discoverModelScan is written never to reject, but guard the state
-      // machine anyway: an unexpected throw must not strand `inFlight` and
-      // wedge every future probe on a permanently-pending promise.
+      // report-ok: discoverModelScan catches every probe failure and answers undefined. A throw
+      // anyway is recorded as a failed probe: the pickers keep the earlier scan or the free-form
+      // model input, and the next probe runs after the failure backoff. Clearing `inFlight`
+      // keeps every later probe from waiting on a promise that never settles.
       recordProbeResult(cliPath, undefined);
       inFlight = null;
       return cache?.scan;

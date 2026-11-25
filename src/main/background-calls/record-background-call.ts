@@ -93,6 +93,8 @@ export function startRecordedCall<T>(
   };
   done.then(
     () => write('succeeded', null),
+    // report-ok: the caller gets this rejection through `done`, the promise returned below.
+    // This copy only writes the ledger row, as failed or timed out.
     (error: unknown) => write(outcomeOf(error), messageOf(error)),
   );
   return { callId, done };

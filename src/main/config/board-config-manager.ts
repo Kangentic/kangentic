@@ -38,6 +38,14 @@ import { applyBoardConfigToDb, type ColumnFieldResets } from './board-config/app
 import { COLUMN_FIELD_DEFAULTS } from './board-config/column-field-defaults';
 import { buildSplitBoardConfigFromDb, jsonEqual } from './board-config/split-config';
 import { RefusalError } from '../../shared/refusal';
+import { createChokepointReporter } from '../analytics/handled-report';
+
+/**
+ * One report per defect in the board config's own work. `stage` says which step:
+ * `write_back` is the export of the board to `kangentic.json` after an edit or an
+ * open. Never a column, a path or the file's text.
+ */
+const boardConfigReporter = createChokepointReporter('board_config');
 
 /** How often, and how far apart, a write-back retries a file a lock is holding. */
 const WRITE_BACK_LOCK_RETRIES = 3;
@@ -984,6 +992,9 @@ export class BoardConfigManager {
       return null;
     } catch (error) {
       console.warn('[BOARD_CONFIG] Write-back failed:', error);
+      // The debounce timer and the open path drop the returned line, so without
+      // this a board edit that never reached the shared file told nobody.
+      boardConfigReporter.report(error, { tags: { stage: 'write_back' } });
       return `Writing ${TEAM_FILE} failed. The log has the details.`;
     } finally {
       // The active project's file just changed under the read memo.

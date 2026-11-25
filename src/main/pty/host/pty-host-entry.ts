@@ -14,9 +14,7 @@
 
 import { format } from 'node:util';
 import { Worker } from 'node:worker_threads';
-import type Database from 'better-sqlite3';
-import { closeProjectDb, configureProjectDbAccess, getProjectDb, setWalAutoCheckpoint } from '../../db/database';
-import { TranscriptRepository } from '../../db/repositories/transcript-repository';
+import { closeProjectDb, configureProjectDbAccess, setWalAutoCheckpoint } from '../../db/database';
 import { agentRegistry } from '../../agent/agent-registry';
 import {
   isBlockRecord,
@@ -29,8 +27,9 @@ import { setTerminalTraceRelay } from '../terminal-trace';
 import { skipConsoleListHelper } from '../spawn/conpty-console-list';
 import { loadWin32OrphanApi } from '../process-tag/win32-reader';
 import { createTaggedProcessReader } from '../process-tag/reader-factory';
-import type { TranscriptSink } from '../buffer/transcript-writer';
 import { PtyHostCore } from './pty-host-core';
+import { HostHandledErrors } from './host-handled-error';
+import { createTranscriptSinkFor } from './host-transcript-sink';
 import { HostRouter } from '../../remote/host-router';
 import { HostProcessTable } from './host-process-table';
 import { setMainExecutable } from './host-exec';
@@ -70,7 +69,8 @@ for (const level of ['log', 'info', 'warn', 'error'] as const) {
     try {
       post({ type: 'log', level, text: format(...args) });
     } catch {
-      // The port is gone: the host is exiting.
+      // report-ok: the port to main is gone because the host is exiting, so a log
+      // line has nowhere to go.
     }
     if (level === 'error') original(...args);
   };
@@ -93,28 +93,12 @@ process.on('uncaughtException', (error) => {
   setTimeout(() => process.exit(1), UNCAUGHT_REPORT_GRACE_MS);
 });
 
-const transcriptRepositories = new WeakMap<Database.Database, TranscriptRepository>();
-
 /**
  * The host's own connection to a project's database, for the raw transcript
- * pieces. Opened with `fileMustExist` and no migrations (main opened and
- * migrated it first), so a late flush for a deleted project throws and is
- * dropped instead of creating the file again.
+ * pieces (`host-transcript-sink.ts`). A database that will not open is relayed
+ * to main once, through the same message an uncaught throw uses.
  */
-function transcriptSinkFor(projectId: string): TranscriptSink | null {
-  let db: Database.Database;
-  try {
-    db = getProjectDb(projectId);
-  } catch {
-    return null;
-  }
-  let repository = transcriptRepositories.get(db);
-  if (!repository) {
-    repository = new TranscriptRepository(db);
-    transcriptRepositories.set(db, repository);
-  }
-  return repository;
-}
+const transcriptSinkFor = createTranscriptSinkFor(new HostHandledErrors(post));
 
 /**
  * What every message from main goes to. The router sends a PTY or session that lives on an SSH host
@@ -206,6 +190,8 @@ async function dispatchRequest(message: PtyHostRequest): Promise<void> {
     const result = await router.handleRequest(message.method, message.params);
     post({ type: 'reply', id: message.id, ok: true, result });
   } catch (error) {
+    // report-ok: sent back as the request's reply, and main's transport rejects the
+    // waiting request with it, for its caller to handle.
     post({ type: 'reply', id: message.id, ok: false, error: toPtyHostError(error) });
   }
 }

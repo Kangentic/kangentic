@@ -6,6 +6,13 @@ import { WslHookInbox } from './wsl-hook-inbox';
 import * as traceRecorder from '../../activity-engine/trace-recorder';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import type { SessionUsage, SessionEvent, AdapterRuntimeStrategy } from '../../../shared/types';
+import { sessionManagerReporter } from '../session-manager-report';
+import { setWslTransportFailureSink } from './wsl-transport-report';
+
+// The WSL hook inbox and its MCP relay are bundled into the pty host (through
+// the adapters), so they cannot import a reporter. This module is main-only and
+// loads with the session layer, so it hands them main's reporter here.
+setWslTransportFailureSink(sessionManagerReporter);
 
 /**
  * Adapter-owned hook describing how to decode the contents of
@@ -103,7 +110,8 @@ export interface StatusFileAttachOptions {
 export async function resetStatusFiles(statusOutputPath: string | null, eventsOutputPath: string | null): Promise<void> {
   const paths = [statusOutputPath, eventsOutputPath].filter((filePath): filePath is string => !!filePath);
   await Promise.all(paths.map((filePath) => fsPromises.writeFile(filePath, '').catch(() => {
-    // The directory may not exist yet.
+    // report-ok: the directory may not exist yet, and the bridge or a hook creates the
+    // file later.
   })));
 }
 
@@ -189,7 +197,7 @@ export class StatusFileReader {
         // must be the file's size before the first read can run, or that read would replay the earlier run.
         state.eventsFileOffset = fs.statSync(eventsOutputPath).size;
       } catch {
-        // No file yet: whatever the agent writes first is new.
+        // report-ok: no file yet, so whatever the agent writes first is new.
       }
     }
     // Registered before the first read below, which looks the state up: an
@@ -232,6 +240,8 @@ export class StatusFileReader {
             const stat = await fsPromises.stat(eventsOutputPath);
             return stat.size > state.eventsFileOffset;
           } catch {
+            // report-ok: the events file is not there yet, or its folder vanished,
+            // which repairMissingEventsDir below recreates. The poll looks again.
             // ENOENT: the session directory (or the events file) vanished
             // out from under a still-attached - i.e. live - session. Recreate
             // the directory so the running agent's event-bridge hooks can
@@ -268,11 +278,15 @@ export class StatusFileReader {
 
     if (state.statusOutputPath) {
       // sync-write-ok: once per session end, done before a later attach can reuse the path.
-      try { fs.unlinkSync(state.statusOutputPath); } catch { /* may not exist */ }
+      try { fs.unlinkSync(state.statusOutputPath); } catch {
+        // report-ok: ENOENT when the file is already gone or was never created.
+      }
     }
     if (state.eventsOutputPath) {
       // sync-write-ok: as above.
-      try { fs.unlinkSync(state.eventsOutputPath); } catch { /* may not exist */ }
+      try { fs.unlinkSync(state.eventsOutputPath); } catch {
+        // report-ok: ENOENT when the file is already gone or was never created.
+      }
     }
 
     this.states.delete(sessionId);
@@ -340,6 +354,7 @@ export class StatusFileReader {
     // A distro CLI's last hook calls are still files: append them first.
     state.wslInbox?.drainSync();
     state.eventsGeneration += 1;
+    let pendingBytes: Buffer;
     try {
       // sync-read-ok: the exit path dispatches these before it handles the exit.
       const stat = fs.statSync(state.eventsOutputPath);
@@ -355,9 +370,19 @@ export class StatusFileReader {
         fs.closeSync(fileDescriptor);
       }
       state.eventsFileOffset = from + buffer.length;
-      this.dispatchEvents(sessionId, state, buffer);
+      pendingBytes = buffer;
     } catch {
-      // File may not exist, or be partially written - ignore.
+      // report-ok: the events file is not there (its folder was never made, or went
+      // with the session), so there is nothing to flush.
+      return;
+    }
+    try {
+      this.dispatchEvents(sessionId, state, pendingBytes);
+    } catch (error) {
+      // The offset has moved past these bytes, so the session's last events
+      // before its exit (a tool end, a SessionEnd) never reach the engine.
+      sessionManagerReporter.report(error, { tags: { stage: 'events_flush' } });
+      console.error(`[status-file-reader] Events for ${sessionId.slice(0, 8)} failed to dispatch at exit`, error);
     }
   }
 
@@ -386,7 +411,8 @@ export class StatusFileReader {
       if (this.states.get(sessionId) !== state || sequence !== state.statusReadSequence) return;
       timeSyncWork('status-file:status', () => this.dispatchStatus(sessionId, state, raw));
     }, () => {
-      // File may not exist yet - ignore.
+      // report-ok: only the read rejects into this handler. The status file is not
+      // there yet or is held for a moment, and the watcher fires again on its next write.
     });
   }
 
@@ -420,6 +446,10 @@ export class StatusFileReader {
     try {
       events = hook.parseStatusEvents(raw, state.lastStatusRaw, Date.now());
     } catch (error) {
+      // An empty or torn write never reaches the parser (the guard above), so a
+      // throw is the adapter's parser: the waits and prompts it reads off the
+      // status line never reach the engine, and the card shows the wrong state.
+      sessionManagerReporter.report(error, { tags: { stage: 'status_parse' } });
       if (!state.statusEventsFailureLogged) {
         state.statusEventsFailureLogged = true;
         console.error(`[status-file-reader] Status events for ${sessionId} could not be read`, error);
@@ -432,6 +462,9 @@ export class StatusFileReader {
     try {
       this.callbacks.onEventsParsed(sessionId, [], events);
     } catch (error) {
+      // The engine never took these events, so the card's activity is wrong
+      // until the next one lands.
+      sessionManagerReporter.report(error, { tags: { stage: 'events_dispatch' } });
       console.error(`[status-file-reader] Status events for ${sessionId} failed to dispatch`, error);
     }
   }
@@ -456,8 +489,11 @@ export class StatusFileReader {
         state.firstStatusDelivered = true;
         this.callbacks.onFirstStatus(sessionId);
       }
-    } catch {
-      // File may not exist yet, or be partially written - ignore.
+    } catch (error) {
+      // No file is read in this try, and every adapter's parser answers null for
+      // an empty or torn write. A throw is the parser or a consumer: the session
+      // shows no model, tokens or context, and its first-status handoff is lost.
+      sessionManagerReporter.report(error, { tags: { stage: 'status_usage_dispatch' } });
     }
   }
 
@@ -499,8 +535,8 @@ export class StatusFileReader {
       );
       return true;
     } catch (error) {
-      // Best-effort: log once and keep polling. A persistent failure here
-      // (EACCES, parent also gone) means the next poll retries.
+      // report-ok: the folder's parent is gone or not writable (EACCES, a deleted
+      // project), which only the user's disk can fix. The next poll retries.
       const message = error instanceof Error ? error.message : String(error);
       console.warn(
         `[status-file] failed to recreate session dir for session=${sessionId.slice(0, 8)}: ${message}`,
@@ -523,7 +559,9 @@ export class StatusFileReader {
     const state = this.states.get(sessionId);
     if (!state || !state.eventsOutputPath) return;
     state.eventsChain = state.eventsChain.then(() => this.readNewEvents(sessionId, state)).catch(() => {
-      // File may not exist yet, or be partially written - ignore.
+      // report-ok: only the file read rejects here, since readNewEvents catches and
+      // reports its own dispatch. The file is not there yet or is held for a moment,
+      // and the next change or poll reads it.
     });
   }
 
@@ -551,7 +589,14 @@ export class StatusFileReader {
     // The exit flush ran meanwhile and dispatched this range itself.
     if (this.states.get(sessionId) !== state || generation !== state.eventsGeneration) return;
     state.eventsFileOffset = from + buffer.length;
-    timeSyncWork('status-file:events', () => this.dispatchEvents(sessionId, state, buffer));
+    try {
+      timeSyncWork('status-file:events', () => this.dispatchEvents(sessionId, state, buffer));
+    } catch (error) {
+      // The offset has moved past these bytes, so their events (a tool start, a
+      // turn's Stop) never reach the engine and the card shows the wrong state.
+      sessionManagerReporter.report(error, { tags: { stage: 'events_dispatch' } });
+      console.error(`[status-file-reader] Events for ${sessionId.slice(0, 8)} failed to dispatch`, error);
+    }
   }
 
   /**

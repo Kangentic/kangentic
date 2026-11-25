@@ -6,6 +6,7 @@ import { buildTerminalModeReset } from './terminal-mode-reset';
 import { traceTerminal, type RepaintSettleReason } from '../terminal-trace';
 import { isRoundTripProbeArmed, noteFlushTimer } from '../../diagnostics/pty-round-trip-probe';
 import type { SeedFrameResult } from '../host/protocol';
+import type { HostHandledErrors } from '../host/host-handled-error';
 
 const MAX_SCROLLBACK = 512 * 1024; // 512KB per session
 /**
@@ -417,6 +418,9 @@ interface PtyBufferManagerCallbacks {
    *  slice, or a replay's drain. The pty host's backpressure pauses the PTY
    *  when it piles up (`BackpressureController.recordPending`). */
   onPendingChange?(sessionId: string, chars: number): void;
+  /** The host core's relay to main (`host-handled-error.ts`), for a drain
+   *  listener that threw. This module runs in the pty host and reports nothing itself. */
+  handledErrors?: Pick<HostHandledErrors, 'report'>;
 }
 
 interface BufferState {
@@ -1310,6 +1314,9 @@ export class PtyBufferManager {
     try {
       this.callbacks.onDrain(sessionId, drained, endOffset);
     } catch (error) {
+      // A phone streaming the session never sees these bytes, and the session's
+      // first-output latch can miss them, so main hears of it by a fixed code.
+      this.callbacks.handledErrors?.report('drain_listener', error);
       // Two of the three drain sites run after the pending buffer is already
       // emptied; a listener throw propagating from there would reject the
       // replay IPC with the drained bytes gone. The report is best-effort by

@@ -91,6 +91,8 @@ export class ErrorBoundary extends React.Component<Props, State> {
     try {
       await window.electronAPI.app.restart();
     } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the boundary shows the
+      // restart failure line under its buttons.
       this.setState({ restartFailure: { error } });
     }
   };

@@ -130,6 +130,8 @@ function launcherTag(session: ManagedSession): string {
   try {
     return fs.existsSync(session.launcherPath) ? 'present' : 'missing';
   } catch {
+    // report-ok: this only builds a tag for a launch report, and a path that cannot be
+    // checked reads as missing.
     return 'missing';
   }
 }
@@ -155,6 +157,8 @@ function commandHeadTag(session: ManagedSession): string {
   try {
     return fs.existsSync(cliPath) ? 'present' : 'missing';
   } catch {
+    // report-ok: this only builds a tag for a launch report, and a path that cannot be
+    // checked reads as missing.
     return 'missing';
   }
 }
@@ -559,6 +563,8 @@ export function reportPreflightFailure(failure: PreflightFailure): void {
       ...(error instanceof Error ? { error } : {}),
     });
   } catch (reportError) {
+    // report-ok: the reporter itself threw, so there is nothing left to report through.
+    // The caller still rethrows or shows the failure this was reporting.
     console.warn('[AGENT-LAUNCH] A preflight report failed:', reportError);
   }
 }
@@ -644,6 +650,8 @@ export function reportSessionLaunchFailure(failure: SessionLaunchFailure): void 
     if (!agentProcess) return send(outputClass, readTags);
     return agentProcess.then(
       (presence) => send(outputClass, { ...readTags, agent_process: presence }),
+      // report-ok: the host could not list processes (down or restarting). The launch
+      // failure is still reported just below, with agent_process as the fixed `unknown`.
       () => send(outputClass, { ...readTags, agent_process: 'unknown' }),
     );
   };
@@ -656,6 +664,8 @@ export function reportSessionLaunchFailure(failure: SessionLaunchFailure): void 
       const { outputClass, readTags } = classifiedOutputOf(session, rawScrollback);
       return sendOnceRead(outputClass, readTags);
     },
+    // report-ok: the host could not hand over the session's output (down or restarting).
+    // The launch failure is still reported, with its output class as `unreadable`.
     () => sendOnceRead('unreadable'),
   );
 }
@@ -1225,6 +1235,8 @@ function readPrintedOutput(readOutput: LaunchOutputReader): Promise<PrintedOutpu
   if (!readOutput) return Promise.resolve({ unread: 'not_read' });
   return readOutput().then(
     (text): PrintedOutput => (text === '' ? { unread: 'not_read' } : { text }),
+    // report-ok: the host could not hand over the output (down or restarting). The caller
+    // sends the launch report either way, with its output class as `unreadable`.
     (): PrintedOutput => ({ unread: 'unreadable' }),
   );
 }

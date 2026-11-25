@@ -19,7 +19,8 @@ export function writeExitSteps(
       try {
         write(step);
       } catch {
-        // The PTY may already be gone.
+        // report-ok: the PTY is already gone, since the agent took the first keys and
+        // exited. Whoever asked has a force-kill or a grace that follows either way.
       }
       continue;
     }

@@ -40,7 +40,8 @@ function applyWalAutoCheckpoint(db: Database.Database): void {
   try {
     db.pragma(`wal_autocheckpoint = ${walAutoCheckpointPages ?? 1000}`);
   } catch {
-    // A connection that cannot take it keeps checkpointing as it did.
+    // report-ok: a connection that cannot take the pragma keeps checkpointing as it did,
+    // and no write is lost.
   }
 }
 
@@ -130,7 +131,8 @@ function closeQuietly(db: Database.Database): void {
   try {
     db.close();
   } catch {
-    // Best effort. The handle is being abandoned either way.
+    // report-ok: the handle is being abandoned either way. After a failed open, that
+    // failure is the one notifyOpenFailure reports.
   }
 }
 

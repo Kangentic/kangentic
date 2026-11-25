@@ -258,6 +258,8 @@ export class BackpressureController {
       target.pause();
       return true;
     } catch {
+      // report-ok: a PTY torn down under the call. The session runs unpaused, as it did
+      // before backpressure existed.
       return false;
     }
   }
@@ -268,7 +270,7 @@ export class BackpressureController {
     try {
       target.resume();
     } catch {
-      // best-effort
+      // report-ok: a PTY torn down under the call, which has no output left to resume.
     }
   }
 }

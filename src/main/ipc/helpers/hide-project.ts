@@ -9,6 +9,7 @@ import type { IpcContext } from '../ipc-context';
 import type { Project } from '../../../shared/types';
 import { clearConversationExpired } from './pending-conversation-expired';
 import { closeProjectTaskWindows } from './task-windows';
+import { handlerStepReporter } from './handler-step-report';
 
 /**
  * What removing an SSH host does to the running app for each of its projects (#913), in two steps either side of
@@ -31,6 +32,8 @@ export async function suspendProjectForHiding(context: IpcContext, project: Proj
   const taskIds = new Set(listTaskIds().map((task) => task.id));
   for (const session of sessions) if (!session.transient) taskIds.add(session.taskId);
   await Promise.all([...taskIds].map((taskId) => pauseTaskSession(context, taskId, { projectId: project.id, suspendedBy: 'system' }).catch((error: unknown) => {
+    // The task's agent keeps running for a project whose host is being removed.
+    handlerStepReporter.report(error, { tags: { area: 'projects', step: 'hide_suspend' } });
     console.warn(`[remote] could not suspend task ${taskId.slice(0, 8)} of ${project.name}:`, error);
   })));
   // A Command Terminal and a workflow's own agent run in the project's folder on the host. Ending the terminal

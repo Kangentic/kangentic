@@ -1,7 +1,10 @@
 import { create, type StateCreator } from 'zustand';
 import { refreshPinnedStore, sharedModuleState } from './hmr-store-pin';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import { useToastStore } from './toast-store';
 import { describeAccountSwitchResult } from '../lib/account-toasts';
+import { ipcFailureToastFields } from '../lib/ipc-error';
 import {
   accountDisplayName,
   type AgentAccount,
@@ -119,6 +122,8 @@ const accountsStoreInitializer: StateCreator<AccountsState> = (set, get) => {
       set({ login: { loginId: started.loginId, accountId: started.accountId, agent, attempt } });
       return true;
     } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the tab's toast says the
+      // sign-in did not start.
       console.warn('[accounts] Could not start a sign-in:', error);
       if (stillOpen()) set({ login: null });
       return false;
@@ -150,8 +155,9 @@ const accountsStoreInitializer: StateCreator<AccountsState> = (set, get) => {
         set({ cards: answer.cards, checked: answer.checked, loaded: true });
       }
     } catch (error) {
-      // The cards on screen stay; the next push or the tab's next open lists again. Callers reach
-      // this from push handlers, where a rejection has nobody to catch it.
+      // report-ok: main's IPC wrap reports a handler's rejection, and the cards on screen stay.
+      // The next push or the tab's next open lists again. Callers reach this from push handlers,
+      // where a rejection has nobody to catch it.
       console.warn('[accounts] Could not list accounts:', error);
     }
   },
@@ -161,6 +167,8 @@ const accountsStoreInitializer: StateCreator<AccountsState> = (set, get) => {
     try {
       await window.electronAPI.accounts?.refreshUsage();
     } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the list below shows the
+      // usage main last read.
       console.warn('[accounts] Could not refresh usage:', error);
     }
     try {
@@ -184,6 +192,7 @@ const accountsStoreInitializer: StateCreator<AccountsState> = (set, get) => {
   closeLogin: () => {
     const { login, loginEnded } = get();
     // A sign-in still starting has no id yet; `beginLogin` ends it when main answers.
+    // report-ok: main's IPC wrap reports a handler's rejection, and the dialog closes either way.
     if (login?.loginId && !loginEnded) void window.electronAPI.accounts.cancelLogin(login.loginId).catch(() => undefined);
     set({ login: null, loginEnded: null });
   },
@@ -201,6 +210,8 @@ const accountsStoreInitializer: StateCreator<AccountsState> = (set, get) => {
     try {
       await window.electronAPI.accounts.reorder(agent, orderedIds);
     } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the list below puts main's
+      // order back on screen.
       console.warn('[accounts] Could not save the order:', error);
     } finally {
       // Main's order, saved or not: a failed save must not leave the dragged order on screen.
@@ -215,6 +226,8 @@ const accountsStoreInitializer: StateCreator<AccountsState> = (set, get) => {
     try {
       result = await window.electronAPI.accounts.switchTo(accountId);
     } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the toast below says the
+      // switch failed.
       console.warn('[accounts] Could not switch account:', error);
       result = { ok: false, agent: null, accountName: null, moved: 0, pending: 0, failed: 0 };
     }
@@ -226,7 +239,14 @@ const accountsStoreInitializer: StateCreator<AccountsState> = (set, get) => {
     try {
       await window.electronAPI.accounts.remove(accountId);
     } catch (error) {
+      // report-ok: the try holds only the IPC call, whose rejection main's wrap reports, and
+      // the toast tells the user the removal failed.
       console.warn('[accounts] Could not remove the account:', error);
+      useToastStore.getState().addToast({
+        title: i18n._(msg`Couldn't remove account`),
+        ...ipcFailureToastFields(error),
+        variant: 'error',
+      });
     }
     await get().loadAccounts();
   },

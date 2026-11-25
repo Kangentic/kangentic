@@ -2,6 +2,7 @@ import { getExistingProjectDb } from '../db/database';
 import { TaskRepository } from '../db/repositories/task-repository';
 import { WorkflowRepository } from '../db/repositories/workflow-repository';
 import type { IpcContext } from '../ipc/ipc-context';
+import { workflowEngineReporter } from './workflow-report';
 import { pauseWorkflow } from './workflow-service';
 
 /**
@@ -25,6 +26,9 @@ export async function pauseWorkflowsOfProject(context: IpcContext, projectId: st
     // One homed here keeps running on other boards with this board's tasks out of reach, member or not.
     for (const workflow of new WorkflowRepository(db).listOpen()) homes.set(workflow.id, projectId);
   } catch (error) {
+    // None of the project's workflows is paused before its host leaves: their agents
+    // keep running, and each workflow still reads Running with tasks nothing can reach.
+    workflowEngineReporter.report(error, { tags: { stage: 'hidden_project_read' } });
     console.warn(`[WORKFLOW] Could not read the workflows of project ${projectId.slice(0, 8)}, whose host is being removed:`, error);
     return;
   }
@@ -35,6 +39,9 @@ export async function pauseWorkflowsOfProject(context: IpcContext, projectId: st
         await pauseWorkflow(context, homeProjectId, workflowId, 'its host being removed');
       }
     } catch (error) {
+      // That workflow stays Running with its agents not stopped through Pause, so
+      // Resume has nothing to bring back when the host returns.
+      workflowEngineReporter.report(error, { tags: { stage: 'hidden_project_pause' } });
       console.warn(`[WORKFLOW] Could not pause workflow ${workflowId.slice(0, 8)} for a removed host:`, error);
     }
   }

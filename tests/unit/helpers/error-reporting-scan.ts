@@ -1,8 +1,9 @@
 /**
  * The detector behind tests/unit/error-reporting-coverage.test.ts
  * (.claude/rules/error-reporting.md). It finds every place a caught error
- * lands, a `catch` clause or a `.catch(callback)`, and decides whether that
- * site says what happened to the error.
+ * lands, a `catch` clause, a `.catch(callback)` or the rejection handler of
+ * `.then(onFulfilled, onRejected)`, and decides whether that site says what
+ * happened to the error.
  *
  * A site passes when its own body, not counting functions nested inside it:
  * - throws (a rethrow, or a wrapped error),
@@ -17,8 +18,12 @@
  * callback) does not count: it may never run. `console.*` never counts, and
  * neither does `markReported`, which records a report rather than making one.
  *
- * Out of reach, by decision: `.then(onFulfilled, onRejected)`, and an error
- * passed somewhere as a value (`onFailed(error)`), which the scan cannot follow.
+ * A `.then` rejection handler that is a bare name passes when the name is a
+ * reporter or the enclosing promise's own `reject`. A `.then` whose second
+ * argument is `undefined` or `null` has no handler and is not a site.
+ *
+ * Out of reach, by decision: an error passed somewhere as a value
+ * (`onFailed(error)`), which the scan cannot follow.
  */
 import * as ts from 'typescript';
 import { hasOptOutMarker } from './opt-out-marker';
@@ -53,9 +58,21 @@ export const REPORTER_FUNCTIONS: readonly string[] = [
   'reportPtyHostHandledError',
   'reportAccountProblem',
   'reportProblem',
+  // main: a workflow command's answer for a failure, which reports a defect
+  // before it turns it into `{ success: false }` (workflow-commands.ts)
+  'reportWorkflowCommandFailure',
+  // main: the card's "could not start" notice, which reports every step but
+  // `agent` through reportPreflightFailure; an `agent` step's callers report first
+  'notifySpawnBlocked',
+  // main: a provider CLI read's empty branch, which reports what the CLI never
+  // said (output that will not parse, a throw of the client's own)
+  'reportUnclassifiedDefect',
   // renderer
   'reportRendererFailure',
   'reportHandledRendererError',
+  // renderer: toast helpers that also call reportRendererFailure
+  'reportWorkflowFailure',
+  'reportTaskActionFailure',
 ];
 
 /** The pass marker, read through the shared reader so a reason is required. */
@@ -64,8 +81,13 @@ export const REPORT_OK_MARKER = 'report-ok';
 export interface CatchSite {
   file: string;
   line: number;
-  kind: 'catch' | '.catch';
+  kind: 'catch' | '.catch' | '.then';
   reported: boolean;
+}
+
+/** `undefined` or `null` in a handler's place: no handler at all. */
+function isAbsentHandler(node: ts.Expression): boolean {
+  return node.kind === ts.SyntaxKind.NullKeyword || (ts.isIdentifier(node) && node.text === 'undefined');
 }
 
 function isNestedFunction(node: ts.Node): boolean {
@@ -132,6 +154,55 @@ function markedAt(sourceFile: ts.SourceFile, lines: string[], siteStart: number,
   return false;
 }
 
+/** The marker a `RefusalError` that wraps a caught error carries: why its cause is known. */
+export const REFUSAL_WRAP_OK_MARKER = 'refusal-wrap-ok';
+
+export interface RefusalWrapSite {
+  file: string;
+  line: number;
+  marked: boolean;
+}
+
+/**
+ * Every `new RefusalError(..., { cause })` inside a catch clause.
+ *
+ * A `RefusalError` is skipped by `isExpectedFailure` before its `cause` is read,
+ * so wrapping a caught error in one hides whatever was caught: a `TypeError`
+ * inside goes unreported for good. It is right only when the catch classified the
+ * error first (one git cause, an abort, a probe whose only failure is the user's
+ * folder), and the marker is where that is said. An unclassified error is wrapped
+ * in a plain `Error` with `cause`, which `isExpectedFailure` judges by what it wraps.
+ */
+export function scanRefusalWraps(fileLabel: string, source: string): RefusalWrapSite[] {
+  const scriptKind = fileLabel.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  const sourceFile = ts.createSourceFile(fileLabel, source, ts.ScriptTarget.Latest, true, scriptKind);
+  const lines = source.split('\n');
+  const sites: RefusalWrapSite[] = [];
+
+  const carriesCause = (argument: ts.Expression): boolean =>
+    ts.isObjectLiteralExpression(argument) && argument.properties.some((property) =>
+      (ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property))
+      && ts.isIdentifier(property.name) && property.name.text === 'cause');
+
+  const visit = (node: ts.Node, insideCatch: boolean): void => {
+    const nowInsideCatch = insideCatch || ts.isCatchClause(node);
+    if (
+      nowInsideCatch
+      && ts.isNewExpression(node)
+      && ts.isIdentifier(node.expression)
+      && node.expression.text === 'RefusalError'
+      && (node.arguments ?? []).some(carriesCause)
+    ) {
+      const line = lineOf(sourceFile, node.getStart(sourceFile));
+      sites.push({ file: fileLabel, line: line + 1, marked: hasOptOutMarker(lines, line, REFUSAL_WRAP_OK_MARKER) });
+    }
+    ts.forEachChild(node, (child) => visit(child, nowInsideCatch));
+  };
+
+  visit(sourceFile, false);
+  return sites;
+}
+
 export function scanCatchSites(fileLabel: string, source: string): CatchSite[] {
   const scriptKind = fileLabel.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
   const sourceFile = ts.createSourceFile(fileLabel, source, ts.ScriptTarget.Latest, true, scriptKind);
@@ -158,6 +229,29 @@ export function scanCatchSites(fileLabel: string, source: string): CatchSite[] {
         reported = (name !== null && REPORTER_FUNCTIONS.includes(name)) || hasOptOutMarker(lines, callLine, REPORT_OK_MARKER);
       }
       sites.push({ file: fileLabel, line: callLine + 1, kind: '.catch', reported });
+    } else if (
+      ts.isCallExpression(node)
+      && ts.isPropertyAccessExpression(node.expression)
+      && node.expression.name.text === 'then'
+      && node.arguments.length === 2
+      && !isAbsentHandler(node.arguments[1])
+    ) {
+      // `.then(onFulfilled, onRejected)`: the second argument is a catch by
+      // another spelling. Located at the handler, where its marker goes.
+      const handler = node.arguments[1];
+      const handlerStart = handler.getStart(sourceFile);
+      const handlerLine = lineOf(sourceFile, handlerStart);
+      let reported: boolean;
+      if (ts.isArrowFunction(handler) || ts.isFunctionExpression(handler)) {
+        reported = bodyAccounts(handler.body) || markedAt(sourceFile, lines, handlerStart, handler.body);
+      } else {
+        // A named handler: a reporter, the enclosing promise's own `reject`
+        // (the error is handed on), or a marker on its line.
+        const name = lastNameOf(handler);
+        reported = (name !== null && (REPORTER_FUNCTIONS.includes(name) || name === 'reject'))
+          || hasOptOutMarker(lines, handlerLine, REPORT_OK_MARKER);
+      }
+      sites.push({ file: fileLabel, line: handlerLine + 1, kind: '.then', reported });
     }
     ts.forEachChild(node, visit);
   };

@@ -26,6 +26,7 @@ import { SessionRepository } from '../../db/repositories/session-repository';
 import { getProjectDb } from '../../db/database';
 import { getProjectRepos, notifySpawnBlocked } from '../helpers';
 import { isLiftableIdlePause } from '../helpers/idle-pause-lift';
+import { handlerStepReporter } from '../helpers/handler-step-report';
 import { resumeBlockReasonForTask } from '../../../shared/session-resume-eligibility';
 import { columnEnteredWhilePaused, resumeTaskSession } from './session-resume';
 import { isResumeInFlight } from './session-resume-controllers';
@@ -102,6 +103,8 @@ export async function resumeTaskOnOpen(
       try {
         options.onDecided?.(outcome);
       } catch (hookError) {
+        // The caller that answers on the decision (a paired phone's open) never hears it.
+        handlerStepReporter.report(hookError, { tags: { area: 'session_resume', step: 'on_decided_hook' } });
         console.warn('[SESSION_RESUME] onDecided hook threw:', hookError);
       }
     }
@@ -131,6 +134,9 @@ export async function resumeTaskOnOpen(
       onFailed: (step, error, failedTask) => notifySpawnBlocked(context, failedTask, step, error, resolvedProjectId, startPath),
     });
   } catch (error) {
+    // The opened task stays paused with no notice. The reporter skips a refusal, and a
+    // failed worktree or agent start that resumeTaskSession already reported.
+    handlerStepReporter.report(error, { tags: { area: 'session_resume', step: 'resume_on_open' } });
     console.warn(`[SESSION_RESUME] Task ${taskId.slice(0, 8)} did not resume on open:`, error);
   }
   // A resume that ended without accepting (its locked check found the task no

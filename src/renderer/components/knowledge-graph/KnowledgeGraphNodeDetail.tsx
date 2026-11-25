@@ -122,6 +122,8 @@ function useTaskSummary(taskId: string | null, nodeProjectId: string | null | un
       .then((text) => {
         if (current) setRead({ projectId, taskId, text });
       })
+      // report-ok: main's IPC wrap reports a handler's rejection, and the detail shows no
+      // task summary.
       .catch(() => undefined);
     return () => {
       current = false;

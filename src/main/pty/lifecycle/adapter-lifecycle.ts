@@ -1,6 +1,7 @@
 import type { AgentParser, SessionAttachment, SessionContext } from '../../../shared/types';
 import { forgetPlanApprovalSpawn } from '../../plan-approval/plan-approval-spawns';
 import { settleHostFiles } from '../../remote/host-file-sync';
+import { sessionManagerReporter } from '../session-manager-report';
 
 /**
  * Minimal session shape required by the adapter lifecycle helpers. The
@@ -83,6 +84,9 @@ export function releaseCommandHold(
   try {
     agentParser?.removeHooks?.(commandCwd, sessionId);
   } catch (error) {
+    // The adapter's hooks or MCP entry stay in the folder's shared file for the
+    // rest of the run, where the user's own CLI in that folder picks them up.
+    sessionManagerReporter.report(error, { tags: { stage: 'hooks_release' } });
     console.error(`[ADAPTER] Releasing the hold of session ${sessionId.slice(0, 8)} failed:`, error);
   }
   // For a CLI on a host, the strip above edited this computer's copy of the host's files; the same

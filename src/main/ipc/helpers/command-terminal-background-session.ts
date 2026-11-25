@@ -62,6 +62,8 @@ export async function stopCommandTerminalBackgroundSession(conversation: Command
   try {
     backgroundId = await adapter.backgroundSessionOf({ agentSessionId, cwd, place });
   } catch (error) {
+    // report-ok: the adapter's read catches its own failures and answers null for any doubt
+    // (claudeBackgroundSessionOf never throws). A throw here reads the same way.
     warn(`could not check whether ${agentSessionId.slice(0, 8)} is in a background session`, error);
     return null;
   }
@@ -76,6 +78,9 @@ export async function stopCommandTerminalBackgroundSession(conversation: Command
     const stopRan = await stopBackgroundSessionOnAccount(adapter, { agentSessionId: backgroundId, cliPath }, conversation.accountId);
     if (stopRan) console.log(`[COMMAND_TERMINAL] stopped the background session ${backgroundId.slice(0, 8)} holding ${agentSessionId.slice(0, 8)}`);
   } catch (error) {
+    // report-ok: the stop catches its own failures (stopBackgroundSessionOnAccount never
+    // throws). What can throw is detecting the CLI of an ended terminal, whose background
+    // session is then left to the leftover reap that follows the end.
     warn(`could not stop the background session ${backgroundId.slice(0, 8)}`, error);
   }
   return backgroundId;
@@ -109,6 +114,9 @@ export async function settleCommandTerminalResume(conversation: CommandTerminalC
     );
     return resolved;
   } catch (error) {
+    // report-ok: the adapter's read catches its own failures and answers the same id for
+    // anything unproven (resolveClaudeResumableSessionId never throws). A throw here reads
+    // the same way, and the resume's own check decides a conversation that is gone.
     warn(`could not resolve which id resumes ${agentSessionId.slice(0, 8)}`, error);
     return agentSessionId;
   }

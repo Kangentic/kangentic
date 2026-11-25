@@ -62,7 +62,8 @@ export class SpawnWorkerHandler {
         this.probe ??= (this.options.createProbe ?? createProcessTreeProbe)();
         this.probe.listAllProcesses().then(
           (rows) => this.post({ type: 'listProcessesResult', id: message.id, rows }),
-          // [] is "no table this cycle", as the probe itself answers a failure.
+          // report-ok: [] is "no table this cycle", as the probe itself answers a failure,
+          // and the watcher that asked skips the cycle and asks again on the next.
           () => this.post({ type: 'listProcessesResult', id: message.id, rows: [] }),
         );
         return;

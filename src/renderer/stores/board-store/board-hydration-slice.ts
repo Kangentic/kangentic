@@ -90,7 +90,9 @@ export const createBoardHydrationSlice: StateCreator<BoardStore, [], [], BoardHy
       }));
       // A mounted viewer still needs an authoritative full refresh (an agent may
       // have archived a task); do it off the hydration critical path.
-      if (keepFull) void get().loadArchivedTasks().catch(() => {});
+      // loadArchivedTasks has no catch of its own, so this is where its failure
+      // lands: the Completed dialog then shows a list an agent's archive never reached.
+      if (keepFull) void get().loadArchivedTasks().catch((error: unknown) => { reportRendererFailure('board', 'archived_refresh', error); });
     } catch (error) {
       console.error('[board-store] Failed to load board:', error);
       // The user sees an empty or stale board. A rejected IPC call already
@@ -115,8 +117,12 @@ export const createBoardHydrationSlice: StateCreator<BoardStore, [], [], BoardHy
       // Reloaded with every board load: an unchanged list keeps its identity, or
       // every open task window (whose detail host carries it) re-renders each time.
       set((state) => ({ shortcuts: keepIfSameJson(state.shortcuts, shortcuts) }));
-    } catch {
-      // Non-fatal: shortcuts are optional
+    } catch (error) {
+      // The board works without shortcuts, but their pills go missing with no
+      // word. Reports a throw from reading the list or applying it; a rejection
+      // main saw is dropped there. A failed icon chunk load never lands here:
+      // ensureIcons swallows it.
+      reportRendererFailure('board', 'shortcuts', error);
     }
   },
 });

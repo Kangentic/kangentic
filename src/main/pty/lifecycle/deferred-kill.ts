@@ -258,7 +258,8 @@ function disposeAll(disposables: PtyDisposable[] | undefined): void {
     try {
       disposable.dispose();
     } catch {
-      // Best-effort: node-pty may have already torn down the emitter.
+      // report-ok: detaching a listener from a PTY being force-killed. An emitter
+      // already torn down has nothing left to deliver.
     }
   }
 }

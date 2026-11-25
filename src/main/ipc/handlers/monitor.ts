@@ -26,6 +26,7 @@ import { onWorkflowChanged } from '../../workflows/workflow-changed';
 import { MonitorPeekTracker } from '../../monitor/monitor-peek-tracker';
 import { buildTaskDetailBundle } from '../../monitor/task-detail-bundle';
 import type { IpcContext } from '../ipc-context';
+import { handlerStepReporter } from '../helpers/handler-step-report';
 
 /**
  * Coalescing window for snapshot rebuilds. A single board move can emit several
@@ -94,6 +95,8 @@ export function registerMonitorHandlers(context: IpcContext): void {
       // per-project OPEN, but the per-row reads against an already-open handle
       // are not individually wrapped, so a mid-loop throw would otherwise reject
       // this invoke and leave the monitor blank for every project.
+      // The empty answer still shows the Agent Monitor with no rows and no reason.
+      handlerStepReporter.report(error, { tags: { area: 'monitor', step: 'snapshot_fetch' } });
       console.error('[monitor] Failed to build snapshot for fetch:', error);
       return { rows: [], generatedAt: new Date().toISOString() };
     }
@@ -169,6 +172,8 @@ export function registerMonitorHandlers(context: IpcContext): void {
         // A catch, not a second argument to then: a broadcast that throws (a
         // pop-out torn down mid-send) is caught too.
       }).catch((error: unknown) => {
+        // The Agent Monitor keeps showing rows that are out of date.
+        handlerStepReporter.report(error, { tags: { area: 'monitor', step: 'snapshot_push' } });
         console.error('[monitor] Failed to build snapshot for push:', error);
       });
     }, MONITOR_PUSH_DEBOUNCE_MS);

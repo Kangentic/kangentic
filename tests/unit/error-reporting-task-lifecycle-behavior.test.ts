@@ -16,6 +16,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Project, Swimlane, Task } from '../../src/shared/types';
+import { reportedFailures, type ReportedFailure } from './helpers/reported-failures';
 
 const reportHandledError = vi.fn();
 vi.mock('../../src/main/analytics/error-reporting', async (importOriginal) => ({
@@ -39,13 +40,10 @@ function removeInstalledMocks(): void {
   vi.resetModules();
 }
 
-interface ReportedCall {
-  sent: Error;
-  tags: Record<string, string>;
-}
+type ReportedCall = ReportedFailure;
 
 function reportedCalls(): ReportedCall[] {
-  return reportHandledError.mock.calls.map((call) => ({ sent: call[0] as Error, tags: call[1] as Record<string, string> }));
+  return reportedFailures(reportHandledError);
 }
 
 // ---------------------------------------------------------------------------
@@ -210,6 +208,9 @@ describe('handleTaskMove failures', () => {
         cleanupTaskResources: vi.fn(async () => {}),
         deleteTaskWorktree: vi.fn(async () => true),
         autoSpawnForTask: vi.fn(async () => {}),
+        // The move's exit group calls this when its rows ran. Left out, reading it throws,
+        // and the exit group's own catch reports that as a second failure.
+        reportAutomationFailures: vi.fn(),
       }),
     });
     ({ handleTaskMove } = await import('../../src/main/ipc/handlers/task-move'));

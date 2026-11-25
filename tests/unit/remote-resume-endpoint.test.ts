@@ -542,6 +542,32 @@ describe('handlers that throw', () => {
     expect(rig.endpoint.stats.receiveOffset).toBeGreaterThan(0);
   });
 
+  it('survives a throwing onMessage, reports it, and still takes the next message in order', async () => {
+    const boom = new Error('message exploded');
+    const delivered: number[] = [];
+    const rig = makeThrowing({
+      onMessage: (json) => {
+        const index = (json as { n: number }).n;
+        if (index === 1) throw boom;
+        delivered.push(index);
+      },
+    });
+    const link = makeSide('link');
+    connect(link, { endpoint: rig.endpoint } as Side);
+    await settle();
+
+    link.endpoint.send({ n: 1 });
+    link.endpoint.send({ n: 2 });
+    await settle();
+
+    // The throw is handed to onError and never out of the stream's data listener.
+    expect(rig.errors).toEqual([boom]);
+    expect(delivered).toEqual([2]);
+    expect(rig.endpoint.connected).toBe(true);
+    // The failed message still counts as received, so a resume does not replay it.
+    expect(rig.endpoint.stats.receiveOffset).toBeGreaterThan(0);
+  });
+
   it('survives a throwing onGap and reports it', async () => {
     const boom = new Error('gap exploded');
     const rig = makeThrowing({ onGap: () => { throw boom; } });

@@ -30,6 +30,7 @@ import { sendToRenderer } from '../send-to-renderer';
 import { queueConversationExpired } from './pending-conversation-expired';
 import { getProjectRepos } from './project-repos';
 import { resolveProjectDefaultBaseBranch } from './default-base-branch';
+import { handlerStepReporter } from './handler-step-report';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
 import { loadTaskProfile } from './task-profile';
 import type { IpcContext } from '../ipc-context';
@@ -94,7 +95,10 @@ export class BranchCheckoutBlockedError extends UserConfigurationError {
 function isSameDirectory(first: string, second: string): boolean {
   try {
     return path.relative(path.resolve(first), path.resolve(second)) === '';
-  } catch {
+  } catch (error) {
+    // Nothing here is known to throw. If it does, a live agent in the folder is not
+    // seen, and a checkout or merge goes ahead under it.
+    handlerStepReporter.report(error, { tags: { area: 'task_git', step: 'same_directory_check' } });
     return false;
   }
 }
@@ -157,7 +161,8 @@ function assertNoOtherAgentInDirectory(
   try {
     blockingTitle = getProjectRepos(context).tasks.getById(occupant.taskId)?.title ?? null;
   } catch {
-    // Naming the blocker is a nicety; never let it turn into the failure.
+    // report-ok: this read only names the blocker. The refusal thrown below still goes
+    // out, with the blocking task's short id in place of its title.
   }
   throw new BranchCheckoutBlockedError(directory, occupant.taskId, blockingTitle);
 }
@@ -676,6 +681,8 @@ export async function ensureTaskWorktree(
     // first, inside this hold, so a later creation at this path never clears
     // the directory under it.
     const launched = scriptMode.launchAgent(result.worktreePath).catch((error: unknown) => {
+      // report-ok: an early launch that fails or is aborted costs only its head start.
+      // spawnAgent starts the agent after the script, and reports a start that fails there.
       if (!isAbortError(error)) console.warn(`[INIT-SCRIPT] Early agent launch failed for task ${task.id.slice(0, 8)}:`, error);
       return null;
     });
@@ -702,16 +709,22 @@ export async function ensureTaskWorktree(
     // runs on past the early return below), a start that could have taken a
     // spare asks for one for the next task. The pool waits until no init
     // script runs before it builds.
-    void creation.then(() => {
-      if (spareEligibleStart && madeWorktree) {
-        sparePool.request(resolvedProjectPath, spareHooksFor(context, resolvedProjectPath, tasks));
-      }
-    }, () => undefined);
+    void creation.then(
+      () => {
+        if (spareEligibleStart && madeWorktree) {
+          sparePool.request(resolvedProjectPath, spareHooksFor(context, resolvedProjectPath, tasks));
+        }
+      },
+      // report-ok: the caller holds this same promise and gets its rejection. A start that
+      // failed asks for no spare.
+      () => undefined,
+    );
   }
   if (scriptMode?.mode !== 'background') return creation;
-  // A background script's failure is reported inside the creation, so a
-  // rejection here can only come before the worktree was recorded, which the
-  // race below already passes on. Handled so the settle after it is not unhandled.
+  // report-ok: the race below passes this same rejection on to the caller. A background
+  // script's failure is caught inside the creation and shown as a warning on the task, so
+  // a rejection here can only come before the worktree was recorded. Handled so the
+  // settle after it is not unhandled.
   creation.catch(() => undefined);
   return Promise.race([recordedBeforeScript, creation]);
 }
@@ -771,6 +784,8 @@ async function adoptSpareWorktree(input: {
     await worktreeManager.linkFolders(result.worktreePath, input.setup);
     if (input.scriptMode?.mode === 'hold-prompt') {
       launched = input.scriptMode.launchAgent(result.worktreePath).catch((error: unknown) => {
+        // report-ok: an early launch that fails or is aborted costs only its head start.
+        // spawnAgent starts the agent after the script, and reports a start that fails there.
         if (!isAbortError(error)) console.warn(`[INIT-SCRIPT] Early agent launch failed for task ${shortId}:`, error);
         return null;
       });
@@ -861,6 +876,9 @@ function reportBackgroundSetupFailure(context: IpcContext, task: Task, error: un
     });
     if (held.status === 'refused') console.warn(`[INIT-SCRIPT] Could not tell the agent of task ${task.id.slice(0, 8)}: ${held.error}`);
   } catch (holdError) {
+    // The user got the warning on the task, but the agent is never told its setup script
+    // failed, so it works on without what the script installs.
+    handlerStepReporter.report(holdError, { tags: { area: 'task_git', step: 'setup_failure_notice' } });
     console.warn(`[INIT-SCRIPT] Could not tell the agent of task ${task.id.slice(0, 8)}:`, holdError);
   }
 }
@@ -928,7 +946,9 @@ async function surfaceWorktreeBaseDrift(
       }
     }, { priority: GitQueuePriority.BACKGROUND, label: `drift-probe:${task.id.slice(0, 8)}` });
   } catch {
-    // Best-effort surfacing; a probe failure must never surface as a spawn failure.
+    // report-ok: a probe that was aborted, timed out, or lost its worktree leaves the card
+    // without its "base N behind" note. A base fetch that fails is surfaced by its own
+    // outcome handler, and a probe failure must never surface as a spawn failure.
   }
 }
 
@@ -1014,7 +1034,8 @@ export async function ensureTaskBranchCheckout(
         await git.raw(['rev-parse', '--verify', task.branch_name!]);
         branchExists = true;
       } catch {
-        // Branch does not exist locally
+        // report-ok: git exits non-zero when the branch does not exist locally, which is
+        // the answer.
       }
 
       if (!branchExists) {
@@ -1024,7 +1045,8 @@ export async function ensureTaskBranchCheckout(
           await git.raw(['rev-parse', '--verify', `origin/${task.branch_name}`]);
           existsOnRemote = true;
         } catch {
-          // Not on remote either
+          // report-ok: git exits non-zero when the branch is not on the remote either, which
+          // is the answer.
         }
 
         if (existsOnRemote) {
@@ -1076,7 +1098,8 @@ export async function ensureTaskBranchCheckout(
         try {
           await git.raw(['merge', '--ff-only', fetchedBranch]);
         } catch {
-          // Local ahead or diverged: keep local state.
+          // report-ok: git refuses a fast-forward when the local branch is ahead or has
+          // diverged, and the local state is kept.
         }
       }
     }, { label: `checkout-branch:${task.id.slice(0, 8)}`, onWaitProgress: options?.onWaitProgress });
@@ -1129,7 +1152,8 @@ export async function ensureTaskBranchCheckout(
       try {
         await git.raw(['merge', '--ff-only', fetched]);
       } catch {
-        // Local ahead or diverged: keep local state.
+        // report-ok: git refuses a fast-forward when the local base is ahead or has
+        // diverged, and the local state is kept.
       }
     }
   }, { label: `checkout-branch:${task.id.slice(0, 8)}`, onWaitProgress: options?.onWaitProgress });

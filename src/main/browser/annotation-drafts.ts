@@ -191,7 +191,11 @@ const retiredOwners = new Map<string, number>();
 
 function inOwnerOrder<T>(folder: string, operation: () => Promise<T>): Promise<T> {
   const previous = ownerChains.get(folder) ?? Promise.resolve();
+  // report-ok: this operation runs after the owner's previous one either way. A failure there
+  // went to its own caller through its `run`.
   const run = previous.then(operation, operation);
+  // report-ok: this copy only orders the owner's next operation. The caller gets a failure
+  // through `run`, which is what this function returns.
   const settled = run.then(() => undefined, () => undefined);
   ownerChains.set(folder, settled);
   void settled.then(() => {

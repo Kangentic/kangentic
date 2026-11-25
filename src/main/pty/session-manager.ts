@@ -99,6 +99,7 @@ import { reapTaggedProcessesInWsl, wslReapSpecs } from './process-tag/wsl-reap';
 import { childProcessEnv } from '../shared/child-env';
 import { resolveTaskDirectories } from './process-tag/task-directories';
 import { hostFailureCodeOf, reportTaskReapFailure } from './task-reap-failure-report';
+import { sessionManagerReporter } from './session-manager-report';
 import {
   LAUNCH_ABANDON_MS,
   classifySessionOutput,
@@ -197,7 +198,8 @@ async function removeCommandTerminalDirectory(sessionDirectory: string): Promise
   try {
     await fsPromises.rm(sessionDirectory, { recursive: true, force: true });
   } catch {
-    // Best-effort cleanup
+    // report-ok: removing an ended Command Terminal's folder, which holds only its
+    // bridges' status and event files. One a handle still holds stays on disk.
   }
 }
 
@@ -931,6 +933,9 @@ export class SessionManager extends EventEmitter {
         try {
           this.emit('turn-ended', payload);
         } catch (error) {
+          // A listener that throws stops the ones after it: the column's turn-end
+          // automations and the workflow's step check never run for this turn.
+          sessionManagerReporter.report(error, { tags: { stage: 'turn_ended_listener' } });
           console.error(`[SESSION] turn-ended listener threw for ${sessionId.slice(0, 8)}:`, error);
         }
       },
@@ -953,6 +958,9 @@ export class SessionManager extends EventEmitter {
         try {
           this.emit('turn-ended-held', payload);
         } catch (error) {
+          // As above, for the turn end reported while background work holds the
+          // session: its listeners after the one that threw never hear of it.
+          sessionManagerReporter.report(error, { tags: { stage: 'turn_ended_held_listener' } });
           console.error(`[SESSION] turn-ended-held listener threw for ${sessionId.slice(0, 8)}:`, error);
         }
       },
@@ -994,6 +1002,8 @@ export class SessionManager extends EventEmitter {
         // scraping if gh is unavailable.
         void this.host.getRawScrollback(sessionId).then(
           (scrollback) => this.emit('pr-candidate', sessionId, scrollback),
+          // report-ok: the host could not hand over the scrollback (down or restarting).
+          // The candidate still fires, and the listener's branch query needs no text.
           () => this.emit('pr-candidate', sessionId, ''),
         );
       },
@@ -1102,8 +1112,11 @@ export class SessionManager extends EventEmitter {
             waitForFile: options?.conversationMoved
               ? () => this.registry.get(sessionId)?.status === 'running'
               : undefined,
-          }).catch((err) => {
-            console.warn(`[session-history] attach failed for session=${sessionId.slice(0, 8)}:`, err);
+          }).catch((error: unknown) => {
+            // The reader catches its own file and parser failures, so this is the
+            // attach itself: the session shows no model, tokens or context.
+            sessionManagerReporter.report(error, { tags: { stage: 'history_attach' } });
+            console.warn(`[session-history] attach failed for session=${sessionId.slice(0, 8)}:`, error);
           });
         }
       },
@@ -1603,6 +1616,10 @@ export class SessionManager extends EventEmitter {
     try {
       await this.host.transport.request('closeProject', { projectId });
     } catch (error) {
+      // A host that is down holds no handle, and the reporter skips that by name.
+      // A host that is up and failed the close still holds the file: on Windows
+      // the delete that follows leaves the project's database in app data.
+      sessionManagerReporter.report(error, { tags: { stage: 'project_close' } });
       console.warn('[pty-host] closing a project database failed:', error);
     }
   }
@@ -2003,6 +2020,8 @@ export class SessionManager extends EventEmitter {
     }
     session.agentProcessAtEnd = this.host.listProcesses().then(
       (rows) => agentProcessPresenceOf(rows, shellPid),
+      // report-ok: the host could not list processes (down or restarting). The
+      // abandoned-launch report still goes, with agent_process as the fixed `unknown`.
       (): AgentProcessPresence => 'unknown',
     );
   }
@@ -2146,7 +2165,7 @@ export class SessionManager extends EventEmitter {
     try {
       session.pty.resize(jiggleCols, rows);
     } catch (error) {
-      // node-pty can throw on a just-died ConPTY; the exit path owns cleanup.
+      // report-ok: a resize on a PTY that just exited, whose exit path owns cleanup.
       // Nothing landed, so the child still holds `cols`.
       traceTerminal(sessionId, 'resize-reassert-failed', { trigger, leg: 'jiggle', message: String(error) });
       return;
@@ -2155,6 +2174,8 @@ export class SessionManager extends EventEmitter {
       session.pty.resize(cols, rows);
       traceTerminal(sessionId, 'resize-reassert', { trigger, cols, rows, jiggleCols });
     } catch (error) {
+      // report-ok: the handle throws for a PTY that exited between the two legs, and
+      // its exit path owns cleanup. Traced for the terminal forensics.
       // The narrow leg landed but the restore did not: node-pty caches dims
       // only on a successful resize, so the child sits at cols-1 until the
       // next real resize. The leg field lets forensics tell this stranded
@@ -2209,7 +2230,7 @@ export class SessionManager extends EventEmitter {
       this.host.post({ type: 'markResized', sessionId });
       pty.resize(pty.cols, jiggleRows);
     } catch (error) {
-      // node-pty can throw on a just-died ConPTY; the exit path owns cleanup.
+      // report-ok: a resize on a PTY that just exited, whose exit path owns cleanup.
       traceTerminal(sessionId, 'terminal-repaint-failed', { leg: 'jiggle', message: String(error) });
       return;
     }
@@ -2222,6 +2243,8 @@ export class SessionManager extends EventEmitter {
         pty.resize(pty.cols, rows);
         traceTerminal(sessionId, 'terminal-repaint', { cols: pty.cols, rows, jiggleRows });
       } catch (error) {
+        // report-ok: the PTY exited during the gap between the legs, and its exit path
+        // owns cleanup. Traced for the terminal forensics.
         traceTerminal(sessionId, 'terminal-repaint-failed', { leg: 'restore', message: String(error) });
       }
     }, TERMINAL_REPAINT_LEG_GAP_MS);
@@ -2536,6 +2559,9 @@ export class SessionManager extends EventEmitter {
     try {
       return { anchor: source.transcriptPosition(sessionId), settling: source.hasPendingRead(sessionId) };
     } catch (error) {
+      // With no anchor the next turn end cannot tell the turn's own reply from
+      // the message an earlier turn ended on.
+      sessionManagerReporter.report(error, { tags: { stage: 'message_trail_read' } });
       console.error(`[SESSION] transcript position read threw for ${sessionId.slice(0, 8)}:`, error);
       return { anchor: null, settling: false };
     }
@@ -2548,6 +2574,9 @@ export class SessionManager extends EventEmitter {
     try {
       return source.hasReadInFlight(sessionId);
     } catch (error) {
+      // Read as no read running, a turn stamped mid-read keeps an anchor that
+      // sits before the last turn's closing text.
+      sessionManagerReporter.report(error, { tags: { stage: 'message_trail_read' } });
       console.error(`[SESSION] transcript read-in-flight check threw for ${sessionId.slice(0, 8)}:`, error);
       return false;
     }
@@ -2720,7 +2749,10 @@ export class SessionManager extends EventEmitter {
       const totals = source.readToolTotals(session);
       this.telemetry.setEarlierToolCallCount(sessionId, totals.toolCallCount);
       return { session, totals };
-    } catch {
+    } catch (error) {
+      // A missing database already reads as zero, so this is the read failing:
+      // the card's tool-call count leaves out the task's earlier runs.
+      sessionManagerReporter.report(error, { tags: { stage: 'earlier_run_totals' } });
       return null;
     }
   }
@@ -2988,6 +3020,9 @@ export class SessionManager extends EventEmitter {
     try {
       return this.sessionQueue.replaceCommand(sessionId, input.rebuildCommand(settings));
     } catch (error) {
+      // The settings were saved, yet the waiting agent starts with its old
+      // command: the model or effort the user just chose is not the one it runs.
+      sessionManagerReporter.report(error, { tags: { stage: 'queued_command_rebuild' } });
       console.error(`[SessionManager] Could not rebuild the queued command for session ${sessionId.slice(0, 8)}:`, error);
       return false;
     }
@@ -3291,6 +3326,8 @@ export class SessionManager extends EventEmitter {
       if (!this.registry.has(sessionId)) return;
       const usage = parser.usageFromOutput?.(screen ?? '');
       if (usage) this.telemetry.setSessionUsage(sessionId, usage);
+      // report-ok: a missed read leaves the record's seed on the card, and the agent's
+      // next paint fills the figure in.
     }).catch(() => undefined);
   }
 
@@ -3373,6 +3410,9 @@ export class SessionManager extends EventEmitter {
     try {
       this.emit('session-resumed', payload);
     } catch (error) {
+      // A listener that throws stops the ones after it, so the resume's
+      // follow-ups (its catch-up turn end, its held messages) never run.
+      sessionManagerReporter.report(error, { tags: { stage: 'session_resumed_listener' } });
       console.error(`[SESSION] session-resumed listener threw for ${sessionId.slice(0, 8)}:`, error);
     }
   }
@@ -3628,6 +3668,8 @@ export class SessionManager extends EventEmitter {
   drain(sessionId: string): Promise<void> {
     const pty = this.registry.get(sessionId)?.pty;
     if (!pty) return Promise.resolve();
+    // report-ok: a host that cannot answer took its PTYs, write queues included, with
+    // it, so there is nothing left to drain and the caller goes on.
     return this.host.drainWrites(pty.ptyId).then(() => undefined, () => undefined);
   }
 
@@ -3663,6 +3705,8 @@ export class SessionManager extends EventEmitter {
     if (!this.registry.get(sessionId)?.pty) return Promise.resolve(this.getPendingDraft(sessionId));
     return this.host.getPromptDraft(sessionId).then(
       (draft) => draft,
+      // report-ok: the host could not answer (down or restarting), and main's mirror
+      // of the draft is the documented fallback. It trails by one promptDraft event.
       () => this.getPendingDraft(sessionId),
     );
   }
@@ -3857,6 +3901,7 @@ export class SessionManager extends EventEmitter {
     try {
       session.pty.resize(clampedCols, clampedRows);
     } catch (error) {
+      // report-ok: a resize on a PTY that has exited, whose exit path owns cleanup.
       // node-pty throws a plain Error once the child has exited but before
       // onExit has nulled session.pty (up to ~1s on Windows, where the exit
       // event waits on the conout flush). Same hazard the jiggle ladder in
@@ -4184,6 +4229,8 @@ export class SessionManager extends EventEmitter {
     try {
       return await this.host.listProcesses();
     } catch {
+      // report-ok: the host did not answer or is restarting. [] is the documented
+      // answer for no table, which a caller reads as unknown.
       return [];
     }
   }
@@ -4227,6 +4274,8 @@ export class SessionManager extends EventEmitter {
     const reapTasks = (await Promise.all(validTasks.map(async (task) => ({
       taskId: task.id,
       directories: await resolveTaskDirectories(projectPath, task.worktreePath),
+      // report-ok: a worktree folder that is already gone has no real path, and its
+      // stored form is used.
       worktreePath: task.worktreePath ? await fsPromises.realpath(task.worktreePath).catch(() => task.worktreePath) : null,
     })))).filter((task) => task.directories.length > 0);
     if (reapTasks.length === 0) return [];
@@ -4254,6 +4303,8 @@ export class SessionManager extends EventEmitter {
     // shell of its own whatever shell is configured, so the reap runs in each
     // distro a task's CLI ran in as well as in the configured shell's.
     if (process.platform === 'win32' && options.stop) {
+      // report-ok: getDefaultShell falls back to a fixed shell and does not reject, so
+      // this only keeps the reap from throwing. No shell names no distro of its own.
       const shellSpec = parseWslShellSpec(await this.getShell().catch(() => ''));
       for (const wslSpec of wslReapSpecs(shellSpec, options.wslDistros ?? [])) {
         killedPids.push(...await this.reapInDistro(wslSpec, reapTasks));
@@ -4377,6 +4428,9 @@ export class SessionManager extends EventEmitter {
       if (result.failureCode) console.warn(`[REAPER] worktree holder stop failed (pid=${pid}): ${result.failureReason}`);
       return result.outcome;
     } catch (error) {
+      // report-ok: a holder stop only logs, by decision, since it is not a Stop the
+      // user asked for. Failed, the removal goes on to name its holders, as a failed
+      // kill by pid did.
       console.warn(`[REAPER] worktree holder stop failed (pid=${pid}):`, error instanceof Error ? error.message : String(error));
       return 'failed';
     }
@@ -4434,6 +4488,8 @@ export class SessionManager extends EventEmitter {
       const probeTasks = (await Promise.all(validTasks.map(async (task) => ({
         taskId: task.id,
         directories: await resolveTaskDirectories(projectPath, task.worktreePath),
+        // report-ok: a worktree folder that is already gone has no real path, and its
+        // stored form is used.
         worktreePath: task.worktreePath ? await fsPromises.realpath(task.worktreePath).catch(() => task.worktreePath) : null,
       })))).filter((task) => task.directories.length > 0);
       if (probeTasks.length === 0) return [];
@@ -4443,6 +4499,10 @@ export class SessionManager extends EventEmitter {
       );
       return result.failed ? null : result.entries;
     } catch (error) {
+      // No answer reads as could not tell, so a project's Stop script never runs
+      // after an idle pause. A scan that fails in the host is relayed from there
+      // (`task_tree_probe`), and a host that is down or slow is skipped by name.
+      sessionManagerReporter.report(error, { tags: { stage: 'task_tree_probe' } });
       console.warn('[STOP-SCRIPT] host probe failed (non-fatal):', error);
       return null;
     }
@@ -4461,6 +4521,8 @@ export class SessionManager extends EventEmitter {
       const answers = await this.host.checkReportedProcesses(identities, REPORTED_PROCESS_CHECK_TIMEOUT_MS);
       return identities.map((_identity, index) => answers[index] ?? null);
     } catch {
+      // report-ok: a host that cannot answer reads as cannot tell for every process,
+      // which changes no row, and the list asks again on its next recheck.
       return identities.map(() => null);
     }
   }
@@ -4673,6 +4735,8 @@ export class SessionManager extends EventEmitter {
         }
         this.telemetry.requestAgentAbsenceCheck(sessionId);
       })
+      // report-ok: the host could not hand over the launch output, down or restarting.
+      // The cooldown below runs the check again when more output arrives.
       .catch((error: unknown) => {
         console.warn(
           `[START_BOUND] Launch output check failed for ${sessionId.slice(0, 8)}:`,
@@ -5041,6 +5105,8 @@ export class SessionManager extends EventEmitter {
         console.log(`${logPrefix} ${agentExit.stillRunning.length} process(es) an exited shell left were still running after ${agentExit.waitedMs} ms: ${agentExit.stillRunning.join(', ')}`);
       }
     } catch (error) {
+      // report-ok: the host could not answer the wait, down or past its timeout. The
+      // caller goes on as it does when the wait runs out its bound.
       console.warn(`${logPrefix} agent exit wait failed (non-fatal):`, error instanceof Error ? error.message : String(error));
     }
   }
@@ -5211,6 +5277,8 @@ export class SessionManager extends EventEmitter {
     // hold the caller's task lock, and the queue's freed slot, for the
     // transport's whole request timeout.
     if (!this.telemetry.hasAgentSessionId(sessionId)) {
+      // report-ok: a host that is down or slow gives no scrollback to scan. This is
+      // the last look for an agent session id, and the suspend must not wait on it.
       const rawScrollback = await this.host.getRawScrollback(sessionId, SUSPEND_SCROLLBACK_SCAN_TIMEOUT_MS).catch(() => '');
       this.sessionIdManager.scanScrollback(sessionId, session.agentParser, rawScrollback);
     }
@@ -5714,6 +5782,7 @@ export class SessionManager extends EventEmitter {
     try {
       return (await fsPromises.stat(outputFile)).size;
     } catch {
+      // report-ok: the shell's output file is not there, which is the documented null.
       return null;
     }
   }

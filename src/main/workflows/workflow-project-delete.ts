@@ -6,6 +6,7 @@ import type { IpcContext } from '../ipc/ipc-context';
 import { notifyWorkflowChanged } from './workflow-changed';
 import { announceBoardChange } from './workflow-board-announce';
 import { deleteWorkflow } from './workflow-service';
+import { workflowEngineReporter } from './workflow-report';
 import { wakeWorkflowEngine } from './workflow-wake';
 
 /**
@@ -43,6 +44,9 @@ export function detachProjectFromWorkflows(context: IpcContext, deletedProjectId
       deletedTasks.releaseAllWorkflowMembers();
     }
   } catch (error) {
+    // The deleted board's tasks stay members, so an engine pass can start one while the
+    // delete kills its sessions, and a workflow left with no task is never deleted.
+    workflowEngineReporter.report(error, { tags: { stage: 'project_delete_detach' } });
     console.error(`[PROJECT_DELETE] Could not read the workflows of project ${deletedProjectId.slice(0, 8)}:`, error);
   }
 
@@ -72,6 +76,9 @@ export function detachProjectFromWorkflows(context: IpcContext, deletedProjectId
           .filter((task) => (task.workflow_project_id ?? project.id) === candidate.homeProjectId).length;
       }
     } catch (error) {
+      // That board keeps tasks and links naming a project that is gone: a task waits on
+      // a blocker nothing can finish, and each read of it makes the database again.
+      workflowEngineReporter.report(error, { tags: { stage: 'project_delete_detach' } });
       unreadBoards.push(project.name);
       console.error(`[PROJECT_DELETE] Could not detach project ${deletedProjectId.slice(0, 8)} from the workflows on ${project.name}:`, error);
     }
@@ -93,6 +100,9 @@ export function detachProjectFromWorkflows(context: IpcContext, deletedProjectId
         if (workflow?.state !== 'running' && workflow?.state !== 'paused') continue;
         deleteWorkflow(context, candidate.homeProjectId, workflowId);
       } catch (error) {
+        // A started workflow with no task left stays in the picker, running or paused,
+        // and can never complete.
+        workflowEngineReporter.report(error, { tags: { stage: 'project_delete_workflows' } });
         console.error(`[PROJECT_DELETE] Could not delete workflow ${workflowId.slice(0, 8)}, left with no tasks:`, error);
       }
     }

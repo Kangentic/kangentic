@@ -39,6 +39,8 @@ export function scheduleFontApply(
     apply();
   };
   if (needsLoad) {
+    // report-ok: a font the user chose could not load. The options are applied either way
+    // rather than left stale.
     load().then(applyUnlessCancelled, applyUnlessCancelled);
   } else {
     applyUnlessCancelled();

@@ -178,6 +178,7 @@ export function DictationTab({
     return window.electronAPI.dictation
       .getInfo(infoConfig)
       .then((result) => setInfo(result))
+      // report-ok: main's IPC wrap reports a handler's rejection, and the tab shows no model info.
       .catch(() => setInfo(null));
   }, [infoConfig]);
 
@@ -189,6 +190,7 @@ export function DictationTab({
         if (!cancelled) setInfo(result);
       })
       .catch(() => {
+        // report-ok: main's IPC wrap reports a handler's rejection, and the tab shows no model info.
         if (!cancelled) setInfo(null);
       });
     return () => {

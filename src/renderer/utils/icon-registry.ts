@@ -207,6 +207,8 @@ export function warmIconCatalog(): void {
 export function ensureIcons(names: Iterable<string | null | undefined>): Promise<void> | null {
   for (const name of names) {
     if (isIconPending(name)) {
+      // report-ok: the icon chunk did not load. A missing icon falls back, the load that asked
+      // goes on, and the icon picker shows the failed load itself.
       return loadIconCatalog().then(() => undefined, () => undefined);
     }
   }

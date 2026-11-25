@@ -19,10 +19,13 @@
 import { createProcessTreeProbe, type ProcessInfo } from '../../activity-engine/background-shell/process-tree';
 import { listWin32Processes, type Win32ProcessRow } from '../process-tag/win32-reader';
 import type { ProcessTableProbe } from './host-spawn-service';
+import type { HostHandledErrors } from './host-handled-error';
 
 export interface HostProcessTableDeps {
   platform?: NodeJS.Platform;
   listToolhelp?: () => Promise<Win32ProcessRow[]>;
+  /** The core's relay to main, for the one failure that moves the table to its fallback. */
+  handledErrors?: Pick<HostHandledErrors, 'report'>;
   /** The `ps` / PowerShell probe. In the utility host it runs in the spawn
    *  worker (`HostSpawnService.processTableProbe`), so its process starts never
    *  hold the terminal thread; Toolhelp stays here (a native call). */
@@ -46,6 +49,9 @@ export class HostProcessTable {
         const rows = await (this.deps.listToolhelp ?? listWin32Processes)();
         return rows.map(toProcessInfo);
       } catch (error) {
+        // The PowerShell probe stands in for the rest of the host's life: 140 ms
+        // a watcher cycle against 8 ms, and a PowerShell child kept running.
+        this.deps.handledErrors?.report('process_table_fallback', error);
         this.toolhelpUnavailable = true;
         console.warn('[PTY-HOST] Toolhelp process listing failed; the watcher falls back to the PowerShell probe:', error);
       }

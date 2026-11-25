@@ -13,6 +13,7 @@ import {
 } from '@kangentic/protocol';
 import { addOrReplaceDevice } from '../roster-store';
 import type { BridgeIdentity } from '../identity';
+import { mobileBridgeReporter } from '../mobile-bridge-report';
 import { isPairingTokenValid, mintPairingToken, type PairingToken } from './pairing-token';
 
 /**
@@ -186,8 +187,8 @@ export class PairingService extends EventEmitter {
     try {
       readResult = attempt.readMessage(frame);
     } catch {
-      // Unauthenticated garbage. The relay slot is reachable by anyone who can
-      // read the request URI, so a frame arriving here proves nothing: ignore
+      // report-ok: unauthenticated garbage. The relay slot is reachable by anyone
+      // who can read the request URI, so a frame arriving here proves nothing: ignore
       // it, keep the token, and stay in waiting-for-phone so the real phone can
       // still pair. Consuming the token here (the old behavior) let one frame
       // deterministically burn the ceremony.
@@ -211,7 +212,11 @@ export class PairingService extends EventEmitter {
     let writeResult: ReturnType<HandshakeState['writeMessage']>;
     try {
       writeResult = attempt.writeMessage(new Uint8Array(0));
-    } catch {
+    } catch (error) {
+      // The phone's message was authenticated, so this is not garbage on a
+      // public slot: the handshake state could not build its own reply, and
+      // the pairing fails for a reason only this side can see.
+      mobileBridgeReporter.report(error, { tags: { stage: 'pairing_write' } });
       this.fail('Pairing handshake failed to construct the response');
       return;
     }
@@ -242,6 +247,9 @@ export class PairingService extends EventEmitter {
     try {
       this.activeTransport.send(writeResult.message);
     } catch {
+      // report-ok: the relay socket dropped mid-ceremony, and the pairing panel
+      // in Settings shows the reason fail() is given below.
+      //
       // Transport.send() genuinely throws - RelayClient rejects a send while
       // not connected (the socket can drop mid-ceremony and be reconnecting).
       // Its per-socket byte cap redials instead of throwing, and a pairing

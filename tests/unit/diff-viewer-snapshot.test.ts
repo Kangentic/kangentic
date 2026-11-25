@@ -130,13 +130,14 @@ describe('snapshotDiffViewer', () => {
       STATE,
     );
 
-    expect(snapshot.original_visible_ranges).toBe('threw: Illegal value for lineNumber');
+    // The error's name, never its message: the snapshot is sent as a report context.
+    expect(snapshot.original_visible_ranges).toBe('threw: Error');
     expect(snapshot.original_line_count).toBe(1500);
     expect(snapshot.original_scroll_top).toBe(26982);
     expect(snapshot.modified_visible_ranges).toBe('1480-1509');
   });
 
-  it('records a read that throws a non-Error value as its string form', () => {
+  it('records a read that throws a non-Error value as NonError, without its text', () => {
     const snapshot = snapshotDiffViewer(
       fakeDiffEditor(
         fakeSide({
@@ -152,7 +153,7 @@ describe('snapshotDiffViewer', () => {
       STATE,
     );
 
-    expect(snapshot.original_visible_ranges).toBe('threw: view model disposed');
+    expect(snapshot.original_visible_ranges).toBe('threw: NonError');
     expect(snapshot.original_line_count).toBe(1500);
   });
 
@@ -242,11 +243,11 @@ describe('snapshotDiffViewer', () => {
       content_matches: true,
       line_change_count: 2,
       folded_region_count: 3,
-      original_line_count: 'threw: disposed',
-      original_scroll_top: 'threw: disposed',
-      original_scroll_height: 'threw: disposed',
-      original_viewport_height: 'threw: disposed',
-      original_visible_ranges: 'threw: disposed',
+      original_line_count: 'threw: Error',
+      original_scroll_top: 'threw: Error',
+      original_scroll_height: 'threw: Error',
+      original_viewport_height: 'threw: Error',
+      original_visible_ranges: 'threw: Error',
       modified_line_count: 3000,
       modified_scroll_top: 26982,
       modified_scroll_height: 27000,

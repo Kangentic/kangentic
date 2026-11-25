@@ -8,6 +8,10 @@
  * repository is mocked at the module edge. Every result is also run through
  * the protocol's own `parseTaskReportWire`, so the desktop mapper and the
  * phone's guard are held to one shape.
+ *
+ * The last block reads what reached `reportHandledError` when the changes read
+ * fails: the answer keeps only the failure's message, which an agent or the
+ * phone reads, so a defect there told nobody else.
  */
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { parseTaskReportWire, type JsonValue, type TaskReportWire } from '@kangentic/protocol';
@@ -15,6 +19,10 @@ import { assembleTaskReport, type TaskReportInput } from '../../src/main/ipc/hel
 import type { TaskReportSessionRecord } from '../../src/main/db/repositories/session-repository';
 import type { CommandContext } from '../../src/main/agent/commands/types';
 import type { GitTaskChangesFile, GitTaskChangesResult, Swimlane, Task, TaskMoveRecord, TaskReport } from '../../src/shared/types';
+import { RefusalError } from '../../src/shared/refusal';
+
+const reportHandledError = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/analytics/error-reporting', () => ({ reportHandledError }));
 
 const hoisted = vi.hoisted(() => ({
   getById: vi.fn<(id: string) => unknown>(),
@@ -35,6 +43,7 @@ import {
   TASK_REPORT_MAX_FILES,
   TASK_REPORT_MAX_VISITS,
 } from '../../src/main/agent/commands/task-report-commands';
+import { mcpCommandReporter } from '../../src/main/agent/mcp-http/tool-reporting';
 
 const TASK_UUID = '6f1c2a90-0000-4000-8000-000000000001';
 const DISPLAY_ID = 42;
@@ -132,6 +141,9 @@ function wireOf(data: unknown): TaskReportWire {
 }
 
 beforeEach(() => {
+  reportHandledError.mockReset();
+  // The reporter latches a key once per run, and this file loads it once.
+  mcpCommandReporter.reset();
   hoisted.getById.mockReset();
   hoisted.getByDisplayId.mockReset();
   hoisted.getById.mockImplementation((id: string) => (id === TASK_UUID ? ARCHIVED_TASK : undefined));
@@ -328,5 +340,70 @@ describe('get_task_report', () => {
 
     expect(response.success).toBe(false);
     expect(response.error).toBe('The task report cannot be read here');
+  });
+});
+
+describe('get_task_report reports a changes read that failed', () => {
+  /** A task title, in every failing value, so a report that carried the value would carry it. */
+  const USER_TEXT = 'Fix Acme billing';
+
+  /** Everything the reports carried, as text, so user text cannot hide in any field. */
+  function reportedText(): string {
+    return JSON.stringify(reportHandledError.mock.calls.map(([reportedError, tags, contexts, fingerprint]) => ({
+      message: (reportedError as Error).message,
+      tags,
+      contexts,
+      fingerprint,
+    })));
+  }
+
+  // Guards the `mcpCommandReporter.report(...)` call in the changes read's
+  // rejection handler: without it the defect reaches the answer and nothing else.
+  it('reports a defect under mcp_command with the command and the changes stage, and keeps the answer', async () => {
+    const defect = new TypeError(`Cannot read properties of undefined (reading '${USER_TEXT}')`);
+    const taskReport = report({ moves: [move(0, 'todo', 0), move(1, 'executing', 10), move(2, 'done', 70)] });
+    const { context } = stubContext(taskReport, defect);
+
+    const response = await handleGetTaskReport({ taskId: TASK_UUID }, context);
+
+    // The answer is what it was before the report: the rest of the report, and the reason.
+    expect(response.success).toBe(true);
+    const wire = wireOf(response.data);
+    expect(wire.changes).toBeNull();
+    expect(wire.changesError).toBe(defect.message);
+    expect(wire.route).toHaveLength(1);
+
+    expect(reportHandledError).toHaveBeenCalledTimes(1);
+    expect(reportHandledError.mock.calls[0][1]).toMatchObject({
+      source: 'mcp_command',
+      command: 'get_task_report',
+      stage: 'changes',
+      error_name: 'TypeError',
+    });
+    expect(reportedText()).not.toMatch(/acme/i);
+  });
+
+  // The refusal is the one `readTaskChanges` throws while the index restarts.
+  // The git failure is built by name, which is how the reporter matches an
+  // expected class (`EXPECTED_FAILURE_NAMES`), so this file loads no git module.
+  it.each([
+    ['a refusal', new RefusalError(`The Knowledge Graph index is restarting, so the commits of ${USER_TEXT} could not be read`)],
+    ['a git failure on a host that is out of reach', Object.assign(new Error(`git is not reachable for ${USER_TEXT}`), { name: 'RemoteGitUnavailableError' })],
+  ])('reports nothing for %s, and still says why in the answer', async (_label, failure) => {
+    const { context } = stubContext(report({}), failure);
+
+    const response = await handleGetTaskReport({ taskId: TASK_UUID }, context);
+
+    expect(response.success).toBe(true);
+    expect(wireOf(response.data).changesError).toBe(failure.message);
+    expect(reportHandledError).not.toHaveBeenCalled();
+  });
+
+  it('reports nothing when the changes are read', async () => {
+    const { context } = stubContext(report({}), changes({}));
+
+    await handleGetTaskReport({ taskId: TASK_UUID }, context);
+
+    expect(reportHandledError).not.toHaveBeenCalled();
   });
 });

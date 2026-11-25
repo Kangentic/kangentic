@@ -4,13 +4,14 @@ import { randomBytes } from 'node:crypto';
 import { slugify, computeAutoBranchName } from '../../shared/slugify';
 import { isAbortError } from '../../shared/abort-utils';
 import { isShuttingDown } from '../shutdown-state';
-import { WorktreeManager, GitQueuePriority, type WorktreeCreateResult } from './worktree-manager';
+import { WorktreeManager, GitQueuePriority, GIT_QUEUE_CLEARED_MESSAGE, type WorktreeCreateResult } from './worktree-manager';
 import { worktreesRootFor } from './task-worktree-folder';
 import { isWorktreeCreationInFlight, pathKey, tryHoldWorktreeCreation, waitForWorktreeCreation } from './worktree-creation-registry';
 import { resolveWorktreeBase } from './base-branch';
 import { whenNoInitScriptRuns } from './run-init-script';
 import { scheduleRemovedWorktreeDeletion } from './removed-worktrees';
 import { gitAt } from './git-client';
+import { gitWorktreeReporter } from './git-worktree-report';
 import type { FetchIfStaleOutcome } from './fetch-throttle';
 
 /**
@@ -140,6 +141,8 @@ export async function readSpareRecord(projectPath: string, folder: string): Prom
   try {
     raw = await fs.promises.readFile(spareRecordPathFor(projectPath, folder), 'utf8');
   } catch {
+    // report-ok: ENOENT when the spare has no ready record. A record that cannot be read
+    // counts as none, so the spare is never claimed and the startup pass discards it.
     return null;
   }
   try {
@@ -164,6 +167,8 @@ export async function readSpareRecord(projectPath: string, folder: string): Prom
       installMs: typeof record.installMs === 'number' ? record.installMs : null,
     };
   } catch {
+    // report-ok: a record that does not parse counts as none, so the spare is never claimed
+    // and the startup pass discards it.
     return null;
   }
 }
@@ -208,6 +213,8 @@ export async function readNoSavingVerdict(projectPath: string): Promise<NoSaving
       decidedAt: verdict.decidedAt,
     };
   } catch {
+    // report-ok: ENOENT when no finding was ever written. One that does not parse counts as
+    // none, so a spare is built and the next claim's catch-up decides again.
     return null;
   }
 }
@@ -230,6 +237,7 @@ async function listSpareFolders(projectPath: string): Promise<string[]> {
   try {
     entries = await fs.promises.readdir(worktreesRootFor(projectPath), { withFileTypes: true });
   } catch {
+    // report-ok: ENOENT when the project has no worktrees folder yet, so it has no spares.
     return [];
   }
   return entries.filter((entry) => entry.isDirectory() && isSpareWorktreeFolder(entry.name)).map((entry) => entry.name);
@@ -259,6 +267,15 @@ function whenNoInitScriptRunsOrAborted(signal: AbortSignal): Promise<void> {
       resolve();
     });
   });
+}
+
+/**
+ * True for a job that was still waiting in the git queue when its project closed
+ * (`WorktreeManager.clearQueue`). The project went away and nothing failed, so a discard
+ * that ends this way is not reported: the next open's startup pass discards the spare.
+ */
+function isGitQueueCleared(error: unknown): boolean {
+  return error instanceof Error && error.message === GIT_QUEUE_CLEARED_MESSAGE;
 }
 
 /** The first line of an error's message, trimmed, for a one-line log. */
@@ -390,6 +407,9 @@ export class SpareWorktreePool {
     try {
       await manager.withLock(() => this.discardInQueue(manager, projectPath, sparePath), { label: `discard-spare:${path.basename(sparePath)}` });
     } catch (error) {
+      // What is left is a whole worktree with an install in it, off the board, and only
+      // this log line says it is there.
+      if (!isGitQueueCleared(error)) gitWorktreeReporter.report(error, { tags: { stage: 'spare_discard' } });
       console.warn(`[SPARE] Could not discard ${sparePath}: ${firstLineOf(error)}`);
     }
   }
@@ -412,6 +432,9 @@ export class SpareWorktreePool {
       try {
         await gitAt(sparePath).raw(['switch', '--detach']);
       } catch (error) {
+        // report-ok: cleanup of a spare that is being removed anyway. A detach that fails
+        // matters only when the removal below fails too, and the task's own worktree add
+        // then refuses the branch and throws.
         console.warn(`[SPARE] Could not detach ${folder} before discarding it: ${firstLineOf(error)}`);
       }
     }
@@ -419,15 +442,23 @@ export class SpareWorktreePool {
     try {
       removed = await manager.moveWorktreeAside(sparePath, { ownCreation: true, timeoutMs: 5_000 });
     } catch (error) {
+      // A move aside answers false when it cannot move. A throw is a defect in it, and the
+      // in-place removal below is the spare's last way off the disk.
+      gitWorktreeReporter.report(error, { tags: { stage: 'spare_discard' } });
       console.warn(`[SPARE] Could not move ${folder} aside: ${firstLineOf(error)}`);
     }
     if (!removed) {
       try {
         removed = await manager.removeWorktree(sparePath, { removalProfile: 'fast', ownCreation: true, caller: 'spare' });
       } catch (error) {
+        // A removal answers false and reports itself when the folder is held. A throw is a
+        // refusal or a defect, and the spare stays on disk with its record deleted below.
+        gitWorktreeReporter.report(error, { tags: { stage: 'spare_discard' } });
         console.warn(`[SPARE] Could not remove ${folder}: ${firstLineOf(error)}`);
       }
     }
+    // report-ok: the startup pass deletes a record whose folder is gone, and a spare still
+    // on disk with its record is discarded again as stale.
     await deleteSpareRecord(projectPath, folder).catch(() => undefined);
     scheduleRemovedWorktreeDeletion(projectPath);
     console.log(`[SPARE] discarded ${folder} (removed=${removed})`);
@@ -500,6 +531,11 @@ export class SpareWorktreePool {
             { priority: GitQueuePriority.BACKGROUND, label: `discard-spare:${folder}` },
           );
         } catch (discardError) {
+          // The half-built spare stays on disk with no record until the next open's
+          // startup pass, and a build that fails every time leaves one each time.
+          if (!isGitQueueCleared(discardError)) {
+            gitWorktreeReporter.report(discardError, { tags: { stage: 'spare_discard' } });
+          }
           console.warn(`[SPARE] Could not discard ${folder}: ${firstLineOf(discardError)}`);
         }
       }
@@ -549,6 +585,7 @@ export class SpareWorktreePool {
       try {
         await whenNoInitScriptRunsOrAborted(signal);
       } catch {
+        // report-ok: the wait rejects only when a stop or the quit aborted the loop.
         return;
       }
       if (isShuttingDown() || !state.hooks) return;
@@ -566,6 +603,9 @@ export class SpareWorktreePool {
           return;
         }
       } catch (error) {
+        // The loop ends here, so the project gets no spare and every new task waits for the
+        // whole Post-Worktree Script again, with nothing to say spares stopped.
+        gitWorktreeReporter.report(error, { tags: { stage: 'spare_check' } });
         console.warn(`[SPARE] Could not check for a spare in ${projectPath}: ${firstLineOf(error)}`);
         return;
       }
@@ -578,6 +618,8 @@ export class SpareWorktreePool {
         const built = await this.build(projectPath, inputs, build.controller.signal);
         if (!built) return;
       } catch (error) {
+        // report-ok: build rejects only when it was aborted. A yield to a task's setup loops
+        // back to the wait, and a stop or the quit ends the loop.
         if (build.stopReason === 'yield') {
           state.wanted = true;
           continue;
@@ -613,6 +655,8 @@ export class SpareWorktreePool {
         + 'no more spares for this init script',
       );
     } catch (error) {
+      // report-ok: the finding only advises the next refill. A write that fails leaves the
+      // last one in place, and the next claim's catch-up decides again.
       console.warn(`[SPARE] Could not record the claim's catch-up time: ${firstLineOf(error)}`);
     }
   }
@@ -672,6 +716,7 @@ export class SpareWorktreePool {
     if (!state) return;
     // A loop that ends with a request pending starts the next one in its own
     // `finally`, so look again until none runs.
+    // report-ok: this only waits for the loop to end, and runLoop handles its own failures.
     while (state.loop) await state.loop.catch(() => undefined);
   }
 
@@ -715,6 +760,9 @@ export class SpareWorktreePool {
           }
         }, { priority: GitQueuePriority.BACKGROUND, label: `sweep-spare:${folder}` });
       } catch (error) {
+        // A spare that is stale or was cut off mid-build stays on disk, and this pass is
+        // the only thing that ever removes one.
+        if (!isGitQueueCleared(error)) gitWorktreeReporter.report(error, { tags: { stage: 'spare_discard' } });
         console.warn(`[SPARE] startup pass could not discard ${folder}: ${firstLineOf(error)}`);
       }
     }
@@ -726,6 +774,7 @@ export class SpareWorktreePool {
     try {
       recordFiles = await fs.promises.readdir(spareRecordsRootFor(projectPath));
     } catch {
+      // report-ok: ENOENT when no spare was ever built here, so there is no record to clear.
       return;
     }
     // Read again: a task may have adopted a spare while the discards ran.
@@ -742,6 +791,8 @@ export class SpareWorktreePool {
         || referencedNow.has(folder)
         || !fs.existsSync(folderPath);
       if (!orphan) continue;
+      // report-ok: nothing reads an orphan record, and the next startup pass tries the
+      // delete again.
       await fs.promises.rm(path.join(spareRecordsRootFor(projectPath), fileName), { force: true }).catch(() => undefined);
     }
   }

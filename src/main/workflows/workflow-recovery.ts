@@ -16,6 +16,7 @@ import { isSessionInOwnCall } from '../ipc/handlers/own-call-turn-wait';
 import { automatedKeysRefusal, KeysReachedPermissionPromptError } from '../pty/automated-keys-guard';
 import { isTurnSettled } from '../pty/turn-settled';
 import { notifyWorkflowChanged } from './workflow-changed';
+import { workflowEngineReporter } from './workflow-report';
 import { heldBackgroundShells, runWorkflowStep, shortCommand, taskBaseBranch, workflowStepApplies, type WorkflowStepResult } from './workflow-step';
 import type { WorkflowBlocker } from './workflow-step-condition';
 import { workflowMemoryGate, type GateMemoryReading } from './workflow-memory-gate';
@@ -148,6 +149,9 @@ export function afterWorkflowStep(
   try {
     handleVerdict(context, target, result, turnStartedAt, options);
   } catch (error) {
+    // A verdict recovery could not take arms nothing: the task stalls in its column with
+    // no next attempt and no notice.
+    workflowEngineReporter.report(error, { tags: { stage: 'recovery_verdict' } });
     console.error(`[WORKFLOW] Recovery could not take task ${target.taskId.slice(0, 8)}'s step verdict:`, error);
   }
 }
@@ -306,6 +310,9 @@ export function holdRowMoveForBackgroundWork(
     entry.verdict = { workSerial: move.workSerial, verdict: 'move-held', reason: null, blockers: [] };
     holdMove(entry, { columnId: target.columnId, sessionId: target.sessionId, kind: 'row', rowId: move.rowId, targetName: move.targetName });
   } catch (error) {
+    // A move that is not held is not retried: the task stays in its column after the
+    // background work that held it ends.
+    workflowEngineReporter.report(error, { tags: { stage: 'recovery_hold_move' } });
     console.error(`[WORKFLOW] Could not hold task ${target.taskId.slice(0, 8)}'s move:`, error);
   }
 }
@@ -346,6 +353,9 @@ export function noteHeldTurnDrained(context: IpcContext, target: RecoveryTarget)
     endWorkingWait(entry);
     armNext(context, entry);
   } catch (error) {
+    // The cached verdict then keeps its full wait past work that is gone, so the task
+    // sits up to an hour before its next nudge.
+    workflowEngineReporter.report(error, { tags: { stage: 'recovery_drained' } });
     console.error(`[WORKFLOW] Could not take task ${target.taskId.slice(0, 8)}'s drained work:`, error);
   }
 }
@@ -395,6 +405,9 @@ export function startWorkflowRecoveryOver(
       detail: options.detail,
     });
   } catch (error) {
+    // Without the row, the next rebuild counts the old recovery's nudges: the task's next
+    // stop finds its recovery spent and waits an hour, or gets no notice of its own.
+    workflowEngineReporter.report(error, { tags: { stage: 'recovery_record' } });
     console.warn('[WORKFLOW] Could not record a new recovery:', error);
   }
 }
@@ -437,6 +450,9 @@ export function resumeWorkflowRecovery(context: IpcContext, target: RecoveryTarg
     if (entry.timer !== null) return;
     armNext(context, entry);
   } catch (error) {
+    // A resumed task whose recovery is not picked up gets no nudge and no stall notice
+    // until its next idle edge, if one comes.
+    workflowEngineReporter.report(error, { tags: { stage: 'recovery_resume' } });
     console.error(`[WORKFLOW] Could not resume task ${target.taskId.slice(0, 8)}'s recovery:`, error);
   }
 }
@@ -464,6 +480,8 @@ export function armWorkflowRecoveryOnIdle(context: IpcContext, sessionId: string
     try {
       repos = getProjectRepos(context, session.projectId);
     } catch {
+      // report-ok: getProjectDb reports a failed open, and a board that cannot be read has
+      // no recovery to arm.
       return;
     }
     const task = repos.tasks.getById(session.taskId);
@@ -481,6 +499,9 @@ export function armWorkflowRecoveryOnIdle(context: IpcContext, sessionId: string
     if (entry.verdict && entry.verdict.workSerial === workSerial && entry.timer === null) return;
     armNext(context, entry);
   } catch (error) {
+    // A turn that ended with no Stop (a failed turn, an interrupt) is then never
+    // recovered: the task sits idle with no nudge and no notice.
+    workflowEngineReporter.report(error, { tags: { stage: 'recovery_arm' } });
     console.warn(`[WORKFLOW] Could not arm recovery for session ${sessionId.slice(0, 8)}:`, error);
   }
 }
@@ -611,6 +632,9 @@ export function noteRecoveryTurnFailed(context: IpcContext, sessionId: string): 
       'Asked the agent to carry on, but its turn failed, so it does not count.',
     );
   } catch (error) {
+    // The row stays a nudge that ran, so a rebuild from the run log (a restart) counts
+    // it and the task's recovery is spent one nudge early.
+    workflowEngineReporter.report(error, { tags: { stage: 'recovery_mark_failed' } });
     console.warn('[WORKFLOW] Could not mark a recovery nudge whose turn failed:', error);
   }
 }
@@ -631,6 +655,9 @@ export async function runRecoveryAttempt(context: IpcContext, taskId: string, si
   try {
     await attempt(context, entry, signal);
   } catch (error) {
+    // An attempt that keeps throwing burns through the schedule and ends in a stall
+    // notice for a task that was never nudged.
+    workflowEngineReporter.report(error, { tags: { stage: 'recovery_attempt' } });
     console.error(`[WORKFLOW] A recovery attempt for task ${taskId.slice(0, 8)} failed:`, error);
     // It spends the schedule's step, as a check that could not run does, so
     // an attempt that keeps throwing still reaches the notice and the end.
@@ -844,6 +871,8 @@ async function attempt(context: IpcContext, entry: RecoveryEntry, signal: AbortS
       idleWithoutQuietMs: SETTLED_PASTE_QUIET_GIVE_UP_MS,
     });
   } catch (error) {
+    // report-ok: a busy or refused delivery, a timeout and a move's abort are expected, and
+    // every failure but the abort is written to the run log the user reads as a failed attempt.
     // Nothing started, so the gate moves on at once.
     workflowMemoryGate.release(gateKey);
     // The move's message is not lost with the attempt: the task's agent gets
@@ -935,6 +964,9 @@ function landedSiblings(context: IpcContext, entry: RecoveryEntry, task: Task): 
         && taskBaseBranch(sibling) === base)
       .map((sibling) => ({ number: sibling.display_id, title: sibling.title }));
   } catch (error) {
+    // The nudge then names no sibling whose PR landed, so an agent stuck on a base branch
+    // that has moved is not told it moved.
+    workflowEngineReporter.report(error, { tags: { stage: 'siblings_read' } });
     console.warn(`[WORKFLOW] Could not read task ${entry.taskId.slice(0, 8)}'s workflow siblings:`, error);
     return [];
   }
@@ -961,6 +993,8 @@ function readSubject(context: IpcContext, entry: RecoveryEntry): AttemptSubject 
   try {
     repos = getProjectRepos(context, entry.projectId);
   } catch {
+    // report-ok: getProjectDb reports a failed open, and a board that cannot be read has no
+    // task for this attempt to judge.
     return null;
   }
   const task = repos.tasks.getById(entry.taskId);
@@ -1092,6 +1126,7 @@ async function openShellFacts(context: IpcContext, sessionId: string, now: numbe
     command: shell.command,
     ageMs: Math.max(0, now - shell.since),
     outputBytes: index < NUDGE_SHELLS_NAMED
+      // report-ok: the output size is a hint in the nudge, and one that cannot be read is left out.
       ? await context.sessionManager.getBackgroundShellOutputBytes(sessionId, shell.id).catch(() => null)
       : null,
   })));
@@ -1278,6 +1313,9 @@ function recordAttempt(
       detail,
     });
   } catch (error) {
+    // The run log is the record a restart rebuilds the recovery from: an attempt with no
+    // row is forgotten, and the user's log does not show it.
+    workflowEngineReporter.report(error, { tags: { stage: 'recovery_record' } });
     console.warn('[WORKFLOW] Could not record a recovery attempt:', error);
     return null;
   }
@@ -1341,7 +1379,9 @@ export function announceWorkflowStall(
     homeProjectId = task?.workflow_project_id ?? stall.projectId;
     taskTitle = task?.title ?? '';
   } catch (error) {
-    // No latch: the notice still goes out, and a restart may send it once more.
+    // No latch: the notice still goes out, and a restart may send it once more. The task
+    // also loses its stall mark on the board and in the Workflows view.
+    workflowEngineReporter.report(error, { tags: { stage: 'recovery_record' } });
     console.warn('[WORKFLOW] Could not record a stall:', error);
   }
   console.warn(`[WORKFLOW] Task ${stall.taskId.slice(0, 8)} stalled: ${stall.reason}`);
@@ -1367,6 +1407,9 @@ function noticeWaiting(context: IpcContext, target: RecoveryTarget, reason: stri
       reason,
     });
   } catch (error) {
+    // The row is the latch that keeps recovery off a task waiting on a person: without
+    // it the agent is nudged while it waits for an answer.
+    workflowEngineReporter.report(error, { tags: { stage: 'recovery_record' } });
     console.warn('[WORKFLOW] Could not record a wait on the user:', error);
   }
   refreshStoppedMark(context, target.projectId, target.taskId);
@@ -1381,12 +1424,16 @@ function sendNotice(
   try {
     context.desktopNotifier.notifyWorkflowTask(notice);
   } catch (error) {
+    // Nobody at the desk is told the workflow stalled or waits on them.
+    workflowEngineReporter.report(error, { tags: { stage: 'stall_notice' } });
     console.warn('[WORKFLOW] Could not show the desktop notice:', error);
   }
   try {
     const detail = notice.kind === 'stalled' ? `Workflow stalled: ${notice.reason}` : `Waiting on you: ${notice.reason}`;
     context.mobileBridgeService?.notifyWorkflowTask({ projectId: notice.projectId, taskId: notice.taskId, detail });
   } catch (error) {
+    // Overnight the phone is the only notice that reaches anyone.
+    workflowEngineReporter.report(error, { tags: { stage: 'stall_notice' } });
     console.warn('[WORKFLOW] Could not send the phone notice:', error);
   }
 }

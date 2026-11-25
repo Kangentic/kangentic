@@ -17,6 +17,7 @@ export function normalizeUrl(input: string): string | null {
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
     return parsed.toString();
   } catch {
+    // report-ok: the user typed a URL that does not parse, and null is the documented answer.
     return null;
   }
 }

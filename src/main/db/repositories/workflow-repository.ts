@@ -11,6 +11,7 @@ import type {
 import { readRunSettings } from '../../../shared/workflow-run-settings';
 import { isPlanApproval } from '../../../shared/plan-approval';
 import { cachedStatement } from '../statement-cache';
+import { dbReporter } from '../db-report';
 import { RefusalError } from '../../../shared/refusal';
 
 /**
@@ -179,10 +180,32 @@ export class WorkflowRepository {
     if (options.expectedRevision != null && options.expectedRevision !== existing.revision) {
       throw new StaleWorkflowRevisionError(existing.revision);
     }
+    if (this.storedPlanIsUnreadable(id)) {
+      throw new RefusalError('This workflow\'s saved plan could not be read, so nothing was saved over it. Delete the workflow and create a new one to plan again.');
+    }
     const title = options.title?.trim() || existing.title;
     this.db.prepare('UPDATE workflows SET title = ?, draft_json = ?, revision = revision + 1 WHERE id = ?')
       .run(title, JSON.stringify(draft), id);
     return this.getById(id)!;
+  }
+
+  /**
+   * True when the row holds plan text that will not parse. Every reader then sees
+   * an empty plan (`parseDraft`, which reports it), and a write built on that read
+   * would replace what a person shaped with nothing. So no writer of the plan
+   * touches such a row: a save is refused with the reason, and the two writes
+   * nobody asked for are skipped. The text stays in the row.
+   */
+  private storedPlanIsUnreadable(id: string): boolean {
+    const row = this.db.prepare('SELECT draft_json FROM workflows WHERE id = ?').get(id) as { draft_json: string | null } | undefined;
+    if (!row?.draft_json) return false;
+    try {
+      JSON.parse(row.draft_json);
+      return false;
+    } catch {
+      // report-ok: `parseDraft` reports the plan that will not parse when the row is read. This only asks.
+      return true;
+    }
   }
 
   /**
@@ -191,6 +214,7 @@ export class WorkflowRepository {
    * workflow agent built on its last read must still go through (#732 board 2c).
    */
   writeDraftLayout(id: string, draft: WorkflowDraft): void {
+    if (this.storedPlanIsUnreadable(id)) return;
     this.db.prepare("UPDATE workflows SET draft_json = ? WHERE id = ? AND state = 'draft'").run(JSON.stringify(draft), id);
   }
 
@@ -256,6 +280,7 @@ export class WorkflowRepository {
    * no longer a draft, so the caller keeps the legacy value.
    */
   writeAdoptedDraft(id: string, draft: WorkflowDraft): boolean {
+    if (this.storedPlanIsUnreadable(id)) return false;
     return this.db.prepare("UPDATE workflows SET draft_json = ? WHERE id = ? AND state = 'draft'").run(JSON.stringify(draft), id).changes > 0;
   }
 
@@ -360,6 +385,7 @@ function parseProjectIds(raw: string | null | undefined): string[] {
     const parsed: unknown = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === 'string') : [];
   } catch {
+    // report-ok: malformed JSON in a column only Kangentic writes reads as no project ids.
     return [];
   }
 }
@@ -370,7 +396,11 @@ export function parseDraft(raw: string | null): WorkflowDraft | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
-  } catch {
+  } catch (error) {
+    // A stored plan that will not parse reads as an empty one. No writer replaces it
+    // (`storedPlanIsUnreadable`), so what a person built stays in the row. The reporter
+    // sends the error's class and frames, never its text, which quotes the plan.
+    dbReporter.report(error, { tags: { stage: 'draft_parse' } });
     return { tasks: [], links: [] };
   }
   if (typeof parsed !== 'object' || parsed === null) return { tasks: [], links: [] };

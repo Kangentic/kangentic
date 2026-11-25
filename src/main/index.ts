@@ -55,6 +55,7 @@ import { initErrorReporting, isErrorReportingActive, reportHandledError, setErro
 import { crashNoticeHolder } from './analytics/crash-notice';
 import { initUsageAnalytics, trackUpdateOutcome } from './analytics/usage';
 import { initRunUptimeTracking, checkpointRunUptime, recordRunExit, previousRunLaunchProps, previousRunLastAliveAt, previousRunLogLine, peekPreviousRun, RUN_UPTIME_CHECKPOINT_INTERVAL_MS } from './analytics/run-uptime';
+import { setRunStateSource } from './analytics/run-state-tags';
 import { readPendingGpuEscalation, clearGpuEscalation, isEscalationFromCurrentRun, gpuEndedPreviousRun, summarizeGpuFaults, shouldReportEscalation, buildGpuProcessContext, createWebglAvailabilityGate, readGpuGraphicsStatus } from './diagnostics/gpu-health';
 import { trackSettingsSnapshot } from './analytics/settings-snapshot';
 import { resolveClientId } from './analytics/client-id';
@@ -198,6 +199,8 @@ let pendingGpuNotice = false;
 /** A database open that failed (`database.ts`), and a migration that failed as a defect. */
 const dbOpenReporter = createChokepointReporter('db_open');
 const dbMigrationReporter = createChokepointReporter('db_migration');
+/** The MCP HTTP server failing to start: every agent then runs without Kangentic's tools. */
+const mcpServerStartReporter = createChokepointReporter('mcp_server_start');
 
 // Report a defect from any `ipcMain.handle` handler (ipc-handler-report.ts).
 // Its own patch, installed before the diagnostics recorder and every
@@ -1111,6 +1114,12 @@ if (!isEphemeral && !isE2ETest) {
 skipConsoleListHelper();
 
 let mainWindow: BrowserWindow | null = null;
+// The window reads behind the `main_window` and `app_focused` tags every Sentry
+// event carries (`analytics/run-state-tags.ts`). Read when an event is sent.
+setRunStateSource({
+  mainWindow: () => mainWindow,
+  appFocused: () => BrowserWindow.getFocusedWindow() !== null,
+});
 let activateAllProjectsTimer: ReturnType<typeof setTimeout> | null = null;
 let mcpServerHandle: McpHttpServerHandle | null = null;
 // Whether the whenReady body has finished DECIDING mcpServerHandle. The handle
@@ -1783,6 +1792,8 @@ const createWindow = () => {
   if (__KANGENTIC_DEV__ && !previousRunLogged) {
     previousRunLogged = true;
     const logPreviousRun = () => console.log(previousRunLogLine());
+    // report-ok: dev only. The line is logged however the boot's project open ended, and
+    // `did-finish-load` below awaits the same promise, so a rejection lands there.
     void preloadPromise.then(logPreviousRun, logPreviousRun);
   }
 
@@ -2138,6 +2149,9 @@ app.whenReady().then(async () => {
     // refused" but the rest of the app stays functional. The MCP connection
     // check reports this error as written.
     recordMcpServerStartFailure(err);
+    // The record above only feeds the Settings check. Without this report an
+    // install whose agents all start with no board tools tells nobody.
+    mcpServerStartReporter.report(err);
   }
   // The relay a distro or SSH agent's MCP messages go through posts to whichever server is running now, with
   // its token, whatever address and token that agent was started with (#913). Read when a message arrives,

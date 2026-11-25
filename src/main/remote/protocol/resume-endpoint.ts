@@ -46,6 +46,18 @@ export interface ResumeEndpointHandlers {
   vetPeer?(peer: PeerHello): string | null;
   /** A handler threw. Reported here so one bad message cannot take the stream down. */
   onError?(error: unknown): void;
+  /**
+   * The peer sent a frame that passed its checksums and still breaks the protocol: a body that is
+   * not JSON, or a length over the cap. Lost or damaged bytes cannot produce that, so it is the
+   * peer's encoder and not the wire. The connection ends either way. The link relays this to main;
+   * the helper runs on the host, where nothing can report, and leaves it unset.
+   */
+  onProtocolFault?(error: unknown): void;
+}
+
+/** The frame errors a checksum had already cleared: what the wire cannot cause (`onProtocolFault`). */
+function isProtocolFault(error: unknown): boolean {
+  return error instanceof FrameError && (error.code === 'bad-json' || error.code === 'too-large');
 }
 
 export interface ResumeEndpointOptions {
@@ -222,6 +234,11 @@ export class ResumeEndpoint {
     try {
       frames = connection.decoder.push(chunk);
     } catch (error) {
+      // report-ok: bytes lost or damaged on the wire are expected (`frame-codec.ts` measured ssh
+      // dropping them mid-stream), and ending the connection so the owner resumes is the answer.
+      // A frame that cleared its checksums and is still invalid is handed to onProtocolFault,
+      // which the link relays to main as remote_frame.
+      if (isProtocolFault(error)) this.safely(() => this.handlers.onProtocolFault?.(error));
       const detail = error instanceof FrameError ? `${error.code}: ${error.message}` : String(error);
       this.drop(connection, `the stream is damaged (${detail})`);
       return;
@@ -252,6 +269,8 @@ export class ResumeEndpoint {
         try {
           this.handlers.onMessage(frame.json, frame.raw);
         } catch (error) {
+          // report-ok: handed to onError. On the link that is RemoteLink, which relays it to
+          // main as remote_handler. The helper runs on the host and can only log it there.
           this.handlers.onError?.(error);
         }
         if (this.isLive(connection) && connection.receivedSinceAck >= this.options.ackEveryBytes) this.sendAck(connection);
@@ -289,6 +308,8 @@ export class ResumeEndpoint {
     try {
       refusal = this.handlers.vetPeer?.(peer) ?? null;
     } catch (error) {
+      // report-ok: handed to onError, as a handler's throw is above. Only the helper vets a
+      // peer, and it runs on the host, where it logs the throw and nothing can report it.
       // A check that cannot answer is a refusal, never an accepted stranger.
       this.handlers.onError?.(error);
       refusal = 'this side could not check the peer';
@@ -315,6 +336,8 @@ export class ResumeEndpoint {
     try {
       call();
     } catch (error) {
+      // report-ok: handed to onError. On the link that is RemoteLink, which relays it to main
+      // as remote_handler. The helper runs on the host and can only log it there.
       this.handlers.onError?.(error);
     }
   }

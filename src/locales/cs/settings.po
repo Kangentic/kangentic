@@ -1066,6 +1066,10 @@ msgstr "Účet se nepodařilo přidat"
 msgid "Couldn't clear browser data"
 msgstr "Data prohlížeče nelze vymazat"
 
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "Couldn't rebuild the index"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
 #, fuzzy
 msgid "Couldn't restart"
@@ -3950,6 +3954,10 @@ msgstr "Okna"
 #, fuzzy
 msgid "Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the Kangentic browser. Saved URLs are kept."
 msgstr "Vymaže soubory cookie, localStorage, IndexedDB, service workery a mezipaměti HTTP/ověření prohlížeče Kangentic. Uložené URL zůstanou."
+
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "With an error, the app's state as fixed ranges: time running, time since the computer woke, which window it came from, whether the window was showing or focused, and whether the processor was slowed"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy

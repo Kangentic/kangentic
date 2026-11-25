@@ -1066,6 +1066,10 @@ msgstr "アカウントを追加できませんでした"
 msgid "Couldn't clear browser data"
 msgstr "ブラウザーデータを消去できませんでした"
 
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "Couldn't rebuild the index"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
 #, fuzzy
 msgid "Couldn't restart"
@@ -3950,6 +3954,10 @@ msgstr "ウィンドウ"
 #, fuzzy
 msgid "Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the Kangentic browser. Saved URLs are kept."
 msgstr "Kangentic ブラウザーの Cookie、localStorage、IndexedDB、Service Worker、HTTP/認証キャッシュを消去します。保存済みの URL は保持されます。"
+
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "With an error, the app's state as fixed ranges: time running, time since the computer woke, which window it came from, whether the window was showing or focused, and whether the processor was slowed"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy

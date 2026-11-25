@@ -47,9 +47,13 @@ export async function resolveTaskDirectories(
   // Home has two forms as well (`/home` is a link to `/var/home` on some Linux
   // distributions), so a directory with ANY form matching either form of home
   // is dropped whole: keeping its other form would make home a root after all.
+  // report-ok: a home that cannot be resolved keeps its stored form, which is still
+  // refused as a root.
   const realHome = await fsPromises.realpath(homeDirectory).catch(() => homeDirectory);
   const homeForms = new Set([homeDirectory, realHome].map(comparable));
   const groups = await Promise.all(stored.map(async (directory) => (
+    // report-ok: a folder that is gone, a deleted worktree's, has no real path, and
+    // its stored form is the one form left to match.
     [directory, await fsPromises.realpath(directory).catch(() => directory)]
   )));
   const outsideHome = groups.filter((forms) => !forms.some((form) => homeForms.has(comparable(form))));

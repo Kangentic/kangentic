@@ -78,6 +78,7 @@ export function SessionPill({ conversationId, isolated = false }: { conversation
               setCopied(true);
               setTimeout(() => setCopied(false), 1500);
             },
+            // report-ok: the OS refused the clipboard write, and the pill shows no check.
             (error: unknown) => console.warn('[completed-task] conversation id copy failed:', error),
           );
         }}

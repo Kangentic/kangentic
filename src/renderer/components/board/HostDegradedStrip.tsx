@@ -29,7 +29,8 @@ export function HostDegradedStrip({ project }: { project: Project }) {
     try {
       await reconnectHost(status?.host.id ?? '');
     } catch {
-      // The host's row in Settings shows the reason; the strip stays until the state changes.
+      // report-ok: main's IPC wrap reports a handler's rejection. The host's row in Settings
+      // shows the reason, and the strip stays until the state changes.
     } finally {
       setReconnecting(false);
     }

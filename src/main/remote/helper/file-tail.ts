@@ -129,6 +129,8 @@ function isSameSearch(kept: SearchState, search: HostFileSearch): boolean {
 
 /** The first regular file `pattern` matches, walking newest name first, so a recent session costs a few reads. */
 async function findFile(directory: string, pattern: RegExp, depth: number): Promise<string | null> {
+  // report-ok: runs on the host, which cannot report; a folder the CLI has not made yet reads as no
+  // match, and the search looks again on its backoff.
   const entries = await fs.readdir(directory, { withFileTypes: true }).catch(() => []);
   entries.sort((left, right) => (left.name < right.name ? 1 : -1));
   const match = entries.find((entry) => entry.isFile() && pattern.test(entry.name));
@@ -220,6 +222,8 @@ export class FileTail {
   private async warnWhenBehind(sessionId: string, entry: Tailing): Promise<void> {
     for (const file of entry.files) {
       if (file.path === null) continue;
+      // report-ok: runs on the host, which cannot report; a file that is gone at the end has
+      // nothing left behind to warn about.
       const stats = await fs.stat(file.path).catch(() => null);
       if (stats && file.sent < stats.size) {
         console.warn(`[file-tail] ${sessionId.slice(0, 8)}: stopped ${stats.size - file.sent} bytes before the end of file ${file.key}`);
@@ -232,6 +236,8 @@ export class FileTail {
     const sizes: Record<string, number> = {};
     for (const file of this.tailing.get(sessionId)?.files ?? []) {
       if (file.path === null) continue;
+      // report-ok: runs on the host, which cannot report; a file that is not there yet is left
+      // out of the sizes, which is the answer.
       const stats = await fs.stat(file.path).catch(() => null);
       if (stats?.isFile()) sizes[file.key] = stats.size;
     }
@@ -271,7 +277,8 @@ export class FileTail {
         if (file.path === null) await this.searchFor(file, lastPass);
         if (file.path !== null) await this.scanFile(sessionId, file, file.path, maxChunks);
       } catch (error) {
-        // A file the agent removed under us, or one that cannot be read right now: the next poll tries again.
+        // report-ok: runs on the host, which cannot report; a file the agent removed under us, or
+        // one that cannot be read right now, is tried again on the next poll.
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') console.warn(`[file-tail] ${sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
@@ -290,6 +297,8 @@ export class FileTail {
   }
 
   private async scanFile(sessionId: string, file: TailState, filePath: string, maxChunks: number): Promise<void> {
+    // report-ok: runs on the host, which cannot report; a file the agent has not written yet is
+    // skipped until it is there.
     const stats = await fs.stat(filePath).catch(() => null);
     if (!stats || !stats.isFile()) return;
     const identity = `${stats.dev}:${stats.ino}`;

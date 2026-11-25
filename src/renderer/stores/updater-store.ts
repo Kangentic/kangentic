@@ -5,6 +5,7 @@ import { msg } from '@lingui/core/runtime-macro';
 import type { UpdateDownloadedInfo } from '../../shared/types';
 import { useConfigStore } from './config-store';
 import { useToastStore } from './toast-store';
+import { reportRendererFailure } from '../utils/renderer-failure';
 
 interface UpdaterState {
   pendingUpdate: UpdateDownloadedInfo | null;
@@ -104,10 +105,12 @@ const updaterStoreInitializer: StateCreator<UpdaterState> = (set, get) => ({
     if (pendingUpdate) {
       // Fire-and-forget, matching the other incidental config writes in
       // config-store.ts: failing to record "seen" must not break dismissal.
+      // The release notes then open again at the next launch, so the failure
+      // is reported: a throw from updateConfig's own refresh is the renderer's.
       void useConfigStore
         .getState()
         .updateConfig({ lastSeenReleaseNotesVersion: pendingUpdate.version })
-        .catch(() => undefined);
+        .catch((error: unknown) => { reportRendererFailure('config', 'seen_release_notes', error); });
     }
   },
 

@@ -39,6 +39,7 @@ import { startMainLoopBlockProbe, takeRequestSpans } from './request-spans';
 import { FORCED_REDIAL_DESCRIPTIONS, type ForcedRedialReason } from './session/forced-redial-reason';
 import { SubscriptionRegistry } from './session/subscription-registry';
 import { CapabilityRouter } from './capability-router';
+import { mobileBridgeReporter } from './mobile-bridge-report';
 import { registerCapabilityHandlers } from './handlers';
 import { terminalStreamKeyFor, TERMINAL_STREAM_KEY_PREFIX } from './handlers/read-stream';
 import { sizeGuardKeyFor } from './handlers/terminal-size-guard';
@@ -340,7 +341,8 @@ export class MobileBridgeService extends EventEmitter {
           taskTitle = task?.title ?? '';
           swimlaneId = task?.swimlane_id;
         } catch {
-          // Best-effort: an unknown title still yields a useful notification.
+          // report-ok: getProjectDb reports a database that will not open. The
+          // push still goes out, without the title and with no lane to clear it by.
         }
         return { projectId, taskId, taskTitle, ...(swimlaneId !== undefined ? { swimlaneId } : {}) };
       },
@@ -398,7 +400,8 @@ export class MobileBridgeService extends EventEmitter {
         const task = getProjectRepos(context, project.id).tasks.getById(taskId);
         if (task) return { projectId: project.id, taskTitle: task.title, swimlaneId: task.swimlane_id };
       } catch {
-        // This project's repos may not be initialized; try the next one.
+        // report-ok: getProjectDb reports a database that will not open. Such a
+        // project cannot be shown to own the task, so the scan tries the next one.
       }
     }
     return null;
@@ -413,6 +416,10 @@ export class MobileBridgeService extends EventEmitter {
   whenStorageReady(): Promise<void> {
     if (!this.storageWarmup) {
       this.storageWarmup = this.warmSecureStorage().catch((error: unknown) => {
+        // Without the identity nothing pairs and no paired phone connects, and
+        // the only sign is this log line. The next call tries again, so the
+        // reporter's latch is what keeps a repeat from sending twice.
+        mobileBridgeReporter.report(error, { tags: { stage: 'secure_storage' } });
         console.warn('[mobile-bridge] could not read secure storage:', error);
         this.storageWarmup = null;
       });
@@ -459,6 +466,8 @@ export class MobileBridgeService extends EventEmitter {
       const task = getProjectRepos(context, projectId).tasks.getById(taskId);
       return { taskTitle: task?.title ?? '', swimlaneId: task?.swimlane_id };
     } catch {
+      // report-ok: getProjectDb reports a database that will not open. The push
+      // still goes out, without the title and with no lane to clear it by.
       return { taskTitle: '', swimlaneId: undefined };
     }
   }
@@ -663,8 +672,14 @@ export class MobileBridgeService extends EventEmitter {
     // transport (revocation, disable, shutdown all route through it).
     // Unlike a pairing ceremony's transport, this attempt is never
     // meaningless while the device stays in the roster.
-    void transport.connect().catch(() => {
-      // The transport's own backoff loop owns recovery from here.
+    void transport.connect().catch((error: unknown) => {
+      // The transport's own backoff loop owns recovery from here. A dial that
+      // never opened is a `RelayDialError`, which the reporter skips as the
+      // network or the relay. RelayClient reports its own two defects where it
+      // throws them (`relay_url`, `relay_socket_build`), so they arrive here
+      // marked and are skipped. This is for a transport that rejects with
+      // anything else, after which the device never connects.
+      mobileBridgeReporter.report(error, { tags: { stage: 'roster_dial' } });
     });
   }
 
@@ -810,12 +825,18 @@ export class MobileBridgeService extends EventEmitter {
     try {
       frameBytes = session.sendMessage(response);
     } catch (error) {
+      // Any other failure is the session dropping mid-dispatch, which the
+      // transport's own lines cover. A response this side built past the
+      // protocol's caps is a defect in what the verb answered, so it is
+      // reported, with the verb (a fixed word) and nothing of the payload.
       if (error instanceof MessageEncodeError) {
+        mobileBridgeReporter.report(error, { tags: { stage: 'response_encode', verb: request.verb } });
         console.warn(`[mobile-bridge] response to ${describeRequest(session, request)} not sent: ${error.message}; answered with a refusal`);
         try {
           session.sendMessage(responseTooLargeRefusal(request.requestId));
         } catch {
-          // The session dropped between the two sends; the phone's own timeout covers it.
+          // report-ok: the session dropped between the two sends, and the phone's own
+          // request timeout covers a refusal that never left.
         }
       }
     }
@@ -1018,6 +1039,8 @@ export class MobileBridgeService extends EventEmitter {
       if (this.disposed) return;
       devQuickPair.reconcile(true);
     })().catch((error: unknown) => {
+      // report-ok: dev builds only. This body returns at once when __KANGENTIC_DEV__ is
+      // false, so no packaged build reaches it, and the developer reads this warning.
       console.warn('[mobile-bridge] dev quick pair could not start:', error);
     });
   }

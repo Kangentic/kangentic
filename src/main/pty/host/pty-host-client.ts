@@ -39,6 +39,7 @@ import type { ScrollbackInvokeResult } from '../../../shared/pty-port-protocol';
 import type { StopProcessRequest, StopProcessResult, TaggedReapRequest, TaggedReapResult, TaskProbeRequest, TaskProbeResult } from '../process-tag/tagged-reap';
 import type { AgentExitWaitResult } from './exited-root-wait';
 import { SPAWN_REQUEST_TIMEOUT_MS } from './root-pid-gate';
+import { sessionManagerReporter } from '../session-manager-report';
 
 /** A listener registration that can be undone. */
 export interface PtyDisposable {
@@ -442,6 +443,9 @@ export class PtyHostClient {
       try {
         cliHandle.deliverHostLost();
       } catch (error) {
+        // The run's caller never hears that it ended, so an Ask, a summary or
+        // a script it waits on hangs until its own timeout, if it has one.
+        sessionManagerReporter.report(error, { tags: { stage: 'host_lost_exit' } });
         console.error('[pty-host] an agent run could not be failed after the host was lost:', error);
       }
     }
@@ -453,6 +457,9 @@ export class PtyHostClient {
       try {
         listener?.(PTY_HOST_LOST_EXIT_CODE);
       } catch (error) {
+        // The session's exit handling did not finish, so its row can stay
+        // running with no PTY behind it and recovery may not resume it.
+        sessionManagerReporter.report(error, { tags: { stage: 'host_lost_exit' } });
         console.error('[pty-host] exit handling after the host was lost failed:', error);
       }
     }
@@ -536,6 +543,8 @@ export class PtyHostClient {
       // counted from this send.
       result = await this.transport.request('spawn', { ...params, ptyId, sentAtMs: Date.now() }, { timeoutMs: SPAWN_REQUEST_TIMEOUT_MS });
     } catch (error) {
+      // report-ok: returned as a failed spawn, which performSpawn hands to
+      // handleSpawnFailure, and that reports it through recordSpawnFailure.
       // The host was lost or did not answer in time. A host that still runs
       // the request later would start a PTY no handle holds, so a kill follows
       // it (commands keep their order, and an unknown ptyId is a no-op). To the
@@ -780,6 +789,8 @@ export class PtyHostClient {
       try {
         listener?.(PTY_HOST_LOST_EXIT_CODE);
       } catch (error) {
+        // As above, for a session its SSH host reported lost after a reconnect.
+        sessionManagerReporter.report(error, { tags: { stage: 'host_lost_exit' } });
         console.error('[pty-host] exit handling after a remote session was lost failed:', error);
       }
     }

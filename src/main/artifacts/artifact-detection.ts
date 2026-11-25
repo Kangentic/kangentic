@@ -99,6 +99,10 @@ export function registerArtifactDetection(context: IpcContext, messageTrailTrack
           source: 'detected',
         });
       });
-    }, () => { /* the session's output is gone: nothing to scan */ });
+    }, () => {
+      // report-ok: the pty host did not answer. It exited or ran out its budget, which its
+      // restart policy and heartbeat stall report cover. With no output to read, this turn end
+      // links nothing.
+    });
   });
 }

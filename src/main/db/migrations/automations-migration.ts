@@ -251,7 +251,8 @@ function parseConfig(configJson: string): AutomationConfig {
     const parsed: unknown = JSON.parse(configJson);
     if (parsed && typeof parsed === 'object') return parsed as AutomationConfig;
   } catch {
-    // A malformed config is not worth failing an app launch over.
+    // report-ok: a malformed config in a legacy column only Kangentic wrote converts as an
+    // empty one. It is not worth failing an app launch over.
   }
   return {};
 }

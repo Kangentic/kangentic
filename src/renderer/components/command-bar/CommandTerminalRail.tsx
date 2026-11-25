@@ -369,6 +369,7 @@ function EarlierRow({ projectId, match, atCap, atCapReason, now, editing, onEdit
         if (!saved) setPending(null);
       })
       .catch((error: unknown) => {
+        // report-ok: main's IPC wrap reports a handler's rejection, and the toast shows the reason.
         setPending(null);
         useToastStore.getState().addToast({
           title: t`Couldn't rename conversation`,
@@ -564,6 +565,7 @@ function EarlierList({ projectId, entries, atCap, atCapReason, onResume }: Earli
         if (!removed) failed(t`A terminal has this conversation open.`);
       })
       .catch((error: unknown) => {
+        // report-ok: main's IPC wrap reports a handler's rejection, and the toast shows the reason.
         const fields = ipcFailureToastFields(error, String(error));
         failed(fields.message, fields.reported);
       });

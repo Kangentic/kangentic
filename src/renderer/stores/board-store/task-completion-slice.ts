@@ -4,6 +4,7 @@ import { msg } from '@lingui/core/runtime-macro';
 import { useToastStore } from '../toast-store';
 import { useProjectStore } from '../project-store';
 import { ipcFailureToastFields } from '../../lib/ipc-error';
+import { reportRendererFailure } from '../../utils/renderer-failure';
 import { openTaskFromNotification } from '../../utils/open-task-from-notification';
 import type { BoardStore, CompletingTask } from './types';
 import { type CompletionGate, createGate, canPersist } from './completion-gate';
@@ -100,6 +101,9 @@ export const createTaskCompletionSlice: StateCreator<BoardStore, [], [], TaskCom
     } catch (err) {
       // Safety net: moveTask returns { ok: false } rather than throwing for IPC
       // failures, but guard an unexpected throw so the gate still cleans up below.
+      // moveTask catches what its move and reload throw, so anything here is the
+      // renderer's own: this function's work, or moveTask's before its own try.
+      reportRendererFailure('board', 'complete', err);
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't complete task`),
         ...ipcFailureToastFields(err),

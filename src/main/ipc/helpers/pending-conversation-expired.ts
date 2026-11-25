@@ -1,4 +1,5 @@
 import type { ConversationExpiredNotice, Task } from '../../../shared/types';
+import { handlerStepReporter } from './handler-step-report';
 
 /**
  * Expired-conversation notices main holds until the renderer takes them.
@@ -57,6 +58,10 @@ export function keepNoticesForLiveTasks(
       return task !== undefined && !task.archived_at;
     });
   } catch (error) {
+    // A board that cannot be read keeps every notice, since a stale toast costs less than
+    // a lost one: the user may be told of a task that is gone. A database that will not
+    // open was marked by the open-failure notifier, so this adds a query that failed.
+    handlerStepReporter.report(error, { tags: { area: 'spawn', step: 'expired_notice_filter' } });
     console.warn('[CONVERSATION-EXPIRED] Could not read the board to filter queued notices:', error);
     return notices;
   }

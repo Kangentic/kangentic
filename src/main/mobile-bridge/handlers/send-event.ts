@@ -1,4 +1,5 @@
 import type { BridgeEvent } from '@kangentic/protocol';
+import { mobileBridgeReporter } from '../mobile-bridge-report';
 import type { BridgeSession } from '../session/bridge-session';
 
 /** `encodeMessage`'s two size-cap throws (packages/protocol/src/wire/framing.ts) both start
@@ -34,7 +35,12 @@ export function sendEvent(session: BridgeSession, event: BridgeEvent): void {
   try {
     session.sendMessage({ type: 'event', event });
   } catch (error) {
+    // Every other failure here is a session torn down or a transport dropped
+    // mid-send, which the phone recovers from by re-reading. An oversize frame
+    // is a payload this side built past the cap, so it is reported, with the
+    // event's kind (a fixed word) and nothing of its content.
     if (error instanceof Error && error.message.startsWith(ENCODE_SIZE_ERROR_PREFIX)) {
+      mobileBridgeReporter.report(error, { tags: { stage: 'event_oversize', event_kind: event.kind } });
       console.warn(`[mobile-bridge/send-event] dropped oversize ${event.kind} event:`, error.message);
     }
   }

@@ -7,6 +7,7 @@ import type {
 } from '@kangentic/protocol';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import type { GitTaskChangesFile, GitTaskChangesResult, TaskReport, TaskReportRouteColumn, TaskReportSummaryState } from '../../../shared/types';
+import { mcpCommandReporter } from '../mcp-http/tool-reporting';
 import { resolveTask } from './task-resolver';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 
@@ -127,7 +128,13 @@ export const handleGetTaskReport: CommandHandler = async (
     readTaskReport(task.id, { commitLimit: TASK_REPORT_MAX_COMMITS, includeLedger: false }),
     readTaskChanges(task.id).then(
       (changes) => ({ changes, error: null }),
-      (error: unknown) => ({ changes: null, error: error instanceof Error ? error.message : String(error) }),
+      (error: unknown) => {
+        // The answer keeps only the message, which an agent or the phone reads. A defect in
+        // the changes read reached nobody else. A refusal (no project, no task, the index
+        // restarting) is skipped by the reporter.
+        mcpCommandReporter.report(error, { tags: { command: 'get_task_report', stage: 'changes' } });
+        return { changes: null, error: error instanceof Error ? error.message : String(error) };
+      },
     ),
   ]);
 

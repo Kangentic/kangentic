@@ -101,6 +101,8 @@ export async function isFileFrom(workingDirectory: string | null, candidate: str
   try {
     return (await fsPromises.stat(resolved)).isFile();
   } catch {
+    // report-ok: no such file is the answer, and the label then keeps the program's
+    // name alone.
     return false;
   }
 }
@@ -137,6 +139,8 @@ export async function labelProcess(input: ProcessLabelInput): Promise<string> {
       return MODULE_NAME_PATTERN.test(moduleName) ? `${name} (${moduleName})` : name;
     }
     if (argument.length === 0 || argument.startsWith('-')) continue;
+    // report-ok: a file check that fails reads as not a file, and the label then keeps
+    // the program's name alone.
     if (await input.isFile(argument).catch(() => false)) return `${name} (${scriptName(argument)})`;
   }
   return name;

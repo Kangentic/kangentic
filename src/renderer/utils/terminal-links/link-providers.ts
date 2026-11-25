@@ -98,8 +98,9 @@ export function createPathLinkProvider(
         answer();
         return;
       }
-      // Every path of the row in one call. The Linkifier waits on this reply, so
-      // it answers on a failure too.
+      // Every path of the row in one call.
+      // report-ok: main's IPC wrap reports a rejected lookup. The Linkifier waits on this
+      // reply, so a failure answers it with no links for the row.
       cache.resolve(unanswered).then(answer, () => callback(undefined));
     },
   };

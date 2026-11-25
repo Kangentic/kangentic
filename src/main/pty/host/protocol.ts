@@ -94,11 +94,33 @@ export interface PtyHostError {
  */
 export type PtyHostHandledErrorCode =
   | 'transcript_flush'
+  /** A project's database would not open for transcripts, so every chunk is dropped unflushed. */
+  | 'transcript_open'
   | 'root_pin'
+  /** A PTY root's exit time could not be read off its pin, so what its shell left is not cleaned up. */
+  | 'root_exit_read'
   | 'cli_pin'
+  /** The Windows process API would not load, so no PTY root is pinned and no orphan cleanup runs. */
+  | 'orphan_api_load'
   | 'orphan_cleanup'
   | 'pty_kill'
   | 'spawn_worker_fallback'
+  /** A Stop script's process scan failed, so the script never runs after a pause. */
+  | 'task_tree_probe'
+  /** The Toolhelp process listing failed, and the PowerShell probe stands in for the host's life. */
+  | 'process_table_fallback'
+  /** A replay's drain listener threw: a phone's tap loses those bytes. */
+  | 'drain_listener'
+  /** An SSH host's helper refused to rebind a session to its PTY here, so its terminal stays blank. */
+  | 'remote_rebind'
+  /** The snapshot after a reconnect failed on the helper, so lost and exited sessions go unnoticed. */
+  | 'remote_reconcile'
+  /** One of the link's own handlers threw on a helper message, a handshake or a gap. */
+  | 'remote_handler'
+  /** An SSH host's helper sent a frame that passed its checksums and still broke the protocol. */
+  | 'remote_frame'
+  /** The helper's listening-ports read failed, so every forward for the host stays waiting. */
+  | 'port_forward_poll'
   | 'uncaught';
 
 /** A short-lived PTY with no session behind it (the Claude model picker

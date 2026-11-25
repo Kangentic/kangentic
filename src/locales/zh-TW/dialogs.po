@@ -15,6 +15,11 @@ msgstr "，然後 "
 msgid "! at the very start: not. The row runs only when the last line does not match."
 msgstr "行首的 ! 表示「非」。僅當最後一行不符合時，該列才執行。"
 
+#: src/renderer/components/dialogs/NewTaskDialog.tsx
+#: src/renderer/components/dialogs/task-detail/useAttachments.ts
+msgid "\"{fileName}\" could not be read."
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/useAttachments.ts
 msgid "\"{fileName}\" is over the 10 MB limit."
 msgstr "「{fileName}」超過 10 MB 的限制。"
@@ -974,6 +979,11 @@ msgstr "無法加入「{filename}」"
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
 msgid "Couldn't archive task"
 msgstr "無法封存任務"
+
+#: src/renderer/components/dialogs/NewTaskDialog.tsx
+#: src/renderer/components/dialogs/task-detail/useAttachments.ts
+msgid "Couldn't attach file"
+msgstr ""
 
 #: src/renderer/components/dialogs/git/useGitActions.tsx
 msgid "Couldn't commit"

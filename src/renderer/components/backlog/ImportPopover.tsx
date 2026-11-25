@@ -93,6 +93,8 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
   // Load sources when popover opens
   useEffect(() => {
     if (!open) return;
+    // report-ok: main's IPC wrap reports a handler's rejection, and the popover lists the
+    // sources it already had.
     window.electronAPI.backlog.importSourcesList().then(setSources).catch(() => {});
   }, [open]);
 
@@ -371,6 +373,8 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
       setOpen(false);
       onOpenImportDialog(source);
     } catch (addError: unknown) {
+      // report-ok: main's IPC wrap reports a handler's rejection and skips a refusal such as
+      // a refused sign-in, and the popover shows the reason inline.
       const reason = describeIpcError(addError, t`Failed to add source`);
       setError(reason);
       // A sign-in is saved for this site and the provider refused it. `getStatus`

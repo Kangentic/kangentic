@@ -43,6 +43,7 @@
 
 import { runWithProjectLogContext } from '../diagnostics/project-log-context';
 import { fetchAllRemotesIfStale, lastAllRemotesFetchAt } from './fetch-throttle';
+import { gitWorktreeReporter } from './git-worktree-report';
 import { WorktreeManager, GitQueuePriority } from './worktree-manager';
 import type { IpcContext } from '../ipc/ipc-context';
 import type { Project } from '../../shared/types';
@@ -66,7 +67,11 @@ let generation = 0;
 function autoFetchEnabled(context: IpcContext, projectPath: string): boolean {
   try {
     return context.configManager.getEffectiveConfig(projectPath).git.autoFetch === true;
-  } catch {
+  } catch (error) {
+    // The config manager handles its own read failures, so a throw here is a defect. It
+    // reads as the switch being off: the project stops refreshing its remotes and every
+    // "behind" count goes stale, with nothing said.
+    gitWorktreeReporter.report(error, { tags: { stage: 'auto_fetch_config' } });
     return false;
   }
 }
@@ -83,7 +88,7 @@ function sweep(context: IpcContext, project: Project): void {
       () => fetchAllRemotesIfStale(project.path, { nonInteractive: true }),
       { priority: GitQueuePriority.BACKGROUND, label: 'auto-fetch' },
     ).catch((error) => {
-      // fetchAllRemotesIfStale never rejects; this covers the lock itself
+      // report-ok: fetchAllRemotesIfStale never rejects; this covers the lock itself
       // (a queue cleared by a project delete mid-wait), so no tick can escape.
       console.error('[auto-fetch] sweep failed:', error);
     });
@@ -105,6 +110,8 @@ async function tick(context: IpcContext, project: Project): Promise<void> {
   activeTimer = null;
   if (activeProjectId !== project.id) return;
   const tickGeneration = generation;
+  // report-ok: lastAllRemotesFetchAt catches its own git failure, and a null here only
+  // times the next sweep from this scheduler's own last attempt.
   const lastFetchAt = await lastAllRemotesFetchAt(project.path).catch(() => null);
   // Stopped, switched, or restarted while the clock was being read.
   if (generation !== tickGeneration || activeProjectId !== project.id || activeTimer) return;

@@ -66,7 +66,8 @@ export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
     if (useBoardStore.getState().archivedFullyLoaded) return;
     let cancelled = false;
     useBoardStore.getState().loadArchivedTasks()
-      // Keep the preview rows already on screen; just stop the spinner.
+      // report-ok: main's IPC wrap reports a handler's rejection. The preview rows already on
+      // screen stay, and the spinner stops.
       .catch(() => { if (!cancelled) setArchiveLoadFailedFor(currentProjectId); });
     return () => { cancelled = true; };
   }, [currentProjectId]);
@@ -79,7 +80,8 @@ export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
         const result = await window.electronAPI.sessions.listSummaries();
         if (!cancelled) setSummaries(result);
       } catch {
-        // Ignore errors (e.g. in tests)
+        // report-ok: main's IPC wrap reports a handler's rejection, and the rows show without
+        // their session summaries.
       }
     })();
     return () => { cancelled = true; };

@@ -70,6 +70,8 @@ export class WorktreeCopyClient {
       const workerPath = unpacked(path.join(__dirname, 'worktree-copy-worker.js'));
       child = utilityProcess.fork(workerPath, [], { serviceName: SERVICE_NAME, stdio: UTILITY_PROCESS_STDIO });
     } catch (error) {
+      // report-ok: restartPolicy.recordCrash below reports it, and the copy runs in the main
+      // process instead.
       console.warn('[WORKTREE] Could not start the copy worker; copying in the main process:', error);
       this.restartPolicy.recordCrash(null, undefined, { cause: 'fork_failed' });
       return null;

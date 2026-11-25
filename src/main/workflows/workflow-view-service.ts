@@ -29,6 +29,7 @@ import { WorkflowRepository } from '../db/repositories/workflow-repository';
 import type { IpcContext } from '../ipc/ipc-context';
 import { wouldCreateCycle } from './engine/workflow-engine-core';
 import { notifyWorkflowChanged } from './workflow-changed';
+import { workflowEngineReporter } from './workflow-report';
 import { isInWorkflow } from './workflow-home';
 import { workflowAgentSummary } from './workflow-agent';
 import { hiddenBoardsOf, linkEndState, readWorkflowTasks } from './workflow-tasks';
@@ -83,8 +84,10 @@ function leftAtByColumn(projectId: string, taskId: string): Map<string, string> 
     for (const move of new TaskMoveRepository(getProjectDb(projectId)).listForTask(taskId)) {
       if (move.from_swimlane_id) left.set(move.from_swimlane_id, move.at);
     }
-  } catch {
-    // No history readable: the rail shows the step without a time.
+  } catch (error) {
+    // No history readable: the rail shows the task's steps without the time it left
+    // each column.
+    workflowEngineReporter.report(error, { tags: { stage: 'view_read' } });
   }
   return left;
 }

@@ -10,14 +10,24 @@ import path from 'node:path';
  * line-count-client.test.ts.
  */
 
-const { mockFork, mockSendHandledFailure } = vi.hoisted(() => ({ mockFork: vi.fn(), mockSendHandledFailure: vi.fn() }));
+const { mockFork, mockSendHandledFailure, mockReportHandledError } = vi.hoisted(() => ({
+  mockFork: vi.fn(),
+  mockSendHandledFailure: vi.fn(),
+  mockReportHandledError: vi.fn(),
+}));
 
 vi.mock('electron', () => ({
   app: { isPackaged: false },
   utilityProcess: { fork: mockFork },
 }));
 
-vi.mock('../../src/main/analytics/handled-report', () => ({
+// The relayed-code path calls the client's own import of `sendHandledFailure`,
+// which this replaces. The failed-call reporter is built on the real
+// `createChokepointReporter`, whose send ends in `reportHandledError`, so that
+// one export of the SDK wrapper is the mock those cases read.
+vi.mock('../../src/main/analytics/error-reporting', () => ({ reportHandledError: mockReportHandledError }));
+vi.mock('../../src/main/analytics/handled-report', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/analytics/handled-report')>()),
   sendHandledFailure: mockSendHandledFailure,
 }));
 
@@ -139,6 +149,67 @@ describe('RetrievalClient', () => {
     expect(rejection).toBeInstanceOf(Error);
     expect(rejection).toMatchObject({ message: 'disk I/O error', name: 'SqliteError', code: 'SQLITE_IOERR' });
     client.dispose();
+  });
+
+  // Every caller of `call()` catches the rejection and degrades, so a defect in
+  // a worker handler used to reach nobody. The latch is module-level (once per
+  // key per run), so each case uses a method, a name or a code of its own.
+  describe('a call the worker answered with a failure', () => {
+    async function failCall(method: 'project.close' | 'projects.summaries', reply: Record<string, unknown>): Promise<unknown> {
+      const client = new RetrievalClient();
+      const call = method === 'project.close'
+        ? client.call('project.close', { projectId: 'project-1' })
+        : client.call('projects.summaries', { projectIds: [] });
+      const child = lastChild();
+      child.emit('message', { type: 'ready' });
+      await flush();
+      const [request] = sent(child, 'request');
+      child.emit('message', { type: 'reply', id: request.id, ok: false, ...reply });
+      const rejection = await call.then(() => null, (error: unknown) => error);
+      client.dispose();
+      return rejection;
+    }
+
+    it('reports a runtime defect once per method, grouped by method, with nothing the handler wrote', async () => {
+      const reply = { error: "Cannot read properties of undefined (reading 'Fix Acme billing')", errorName: 'TypeError' };
+      const rejection = await failCall('project.close', reply);
+      await failCall('project.close', reply);
+
+      expect(rejection).toMatchObject({ name: 'TypeError' });
+      expect(mockReportHandledError).toHaveBeenCalledTimes(1);
+      const [sentError, tags, contexts, fingerprint] = mockReportHandledError.mock.calls[0] as [Error, Record<string, string>, unknown, string[]];
+      expect(sentError.message).toBe('Handled retrieval_call failure: TypeError');
+      expect(tags).toMatchObject({ source: 'retrieval_call', method: 'project.close', error_name: 'TypeError' });
+      expect(contexts).toEqual({});
+      // Rebuilt in main, every failed reply has the same frames, so it groups by method.
+      expect(fingerprint).toEqual(['retrieval-call', 'project.close', 'TypeError', 'none']);
+      expect(JSON.stringify([sentError.message, sentError.stack, tags, fingerprint])).not.toContain('Acme');
+    });
+
+    it('reports a SQLite failure with its code, as the environment it is', async () => {
+      await failCall('projects.summaries', { error: 'database disk image is malformed', errorName: 'SqliteError', errorCode: 'SQLITE_CORRUPT' });
+
+      expect(mockReportHandledError).toHaveBeenCalledTimes(1);
+      const [, tags, , fingerprint] = mockReportHandledError.mock.calls[0] as [Error, Record<string, string>, unknown, string[]];
+      expect(tags).toMatchObject({ method: 'projects.summaries', error_name: 'SqliteError', errno: 'SQLITE_CORRUPT' });
+      expect(fingerprint).toEqual(['retrieval-call', 'projects.summaries', 'SqliteError', 'SQLITE_CORRUPT']);
+    });
+
+    it('reports nothing for an error a handler threw on purpose, a file that is gone, or a worker that is down', async () => {
+      await failCall('projects.summaries', { error: 'The project is closed.' });
+      await failCall('projects.summaries', { error: 'ENOENT: no such file', errorName: 'Error', errorCode: 'ENOENT' });
+
+      const client = new RetrievalClient();
+      const call = client.call('projects.summaries', { projectIds: [] });
+      const child = lastChild();
+      child.emit('message', { type: 'ready' });
+      await flush();
+      child.emit('exit', 1);
+      await expect(call).rejects.toBeInstanceOf(RetrievalUnavailableError);
+      client.dispose();
+
+      expect(mockReportHandledError).not.toHaveBeenCalled();
+    });
   });
 
   // The latch is module-level (once per code per run), so each test uses codes of its own.

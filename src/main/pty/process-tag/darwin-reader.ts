@@ -335,7 +335,9 @@ export function runTool(command: string, args: string[], timeoutMs = TOOL_TIMEOU
       env: childProcessEnv({ LC_ALL: 'C' }),
     });
     const timer = setTimeout(() => {
-      try { child.kill('SIGKILL'); } catch { /* already gone */ }
+      try { child.kill('SIGKILL'); } catch {
+        // report-ok: the tool is already gone, and the run still answers timeout.
+      }
       finish({ ok: false, cause: 'timeout' });
     }, timeoutMs);
     timer.unref();
@@ -502,6 +504,8 @@ export class DarwinTaggedProcessReader implements TaggedProcessReader {
       // Identity: the start time the kernel reports for this pid right now.
       current = (await this.loadKernel()).processRow(target.pid);
     } catch {
+      // report-ok: no identity could be read, so nothing is signalled. The reap's next
+      // scan lists the process as not stopped if it still runs.
       return false;
     }
     if (!current || current.pid !== target.pid || current.startKey !== target.startKey) return false;
@@ -509,6 +513,8 @@ export class DarwinTaggedProcessReader implements TaggedProcessReader {
       this.sendSignal(target.pid, strength === 'force' ? 'SIGKILL' : 'SIGTERM');
       return true;
     } catch {
+      // report-ok: the process exited between the identity check and the signal, or
+      // refused it. The reap's next scan says whether it still runs.
       return false;
     }
   }
@@ -526,6 +532,8 @@ export class DarwinTaggedProcessReader implements TaggedProcessReader {
       if (current && current.pid === target.pid) return current.startKey === target.startKey;
       return kernel.listPids().includes(target.pid) ? null : false;
     } catch {
+      // report-ok: a read that failed answers unknown, which changes no row in the
+      // leftover list.
       return null;
     }
   }
@@ -536,6 +544,8 @@ export class DarwinTaggedProcessReader implements TaggedProcessReader {
     try {
       kernel = await this.loadKernel();
     } catch {
+      // report-ok: a reap whose kernel load fails already answered reader_load before
+      // any label was asked for. No label lists a process under the unnamed label.
       return labels;
     }
     for (const target of targets) {
@@ -557,7 +567,7 @@ export class DarwinTaggedProcessReader implements TaggedProcessReader {
           argv: parsed.argv,
           isFile: (candidate) => isFileFrom(workingDirectory, candidate),
         }));
-      } catch { /* gone, or not ours */ }
+      } catch { /* report-ok: the process is gone or not ours, so it gets the unnamed label. */ }
     }
     return labels;
   }

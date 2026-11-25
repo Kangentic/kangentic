@@ -9,6 +9,7 @@ import type { SessionRecord, Session, StoredCliTarget } from '../../../shared/ty
 import { parseStoredCliTarget } from '../../agent/shared/cli-target';
 import { workflowAgentEffort } from '../../workflows/workflow-agent-effort';
 import { isContextOccupancyKnown } from '../../../shared/context-occupancy';
+import { handlerStepReporter } from '../helpers/handler-step-report';
 
 /**
  * Capture session metrics (cost, tokens, model, duration, tool calls,
@@ -114,8 +115,10 @@ export function captureSessionMetrics(
         effort: record?.applied_effort ?? null,
       });
     }
-  } catch {
-    // Metrics capture is best-effort -- never break the calling flow
+  } catch (error) {
+    // Never break the calling flow. The session's cost, tokens and tool counts are not
+    // written, so Stats loses what it spent.
+    handlerStepReporter.report(error, { tags: { area: 'session_metrics', step: 'metrics_capture' } });
   }
 }
 
@@ -156,8 +159,10 @@ export function captureWorkflowAgentUsage(
       // started with: it has no session record to carry `applied_effort`.
       effort: usage.model.effort ?? workflowAgentEffort(session.id),
     });
-  } catch {
-    // Metrics capture is best-effort -- never break the calling flow
+  } catch (error) {
+    // Never break the calling flow. The workflow agent's spend is not written, so Stats
+    // loses it.
+    handlerStepReporter.report(error, { tags: { area: 'session_metrics', step: 'workflow_usage_capture' } });
   }
 }
 
@@ -325,11 +330,15 @@ export function refineTranscriptTokens(
           totalOutputTokens: transcriptUsage.outputTokens,
         });
       })
-      .catch(() => {
-        // Best-effort: leave the snapshot tokens in place.
+      .catch((error: unknown) => {
+        // The snapshot tokens stay in place, so the record's token totals count only the
+        // context it ended on. The retrieval client reports a defect or a SQLite failure
+        // of the read itself, and the reporter skips a worker that is down.
+        handlerStepReporter.report(error, { tags: { area: 'session_metrics', step: 'transcript_tokens' } });
       });
-  } catch {
-    // Best-effort: never break the calling suspend/move/reconcile flow.
+  } catch (error) {
+    // Never break the calling suspend/move/reconcile flow. The refinement never started.
+    handlerStepReporter.report(error, { tags: { area: 'session_metrics', step: 'transcript_tokens' } });
   }
 }
 
@@ -418,8 +427,9 @@ async function readLiveRunToolResultTokens(
       { agentName, transcriptPath, agentSessionId, cwd, cliTarget, sinceMs: runStartMs(sessionManager, sessionId, record) },
       { timeoutMs: null },
     );
-  } catch {
-    // Best-effort: the popover keeps its live rows without the column.
+  } catch (error) {
+    // The popover keeps its live rows without the Tokens column.
+    handlerStepReporter.report(error, { tags: { area: 'session_metrics', step: 'live_result_tokens' } });
     return null;
   }
 }
@@ -444,8 +454,9 @@ async function readEarlierRunToolResultTokens(
     const earlierRows = sessionRepo.getEarlierRunToolTotals(track.taskId, track.isolatedSwimlaneId, sessionId).toolBreakdown;
     const estimates = earlierRows.flatMap((row) => (row.resultTokens === undefined ? [] : [[row.toolName, row.resultTokens] as const]));
     return estimates.length > 0 ? Object.fromEntries(estimates) : null;
-  } catch {
-    // Best-effort: the popover keeps the stored estimates it already shows.
+  } catch (error) {
+    // The popover keeps the stored estimates it already shows, without the earlier runs.
+    handlerStepReporter.report(error, { tags: { area: 'session_metrics', step: 'earlier_result_tokens' } });
     return null;
   }
 }
@@ -582,7 +593,10 @@ export async function fillEarlierRunResultTokens(
   try {
     const track = sessionTrackOf(sessionManager, sessionRepo, sessionId);
     return track ? await fillEarlierRuns(sessionManager, sessionRepo, sessionId, track, options) : false;
-  } catch {
+  } catch (error) {
+    // The earlier runs keep their missing Tokens. fillEarlierRuns never rejects, so this
+    // is the read of the session's track.
+    handlerStepReporter.report(error, { tags: { area: 'session_metrics', step: 'earlier_runs_fill' } });
     return false;
   }
 }
@@ -605,7 +619,9 @@ async function fillEarlierRuns(
     const windows = earlierRunWindows(records, runStartMs(sessionManager, sessionId, liveRecord), liveSessionCwd);
     const results = await Promise.all(windows.map((window) => fillEarlierRun(sessionRepo, window, options)));
     return results.some(Boolean);
-  } catch {
+  } catch (error) {
+    // The earlier runs keep their missing Tokens: their records could not be read.
+    handlerStepReporter.report(error, { tags: { area: 'session_metrics', step: 'earlier_runs_fill' } });
     return false;
   }
 }
@@ -668,8 +684,10 @@ async function readEarlierRunWindow(
         },
         { timeoutMs: null },
       );
-    } catch {
-      // Not an answer: the worker was restarting or the read failed.
+    } catch (error) {
+      // Not an answer: the worker was restarting (which the reporter skips) or the read
+      // failed. The run keeps its missing Tokens and a caller reads again after the wait.
+      handlerStepReporter.report(error, { tags: { area: 'session_metrics', step: 'earlier_run_read' } });
       return failFill();
     }
     // Null is "no readable transcript here": the next cwd may have it.
@@ -685,8 +703,10 @@ async function readEarlierRunWindow(
     // again costs a whole transcript parse on every launch.
     if (!changed) sessionRepo.markResultTokensRead(window.recordId);
     return changed;
-  } catch {
-    // The project database closed under the write.
+  } catch (error) {
+    // The estimates were read and not kept, so the transcript is parsed again after the
+    // wait. A project deleted during the read closes its database under this write.
+    handlerStepReporter.report(error, { tags: { area: 'session_metrics', step: 'earlier_run_write' } });
     return failFill();
   }
 }
@@ -771,10 +791,13 @@ export function refineTranscriptToolCounts(
         if (!counts) return;
         sessionRepo.updateTranscriptToolCounts(recordId, counts);
       })
-      .catch(() => {
-        // Best-effort: leave the live/0 count in place.
+      .catch((error: unknown) => {
+        // The live count stays in place, so a session whose tool events never arrived
+        // keeps reading zero tool calls.
+        handlerStepReporter.report(error, { tags: { area: 'session_metrics', step: 'transcript_tool_counts' } });
       });
-  } catch {
-    // Best-effort: never break the calling suspend/move/reconcile flow.
+  } catch (error) {
+    // Never break the calling suspend/move/reconcile flow. The backfill never started.
+    handlerStepReporter.report(error, { tags: { area: 'session_metrics', step: 'transcript_tool_counts' } });
   }
 }

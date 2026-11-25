@@ -4,6 +4,7 @@ import { msg } from '@lingui/core/runtime-macro';
 import type { ActivityState, Session, SessionInjectSettingsInput } from '../../../shared/types';
 import { isActive, requiresUserInteraction } from '../../../shared/activity-state';
 import { isCommandTerminalSession } from '../../../shared/session-owner';
+import { RefusalError } from '../../../shared/refusal';
 import { useProjectStore } from '../project-store';
 import { useToastStore } from '../toast-store';
 import { asSentence, ipcFailureToastFields } from '../../lib/ipc-error';
@@ -305,7 +306,9 @@ export function createTransientSessionSlice(preserved: {
       const currentProject = useProjectStore.getState().currentProject;
       // Translated: the window's catch toasts this message, and a project that
       // closes during a branch switch's stop (an await before this read) reaches it.
-      if (!currentProject) throw new Error(i18n._(msg`No project is currently open`));
+      // A refusal, not a plain Error: that close is the user's, so the window's
+      // report skips it.
+      if (!currentProject) throw new RefusalError(i18n._(msg`No project is currently open`));
       const result = await window.electronAPI.sessions.spawnTransient({
         projectId: currentProject.id,
         // The window is anchored to this slot before it spawns, so it asks main
@@ -436,8 +439,9 @@ export function createTransientSessionSlice(preserved: {
         if (options?.respawn) await window.electronAPI.sessions.killTransient(entry.sessionId, { respawn: true });
         else await window.electronAPI.sessions.killTransient(entry.sessionId);
       } catch {
-        // The renderer already let go of a PTY it can no longer address; report
-        // the failure rather than passing as a kill.
+        // report-ok: main's IPC wrap reports a handler's rejection, and the caller toasts that
+        // the process may still be running. The renderer already let go of a PTY it can no
+        // longer address, so this answers failed rather than passing as a kill.
         return 'failed';
       }
       return 'killed';
@@ -471,7 +475,8 @@ export function createTransientSessionSlice(preserved: {
         try {
           await window.electronAPI.sessions.killTransient(entry.sessionId);
         } catch {
-          // Best-effort
+          // report-ok: main's IPC wrap reports a handler's rejection, and the entry leaves
+          // this store below either way.
         }
       }
       set((state) => {
@@ -508,7 +513,8 @@ export function createTransientSessionSlice(preserved: {
           try {
             head = await readHead({ path: projectPath });
           } catch {
-            // Best-effort: an unreachable main leaves the entries as they are.
+            // report-ok: main's IPC wrap reports a handler's rejection, and the entries keep
+            // the branch they show.
             return;
           }
           // A detached HEAD shows as its short sha rather than as the default
@@ -534,7 +540,8 @@ export function createTransientSessionSlice(preserved: {
           if (typeof mirrorBranch !== 'function') continue;
           for (const sessionId of changedSessionIds) {
             void mirrorBranch(sessionId, value).catch(() => {
-              // Best-effort - the branch is already applied locally.
+              // report-ok: main's IPC wrap reports a handler's rejection, and the branch is
+              // already applied locally.
             });
           }
         } while (headRefreshRerun.get(projectId) === true);
@@ -558,6 +565,7 @@ export function createTransientSessionSlice(preserved: {
           });
         }
       } catch (error) {
+        // report-ok: main's IPC wrap reports a handler's rejection, and the toast shows the reason.
         useToastStore.getState().addToast({
           title: i18n._(msg`Couldn't apply model or effort`),
           ...ipcFailureToastFields(error, ''),

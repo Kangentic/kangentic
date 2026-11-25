@@ -287,6 +287,7 @@ export function pngWidth(pngBase64: string): number | null {
   try {
     header = Buffer.from(pngBase64.slice(0, 44), 'base64');
   } catch {
+    // report-ok: bytes that do not decode are not a PNG, and null is the answer for that.
     return null;
   }
   if (header.length < 24 || header.toString('ascii', 12, 16) !== 'IHDR') return null;

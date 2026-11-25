@@ -22,6 +22,7 @@ import {
   type WorkflowBlocker,
 } from './workflow-step-condition';
 import { workflowOfTask } from './workflow-home';
+import { workflowEngineReporter } from './workflow-report';
 import { needsOwnerQuestion } from '../../shared/workflow-needs-owner';
 import { noChangesReason } from '../../shared/workflow-no-changes';
 import { finalMatchLine } from '../../shared/final-line-match';
@@ -250,7 +251,10 @@ export function workflowStepApplies(task: Pick<Task, 'workflow_id' | 'workflow_p
   if (!task.workflow_id) return false;
   try {
     return workflowOfTask(task, projectId)?.state === 'running';
-  } catch {
+  } catch (error) {
+    // A home that cannot be read answers no: the turn end gets no step check, recovery
+    // forgets the task, and the workflow stops on it with no stall notice.
+    workflowEngineReporter.report(error, { tags: { stage: 'step_applies_read' } });
     return false;
   }
 }
@@ -340,6 +344,9 @@ export async function runWorkflowStep(
     try {
       repos.automationRuns.recordWorkflowStep({ taskId: task.id, swimlaneId: column.id, workflowId: task.workflow_id!, ...row });
     } catch (error) {
+      // The row marks this reply as judged and latches the once-a-visit notices: without
+      // it the same reply is judged and paid for again, and a notice repeats.
+      workflowEngineReporter.report(error, { tags: { stage: 'step_record' } });
       console.warn('[WORKFLOW] Could not record the step check:', error);
     }
   };
@@ -482,6 +489,9 @@ export async function runWorkflowStep(
       // during the check. Nothing is recorded, so the reply is judged again
       // after Resume.
       if (!workflowStepApplies(task, payload.projectId)) return;
+      // A done step whose move fails leaves the task in its column: recovery retries
+      // the move on its schedule, and a failure that repeats ends in a stall.
+      workflowEngineReporter.report(error, { tags: { stage: 'step_move' } });
       const message = error instanceof Error ? error.message : String(error);
       record({ met: true, reason: answer.reason, detail: `Step done, but the move to ${next.name} failed: ${message}`, backgroundCallId: answerCallId });
       // Logged here, not thrown: the caller retries the move on recovery's schedule.

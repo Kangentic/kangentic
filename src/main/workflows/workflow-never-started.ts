@@ -3,6 +3,7 @@ import { getExistingProjectDb } from '../db/database';
 import { SessionRepository } from '../db/repositories/session-repository';
 import { TaskMoveRepository } from '../db/repositories/task-move-repository';
 import { safeLanes } from './workflow-lanes';
+import { workflowEngineReporter } from './workflow-report';
 
 /**
  * Whether a workflow's task never started: it is in To Do, has never had a
@@ -29,7 +30,10 @@ export function isNeverStarted(projectId: string, task: Task, lanes: Swimlane[] 
     if (!db) return false;
     if (new SessionRepository(db).getLatestForTask(task.id)) return false;
     return !new TaskMoveRepository(db).hasEnteredOtherLane(task.id, lane.id);
-  } catch {
+  } catch (error) {
+    // A board that cannot be read answers false, so nothing is deleted on a guess. The
+    // Delete confirm then offers to take no task along, and none is taken.
+    workflowEngineReporter.report(error, { tags: { stage: 'never_started_read' } });
     return false;
   }
 }

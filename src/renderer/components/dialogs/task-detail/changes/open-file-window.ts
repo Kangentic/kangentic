@@ -26,6 +26,7 @@ export async function openChangesFileWindow(params: PopOutChangesFileParams): Pr
       variant: 'info',
     });
   } catch (error) {
+    // report-ok: main's IPC wrap reports a handler's rejection, and the toast shows the reason.
     useToastStore.getState().addToast({
       title: i18n._(msg`Couldn't open file diff`),
       ...ipcFailureToastFields(error, i18n._(msg`The window could not be created.`)),

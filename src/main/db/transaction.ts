@@ -53,7 +53,8 @@ function runAfterCommit(db: Database.Database): void {
   try {
     afterCommit(db);
   } catch {
-    // The transaction already committed.
+    // report-ok: the transaction already committed. Only the retrieval worker sets this
+    // hook, to pace its checkpoints, and its next commit paces again.
   }
 }
 
@@ -109,7 +110,8 @@ export function writeTransaction<Args extends unknown[], Result>(
       try {
         holdObserver(db, heldMs);
       } catch {
-        // The transaction already committed.
+        // report-ok: the transaction already committed. Only the retrieval worker sets this
+        // observer, for its write budget, and a hold it misses is one write not counted.
       }
     }
     runAfterCommit(db);

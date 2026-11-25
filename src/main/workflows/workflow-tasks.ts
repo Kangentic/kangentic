@@ -3,6 +3,7 @@ import { getExistingProjectDb } from '../db/database';
 import { isSqliteError } from '../db/sqlite-error';
 import { TaskRepository } from '../db/repositories/task-repository';
 import type { IpcContext } from '../ipc/ipc-context';
+import { workflowEngineReporter } from './workflow-report';
 
 /** A workflow's task on a board hidden because its SSH host was removed. */
 export interface HiddenWorkflowTask {
@@ -51,6 +52,9 @@ export function readWorkflowTasks(
         .filter((task) => (task.workflow_project_id ?? project.id) === homeProjectId);
     } catch (error) {
       if (!isSqliteError(error)) throw error;
+      // An unread board's tasks are missing from every read of the workflow: the view
+      // shows fewer cards, and nothing completes or resumes until it reads again.
+      workflowEngineReporter.report(error, { tags: { stage: 'tasks_read' } });
       unreadProjectIds.add(project.id);
       return [];
     }
@@ -115,6 +119,9 @@ export function linkEndState(
     return 'held';
   } catch (error) {
     if (!isSqliteError(error)) throw error;
+    // A link whose end cannot be looked up keeps holding: the task that waits on it
+    // never starts, and the view counts a blocker it cannot name.
+    workflowEngineReporter.report(error, { tags: { stage: 'task_hold' } });
     return 'held';
   }
 }

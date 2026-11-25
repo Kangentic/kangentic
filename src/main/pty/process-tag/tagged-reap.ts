@@ -72,6 +72,7 @@ import {
   treeConnectionQueryOf,
   type TaskTreeProbeInput,
 } from './task-tree-probe';
+import type { HostHandledErrors } from '../host/host-handled-error';
 
 /** How long the first pass's targets get to exit before the second scan. */
 export const REAP_GRACE_MS = 1000;
@@ -251,6 +252,12 @@ export interface TaggedReaperDeps {
    * batch ahead of it. Only `TaggedReaper` calls it.
    */
   onBatchStart?: (kind: TaggedReaperQueue) => void;
+  /**
+   * The pty host's relay to main (`host-handled-error.ts`), for a probe that
+   * failed. A reap and a Stop return their failure code to main instead, which
+   * reports it there. A probe's answer carries none: it only says it failed.
+   */
+  handledErrors?: Pick<HostHandledErrors, 'report'>;
 }
 
 /** A fresh result each time, so no caller can share another's arrays. */
@@ -313,6 +320,8 @@ async function killAll(
     try {
       return (await reader.kill(target, strength)) ? target.pid : null;
     } catch {
+      // report-ok: a kill that throws counts as not signalled, and the scan after it
+      // decides. A process still running is listed to the user as not stopped.
       return null;
     }
   }));
@@ -324,6 +333,8 @@ async function describeSafely(reader: TaggedProcessReader, targets: readonly Sca
   try {
     return await reader.describe(targets);
   } catch {
+    // report-ok: a label only names a process in the report. Without one it is listed
+    // under the unnamed label, and no kill decision reads a label.
     return new Map();
   }
 }
@@ -444,6 +455,10 @@ export async function probeTaskTrees(request: TaskProbeRequest, deps: TaggedReap
     }
     return { entries, failed: false };
   } catch (error) {
+    // A failed probe reads as could not tell, so a project's Stop script never
+    // runs after an idle pause and the stack it would stop keeps running. Only
+    // the error's name and code leave this computer: main sends no text.
+    deps.handledErrors?.report('task_tree_probe', error);
     console.warn('[STOP-SCRIPT] probe failed:', messageOf(error));
     return { entries: [], failed: true };
   }
@@ -458,6 +473,8 @@ export async function reapTaggedOnce(
   try {
     tasks = scopesOf(request.tasks, deps.homeDirectory ?? os.homedir());
   } catch (error) {
+    // report-ok: returned as failureCode reap_error, which main's noteHostReapResult
+    // reports through reportTaskReapFailure.
     // `os.homedir()` throws for a user with no home. Without it home cannot be
     // refused as a root, so the reap kills nothing.
     return { ...emptyReapResult(), failureReason: messageOf(error), failureCode: 'reap_error' };
@@ -481,6 +498,8 @@ export async function reapTaggedOnce(
   try {
     await deps.reader.ready?.();
   } catch (error) {
+    // report-ok: returned as failureCode reader_load, which main's noteHostReapResult
+    // reports through reportTaskReapFailure.
     return { ...emptyReapResult(), failureReason: messageOf(error), failureCode: 'reader_load' };
   }
   const killed = new Set<number>();
@@ -624,6 +643,8 @@ export async function reapTaggedOnce(
       ],
     };
   } catch (error) {
+    // report-ok: returned with its fixed failureCode, pass and cause, which main's
+    // noteHostReapResult reports through reportTaskReapFailure.
     return {
       ...emptyReapResult(),
       killedPids: [...killed].sort((left, right) => left - right),
@@ -732,6 +753,9 @@ export async function stopProcessTree(
     const aliveAtLast = runningIdentitiesOf(lastScan);
     return stopAnswer(survivors.some((survivor) => aliveAtLast.has(processIdentity(survivor))) ? 'failed' : 'stopped');
   } catch (error) {
+    // report-ok: returned with its fixed failureCode, pass and cause. Main's
+    // noteHostStopResult reports a Stop the user asked for through
+    // reportTaskReapFailure, and a worktree holder stop logs it, by decision.
     return { outcome: 'failed', failureCode: failureCodeOf(error), failurePass: pass, failureCause: failureCauseOf(error), failureReason: messageOf(error) };
   }
 }
@@ -788,6 +812,8 @@ export class TaggedReaper {
       this.announceStart('stop');
       return stopProcessTree(request, this.deps);
     });
+    // report-ok: the chain only orders Stops, so it settles either way. The caller
+    // holds `run` itself, and stopProcessTree answers a failure instead of rejecting.
     this.stopChain = run.then(() => undefined, () => undefined);
     return run;
   }
@@ -808,6 +834,8 @@ export class TaggedReaper {
       try {
         answers.push(await reader.isRunning(identity));
       } catch {
+        // report-ok: a read that failed answers cannot tell, which changes no row in
+        // the leftover list.
         answers.push(null);
       }
     }
@@ -829,7 +857,8 @@ export class TaggedReaper {
     try {
       this.deps.onBatchStart?.(kind);
     } catch {
-      // Main's budget then runs from the send, as it did before batches announced their start.
+      // report-ok: telling main failed, a closed port at quit. Main's budget then runs
+      // from the send, as it did before batches announced their start.
     }
   }
 }

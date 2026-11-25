@@ -24,6 +24,7 @@ export async function resolveRunTranscriptPath(
   const place = input.place ?? null;
   // An agent in a WSL distro reports its transcript by its Linux path.
   const reported = input.transcriptPath ? hostPathForTarget(input.transcriptPath, place) : null;
+  // report-ok: no file at the reported path is the answer, and `locate` below looks for it.
   if (reported && path.isAbsolute(reported) && await fs.promises.stat(reported).then(() => true, () => false)) {
     return reported;
   }

@@ -5,6 +5,7 @@ import { hostOfRecord } from '../../remote/record-host';
 import { lineageHadTurns, resolveResumeLineage } from '../../transition-engine/resume-conversation-guard';
 import type { IpcContext } from '../ipc-context';
 import { withTaskLock } from '../task-lifecycle-lock';
+import { handlerStepReporter } from './handler-step-report';
 
 /**
  * A resume whose CLI said the conversation does not exist, and whose lineage
@@ -75,6 +76,9 @@ export async function markResumeMiss(
       return 'marked';
     });
   } catch (error) {
+    // The record stays unmarked, so the retry may run the same `--resume` and the task
+    // can stay paused across restarts with its prompt undelivered.
+    handlerStepReporter.report(error, { tags: { area: 'session_resume', step: 'resume_miss_mark' } });
     console.warn('[AGENT-LAUNCH] Could not mark a resume that found no conversation:', error);
     return 'not_a_miss';
   }

@@ -35,16 +35,18 @@ export async function closeBrowserForTask(taskId: string, projectId?: string | n
     try {
       await window.electronAPI.browser.closePaneByUser(webContentsId);
     } catch {
-      // Main will still unregister on the unmount below; the only loss is the
-      // reason word, and a lane it might stand up ends with the session.
+      // report-ok: main's IPC wrap reports a handler's rejection. Main will still
+      // unregister on the unmount below; the only loss is the reason word, and a
+      // lane it might stand up ends with the session.
     }
   }
   if (useSessionStore.getState().browserOffscreenTasks.has(taskId)) {
     try {
       await window.electronAPI.browser.closeOffscreenSurface(taskId, projectId);
     } catch {
-      // Nothing else can reach it, so report nothing and leave it to session
-      // end - the same guarantee every offscreen surface already has.
+      // report-ok: main's IPC wrap reports a handler's rejection. Nothing else
+      // here can reach the surface, so it is left to session end, the same
+      // guarantee every offscreen surface already has.
     }
   }
   useSessionStore.getState().setBrowserOpen(taskId, false);

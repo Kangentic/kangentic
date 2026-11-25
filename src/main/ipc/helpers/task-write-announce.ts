@@ -2,6 +2,7 @@ import type { WebContents } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { isShuttingDown } from '../../shutdown-state';
 import { sendToRenderer } from '../send-to-renderer';
+import { handlerStepReporter } from './handler-step-report';
 import type { IpcContext } from '../ipc-context';
 import type { BoardChange } from '../../mobile-bridge/board-event-bus';
 
@@ -78,6 +79,9 @@ export function announceTaskBoardChange(
   try {
     context.boardEvents.emitBoardChanged({ projectId, change: boardChange.change, ids: boardChange.ids });
   } catch (error) {
+    // The listeners after the one that threw (a paired phone, the Agent Monitor, the
+    // workflow engine) never hear of the write.
+    handlerStepReporter.report(error, { tags: { area: 'announce', step: 'board_listener' } });
     console.warn('[task-write-announce] A board-changed listener threw on a task write:', error);
   }
 }
@@ -113,6 +117,8 @@ export function announceToMainWindow(
   try {
     sendToRenderer(context.mainWindow, IPC.TASK_CHANGED_IN_OTHER_WINDOW, projectId);
   } catch (error) {
+    // The main window's board stays stale after a write made from another window.
+    handlerStepReporter.report(error, { tags: { area: 'announce', step: 'renderer_send' } });
     console.warn('[task-write-announce] Could not tell the main window about a task write:', error);
   }
 }

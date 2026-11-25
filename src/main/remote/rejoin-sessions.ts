@@ -28,6 +28,7 @@ import { sessionOutputPaths } from '../transition-engine/session-paths';
 import type { HelperSnapshot } from './protocol/messages';
 import { hostOfRecord } from './record-host';
 import { resolveRemoteLaunch } from './remote-launch';
+import { remoteHostReporter } from './remote-report';
 
 export type RejoinOutcome = 'rejoined' | 'pending' | 'gone';
 
@@ -58,6 +59,9 @@ export async function rejoinRunningRemoteSessions(
     try {
       alive = new Set((await deps.snapshot(hostId)).sessions.filter((entry) => entry.alive).map((entry) => entry.sessionId));
     } catch (error) {
+      // Every agent this host kept running stays pending: its card shows no terminal and nothing
+      // is resumed or started for its task. A host out of reach is skipped by the reporter.
+      remoteHostReporter.report(error, { tags: { stage: 'rejoin_snapshot' } });
       deps.log?.(`[remote] could not ask ${hostId.slice(0, 8)} which agents it kept running: ${error instanceof Error ? error.message : String(error)}`);
       for (const record of group) outcomes.set(record.id, 'pending');
       continue;
@@ -70,6 +74,9 @@ export async function rejoinRunningRemoteSessions(
       try {
         outcomes.set(record.id, (await deps.adopt(record)) ? 'rejoined' : 'gone');
       } catch (error) {
+        // An agent the host still runs is not taken back, so its task waits with no terminal
+        // until the host's next connect asks again.
+        remoteHostReporter.report(error, { tags: { stage: 'rejoin_adopt' } });
         deps.log?.(`[remote] could not take back the agent of session ${record.id.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
         outcomes.set(record.id, 'pending');
       }

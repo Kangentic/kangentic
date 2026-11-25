@@ -3,6 +3,7 @@ import PixelDiffWorker from './pixel-diff.worker?worker';
 import type { PixelDiffRequest, PixelDiffResponse, PixelDiffSource } from './pixel-diff.worker';
 import { loadImage, type DecodedImageSide } from './diff-content';
 import { pixelDiffCanvas } from './pixel-diff-canvas';
+import { reportRendererFailure } from '../../../../utils/renderer-failure';
 
 /**
  * Main-thread half of the Diff mode: hands both sides to the pixel-diff
@@ -90,11 +91,25 @@ function getWorker(): Worker {
     const resolve = pendingRequests.get(response.id);
     pendingRequests.delete(response.id);
     if (!resolve) return;
+    if (!response.ok) {
+      // The worker cannot report, so it relays the class name of what its comparison threw.
+      // Both sides decoded on this thread, so a pair Diff mode cannot compare is the worker's.
+      const comparisonFailure = new Error('The pixel diff worker could not compare a pair.');
+      comparisonFailure.name = response.errorName;
+      reportRendererFailure('changes', 'pixel_diff_compare', comparisonFailure);
+    }
     resolve(response.ok
       ? { status: 'done', maskUrl: response.maskUrl, changedPixels: response.changedPixels, totalPixels: response.totalPixels }
       : { status: 'failed' });
   };
   created.onerror = () => {
+    // The worker's script did not load, or the worker died, so every comparison waiting on
+    // it fails and Diff mode cannot compare any image. The event carries no error object.
+    if (!disposed) {
+      const workerFailure = new Error('The pixel diff worker raised an error event.');
+      workerFailure.name = 'PixelDiffWorkerError';
+      reportRendererFailure('changes', 'pixel_diff_worker', workerFailure);
+    }
     failAllPending();
     created.terminate();
     if (worker === created) worker = null;
@@ -122,8 +137,11 @@ function closeIfBitmap(source: PixelDiffSource): void {
   if (typeof source !== 'string') source.close();
 }
 
-/** One pair's comparison, shared by every caller asking for it while it runs. */
-function computePixelDiff(before: DecodedImageSide, after: DecodedImageSide, scalable: boolean): Promise<PixelDiffOutcome> {
+/**
+ * One pair's comparison, shared by every caller asking for it while it runs.
+ * Exported for the unit test that drives a worker that cannot start.
+ */
+export function computePixelDiff(before: DecodedImageSide, after: DecodedImageSide, scalable: boolean): Promise<PixelDiffOutcome> {
   const cached = outcomeCache.get(before, after);
   if (cached !== undefined) return Promise.resolve(cached);
   const running = runningComparisons.get(before, after);
@@ -166,7 +184,10 @@ async function runPixelDiff(before: DecodedImageSide, after: DecodedImageSide, s
       // worker's reply is a later task, so it cannot arrive before the set.
       pendingRequests.set(id, resolve);
     });
-  } catch {
+  } catch (error) {
+    // The worker could not be built or posted to, so Diff mode says it could not compare
+    // for every image. A Fast Refresh fails the comparison on purpose, which is not a defect.
+    if (!disposed) reportRendererFailure('changes', 'pixel_diff_worker', error);
     outcome = { status: 'failed' };
   }
   if (outcome.status === 'done') outcomeCache.set(before, after, outcome);

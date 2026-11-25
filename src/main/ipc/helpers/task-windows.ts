@@ -2,6 +2,7 @@ import { popOutWindowManager } from '../../pop-out/pop-out-window-manager';
 import { destroyLanesForTask } from '../../browser/browser-lane-manager';
 import { forgetAgentControl } from '../../browser/passkey-guard';
 import { parsePopOutInstanceKey } from '../../../shared/pop-out';
+import { handlerStepReporter } from './handler-step-report';
 
 /**
  * Close every OS window that belongs to a task whose work just ended: its
@@ -38,6 +39,8 @@ export function closeTaskWindows(projectId: string | null | undefined, taskId: s
       console.log(`[TASK_WINDOWS] Closed ${popOutCount} pop-out(s) and ${laneCount} lane(s) for task ${taskId.slice(0, 8)}`);
     }
   } catch (error) {
+    // A finished task keeps a pop-out window or an offscreen browser open.
+    handlerStepReporter.report(error, { tags: { area: 'task_windows', step: 'close_windows' } });
     console.warn(`[TASK_WINDOWS] Closing windows failed for task ${taskId.slice(0, 8)} (non-fatal):`, error);
   }
 }

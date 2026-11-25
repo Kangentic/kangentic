@@ -1078,6 +1078,8 @@ export class TaskRepository {
     writeTransaction(this.db, () => {
       for (const row of allRows) {
         let labels: string[];
+        // report-ok: a row whose labels are not JSON, in a column only Kangentic writes, holds
+        // no label to rename.
         try { labels = JSON.parse(row.labels); } catch { continue; }
         const index = labels.indexOf(oldName);
         if (index === -1) continue;
@@ -1126,6 +1128,8 @@ export class TaskRepository {
     writeTransaction(this.db, () => {
       for (const row of allRows) {
         let labels: string[];
+        // report-ok: a row whose labels are not JSON, in a column only Kangentic writes, holds
+        // no label to remove.
         try { labels = JSON.parse(row.labels); } catch { continue; }
         const filtered = labels.filter((label) => label !== name);
         if (filtered.length === labels.length) continue;
@@ -1166,6 +1170,9 @@ export class TaskRepository {
       try {
         removeLinksInWorkflowHome(task);
       } catch (error) {
+        // report-ok: the workflow engine's next drop-links pass removes the links to a task
+        // that is gone, so a miss here costs nothing. That pass reports through
+        // workflowEngineReporter if it fails too.
         console.warn(`[TaskRepository] Could not remove the links of deleted task ${id.slice(0, 8)} in its workflow's home:`, error);
       }
     }

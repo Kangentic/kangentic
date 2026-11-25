@@ -52,6 +52,8 @@ export function ProjectPathMissingDialog() {
         });
       }
     } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the toast shows the
+      // reason. openProject toasts its own failure and does not throw.
       useToastStore.getState().addToast({
         title: t`Couldn't relocate project`,
         ...ipcFailureToastFields(error, '', t`The folder could not be used.`),

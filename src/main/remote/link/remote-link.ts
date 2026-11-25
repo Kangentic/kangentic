@@ -28,9 +28,12 @@ import {
   type RendererPort,
 } from '../../pty/host/protocol';
 import type { PtyHostRequestOptions, PtyHostTransport } from '../../pty/host/pty-host-client';
+import { HostHandledErrors } from '../../pty/host/host-handled-error';
 import type { FromPtyHostPortMessage, ToPtyHostPortMessage } from '../../../shared/pty-port-protocol';
 import { MAX_FRAME_JSON_BYTES, MAX_FRAME_RAW_BYTES } from '../protocol/frame-codec';
 import { ResumeEndpoint, type GapInfo, type ResumeEndpointOptions } from '../protocol/resume-endpoint';
+import { HOST_REQUEST_UNANSWERED_ERROR_NAME, HostRequestUnansweredError } from './host-request-unanswered-error';
+import { HOST_UNREACHABLE_ERROR_NAME } from './host-unreachable-error';
 import {
   joinPortMessage,
   parseHelperMessage,
@@ -92,6 +95,17 @@ interface LinkSession {
   alive: boolean;
 }
 
+/**
+ * Whether a failed request is the link being down or slow, which is a state and never a failure
+ * (`.claude/rules/ssh-remote.md`). Read by name: an error that crossed a transport keeps only that.
+ * A drop must never be relayed. The relay sends each code once per run, so a drop relayed first
+ * would use the code up and hide the defect that came after it.
+ */
+export function isLinkDrop(error: unknown): boolean {
+  return error instanceof Error
+    && (error.name === HOST_REQUEST_UNANSWERED_ERROR_NAME || error.name === HOST_UNREACHABLE_ERROR_NAME);
+}
+
 export class RemoteLink implements PtyHostTransport {
   readonly hostPid = null;
   private readonly endpoint: ResumeEndpoint;
@@ -118,6 +132,12 @@ export class RemoteLink implements PtyHostTransport {
   private retryWake: (() => void) | null = null;
   /** Counts `start` calls, so a loop a `stop` left mid-await ends when a later `start` has begun another. */
   private loopGeneration = 0;
+  /**
+   * Failures main should hear of, relayed by a fixed code on the link's own event stream, the way the
+   * pty host's core relays its own (`host-handled-error.ts`). The link runs in the pty host, which
+   * cannot load a reporter, and its events already reach main through the hub and the router.
+   */
+  private readonly handledErrors = new HostHandledErrors((event) => this.eventListener?.(event));
 
   constructor(private readonly options: RemoteLinkOptions) {
     this.endpoint = new ResumeEndpoint(
@@ -126,7 +146,16 @@ export class RemoteLink implements PtyHostTransport {
         onAttached: () => this.onAttached(),
         onDetached: (reason) => this.onDetached(reason),
         onGap: (info) => this.handlers.onGap?.(info),
-        onError: (error) => this.log(`a handler threw: ${String(error)}`),
+        onError: (error) => {
+          // The endpoint caught one of this link's own handlers throwing (a helper message, the
+          // handshake's attach, a gap, a detach). The stream goes on, and whatever that handler
+          // was doing for a terminal on the host (an exit, a reply, a reconcile) did not happen.
+          if (!isLinkDrop(error)) this.handledErrors.report('remote_handler', error);
+          this.log(`a handler threw: ${String(error)}`);
+        },
+        // The helper sent a frame that cleared its checksums and still broke the protocol. The
+        // connection ends and redials, and the same frame fails again: the host stays unusable.
+        onProtocolFault: (error) => this.handledErrors.report('remote_frame', error),
       },
       {
         role: 'link',
@@ -158,7 +187,7 @@ export class RemoteLink implements PtyHostTransport {
     this.stopped = true;
     this.endRetryWait();
     this.endpoint.detach('the link stopped');
-    this.failPending(new Error('the link stopped'));
+    this.failPending(new HostRequestUnansweredError('the link stopped'));
     this.setState('stopped', null);
   }
 
@@ -203,6 +232,9 @@ export class RemoteLink implements PtyHostTransport {
         if (answer.ok) this.sessions.set(route.sessionId, { ptyId: route.ptyId, alive: true });
         outcomes.push({ sessionId: route.sessionId, rejoined: answer.ok });
       } catch (error) {
+        // The agent runs on and the app does not take it back: its task shows no terminal and the
+        // record waits for a later attempt. A drop or a slow host is a state, and is not relayed.
+        if (!isLinkDrop(error)) this.handledErrors.report('remote_rebind', error);
         this.log(`rejoin of ${route.sessionId.slice(0, 8)} failed: ${error instanceof Error ? error.message : String(error)}`);
         outcomes.push({ sessionId: route.sessionId, rejoined: false });
       }
@@ -315,6 +347,8 @@ export class RemoteLink implements PtyHostTransport {
         this.endpoint.attach(stream);
         await ended;
       } catch (error) {
+        // report-ok: the dial failed (ssh would not start, the network, the host), so the state
+        // shows reconnecting with the reason and the loop dials again after its backoff.
         // A dial that fails after `stop` belongs to a link that is over: nothing brings a stopped state back.
         if (superseded()) return;
         this.log(`could not connect: ${error instanceof Error ? error.message : String(error)}`);
@@ -360,6 +394,10 @@ export class RemoteLink implements PtyHostTransport {
     try {
       snapshot = await this.requestHelper('snapshot', {});
     } catch (error) {
+      // With no snapshot after a reconnect, a session that exited or was lost while the link was
+      // away is never noticed, and its terminal stays blank. A drop is a state: the next attach
+      // reconciles again.
+      if (!isLinkDrop(error)) this.handledErrors.report('remote_reconcile', error);
       this.log(`snapshot failed: ${error instanceof Error ? error.message : String(error)}`);
       return;
     }
@@ -378,7 +416,12 @@ export class RemoteLink implements PtyHostTransport {
         // The host kept an exit code but no signal, so none is reported.
         this.eventListener?.({ type: 'exit', ptyId: session.ptyId, sessionId, exitCode: record.exitCode ?? -1, signal: null });
       } else if (record.wirePtyId !== session.ptyId) {
-        void this.requestHelper('rebind', { sessionId, ptyId: session.ptyId }).catch((error) => this.log(`rebind failed: ${String(error)}`));
+        void this.requestHelper('rebind', { sessionId, ptyId: session.ptyId }).catch((error: unknown) => {
+          // The helper keeps sending this session's output under a PTY id nothing here holds, so
+          // its terminal stays blank until the next reconcile. A drop is a state, not relayed.
+          if (!isLinkDrop(error)) this.handledErrors.report('remote_rebind', error);
+          this.log(`rebind failed: ${String(error)}`);
+        });
       }
     }
     if (lost.length > 0) this.handlers.onSessionsLost?.(lost);
@@ -408,7 +451,7 @@ export class RemoteLink implements PtyHostTransport {
       const id = this.nextRequestId++;
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`the host did not answer ${method} within ${Math.round(timeoutMs / 1000)} s`));
+        reject(new HostRequestUnansweredError(`the host did not answer ${method} within ${Math.round(timeoutMs / 1000)} s`));
       }, timeoutMs);
       this.pending.set(id, { method, resolve, reject, timer });
       this.endpoint.send({ t: 'request', id, method, params } satisfies LinkToHelperMessage, raw);

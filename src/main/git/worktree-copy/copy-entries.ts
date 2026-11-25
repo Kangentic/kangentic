@@ -121,6 +121,7 @@ class CopyPlanner {
       await fs.promises.lstat(absolutePath(this.request.projectPath, entry));
       return true;
     } catch {
+      // report-ok: ENOENT when nothing has that literal name, so the entry reads as a glob.
       return false;
     }
   }
@@ -250,6 +251,8 @@ class CopyPlanner {
    */
   private async addLink(relative: string, root: string): Promise<void> {
     const source = absolutePath(this.request.projectPath, relative);
+    // report-ok: a link that left or cannot be read is left out and counted in skippedLinks,
+    // which the copy step logs.
     const target = await fs.promises.readlink(source).catch(() => null);
     if (target === null || path.isAbsolute(target)
       || !isPathInside(path.resolve(path.dirname(source), target), absolutePath(this.request.projectPath, root))) {
@@ -277,6 +280,7 @@ async function forEachConcurrently<Item>(items: Item[], work: (item: Item) => Pr
         signal?.throwIfAborted();
         await work(item);
       } catch (error) {
+        // report-ok: kept as the failure and thrown below once nothing is still running.
         if (!failed) failure = error;
         failed = true;
       }
@@ -358,11 +362,13 @@ async function makeLink(request: CopyEntriesRequest, writer: WorktreeWriter, lin
   if (await writer.lstatIfPresent(destination)) return true;
   try {
     const resolved = path.resolve(path.dirname(absolutePath(request.projectPath, link.relative)), link.target);
+    // report-ok: a dangling link has no target to stat, and it is made as a file link.
     const isDirectory = (await fs.promises.stat(resolved).catch(() => null))?.isDirectory() ?? false;
     await fs.promises.symlink(link.target, destination, isDirectory ? 'dir' : 'file');
     return true;
   } catch {
-    // Windows refuses a relative symlink without Developer Mode.
+    // report-ok: Windows refuses a relative symlink without Developer Mode, the user's own
+    // setting, and the link is counted in skippedLinks, which the copy step logs.
     return false;
   }
 }

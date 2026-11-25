@@ -17,6 +17,7 @@ import { isAbortError } from '../../../shared/abort-utils';
 import { createProgressCallback, clearSpawnProgress } from '../../transition-engine/spawn-progress';
 import { resolveProjectContext } from '../helpers/project-repos';
 import { announceTaskBoardChange, announceTaskWrite } from '../helpers/task-write-announce';
+import { handlerStepReporter } from '../helpers/handler-step-report';
 import { withTaskLock } from '../task-lifecycle-lock';
 import { supersedeMessageDeliveries } from '../../automations/turn-end/turn-end-passes';
 import { WORKFLOW_REFUSALS } from '../../../shared/workflow-refusals';
@@ -108,10 +109,11 @@ function serializeReconcile(
   run: () => Promise<ImportReconcileResult>,
 ): Promise<ImportReconcileResult> {
   const previous = inFlightReconciles.get(key);
-  // Swallow the predecessor's rejection: a failed reconcile must not fail the
-  // next one, it only has to finish first.
+  // report-ok: the predecessor's own handler call got this rejection, and the IPC wrap
+  // reported it. A failed reconcile must not fail the next one, it only has to finish first.
   const chained = (previous ? previous.catch(() => undefined) : Promise.resolve()).then(run);
   inFlightReconciles.set(key, chained);
+  // report-ok: the handler returns this same promise, so the IPC wrap reports its rejection.
   void chained.catch(() => undefined).finally(() => {
     if (inFlightReconciles.get(key) === chained) inFlightReconciles.delete(key);
   });
@@ -263,6 +265,19 @@ export function registerBacklogHandlers(context: IpcContext): void {
             attachments.add(projectPath, task.id, backlogAttachment.filename, base64Data, backlogAttachment.media_type);
           } catch (error) {
             console.error(`[BACKLOG_PROMOTE] Failed to copy attachment "${backlogAttachment.filename}":`, error);
+            // The item's own files are deleted right below. A copy that failed while its
+            // source is still on disk used to lose that file for good. Now this item's
+            // promote is undone and the failure thrown, so the item keeps its files and
+            // its place in the backlog, and the IPC wrap reports it.
+            if (fs.existsSync(backlogAttachment.file_path)) {
+              attachments.deleteByTaskId(task.id);
+              tasks.delete(task.id);
+              createdTaskIds.pop();
+              throw error;
+            }
+            // The source is already gone, so nothing is left to lose: the promote goes on
+            // without that file, and the missing file is reported.
+            handlerStepReporter.report(error, { tags: { area: 'backlog', step: 'promote_attachment_missing' } });
           }
         }
         // Clean up backlog attachment files
@@ -343,6 +358,9 @@ export function registerBacklogHandlers(context: IpcContext): void {
             });
           }
         } catch (error) {
+          // The promoted task sits in its column with no agent, and the tasks after it in
+          // the batch are not started. The reporter skips what spawnAgent already reported.
+          handlerStepReporter.report(error, { tags: { area: 'backlog', step: 'promote_spawn' } });
           console.error('[BACKLOG_PROMOTE] Background agent spawn failed:', error);
         }
       })();
@@ -414,6 +432,18 @@ export function registerBacklogHandlers(context: IpcContext): void {
           backlogAttachmentRepo.add(projectPath, backlogTask.id, taskAttachment.filename, base64Data, taskAttachment.media_type);
         } catch (error) {
           console.error(`[BACKLOG_DEMOTE] Failed to copy attachment "${taskAttachment.filename}":`, error);
+          // The task's own files and its row are deleted right below. A copy that failed
+          // while its source is still on disk used to lose that file for good. Now the
+          // backlog row this demote just made is taken back and the failure thrown, so the
+          // task stays on the board with its files, and the IPC wrap reports it.
+          if (fs.existsSync(taskAttachment.file_path)) {
+            backlogAttachmentRepo.deleteByTaskId(backlogTask.id);
+            backlogRepo.delete(backlogTask.id);
+            throw error;
+          }
+          // The source is already gone, so nothing is left to lose: the demote goes on
+          // without that file, and the missing file is reported.
+          handlerStepReporter.report(error, { tags: { area: 'backlog', step: 'demote_attachment_missing' } });
         }
       }
 
@@ -623,6 +653,9 @@ export function registerBacklogHandlers(context: IpcContext): void {
         removed = cacheRepo.pruneMissing(input.source, input.repository, toCache.map((issue) => issue.externalId));
       }
     } catch (error) {
+      // An item deleted on the remote stays in the Import dialog until a later pass prunes.
+      // The reporter skips a provider that is unreachable.
+      handlerStepReporter.report(error, { tags: { area: 'backlog', step: 'import_prune' } });
       console.warn('[BACKLOG_IMPORT_RECONCILE] prune step failed; skipping prune this round', error);
     }
 
@@ -654,6 +687,8 @@ export function registerBacklogHandlers(context: IpcContext): void {
       try {
         issuesToImport = await adapter.hydrateForImport(input.repository, input.issues);
       } catch (error) {
+        // report-ok: the provider's detail fetch failed, and the import result tells the user
+        // how many items came in without their comments.
         console.warn('[BACKLOG_IMPORT_EXECUTE] hydrate step failed; importing without deferred detail', error);
         // Report it rather than degrading silently. The items import fine, but they
         // are missing content the user would otherwise have got, and nothing else on
@@ -778,7 +813,8 @@ export function registerBacklogHandlers(context: IpcContext): void {
           if (updated) return updated;
         }
       } catch {
-        /* keep the placeholder label */
+        // report-ok: the provider could not name the source, and the label the URL parser
+        // made stays on the row the user just added.
       }
     }
     return source;

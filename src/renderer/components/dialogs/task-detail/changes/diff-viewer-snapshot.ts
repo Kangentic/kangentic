@@ -1,5 +1,6 @@
 import type { editor as MonacoEditorNamespace } from 'monaco-editor';
 import type { DiffViewerSnapshot } from '../../../../monaco-error-funnel';
+import { errorNameOf } from '../../../../../shared/handled-error-copy';
 
 /** The parts of a monaco sub-editor the snapshot reads. */
 type SnapshotSubEditor = Pick<
@@ -36,7 +37,10 @@ function readSafely(read: () => string | number | boolean | null): string | numb
   try {
     return read();
   } catch (error) {
-    return `threw: ${error instanceof Error ? error.message : String(error)}`;
+    // report-ok: this read runs for the monaco error funnel's own report, and a read that
+    // throws again is recorded in the snapshot that report carries. The name only: the
+    // snapshot is sent as a report context, and an error's message never is.
+    return `threw: ${errorNameOf(error)}`;
   }
 }
 

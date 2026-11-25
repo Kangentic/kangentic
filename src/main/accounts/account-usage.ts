@@ -282,6 +282,8 @@ export class AccountUsageRefresher {
       timer = setTimeout(() => resolve('timed-out'), timeoutMs);
       timer.unref?.();
     });
+    // report-ok: refreshAccount reports a failed read itself (stage `usage_read`), and the spawn
+    // ranks on the stored readings either way.
     const finished = Promise.all(reads).then(() => 'read' as const, () => 'read' as const);
     const result = await Promise.race([finished, timeoutSignal]);
     if (timer) clearTimeout(timer);

@@ -37,6 +37,8 @@ export function LanguageTab() {
     let cancelled = false;
     window.electronAPI.language.getInfo()
       .then((info) => { if (!cancelled) setShippedLocales(info.shippedLocales); })
+      // report-ok: main's IPC wrap reports a handler's rejection, and the picker lists the
+      // session's own language alone.
       .catch((error: unknown) => console.error('Could not read the display languages:', error));
     return () => { cancelled = true; };
   }, []);

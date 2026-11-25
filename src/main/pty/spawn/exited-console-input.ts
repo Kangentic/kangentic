@@ -55,6 +55,8 @@ export function writeToExitedConsole(pty: unknown, steps: readonly ExitSequenceS
   try {
     for (const part of immediate) input.write(part);
   } catch {
+    // report-ok: a pipe that refuses the first keys reads as not asked. The orphan
+    // cleanup logs that, and its grace and terminate still run.
     return false;
   }
   if (firstPause >= 0) writeExitSteps((data) => input.write(data), steps.slice(firstPause));

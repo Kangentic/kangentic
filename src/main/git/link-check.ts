@@ -27,6 +27,8 @@ export async function mayBeLink(target: string): Promise<boolean> {
   try {
     return await isLinkEntry(target, await fs.promises.lstat(target));
   } catch (error) {
+    // report-ok: ENOENT means the target is gone. Any other error reads as a link, so the
+    // caller stays out of a path it cannot identify.
     return (error as NodeJS.ErrnoException | undefined)?.code !== 'ENOENT';
   }
 }

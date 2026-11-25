@@ -1,5 +1,6 @@
 import type { SpawnSessionInput } from '../../shared/types';
 import { isShuttingDown } from '../shutdown-state';
+import { sessionManagerReporter } from './session-manager-report';
 
 interface QueueEntry {
   input: SpawnSessionInput & { id: string };
@@ -94,6 +95,9 @@ export class SessionQueue {
     try {
       return this.gate.mustWait(input, this.queuedInputs());
     } catch (error) {
+      // A gate that throws admits every start, so a column's agent limit is off
+      // with nothing on screen to say so.
+      sessionManagerReporter.report(error, { tags: { stage: 'queue_gate' } });
       console.error('[SessionQueue] mustWait threw, admitting:', error);
       return false;
     }
@@ -126,8 +130,11 @@ export class SessionQueue {
   notifySlotFreed(): void {
     // Don't await -- callers (kill, suspend, onExit) shouldn't block.
     // The reentrancy guard ensures only one loop runs at a time.
-    this.processQueue().catch((err) => {
-      console.error('[SessionQueue] processQueue error:', err);
+    this.processQueue().catch((error: unknown) => {
+      // A spawn's own failure is caught inside the loop, so this is the loop
+      // itself throwing: nothing queued starts until the next slot frees.
+      sessionManagerReporter.report(error, { tags: { stage: 'queue_loop' } });
+      console.error('[SessionQueue] processQueue error:', error);
     });
   }
 
@@ -159,10 +166,13 @@ export class SessionQueue {
           const [next] = this.queue.splice(index, 1);
           try {
             await this.spawner(next.input);
-          } catch (err) {
+          } catch (error) {
+            // The entry has left the queue and no caller waits on it, so the
+            // agent never starts and its card can stay Queued.
+            sessionManagerReporter.report(error, { tags: { stage: 'queued_spawn' } });
             console.error(
               `[SessionQueue] Failed to spawn queued session for task ${next.input.taskId}:`,
-              err,
+              error,
             );
           }
         }
@@ -182,6 +192,8 @@ export class SessionQueue {
     try {
       return this.gate.pick(this.queuedInputs());
     } catch (error) {
+      // The head starts whatever its column holds, so the limit is off unseen.
+      sessionManagerReporter.report(error, { tags: { stage: 'queue_gate' } });
       console.error('[SessionQueue] pick threw, taking the head:', error);
       return 0;
     }
@@ -202,6 +214,8 @@ export class SessionQueue {
     try {
       return this.gate.countBlocked(this.queuedInputs());
     } catch (error) {
+      // Counting none reads every waiting entry as waiting on a global slot.
+      sessionManagerReporter.report(error, { tags: { stage: 'queue_gate' } });
       console.error('[SessionQueue] countBlocked threw, counting none:', error);
       return 0;
     }

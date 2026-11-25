@@ -192,6 +192,8 @@ export class RootPidGate {
         try {
           handle();
         } catch (error) {
+          // report-ok: kept so the handlers after it still run. The first error is
+          // thrown below once all have run.
           errors.push(error);
         }
       }

@@ -93,6 +93,8 @@ export class HostCliProcesses {
         ...(params.detached ? { detached: true } : {}),
       }));
     } catch (error) {
+      // report-ok: handed on as cliError, which the run's handle on main emits as its
+      // error event to whoever started the run.
       this.failToStart(processId, error);
       return;
     } finally {
@@ -122,7 +124,8 @@ export class HostCliProcesses {
     try {
       run.child.stdin?.write(data);
     } catch {
-      // The stdin pipe is already closed; the exit reports why.
+      // report-ok: the stdin pipe is already closed under a CLI that exited, and its
+      // cliExit tells the caller why.
     }
   }
 
@@ -133,7 +136,8 @@ export class HostCliProcesses {
       if (data === undefined) run.child.stdin?.end();
       else run.child.stdin?.end(data);
     } catch {
-      // As above.
+      // report-ok: as above, the stdin pipe is already closed and the run's cliExit
+      // tells the caller why.
     }
   }
 

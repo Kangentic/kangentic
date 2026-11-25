@@ -78,6 +78,7 @@ async function findTranscript(defaultHome: string, cwd: string, agentSessionId: 
   const fileName = `${agentSessionId}.jsonl`;
   const projectsFolder = path.join(defaultHome, 'projects');
   const expected = path.join(projectsFolder, claudeProjectSlug(cwd), fileName);
+  // report-ok: no transcript under this folder is the answer, and the other folders are tried.
   if (await fs.promises.stat(expected).then((stats) => stats.isFile(), () => false)) return expected;
   let projectFolders: string[];
   try {
@@ -87,6 +88,7 @@ async function findTranscript(defaultHome: string, cwd: string, agentSessionId: 
   }
   for (const projectFolder of projectFolders) {
     const candidate = path.join(projectsFolder, projectFolder, fileName);
+    // report-ok: a project folder that does not hold this conversation is the answer.
     if (await fs.promises.stat(candidate).then((stats) => stats.isFile(), () => false)) return candidate;
   }
   return null;

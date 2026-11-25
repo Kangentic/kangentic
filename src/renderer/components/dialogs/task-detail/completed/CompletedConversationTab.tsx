@@ -34,6 +34,8 @@ export function CompletedConversationTab({ taskId, projectId, isFocused, tabRequ
         if (!cancelled) setAnchor({ key, sessionId: newest?.sessionId ?? null });
       })
       .catch((error: unknown) => {
+        // report-ok: main's IPC wrap reports a handler's rejection, and the tab shows its
+        // empty state.
         console.warn('[completed-task] conversation sessions read failed:', error);
         if (!cancelled) setAnchor({ key, sessionId: null });
       });

@@ -14,7 +14,7 @@ import type { ProjectRepository } from '../db/repositories/project-repository';
 import { devPortRepository } from '../db/repositories/dev-port-repository';
 import { SshHostRepository } from '../db/repositories/ssh-host-repository';
 import type { SessionManager } from '../pty/session-manager';
-import type { HostAsset } from './link/host-installer';
+import type { HostAsset, HostInstallError } from './link/host-installer';
 import { readInstallId } from './install-identity';
 import { HostStatusBook } from './host-status';
 import { connectRetryDelayMs, isTransientConnectFailure } from './connect-retry';
@@ -34,6 +34,8 @@ import { RemoteHostService } from './remote-host-service';
 import { createSpawnAgentProbe, probeAgentOnHost, type HostAgentProbe } from './host-agent-probe';
 import { invalidateHostAgentList } from '../agent/agent-list';
 import type { ProjectRemote } from '../../shared/types';
+import { isRuntimeDefect } from '../../shared/handled-error-copy';
+import { remoteHostReporter } from './remote-report';
 import { RemoteSessionRelay } from './remote-session-relay';
 
 export interface RemoteHosting {
@@ -81,6 +83,37 @@ function samePath(left: string, right: string): boolean {
   return normalize(left) === normalize(right);
 }
 
+/**
+ * `ssh` exits with this when the connection or the sign-in failed. Any other status is the remote
+ * command's own.
+ */
+const SSH_OWN_FAILURE_EXIT_CODE = 255;
+
+/**
+ * Whether a connect failed on something of Kangentic's own, as opposed to the network, a refused
+ * sign-in, an `ssh` that would not start or a host Kangentic does not support, which are the user's
+ * to fix and are the ordinary failures here. Told by the error's class and fields, never its words:
+ *
+ * - this build carries no host program (`HostProgramMissingError`),
+ * - the archive downloaded is not the one the manifest names (`HostProgramMismatchError`),
+ * - the build's own asset is malformed, or the host found the archive it received did not match,
+ * - the install script ran on the host and failed there: `ssh` reached the host and handed back the
+ *   script's own exit status, where a host it could not reach or sign in to exits 255,
+ * - a `TypeError`, `RangeError` or `ReferenceError`, which is this side's own logic.
+ *
+ * Matched by name, as `EXPECTED_FAILURE_NAMES` is, so nothing here depends on which module made
+ * the error.
+ */
+function isConnectInstallDefect(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (isRuntimeDefect(error)) return true;
+  if (error.name === 'HostProgramMissingError' || error.name === 'HostProgramMismatchError') return true;
+  if (error.name !== 'HostInstallError') return false;
+  const installError = error as HostInstallError;
+  if (installError.code === 'checksum' || installError.step === 'asset') return true;
+  return installError.step === 'install' && typeof installError.exitCode === 'number' && installError.exitCode !== SSH_OWN_FAILURE_EXIT_CODE;
+}
+
 /** The app's version of the host program. A packaged app has one asset per CPU, and they all carry it. */
 function assetVersion(asset: HostAsset | readonly HostAsset[] | null | undefined): string | undefined {
   const first = (Array.isArray(asset) ? asset[0] : asset) as HostAsset | null | undefined;
@@ -100,6 +133,8 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
     try {
       await hostService.pruneVersions(hostId, [appVersion], PRUNE_AFTER_DAYS);
     } catch (error) {
+      // report-ok: old program versions stay on the host, which costs disk there, and the next
+      // run's first connect tidies again.
       log(`[remote] could not tidy old program versions on ${hostId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
@@ -207,6 +242,11 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
       // Dropping a link forgets its wanted ports, and the plan would not send a set it thinks is unchanged.
       forwardPlan.resendHost(hostId);
     } catch (error) {
+      // A host program this build does not carry, an archive that fails its checksum, or an
+      // install script that failed on the host reads as "unreachable" on the host's row, and the
+      // user cannot fix any of them. The network, a refused sign-in and an unsupported host are
+      // the ordinary failures here and are not reported.
+      if (isConnectInstallDefect(error)) remoteHostReporter.report(error, { tags: { stage: 'connect_install' } });
       const message = error instanceof Error ? error.message : String(error);
       log(`[remote] host ${hostId.slice(0, 8)} was not connected: ${message}`);
       status.set(hostId, 'unreachable', message);

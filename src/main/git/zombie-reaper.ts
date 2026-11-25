@@ -80,11 +80,22 @@ import { isProcessAlive } from '../shared/process-liveness';
 import { execFileAsync, execRunFailureOf } from '../utility-process/off-main-exec';
 import type { StopProcessOutcome } from '../pty/process-tag/tagged-reap';
 
+/**
+ * Where a reap reports a failure of its own. Handed in by the caller, never imported
+ * here: the E2E janitor loads this module in the Playwright process, where the reporter's
+ * Sentry graph cannot load. `gitWorktreeReporter` (`git-worktree-report.ts`) fits it.
+ */
+export interface ReapFailureReporter {
+  report(error: unknown, options?: { tags?: Record<string, string> }): boolean;
+}
+
 export interface ZombieScanOptions {
   /** Filesystem root to match orphan paths against (worktrees + node_modules). */
   projectPath: string;
   /** Time cap on the OS-level enumeration. Default 1500ms. */
   scanTimeoutMs?: number;
+  /** Reports a self-walk that threw. With none, the abort is only logged. */
+  failureReporter?: ReapFailureReporter;
 }
 
 export interface ReapedProcess {
@@ -130,6 +141,8 @@ export interface WorktreeReapOptions {
    * that and silently return no rows.
    */
   scanTimeoutMs?: number;
+  /** Reports a self-walk that threw. With none, the abort is only logged. */
+  failureReporter?: ReapFailureReporter;
 }
 
 const DEFAULT_SCAN_TIMEOUT_MS = 1500;
@@ -263,6 +276,8 @@ async function scanLivePidsWindows(scanTimeoutMs: number): Promise<Set<number>> 
       { timeoutMs: scanTimeoutMs, windowsHide: true },
     );
   } catch {
+    // report-ok: a scan that fails or times out answers an empty set, which the sweep reads
+    // as a failed scan and refuses to kill on.
     return new Set();
   }
   return parseLivePidsFromJson(stdout);
@@ -273,6 +288,8 @@ async function scanLivePidsUnix(scanTimeoutMs: number): Promise<Set<number>> {
   try {
     stdout = await runCommandWithTimeout('ps', ['-ax', '-o', 'pid='], { timeoutMs: scanTimeoutMs });
   } catch {
+    // report-ok: a scan that fails or times out answers an empty set, which the sweep reads
+    // as a failed scan and refuses to kill on.
     return new Set();
   }
   return parseLivePidsFromPs(stdout);
@@ -312,6 +329,8 @@ export function parseLivePidsFromJson(stdout: string): Set<number> {
   try {
     parsed = JSON.parse(stdout);
   } catch {
+    // report-ok: a truncated scan does not parse, and the empty set it answers makes the
+    // sweep refuse to kill.
     return result;
   }
   const items = Array.isArray(parsed) ? parsed : [parsed];
@@ -416,6 +435,8 @@ export function parseProcessRowsFromJson(stdout: string): ProcessRow[] {
   try {
     parsed = parseScanJson(stdout);
   } catch {
+    // report-ok: scan output that does not parse even after the retry reads as no rows, and
+    // every caller treats an empty scan as nothing to stop or name.
     return [];
   }
   const rows = Array.isArray(parsed) ? parsed : [parsed];
@@ -811,6 +832,8 @@ export async function describeWorktreeHolders(
     const skipPids = _internals.buildSelfSkipSet(rows, process.pid);
     return _internals.findWorktreePathHolders(rows, worktreePath, skipPids);
   } catch (error) {
+    // report-ok: a holder scan that fails or times out names no one, and the failed removal
+    // it was asked about is reported by removeWorktreeInternal either way.
     console.warn('[REAPER] holder scan failed:', error);
     return [];
   }
@@ -833,12 +856,13 @@ export async function killProcess(pid: number): Promise<void> {
         { timeoutMs: 2000, windowsHide: true },
       );
     } catch (error) {
-      // A pid that exited between selection and kill is the EXPECTED case, not a
+      // report-ok: a pid that exited between selection and kill is the EXPECTED case, not a
       // failure: `/T` on a parent already took the subtree, and taskkill then
       // exits 128 ("process not found") for each child we also targeted. Warning
-      // on that filled the log with noise on every successful reap. Only report
+      // on that filled the log with noise on every successful reap. Only warn on
       // a kill that failed against a process still standing (access denied, a
-      // protected process).
+      // protected process). That holder keeps its worktree's removal failing, and
+      // the removal reports through reportWorktreeRemovalFailure.
       if (isProcessAlive(pid)) {
         console.warn(`[REAPER] taskkill failed for pid=${pid}:`, error);
       }
@@ -848,13 +872,13 @@ export async function killProcess(pid: number): Promise<void> {
   try {
     process.kill(pid, 'SIGTERM');
   } catch {
-    // Process may already be dead
+    // report-ok: the process may already be dead, which is the goal.
   }
   await new Promise<void>((resolve) => setTimeout(resolve, 250));
   try {
     process.kill(pid, 'SIGKILL');
   } catch {
-    // Process exited cleanly during the SIGTERM grace window
+    // report-ok: the process exited during the SIGTERM grace window, which is the goal.
   }
 }
 
@@ -878,6 +902,8 @@ export async function reapWorktreeElectronZombies(
       _internals.scanLivePids(scanTimeoutMs),
     ]);
   } catch (error) {
+    // report-ok: a scan that fails or times out makes this dev-build boot sweep a no-op, and
+    // the next launch's sweep tries again.
     console.warn('[REAPER] scan failed:', error);
     return [];
   }
@@ -898,7 +924,9 @@ export async function reapWorktreeElectronZombies(
     skipPids = _internals.buildSelfSkipSet(rows, process.pid);
   } catch (error) {
     // Defensive: if the self-walk throws somehow, abort rather than risk
-    // a wrong-process kill.
+    // a wrong-process kill. The sweep then never clears a zombie again, so it
+    // is reported where a reporter was handed in.
+    options.failureReporter?.report(error, { tags: { stage: 'reap_walk' } });
     console.warn('[REAPER] self-walk failed, aborting:', error);
     return [];
   }
@@ -930,6 +958,8 @@ async function endCandidates(candidates: readonly ReapedProcess[]): Promise<Reap
       console.log(`[REAPER] killed ${candidateLabel(candidate)}`);
       killed.push(candidate);
     } catch (error) {
+      // report-ok: killProcess handles its own failures, so this only keeps one stuck pid
+      // from ending the sweep. A holder left alive fails the removal, which reports.
       console.warn(`[REAPER] kill failed for pid=${candidate.pid}:`, error);
     }
   }
@@ -960,6 +990,9 @@ async function stopCandidatesByIdentity(candidates: readonly ReapedProcess[], st
       console.log(`[REAPER] ${outcome === 'stopped' ? 'killed' : 'already gone'} ${label}`);
       return true;
     } catch (error) {
+      // report-ok: a Stop the pty host could not carry out leaves the process running. A
+      // worktree it holds then fails its removal, which reports through
+      // reportWorktreeRemovalFailure.
       console.warn(`[REAPER] kill failed for pid=${candidate.pid}:`, error);
       return false;
     }
@@ -985,6 +1018,8 @@ export async function reapProcessesForWorktree(
     // not on anything a user is waiting for.
     rows = await _internals.scanAllProcessesCached(scanTimeoutMs);
   } catch (error) {
+    // report-ok: a scan that fails or times out reaps nothing, and the removal this reap
+    // was meant to unblock reports its own failure through reportWorktreeRemovalFailure.
     console.warn('[REAPER] worktree scan failed:', error);
     return [];
   }
@@ -994,6 +1029,9 @@ export async function reapProcessesForWorktree(
   try {
     skipPids = _internals.buildSelfSkipSet(rows, process.pid);
   } catch (error) {
+    // No reap runs without the walk, so a worktree an orphaned process holds is never
+    // freed and its removal fails at every retry.
+    options.failureReporter?.report(error, { tags: { stage: 'reap_walk' } });
     console.warn('[REAPER] self-walk failed, aborting:', error);
     return [];
   }

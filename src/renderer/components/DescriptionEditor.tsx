@@ -15,6 +15,7 @@ import {
   type MarkdownEdit,
 } from '../utils/markdown-editing';
 import { convertHtmlToMarkdown } from '../utils/markdown-paste-html';
+import { reportRendererFailure } from '../utils/renderer-failure';
 import { matchesCombo } from '../utils/keybindings';
 import { effectiveCombo } from '../../shared/keybindings';
 
@@ -212,7 +213,11 @@ export function DescriptionEditor({
         // We already preventDefault'd, so a failed conversion must still
         // deliver something; fall back to the plain-text flavor rather than
         // silently dropping the user's paste.
-        .catch(() => insertAtCaret(plainText));
+        .catch((error: unknown) => {
+          // The paste lands as plain text, without its links, lists and headings.
+          reportRendererFailure('description', 'paste_markdown', error);
+          insertAtCaret(plainText);
+        });
       return;
     }
 

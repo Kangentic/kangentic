@@ -49,6 +49,7 @@ export function reportAbandonedLaunches(filePath: string): void {
   try {
     contents = fs.readFileSync(filePath, 'utf-8');
   } catch {
+    // report-ok: ENOENT on most starts, when the last quit recorded no abandoned launch.
     return;
   }
   fs.rmSync(filePath, { force: true });
@@ -56,6 +57,8 @@ export function reportAbandonedLaunches(filePath: string): void {
   try {
     launches = JSON.parse(contents);
   } catch {
+    // report-ok: a file edited or cut short on disk, already deleted above. Only the last
+    // run's count of abandoned launches goes unsent.
     return;
   }
   if (!Array.isArray(launches)) return;

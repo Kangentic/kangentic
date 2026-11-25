@@ -32,7 +32,8 @@ import type { BrowserPaneVisibility, BrowserPickedElement, BrowserViewportOverri
 import type { AnnotationLayerState } from './annotations/annotationLayerScript';
 import { ALLOW_POPUPS_ATTRIBUTE, type WebviewElement } from './webview-types';
 import { MIN_ZOOM, MAX_ZOOM, stepZoom } from '../../../shared/zoom-steps';
-import { asSentence, ipcFailureToastFields, rejectionMessage } from '../../lib/ipc-error';
+import { asSentence, ipcErrorWasReported, ipcFailureToastFields, rejectionMessage } from '../../lib/ipc-error';
+import { reportRendererFailure } from '../../utils/renderer-failure';
 
 // Side-pane in the task-detail window that hosts an Electron <webview> and the
 // user's numbered annotations: elements selected on the page and drawings,
@@ -418,7 +419,8 @@ function BrowserPaneActive({
           recordNavigation(current);
         }
       } catch {
-        /* webview not yet attached */
+        // report-ok: a webview method throws while its guest is not attached, and the next
+        // navigation event reads the URL again.
       }
     };
     // A page load keeps the annotations: each one is redrawn where its
@@ -462,7 +464,8 @@ function BrowserPaneActive({
       try {
         webContentsId = webview.getWebContentsId();
       } catch {
-        return; // guest not attached yet; dom-ready will retry
+        // report-ok: the guest is not attached yet, and dom-ready runs register again.
+        return;
       }
       if (!Number.isInteger(webContentsId) || webContentsId <= 0) return;
       registered = true;
@@ -472,7 +475,8 @@ function BrowserPaneActive({
       try {
         url = webview.getURL() || null;
       } catch {
-        /* not attached */
+        // report-ok: getURL throws while the guest is not attached. The pane registers with no
+        // URL, and main follows the guest's own navigations from there.
       }
       void window.electronAPI.browser.registerPane({ ...registrationIdentityRef.current, webContentsId, url });
       // Sent here too, not only from the observer below: an agent's next call can
@@ -530,7 +534,8 @@ function BrowserPaneActive({
     try {
       url = webviewRef.current?.getURL() || null;
     } catch {
-      /* not attached */
+      // report-ok: getURL throws while the guest is not attached. The owner update goes out
+      // with no URL, and main follows the guest's own navigations.
     }
     void window.electronAPI.browser.registerPane({
       sessionId,
@@ -609,6 +614,7 @@ function BrowserPaneActive({
     try {
       parsed = new URL(candidate);
     } catch {
+      // report-ok: the user typed a URL that does not parse, and the inline error says so.
       setError(i18n._(msg`Invalid URL: ${target}`));
       return;
     }
@@ -621,6 +627,7 @@ function BrowserPaneActive({
     // Drive navigation through the webview's own loadURL to keep its history
     // intact across multi-step Back/Forward.
     webviewRef.current?.loadURL(finalUrl).catch(() => {
+      // report-ok: a page or network load failure, and the inline error names the URL.
       setError(i18n._(msg`Failed to load: ${finalUrl}`));
     });
   }, []);
@@ -637,6 +644,7 @@ function BrowserPaneActive({
       if (!pageReady) return;
       const url = navigateRequest.url;
       webviewRef.current?.loadURL(url).catch(() => {
+        // report-ok: a page or network load failure, and the inline error names the URL.
         setError(i18n._(msg`Failed to load: ${url}`));
       });
     }
@@ -650,6 +658,7 @@ function BrowserPaneActive({
 
   const handleSaveAsProjectDefault = useCallback(async () => {
     const target = (() => {
+      // report-ok: getURL throws while the guest is not attached, and the last known URL is used.
       try { return webviewRef.current?.getURL() || currentUrl; } catch { return currentUrl; }
     })();
     if (!target) return;
@@ -662,6 +671,7 @@ function BrowserPaneActive({
         variant: 'success',
       });
     } catch (caught) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the toast shows the reason.
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't save URL`),
         ...ipcFailureToastFields(caught),
@@ -688,6 +698,7 @@ function BrowserPaneActive({
     setInspectActive(false);
     // Forcibly clean up the webview side, without sending the page anything
     // (see INSPECT_CANCEL_SCRIPT).
+    // report-ok: a guest that navigated or is gone has no guard left for the cancel to clear.
     webviewRef.current?.executeJavaScript(INSPECT_CANCEL_SCRIPT).catch(() => undefined);
   }, []);
 
@@ -714,6 +725,9 @@ function BrowserPaneActive({
     } catch (caught) {
       // A navigation ends the page the script was waiting in; that is not an error.
       if (isCurrent()) {
+        // Select element stops with only an inline line. The pick script runs in the guest,
+        // so no IPC wrap sees it fail.
+        reportRendererFailure('browser', 'inspect', caught);
         setError(caught instanceof Error ? rejectionMessage(caught) : i18n._(msg`Inspect failed`));
       }
     } finally {
@@ -724,9 +738,10 @@ function BrowserPaneActive({
         // The loop ended on its own (Esc in the page, or an error): the page's
         // presses go back to it.
         try {
+          // report-ok: a guest that navigated or is gone has no guard left for the cancel to clear.
           void webview.executeJavaScript(INSPECT_CANCEL_SCRIPT).catch(() => undefined);
         } catch {
-          // A guest that is gone has no guard left to clear.
+          // report-ok: a guest that is gone has no guard left to clear.
         }
       }
     }
@@ -786,6 +801,7 @@ function BrowserPaneActive({
         '(function () { const sel = window.getSelection(); return sel ? sel.toString() : ""; })()',
       );
       const url = (() => {
+        // report-ok: getURL throws while the guest is not attached, and the last known URL is sent.
         try { return webview.getURL(); } catch { return currentUrl; }
       })();
 
@@ -815,6 +831,9 @@ function BrowserPaneActive({
       if (inspectActiveRef.current) cancelInspect();
       setDrawMode(false);
     } catch (caught) {
+      // The capture, the guest's selection read and the annotation mapping all run in this
+      // try beside the IPC call, and a failure in them leaves the agent without the message.
+      reportRendererFailure('browser', 'send_to_agent', caught);
       const message = rejectionMessage(caught);
       setError(message);
       // Surface paste/submit failures via toast as well, since the inline
@@ -822,6 +841,7 @@ function BrowserPaneActive({
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't send to agent`),
         message: asSentence(message),
+        reported: ipcErrorWasReported(caught),
         variant: 'error',
         durationMs: 6000,
       });
@@ -916,9 +936,13 @@ function BrowserPaneActive({
     isActive: () => hoveredRef.current
       || (!!paneRef.current && paneRef.current.contains(document.activeElement)),
     webContentsId: () => registeredWebContentsIdRef.current,
+    // report-ok: a guest that is not attached has no history, so the answer is no.
     canGoBack: () => { try { return webviewRef.current?.canGoBack() ?? false; } catch { return false; } },
+    // report-ok: a guest that is not attached has no history, so the answer is no.
     canGoForward: () => { try { return webviewRef.current?.canGoForward() ?? false; } catch { return false; } },
+    // report-ok: a guest that is not attached has no page to go back from.
     goBack: () => { try { webviewRef.current?.goBack(); } catch { /* not attached */ } },
+    // report-ok: a guest that is not attached has no page to go forward from.
     goForward: () => { try { webviewRef.current?.goForward(); } catch { /* not attached */ } },
   }), []);
 

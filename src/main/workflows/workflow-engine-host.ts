@@ -3,7 +3,7 @@ import type { Swimlane, Task, Workflow } from '../../shared/types';
 import { startColumn } from '../../shared/workflow-route';
 import { getExistingProjectDb, getOpenProjectDb, getProjectDb } from '../db/database';
 import { isSqliteError } from '../db/sqlite-error';
-import { createChokepointReporter } from '../analytics/handled-report';
+import { workflowEngineReporter } from './workflow-report';
 import { TaskRepository } from '../db/repositories/task-repository';
 import { setHomeLinkRemover } from '../db/repositories/workflow-home-links';
 import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
@@ -112,13 +112,6 @@ interface FailedStart {
 }
 
 const yieldToEventLoop = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
-
-/**
- * One report per defect in the engine's own work: an evaluation pass, a start
- * nothing else reported, dropping links, completing a workflow, ending its agent.
- * The `stage` tag says which. Exported for tests.
- */
-export const workflowEngineReporter = createChokepointReporter('workflow_engine');
 
 export class WorkflowEngineHost {
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -270,6 +263,9 @@ export class WorkflowEngineHost {
         countedNudges: 0,
       });
     } catch (error) {
+      // A start that has failed for half an hour then stalls its workflow with no
+      // notice on desktop or phone, and no Stalled mark on the card.
+      workflowEngineReporter.report(error, { tags: { stage: 'start_failure_notice' } });
       console.warn('[WORKFLOW] Could not report a start that keeps failing:', error);
     }
   }
@@ -284,6 +280,8 @@ export class WorkflowEngineHost {
       const { step, cause } = spawnFailureOf(error);
       notifySpawnBlocked(this.context, task, step, cause, intent.projectId, 'workflow');
     } catch (toastError) {
+      // The user gets no toast for a start nobody dragged: the task just stays in To Do.
+      workflowEngineReporter.report(toastError, { tags: { stage: 'start_failure_notice' } });
       console.warn('[WORKFLOW] Could not report a failed start:', toastError);
     }
   }
@@ -366,6 +364,7 @@ export class WorkflowEngineHost {
       try {
         this.unopened.set(projectId, probeWorkflowProject(projectId));
       } catch (error) {
+        // report-ok: noteUnread reports a SQLite failure and rethrows anything else.
         this.noteUnread(unreadProjectIds, projectId, error);
       }
     }
@@ -378,6 +377,7 @@ export class WorkflowEngineHost {
       getExistingProjectDb(projectId);
       this.unopened.delete(projectId);
     } catch (error) {
+      // report-ok: noteUnread reports a SQLite failure and rethrows anything else.
       this.noteUnread(unreadProjectIds, projectId, error);
     }
   }
@@ -394,6 +394,9 @@ export class WorkflowEngineHost {
     unreadProjectIds.add(projectId);
     if (this.unreadReported.has(projectId)) return;
     this.unreadReported.add(projectId);
+    // While a board stays unread no workflow completes and nothing that waits on a task
+    // there starts, with nothing shown to the user.
+    workflowEngineReporter.report(error, { tags: { stage: 'unread' } });
     console.warn(`[WORKFLOW] Could not read project ${projectId.slice(0, 8)}; no workflow completes until it can be read, and the engine keeps trying:`, error);
   }
 
@@ -426,6 +429,7 @@ export class WorkflowEngineHost {
           if (workflow.state === 'running' || workflow.state === 'paused') activeWorkflows.push({ homeProjectId, workflow });
         }
       } catch (error) {
+        // report-ok: noteUnread reports a SQLite failure and rethrows anything else.
         this.noteUnread(unreadProjectIds, homeProjectId, error);
       }
     }
@@ -445,6 +449,7 @@ export class WorkflowEngineHost {
         try {
           workflowIdsByBoard.set(projectId, new TaskRepository(db).workflowIdsOnBoard());
         } catch (error) {
+          // report-ok: noteUnread reports a SQLite failure and rethrows anything else.
           this.noteUnread(unreadProjectIds, projectId, error);
         }
       }
@@ -516,6 +521,9 @@ export class WorkflowEngineHost {
         for (const workflowId of memberOf) held.add(workflowId);
       } catch (error) {
         if (!isSqliteError(error)) throw error;
+        // A hidden board that cannot be read holds none of its workflows, so one of them
+        // can complete with that board's tasks undone.
+        workflowEngineReporter.report(error, { tags: { stage: 'hidden_project_read' } });
         console.warn(`[WORKFLOW] Could not read hidden project ${projectId.slice(0, 8)}:`, error);
       }
     }
@@ -557,6 +565,7 @@ export class WorkflowEngineHost {
         if (projectTasks.length === 0) continue;
         lanes = new SwimlaneRepository(db).list();
       } catch (error) {
+        // report-ok: noteUnread reports a SQLite failure and rethrows anything else.
         this.noteUnread(unreadProjectIds, projectId, error);
         continue;
       }
@@ -650,6 +659,8 @@ export class WorkflowEngineHost {
     if (intent.takesSlot) this.inFlightSlots.add(key);
     void this.startTask(intent, titles.get(intent.workflowId) ?? 'its workflow')
       .then(() => this.forgetFailedStart(key))
+      // report-ok: recordFailedStart reports a start's first failure through
+      // workflowEngineReporter and shows its toast.
       .catch((error: unknown) => this.recordFailedStart(key, intent, error))
       .finally(() => {
         this.inFlight.delete(key);
@@ -789,7 +800,9 @@ function notifyOpenWorkflows(projectId: string): void {
     for (const workflow of new WorkflowRepository(getProjectDb(projectId)).listOpen()) {
       notifyWorkflowChanged(projectId, workflow.id);
     }
-  } catch {
-    // A board whose database cannot be read has no view to refresh.
+  } catch (error) {
+    // An open Workflows view then keeps showing a task that was deleted, since this push
+    // is the only thing that reloads it.
+    workflowEngineReporter.report(error, { tags: { stage: 'open_workflows_read' } });
   }
 }

@@ -51,6 +51,7 @@ import {
   type ConversationSlice,
 } from './route-slice';
 import type { ConversationViewPaging, InitialPosition } from './ConversationView';
+import { reportRendererFailure } from '../../utils/renderer-failure';
 import { transcriptToMarkdown } from '../../../shared/transcript-format';
 import {
   applyTranscriptDelta,
@@ -254,6 +255,8 @@ export function useConversationState(options: ConversationStateOptions): Convers
           setSettledFetchKey(fetchKey);
         })
         .catch(() => {
+          // report-ok: main's IPC wrap reports a handler's rejection, and the viewer shows
+          // empty and reads again on the timer below.
           if (cancelled) return;
           setResponse(null);
           setSettledFetchKey(fetchKey);
@@ -304,6 +307,8 @@ export function useConversationState(options: ConversationStateOptions): Convers
     window.electronAPI.sessions
       .getTaskRoute(projectId, taskId)
       .then(keep)
+      // report-ok: main's IPC wrap reports a handler's rejection. A failed first read leaves
+      // no tab row, and a failed re-read keeps the route already held.
       .catch(() => keep(null));
     return () => {
       cancelled = true;
@@ -455,7 +460,12 @@ export function useConversationState(options: ConversationStateOptions): Convers
             transcriptSignature(previous) === transcriptSignature(next) ? previous : next,
           );
         })
-        .catch(() => undefined)
+        .catch((error: unknown) => {
+          // A throw while patching a delta in leaves a live conversation frozen with no sign.
+          // The reporter drops a read main's wrap saw fail, and sends each error name once a
+          // run, so a poll that fails every tick reports once.
+          reportRendererFailure('conversation', 'live_poll', error);
+        })
         .finally(() => {
           inFlight = false;
         });
@@ -481,6 +491,8 @@ export function useConversationState(options: ConversationStateOptions): Convers
         setCopied(true);
         setTimeout(() => setCopied(false), 1500);
       })
+      // report-ok: the OS refused the clipboard write (an unfocused document, a denied
+      // permission), and the button does not flip to copied.
       .catch(() => undefined);
   }, [response, visibleEntries, copyNotice]);
 

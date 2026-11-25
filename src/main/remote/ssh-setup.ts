@@ -115,6 +115,8 @@ export async function detectSshClient(deps: SshSetupDeps): Promise<SshClientInfo
     const text = (result.stderr || result.stdout).trim();
     return { found: true, version: text.split(/\r?\n/)[0] || null, error: null };
   } catch (error) {
+    // report-ok: ssh is not installed or would not start, which is the answer. The caller gets
+    // not found with the raw error to show.
     return { found: false, version: null, error: error instanceof Error ? error.message : String(error) };
   }
 }
@@ -229,6 +231,8 @@ export async function probeHostKey(destination: string, deps: SshSetupDeps, reso
       destination,
       'exit',
     ], { env: childProcessEnv(), timeout: 30_000 });
+    // report-ok: ssh wrote no known_hosts because it never reached the host, and the empty text
+    // becomes the refusal thrown below.
     const text = await fs.readFile(known, 'utf8').catch(() => '');
     const entry = pickKnownHostsEntry(text, knownHostsToken(target));
     if (!entry) throw new RefusalError(`Could not reach ${target.hostname}${target.port === 22 ? '' : `:${target.port}`} to read its key. Check the address and that the host is on.`);
@@ -240,6 +244,8 @@ export async function probeHostKey(destination: string, deps: SshSetupDeps, reso
       knownHostsLine: `${entry.hostField} ${entry.keyType} ${entry.base64}`,
     };
   } finally {
+    // report-ok: a scratch folder that will not delete holds only a throwaway known_hosts, and
+    // stays in the temp folder for the system to clear.
     await fs.rm(scratch, { recursive: true, force: true }).catch(() => undefined);
   }
 }
@@ -261,6 +267,8 @@ export async function trustHostKey(destination: string, shownFingerprint: string
 /** Add a key line to the user's own known_hosts, once. */
 async function recordKnownHostsLine(target: ResolvedTarget, knownHostsLine: string): Promise<void> {
   await fs.mkdir(path.dirname(target.userKnownHostsFile), { recursive: true, mode: 0o700 });
+  // report-ok: a known_hosts that is not there yet reads as empty, and the append below makes it
+  // or throws for a file that cannot be written.
   const existing = await fs.readFile(target.userKnownHostsFile, 'utf8').catch(() => '');
   if (existing.split(/\r?\n/).some((line) => line.trim() === knownHostsLine)) return;
   await fs.appendFile(target.userKnownHostsFile, `${existing.length > 0 && !existing.endsWith('\n') ? '\n' : ''}${knownHostsLine}\n`, { mode: 0o600 });
@@ -293,6 +301,8 @@ export async function readRecordedFingerprint(destination: string, deps: SshSetu
     const entry = knownHostsEntries(result.stdout)[0];
     return entry ? fingerprintOf(entry[2]) : null;
   } catch {
+    // report-ok: the old fingerprint could not be read (an address ssh cannot resolve, ssh-keygen
+    // would not start), and the changed-key dialog works without that one line.
     return null;
   }
 }
@@ -502,6 +512,8 @@ export async function installPublicKeyWithPassword(destination: string, publicKe
         : `The ssh program exited with code ${result.code} and printed no message.`));
     }
   } finally {
+    // report-ok: a scratch folder that will not delete holds only the askpass script, which
+    // carries no password, and stays in the temp folder for the system to clear.
     await fs.rm(scratch, { recursive: true, force: true }).catch(() => undefined);
   }
 }

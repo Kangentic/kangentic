@@ -420,13 +420,16 @@ describe('registerAllIpc command terminal history deps', () => {
       expect(locateMock(adapter)).toHaveBeenCalledTimes(1);
     });
 
-    it('answers false instead of rejecting when the transcript lookup throws', async () => {
+    // A lookup that threw has not shown the transcript gone. Answering false made the
+    // Earlier list delete the row for good, so it answers true, as for a place it cannot
+    // read, and never rejects.
+    it('keeps the row, without rejecting, when the transcript lookup throws', async () => {
       const adapter = makeAdapter(RESUMABLE_BY_ID, async () => {
         throw new Error('EACCES: permission denied, scandir');
       });
       agentRegistryGet.mockReturnValue(adapter);
 
-      await expect(deps.conversationAvailable('resumable-agent', 'conversation-4', '/mock/project')).resolves.toBe(false);
+      await expect(deps.conversationAvailable('resumable-agent', 'conversation-4', '/mock/project')).resolves.toBe(true);
     });
 
     it('answers true when the adapter finds the transcript', async () => {

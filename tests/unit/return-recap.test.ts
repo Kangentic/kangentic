@@ -6,9 +6,17 @@
  * Plain fakes for the three sources (git range, final reply, column names), so
  * these pin the gather, the wording and the budget with no spawn, no database
  * and no git. The wiring into the resume is spawn-agent-return-recap.test.ts.
+ *
+ * The last block reads what reached `reportHandledError` when the recap cannot
+ * be built: the resume then goes out without it, and nothing else said so.
  */
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+const reportHandledError = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/analytics/error-reporting', () => ({ reportHandledError }));
+
 import {
+  RETURN_RECAP_BUDGET_MS,
   RETURN_RECAP_COMMIT_LIMIT,
   formatReturnRecap,
   gatherReturnRecap,
@@ -18,8 +26,15 @@ import {
   type ReturnRecapFacts,
   type ReturnRecapSources,
 } from '../../src/main/transition-engine/return-recap';
+import { handlerStepReporter } from '../../src/main/ipc/helpers/handler-step-report';
 import type { CommitsSince } from '../../src/main/git/worktree-head';
 import type { IsolatedRunRecord } from '../../src/main/db/repositories/session-repository';
+
+beforeEach(() => {
+  reportHandledError.mockReset();
+  // The reporter latches a key once per run, and this file loads it once.
+  handlerStepReporter.reset();
+});
 
 const CWD = '/mock/project/.kangentic/worktrees/export';
 const INTRO_FOR_CODE_REVIEW = 'While this conversation was away, the task ran in Code Review in a conversation of its own, which you have not seen.';
@@ -497,5 +512,80 @@ describe('withinBudget', () => {
     await vi.advanceTimersByTimeAsync(3_000);
 
     expect(settledWith).toBeNull();
+  });
+});
+
+describe('a return recap that could not be built', () => {
+  /** A task title, in the failing value, so a report that carried the value would carry it. */
+  const USER_TEXT = 'Fix Acme billing';
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Everything the reports carried, as text, so user text cannot hide in any field. */
+  function reportedText(): string {
+    return JSON.stringify(reportHandledError.mock.calls.map(([reportedError, tags, contexts, fingerprint]) => ({
+      message: (reportedError as Error).message,
+      tags,
+      contexts,
+      fingerprint,
+    })));
+  }
+
+  // Guards the `handlerStepReporter.report(...)` call in `withinBudget`'s
+  // rejection handler. The gather is bounded exactly as the resume bounds it
+  // (`readReturnRecap` in agent-spawn.ts), and its column name read, a database
+  // read there, is what throws.
+  it('is reported under handler_step as agent_spawn and return_recap, and the resume goes without it', async () => {
+    const sources = makeSources();
+    sources.columnName = () => {
+      throw new TypeError(`Cannot read properties of undefined (reading '${USER_TEXT}')`);
+    };
+
+    const facts = await withinBudget(
+      gatherReturnRecap({ cwd: CWD, isolatedRuns: [makeRun()], includeReplies: true }, sources),
+      RETURN_RECAP_BUDGET_MS,
+      null,
+    );
+
+    expect(facts).toBeNull();
+    expect(reportHandledError).toHaveBeenCalledTimes(1);
+    expect(reportHandledError.mock.calls[0][1]).toMatchObject({
+      source: 'handler_step',
+      area: 'agent_spawn',
+      step: 'return_recap',
+      error_name: 'TypeError',
+    });
+    expect(reportedText()).not.toMatch(/acme/i);
+  });
+
+  it('is not reported when the budget ran out, which is no failure', async () => {
+    vi.useFakeTimers();
+    let settledWith: ReturnRecapFacts | null | undefined;
+    const slowGather = new Promise<ReturnRecapFacts | null>(() => undefined);
+    void withinBudget(slowGather, RETURN_RECAP_BUDGET_MS, null).then((value) => { settledWith = value; });
+
+    await vi.advanceTimersByTimeAsync(RETURN_RECAP_BUDGET_MS);
+
+    // The control: the budget did end the wait.
+    expect(settledWith).toBeNull();
+    expect(reportHandledError).not.toHaveBeenCalled();
+  });
+
+  it('is not reported when its reads answer null, as they do on their own failures', async () => {
+    const sources = makeSources({ commits: null });
+
+    const facts = await withinBudget(
+      gatherReturnRecap({ cwd: CWD, isolatedRuns: [makeRun({ start_head_sha: 'aaaaaaa' })], includeReplies: true }, sources),
+      RETURN_RECAP_BUDGET_MS,
+      null,
+    );
+
+    // The control: both reads ran, and neither had anything to say.
+    expect(sources.readCommitsSince).toHaveBeenCalledTimes(1);
+    expect(sources.readFinalReply).toHaveBeenCalledTimes(1);
+    expect(facts).toBeNull();
+    expect(reportHandledError).not.toHaveBeenCalled();
   });
 });

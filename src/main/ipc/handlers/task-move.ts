@@ -336,6 +336,9 @@ function ownerAnswerUnlessAborted(answer: Promise<boolean>, signal: AbortSignal)
     const onAbort = (): void => resolve(false);
     signal.addEventListener('abort', onAbort, { once: true });
     void answer
+      // report-ok: the one caller passes turnStartedByOwner's promise, which reports its own
+      // failure (ownerTurnReporter) and answers false, or an already resolved true. A
+      // rejection would read the same way, as not the owner's turn.
       .then(resolve, () => resolve(false))
       .finally(() => signal.removeEventListener('abort', onAbort));
   });
@@ -658,6 +661,9 @@ export async function handleTaskMove(
         try {
           forgetPRLinkOnTodoReset(context, tasks, task, resolvedProjectId);
         } catch (forgetError) {
+          // The To Do card keeps the last run's PR chip, and its merged state blocks the
+          // next run's link.
+          taskMoveReporter.report(forgetError, { tags: { stage: 'pr_forget' } });
           console.error(`[TASK_MOVE] Forgetting the PR link failed for task ${input.taskId.slice(0, 8)}:`, forgetError);
         }
       }
@@ -714,6 +720,8 @@ export async function handleTaskMove(
         try {
           MOVE_COMMIT_PUSH_BY_ORIGIN[origin]?.(context, announceProjectId, input, task.title);
         } catch (pushError) {
+          // The board keeps the card in its old column until the move settles.
+          taskMoveReporter.report(pushError, { tags: { stage: 'commit_push' } });
           console.error(`[TASK_MOVE] Commit-time push failed for task ${input.taskId.slice(0, 8)}:`, pushError);
         }
       }
@@ -727,6 +735,8 @@ export async function handleTaskMove(
         try {
           options.onCommitted();
         } catch (callbackError) {
+          // The caller that answers on the commit (a paired phone's move) never hears it.
+          taskMoveReporter.report(callbackError, { tags: { stage: 'on_committed' } });
           console.error(`[TASK_MOVE] onCommitted callback threw for task ${input.taskId.slice(0, 8)}:`, callbackError);
         }
       }
@@ -875,7 +885,9 @@ export async function handleTaskMove(
 
         } catch (exitError) {
           // Reaching here means the LIST could not run at all (a repository
-          // read failed), not that a row failed. Either way the move goes on.
+          // read failed), not that a row failed. Either way the move goes on,
+          // and none of the column's On exit rows ran.
+          taskMoveReporter.report(exitError, { tags: { stage: 'exit_automations' } });
           console.error(`[TASK_MOVE] Exit automations failed for task ${input.taskId.slice(0, 8)}:`, exitError);
         } finally {
           // The exit group's own label, cleared by the group that set it.
@@ -981,7 +993,9 @@ export async function handleTaskMove(
           reportAutomationFailures(context, enterSummary, enterTask, resolvedProjectId, 'enter');
         } catch (enterError) {
           // The LIST could not run at all. The move is already committed and
-          // the session is untouched, so it goes on, as on exit.
+          // the session is untouched, so it goes on, as on exit, and none of the
+          // column's On enter rows ran.
+          taskMoveReporter.report(enterError, { tags: { stage: 'enter_automations' } });
           console.error(`[TASK_MOVE] Enter automations failed for task ${input.taskId.slice(0, 8)}:`, enterError);
         } finally {
           // This group runs only on moves Phase 1 finishes (the warm paths, a
@@ -1064,6 +1078,8 @@ export async function handleTaskMove(
           try {
             forgetPRLinkOnTodoReset(context, tasks, task, resolvedProjectId);
           } catch (forgetError) {
+            // The To Do card keeps the last run's PR chip, as on the commit-time forget.
+            taskMoveReporter.report(forgetError, { tags: { stage: 'pr_forget' } });
             console.error(`[TASK_MOVE] Forgetting the PR link failed for task ${task.id.slice(0, 8)}:`, forgetError);
           }
         }
@@ -1877,6 +1893,9 @@ export async function handleTaskMove(
                   // startup-retry net either way.
                   await worktreeManager.removeWorktree(expectedPath, { removalProfile: 'moderate', caller: 'stale_cleanup' });
                 } catch (removalError) {
+                  // report-ok: removeWorktree throws for a candidate outside this project's
+                  // worktrees root, which is not ours to remove. A removal that fails returns
+                  // false and is reported inside it (reportWorktreeRemovalFailure).
                   console.warn(`[TASK_MOVE] Skipped stale worktree candidate ${expectedPath}:`, removalError);
                   continue;
                 }
@@ -1896,6 +1915,9 @@ export async function handleTaskMove(
               }
             }, { label: `stale-cleanup:${task.id.slice(0, 8)}` });
           } catch (cleanupError) {
+            // report-ok: this clears what a failed creation left, and the creation's own error
+            // is rethrown below. A leftover that stays is met by the next start, which runs
+            // this cleanup again.
             console.warn('[TASK_MOVE] Stale resource cleanup failed (will retry on next attempt):', cleanupError);
           }
         }
@@ -2098,6 +2120,8 @@ export async function handleTaskMove(
       try {
         MOVE_PUSH_BY_ORIGIN[origin]?.(context, announceProjectId, input, movedTaskTitle);
       } catch (announceError) {
+        // The settled move never reaches the board, the Agent Monitor or a paired phone.
+        taskMoveReporter.report(announceError, { tags: { stage: 'settle_announce' } });
         console.error(`[TASK_MOVE] Announce failed for task ${input.taskId.slice(0, 8)}:`, announceError);
       }
 

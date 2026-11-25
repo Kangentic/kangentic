@@ -110,6 +110,8 @@ export function AccountsTab({ globalConfig }: { globalConfig: AppConfig }) {
     try {
       result = await window.electronAPI.accounts.addKeyFile(card.agent);
     } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the toast says the file
+      // could not be read.
       console.warn('[accounts] Could not add a key file:', error);
       result = { ok: false, reason: 'unreadable' };
     }

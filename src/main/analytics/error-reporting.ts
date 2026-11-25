@@ -25,6 +25,7 @@ import { SENTRY_DATA_COLLECTION } from '../../shared/sentry-data-collection';
 import { redactEventPaths } from './redact-event-paths';
 import { rendererNameForReporting } from './renderer-classification';
 import type { PreviousRun } from './run-uptime';
+import { runStateTags } from './run-state-tags';
 import { isShuttingDown } from '../shutdown-state';
 
 /**
@@ -382,7 +383,34 @@ export function beforeSendEvent(event: ErrorEvent, hint: EventHint): ErrorEvent 
   } catch {
     // Tagging is diagnostic only; never let it cost us the event.
   }
+  try {
+    tagRunState(event, hint);
+  } catch {
+    // report-ok: tagging is diagnostic only, and a throw here would make the SDK drop the event.
+  }
   return redactEventPaths(filterNativeCrashEvent(event, hint));
+}
+
+/**
+ * Put the run-state tags (`run-state-tags.ts`) on an event: how long ago the
+ * machine woke, the CPU speed limit, this run's uptime, the main window's state
+ * and whether the app is focused. A renderer event gets them too, since the SDK
+ * re-captures it through main's client.
+ *
+ * A native crash event gets none. Its dump can be one the next launch found, so
+ * the state read now would describe the uploading run, not the crashed one
+ * (the same trap `correctNativeCrashEvent` corrects for the release tag).
+ *
+ * The event's own tags win: a reporter that read the state itself, at the moment
+ * its failure happened (`browser_driver`'s `since_wake`), keeps its value.
+ */
+export function tagRunState(event: ErrorEvent, hint: EventHint): ErrorEvent {
+  const carriesDump = hint.attachments?.some(
+    (attachment) => attachment.attachmentType === MINIDUMP_ATTACHMENT_TYPE
+  );
+  if (carriesDump || isBrowserGuestCrashEvent(event)) return event;
+  event.tags = { ...runStateTags(), ...event.tags };
+  return event;
 }
 
 /**

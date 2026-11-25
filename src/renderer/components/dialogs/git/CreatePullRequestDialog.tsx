@@ -60,9 +60,13 @@ export function CreatePullRequestDialog({
     let cancelled = false;
     window.electronAPI.git.branchSummary({
       worktreePath: checkout.worktreePath ?? undefined, projectPath: checkout.projectPath, baseBranch: checkout.baseBranch,
-    }).then((summary) => {
-      if (!cancelled) setTitle((current) => current || (summary.lastCommit?.subject ?? ''));
-    }, () => undefined);
+    }).then(
+      (summary) => {
+        if (!cancelled) setTitle((current) => current || (summary.lastCommit?.subject ?? ''));
+      },
+      // report-ok: main's IPC wrap reports a handler's rejection, and the title starts empty.
+      () => undefined,
+    );
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- read once, for the title the dialog opens on
   }, []);

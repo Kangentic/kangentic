@@ -703,6 +703,7 @@ msgid "Couldn't move every session"
 msgstr ""
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#: src/renderer/stores/project-store.ts
 #, fuzzy
 msgid "Couldn't move project"
 msgstr "프로젝트를 이동할 수 없음"
@@ -757,6 +758,10 @@ msgstr "MCP 서버에 연결할 수 없음"
 msgid "Couldn't read that folder"
 msgstr "해당 폴더를 읽을 수 없음"
 
+#: src/renderer/stores/accounts-store.ts
+msgid "Couldn't remove account"
+msgstr ""
+
 #: src/renderer/stores/workflow-store.ts
 #, fuzzy
 msgid "Couldn't remove the link"
@@ -766,6 +771,10 @@ msgstr "연결을 제거할 수 없음"
 #, fuzzy
 msgid "Couldn't remove the task"
 msgstr "작업을 제거할 수 없음"
+
+#: src/renderer/stores/project-store.ts
+msgid "Couldn't rename project"
+msgstr ""
 
 #: src/renderer/lib/auto-name-scheduler.ts
 #, fuzzy
@@ -781,6 +790,14 @@ msgstr "워크플로 이름을 바꿀 수 없음"
 #, fuzzy
 msgid "Couldn't reorder columns"
 msgstr "열 순서를 변경할 수 없음"
+
+#: src/renderer/stores/project-store.ts
+msgid "Couldn't reorder groups"
+msgstr ""
+
+#: src/renderer/stores/project-store.ts
+msgid "Couldn't reorder projects"
+msgstr ""
 
 #: src/renderer/stores/board-store/task-slice.ts
 #, fuzzy
@@ -867,6 +884,10 @@ msgstr "프로세스를 중지할 수 없음"
 
 #: src/renderer/lib/account-toasts.ts
 msgid "Couldn't switch account"
+msgstr ""
+
+#: src/renderer/stores/project-store.ts
+msgid "Couldn't update group"
 msgstr ""
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx

@@ -285,7 +285,10 @@ export function runProjectMigrations(db: Database.Database): void {
         db.prepare('UPDATE actions SET config_json = ? WHERE id = ?')
           .run(JSON.stringify(config), action.id);
       }
-    } catch { /* skip malformed config */ }
+    } catch {
+      // report-ok: a malformed config in a legacy column only Kangentic wrote is skipped and
+      // left as it is. This pass runs again at the next open.
+    }
   }
 
   // Migration: add permission_mode (formerly permission_strategy) and auto_spawn columns to swimlanes
@@ -823,7 +826,8 @@ export function runProjectMigrations(db: Database.Database): void {
         );
       }
     } catch {
-      // Skip malformed configs
+      // report-ok: a malformed config in a legacy column only Kangentic wrote is skipped and
+      // left as it is. This pass runs again at the next open.
     }
   }
 

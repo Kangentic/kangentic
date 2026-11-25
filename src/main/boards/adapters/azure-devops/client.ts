@@ -6,6 +6,7 @@ import { convertHtmlToMarkdown, extractInlineImageUrls, formatCommentsSection } 
 import { AZURE_CLOSED_STATES, buildWiqlQuery, buildWorkItemIdsWiql } from './wiql';
 import { RefusalError } from '../../../../shared/refusal';
 import { UserConfigurationError } from '../../../../shared/user-configuration-error';
+import { reportUnclassifiedDefect } from '../../shared/unclassified-defect';
 
 
 /** Raw work item shape from az boards query. */
@@ -909,6 +910,8 @@ export class AzureDevOpsImporter {
     } catch (error) {
       const toThrow = azErrorToThrow(error);
       if (toThrow) throw toThrow;
+      // Unless az never said it: output that will not parse, or a throw of ours.
+      reportUnclassifiedDefect(error, 'azure_devops', 'pr_by_branch');
       return [];
     }
   }
@@ -937,6 +940,7 @@ export class AzureDevOpsImporter {
     } catch (error) {
       const toThrow = azErrorToThrow(error);
       if (toThrow) throw toThrow;
+      reportUnclassifiedDefect(error, 'azure_devops', 'pr_by_number');
       return null;
     }
   }
@@ -1100,6 +1104,7 @@ export class AzureDevOpsImporter {
     } catch (error) {
       const toThrow = azErrorToThrow(error);
       if (toThrow) throw toThrow;
+      reportUnclassifiedDefect(error, 'azure_devops', 'build_read');
       return null;
     }
   }
@@ -1151,6 +1156,7 @@ export class AzureDevOpsImporter {
     } catch (error) {
       const toThrow = azErrorToThrow(error);
       if (toThrow) throw toThrow;
+      reportUnclassifiedDefect(error, 'azure_devops', 'pr_by_commit');
       return [];
     }
   }

@@ -592,6 +592,7 @@ msgid "Couldn't move every session"
 msgstr "无法移动全部会话"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#: src/renderer/stores/project-store.ts
 msgid "Couldn't move project"
 msgstr "无法移动项目"
 
@@ -635,6 +636,10 @@ msgstr "无法连接 MCP 服务器"
 msgid "Couldn't read that folder"
 msgstr "无法读取该文件夹"
 
+#: src/renderer/stores/accounts-store.ts
+msgid "Couldn't remove account"
+msgstr ""
+
 #: src/renderer/stores/workflow-store.ts
 msgid "Couldn't remove the link"
 msgstr "无法移除关联"
@@ -642,6 +647,10 @@ msgstr "无法移除关联"
 #: src/renderer/stores/workflow-store.ts
 msgid "Couldn't remove the task"
 msgstr "无法移除任务"
+
+#: src/renderer/stores/project-store.ts
+msgid "Couldn't rename project"
+msgstr ""
 
 #: src/renderer/lib/auto-name-scheduler.ts
 msgid "Couldn't rename task"
@@ -654,6 +663,14 @@ msgstr "无法重命名工作流"
 #: src/renderer/stores/board-store/swimlane-slice.ts
 msgid "Couldn't reorder columns"
 msgstr "无法重新排序列"
+
+#: src/renderer/stores/project-store.ts
+msgid "Couldn't reorder groups"
+msgstr ""
+
+#: src/renderer/stores/project-store.ts
+msgid "Couldn't reorder projects"
+msgstr ""
 
 #: src/renderer/stores/board-store/task-slice.ts
 msgid "Couldn't reorder task"
@@ -726,6 +743,10 @@ msgstr "无法停止进程"
 #: src/renderer/lib/account-toasts.ts
 msgid "Couldn't switch account"
 msgstr "无法切换账户"
+
+#: src/renderer/stores/project-store.ts
+msgid "Couldn't update group"
+msgstr ""
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 msgid "Delete"

@@ -54,8 +54,10 @@ export class RemoteItemCacheRepository {
       try {
         parsed = JSON.parse(row.payload);
       } catch {
-        // A corrupted payload (e.g. a partial write from a crash) must not fail the
-        // whole source's read; skip the bad row so the rest of the cache still paints.
+        // report-ok: a corrupted payload (e.g. a partial write from a crash) in a cache only
+        // Kangentic writes must not fail the whole source's read. The bad row is skipped so
+        // the rest of the cache still paints, and a reconcile that fetches the item again
+        // overwrites it.
         continue;
       }
       // Same reasoning for a payload that parses but no longer matches the shape.

@@ -907,6 +907,10 @@ msgstr "无法添加账户"
 msgid "Couldn't clear browser data"
 msgstr "无法清除浏览器数据"
 
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "Couldn't rebuild the index"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
 msgid "Couldn't restart"
 msgstr "无法重启"
@@ -3374,6 +3378,10 @@ msgstr "窗口"
 #, fuzzy
 msgid "Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the Kangentic browser. Saved URLs are kept."
 msgstr "清除 Kangentic 浏览器的 Cookie、localStorage、IndexedDB、Service Worker 及 HTTP/身份验证缓存。已保存的 URL 会保留。"
+
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "With an error, the app's state as fixed ranges: time running, time since the computer woke, which window it came from, whether the window was showing or focused, and whether the processor was slowed"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Workflow agent"

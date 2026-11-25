@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { remoteHostReporter } from './remote-report';
 
 const FILE_NAME = 'remote-install-id';
 
@@ -18,13 +19,17 @@ export function readInstallId(configDirectory: string, log: (line: string) => vo
     const existing = fs.readFileSync(file, 'utf8').trim();
     if (/^[0-9a-f-]{36}$/.test(existing)) return existing;
   } catch {
-    // Not made yet, or unreadable: made below.
+    // report-ok: ENOENT on first run, before the id is ever written. A file that cannot be read
+    // gets a new id too, made and written below.
   }
   const created = randomUUID();
   try {
     fs.mkdirSync(configDirectory, { recursive: true });
     fs.writeFileSync(file, created, { encoding: 'utf8', mode: 0o600 });
   } catch (error) {
+    // The id lasts for this run only. The next launch looks like another installation to a host
+    // that still holds this one's sessions, and that host refuses the connection.
+    remoteHostReporter.report(error, { tags: { stage: 'install_identity_write' } });
     log(`[remote] could not keep the installation id (${error instanceof Error ? error.message : String(error)}); it lasts for this run only`);
   }
   return created;

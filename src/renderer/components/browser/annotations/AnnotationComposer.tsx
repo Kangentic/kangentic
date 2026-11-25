@@ -68,6 +68,7 @@ function pageLabel(url: string): string {
     const parsed = new URL(url);
     return `${parsed.host}${parsed.pathname === '/' ? '' : parsed.pathname}`;
   } catch {
+    // report-ok: a page URL that does not parse is shown as it was recorded.
     return url;
   }
 }

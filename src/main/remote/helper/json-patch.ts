@@ -135,6 +135,8 @@ function delay(durationMs: number): Promise<void> {
 const breakingLocks = new Set<string>();
 
 function lockAge(lockDirectory: string): Promise<number> {
+  // report-ok: runs on the host, which cannot report; a lock that is gone by now has no age, so
+  // it reads as fresh and the caller's next try takes it.
   return fs.stat(lockDirectory).then((stats) => Date.now() - stats.mtimeMs, () => 0);
 }
 
@@ -151,6 +153,8 @@ async function takeStaleLock(lockDirectory: string): Promise<boolean> {
     if (await lockAge(lockDirectory) <= LOCK_STALE_MS) return false;
     const removed = await fs.rmdir(lockDirectory).then(
       () => true,
+      // report-ok: runs on the host, which cannot report; a lock already gone counts as removed,
+      // and one that cannot be removed is not taken, so the patch tells main `locked`.
       (error: NodeJS.ErrnoException) => error.code === 'ENOENT',
     );
     if (!removed) return false;
@@ -193,6 +197,8 @@ export async function patchJsonFile(request: JsonPatchRequest): Promise<JsonPatc
     try {
       raw = await fs.readFile(request.path, 'utf8');
     } catch (error) {
+      // report-ok: runs on the host, which cannot report; a file that is not there starts empty,
+      // and any other read failure goes back to main as the result's reason.
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return { applied: false, changed: false, reason: 'unreadable' };
       raw = null;
     }
@@ -204,6 +210,8 @@ export async function patchJsonFile(request: JsonPatchRequest): Promise<JsonPatc
       try {
         parsed = JSON.parse(raw);
       } catch {
+        // report-ok: runs on the host, which cannot report; a file that is not JSON is left
+        // untouched and the result's reason says so to main.
         return { applied: false, changed: false, reason: 'not-an-object' };
       }
       if (!isObject(parsed)) return { applied: false, changed: false, reason: 'not-an-object' };
@@ -219,7 +227,11 @@ export async function patchJsonFile(request: JsonPatchRequest): Promise<JsonPatc
     if (!changed) return { applied: true, changed: false };
     // Written through a link's target, with the file's own mode, so a symlinked file stays a link and a
     // 0600 file holding the user's auth does not come back with the umask's default.
+    // report-ok: runs on the host, which cannot report; a file that is not there yet has no link to
+    // follow, so the path as named is written.
     const target = await fs.realpath(request.path).catch(() => request.path);
+    // report-ok: runs on the host, which cannot report; a file that is not there yet has no mode
+    // to keep, so it is made owner-only.
     const mode = await fs.stat(target).then((stats) => stats.mode & 0o777, () => 0o600);
     await fs.mkdir(path.dirname(target), { recursive: true });
     stagingCounter += 1;
@@ -228,10 +240,15 @@ export async function patchJsonFile(request: JsonPatchRequest): Promise<JsonPatc
       await fs.writeFile(staging, JSON.stringify(data, null, 2), { encoding: 'utf8', mode });
       await fs.rename(staging, target);
     } finally {
+      // report-ok: runs on the host, which cannot report; a staging file that will not go stays on
+      // the host's disk, and a failed write still throws to the reply.
       await fs.rm(staging, { force: true }).catch(() => undefined);
     }
     return { applied: true, changed: true };
   } finally {
+    // report-ok: runs on the host, which cannot report; a lock another taker already broke is
+    // gone, one left behind is broken as stale once it is 10 s old, and a patch that still cannot
+    // take it tells main `locked`.
     if (request.lockDirectory) await fs.rmdir(request.lockDirectory).catch(() => undefined);
   }
 }

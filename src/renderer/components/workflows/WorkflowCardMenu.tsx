@@ -57,7 +57,10 @@ export function WorkflowCardMenu({ viewTask, position, onClose, onOpenOnBoard, o
     let cancelled = false;
     void window.electronAPI.monitor.getTaskDetail(viewTask.projectId, taskId)
       .then((bundle) => { if (!cancelled && bundle) setElsewhere({ task: bundle.task, swimlanes: bundle.swimlanes }); })
-      .catch(() => { /* the menu does not open; Open on board still works from the inspector */ });
+      .catch(() => {
+        // report-ok: main's IPC wrap reports a handler's rejection. The menu does not open,
+        // and Open on board still works from the inspector.
+      });
     return () => { cancelled = true; };
   }, [onThisBoard, viewTask.projectId, taskId]);
 
@@ -102,6 +105,8 @@ export function WorkflowCardMenu({ viewTask, position, onClose, onOpenOnBoard, o
     }
     void window.electronAPI.tasks.move({ taskId, targetSwimlaneId, targetPosition: 0 }, viewTask.projectId)
       .then(() => reportMoved(targetName))
+      // report-ok: main's IPC wrap reports a handler's rejection, and the toast shows
+      // main's reason.
       .catch(reportMoveFailure)
       // Main sends no push for a move from this window, and a warm switch reads
       // that project's snapshot, so bring its board up to date as the Agent

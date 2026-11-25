@@ -5,6 +5,7 @@ import { Bell, Bot, Brain, Bug, FolderCog, Gauge, GitBranch, GitCompare, Globe, 
 import { useConfigStore } from '../../stores/config-store';
 import { useToastStore } from '../../stores/toast-store';
 import { ipcFailureToastFields } from '../../lib/ipc-error';
+import { reportRendererFailure } from '../../utils/renderer-failure';
 import { SettingsPanelProvider, SearchTabGroupHeader, NoSearchResults } from './shared';
 import type { SettingsTabDefinition, SettingScope, SettingsContentProps } from './shared';
 import { SETTINGS_TABS } from './settings-tabs';
@@ -201,6 +202,10 @@ export function SettingsContent({ activeTab, isSearching, searchQuery, matchingT
       // explains it. Giving each branch its own timer would toast twice for one
       // setting that is failing for two reasons at once.
       (error: unknown) => {
+        // The store merges the change and chains the write before it reaches IPC, so a throw
+        // there is the renderer's own and the setting is not saved. The reporter drops what
+        // main's wrap saw, and sends each error name once a run however many keys repeat it.
+        reportRendererFailure('settings', 'write', error);
         const fields = ipcFailureToastFields(error, t`The change was not written.`);
         reportFailure(fields.message, fields.reported);
       },

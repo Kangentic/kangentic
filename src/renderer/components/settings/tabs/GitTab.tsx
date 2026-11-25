@@ -33,6 +33,8 @@ function StopScriptRow() {
       (projectConfig) => {
         if (!stale) setLoaded({ projectId, script: projectConfig.git.stopScript ?? '' });
       },
+      // report-ok: main's IPC wrap reports a handler's rejection, and the Stop script field
+      // stays disabled, so an empty draft cannot delete the script.
       (error: unknown) => console.warn('[SETTINGS] Could not read the Stop script:', error),
     );
     return () => {
@@ -53,6 +55,8 @@ function StopScriptRow() {
             .then(
               (projectConfig) => setLoaded({ projectId, script: projectConfig.git.stopScript ?? '' }),
               (error: unknown) => {
+                // report-ok: main's IPC wrap reports a handler's rejection, and the toast
+                // shows the reason.
                 useToastStore.getState().addToast({
                   title: t`Couldn't save Stop script`,
                   ...ipcFailureToastFields(error),
@@ -100,6 +104,8 @@ export function GitTab({ config }: { config: AppConfig }) {
               // refuses the write when it exists but cannot be read (merge
               // conflict markers, say), and that refusal has to reach the user.
               window.electronAPI.boardConfig.setDefaultBaseBranch(branch).catch((error: unknown) => {
+                // report-ok: main's IPC wrap reports a handler's rejection, and the toast
+                // shows the reason.
                 useToastStore.getState().addToast({
                   title: t`Couldn't save base branch`,
                   ...ipcFailureToastFields(error),

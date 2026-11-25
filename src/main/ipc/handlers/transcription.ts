@@ -1,4 +1,5 @@
 import { ipcMain, systemPreferences } from 'electron';
+import { onReported } from '../../analytics/ipc-handler-report';
 import { IPC } from '../../../shared/ipc-channels';
 import type {
   DictationAudioChunk,
@@ -28,6 +29,8 @@ async function requestMicrophone(): Promise<DictationMicPermission> {
     const granted = await systemPreferences.askForMediaAccess('microphone');
     return granted ? 'granted' : 'denied';
   } catch {
+    // report-ok: macOS could not ask for the microphone, and unavailable is the answer the
+    // dictation popup shows.
     return 'unavailable';
   }
 }
@@ -105,7 +108,7 @@ export function registerTranscriptionHandlers(context: IpcContext): void {
   // Pre-load the engine for the selected config so the next press is instant
   // (the model load happens ahead of the press). Fire-and-forget; a `null`
   // config releases the warm engines (dictation disabled).
-  ipcMain.on(IPC.TRANSCRIBE_PREWARM, (_event, config: DictationConfig | null) => {
+  onReported(ipcMain, IPC.TRANSCRIBE_PREWARM, (_event, config: DictationConfig | null) => {
     void transcriptionService.prewarm(config);
   });
 
@@ -113,7 +116,7 @@ export function registerTranscriptionHandlers(context: IpcContext): void {
   // round-trip) so rapid frames never block on a reply. This is the local
   // transport into the transport-agnostic ingest boundary; a future mobile
   // client feeds the same `ingest(...)`.
-  ipcMain.on(IPC.TRANSCRIBE_AUDIO_CHUNK, (_event, chunk: DictationAudioChunk) => {
+  onReported(ipcMain, IPC.TRANSCRIBE_AUDIO_CHUNK, (_event, chunk: DictationAudioChunk) => {
     transcriptionService.ingest(chunk.dictationSessionId, new Int16Array(chunk.pcm));
   });
 
@@ -125,7 +128,7 @@ export function registerTranscriptionHandlers(context: IpcContext): void {
   // The agent's cursor-to-end keys lead every write, the first partial included,
   // because the payload's DELs eat whatever sits before the cursor and the user
   // can move it during a hold. Words therefore land after any draft.
-  ipcMain.on(IPC.TRANSCRIBE_LIVE_WRITE, (_event, sessionId: string, payload: string) => {
+  onReported(ipcMain, IPC.TRANSCRIBE_LIVE_WRITE, (_event, sessionId: string, payload: string) => {
     // 'user': dictation is the user speaking into the prompt, so it counts as
     // a draft that an injected auto_command must not concatenate onto.
     if (sessionId && payload) {
@@ -136,7 +139,7 @@ export function registerTranscriptionHandlers(context: IpcContext): void {
   // A press, or how a hold ended. Written at `warn` because that is the one level
   // the log mirror keeps in a production build, and a renderer's own console never
   // reaches the log. One line per press and per end, with no spoken text in it.
-  ipcMain.on(IPC.TRANSCRIBE_HOLD_TRACE, (_event, trace: unknown) => {
+  onReported(ipcMain, IPC.TRANSCRIBE_HOLD_TRACE, (_event, trace: unknown) => {
     const line = formatHoldTraceLine(trace);
     if (line) console.warn(line);
   });
@@ -179,6 +182,8 @@ export function registerTranscriptionHandlers(context: IpcContext): void {
         await context.terminalSubmit.submitContent(sessionId, sanitized, { source: 'dictation', origin: 'person' });
         return true;
       } catch {
+        // report-ok: the paste engine could not confirm a submit, and the dictated text stays
+        // in the agent's input for the user to send.
         return false;
       }
     },

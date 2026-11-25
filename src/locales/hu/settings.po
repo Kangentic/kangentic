@@ -1066,6 +1066,10 @@ msgstr "Nem sikerült hozzáadni a fiókot"
 msgid "Couldn't clear browser data"
 msgstr "Nem sikerült törölni a böngészőadatokat"
 
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "Couldn't rebuild the index"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
 #, fuzzy
 msgid "Couldn't restart"
@@ -3950,6 +3954,10 @@ msgstr "Ablakok"
 #, fuzzy
 msgid "Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the Kangentic browser. Saved URLs are kept."
 msgstr "A Kangentic böngésző sütijeinek, localStorage-ának, IndexedDB-jének, service workereinek és HTTP/hitelesítési gyorsítótárainak törlése. A mentett URL-ek megmaradnak."
+
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "With an error, the app's state as fixed ranges: time running, time since the computer woke, which window it came from, whether the window was showing or focused, and whether the processor was slowed"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy

@@ -84,6 +84,8 @@ export function usePrChecks(task: Task | null | undefined, projectId: string | n
             timer = setTimeout(() => run(false), PENDING_POLL_MS);
           }
         },
+        // report-ok: main's IPC wrap reports a handler's rejection. A failed read keeps the
+        // last answer for the same PR.
         () => undefined,
       );
     };

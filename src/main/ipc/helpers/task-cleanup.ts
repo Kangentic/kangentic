@@ -16,6 +16,7 @@ import { parseStoredCliTarget, parseWslCliPath, type CliPlace } from '../../agen
 import { isWslDistroRunning, resolveWslDistroFacts } from '../../agent/shared/wsl-distro';
 import type { IpcContext } from '../ipc-context';
 import { leftoverProcessReports, publishLeftoverProcesses } from './leftover-process-reports';
+import { handlerStepReporter } from './handler-step-report';
 import { getProjectRepos } from './project-repos';
 import { withTaskLock } from '../task-lifecycle-lock';
 import { isShuttingDown } from '../../shutdown-state';
@@ -129,6 +130,11 @@ export async function reapTaskLeftovers(
     publishLeftoverProcesses(context.mainWindow, entries, taskTitles, stoppingEnabled, projectPath ?? null);
     return reapVerdictOf(entries);
   } catch (error) {
+    // The host reports its own failed reap (reportTaskReapFailure), so this is a throw
+    // around it: the processes the tasks left may still run, and no toast says so. The
+    // answer names no task, which is the verdict for a reap that says nothing: a
+    // worktree removal that fails after it still reports.
+    handlerStepReporter.report(error, { tags: { area: 'task_cleanup', step: 'leftover_reap' } });
     console.warn(`[TASK-REAP] Leftover reap failed for ${tasks.length} task(s) (non-fatal):`, error);
     return NOTHING_LEFT_RUNNING;
   } finally {
@@ -214,13 +220,15 @@ async function stopTaskBackgroundSessions(context: IpcContext, projectPath: stri
         // On the account the record ran on: a CLI lists only its own home's background sessions.
         if (cliPath) await stopBackgroundSessionOnAccount(adapter, { agentSessionId: backgroundId, cliPath }, record.account_id);
       } catch (error) {
+        // report-ok: a background session that is not stopped here is left to the reap that
+        // follows, which ends it or lists it in the leftover-process toast.
         console.warn(`[TASK-REAP] could not stop a background session for record ${record.id.slice(0, 8)} before the reap (non-fatal):`, error);
       }
     };
     const queue = new PQueue({ concurrency: BACKGROUND_SESSION_STOP_CONCURRENCY });
     const allStops = Promise.all(records.map((record) => queue.add(() => stopForRecord(record))));
-    // `stopForRecord` never rejects, so only `queue.clear()` below can reject this, with an
-    // AbortError for each stop it removes. The race has gone to the deadline by then.
+    // report-ok: `stopForRecord` never rejects, so only `queue.clear()` below can reject this,
+    // with an AbortError for each stop it removes. The race has gone to the deadline by then.
     allStops.catch(() => undefined);
     let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
     const deadline = new Promise<'deadline'>((resolve) => {
@@ -240,6 +248,8 @@ async function stopTaskBackgroundSessions(context: IpcContext, projectPath: stri
       clearTimeout(deadlineTimer);
     }
   } catch (error) {
+    // report-ok: a background session that is not stopped here is left to the reap that
+    // follows, which ends it or lists it in the leftover-process toast.
     console.warn('[TASK-REAP] could not stop a background session before the reap (non-fatal):', error);
   }
 }
@@ -266,6 +276,9 @@ function wslCliDistrosOf(context: IpcContext, projectPath: string | null, taskId
       .filter((distro): distro is string => typeof distro === 'string');
     return [...new Set(distros)];
   } catch (error) {
+    // The reap skips the WSL distros the tasks' CLIs ran in, so what they left running
+    // there keeps running.
+    handlerStepReporter.report(error, { tags: { area: 'task_cleanup', step: 'wsl_distros_read' } });
     console.warn('[TASK-REAP] could not read the distros the tasks ran a CLI in (non-fatal):', error);
     return [];
   }
@@ -349,6 +362,9 @@ export async function retryDoneWorktreeRemoval(
       return deleteTaskWorktree(context, task, tasks, projectPath, { caller: options.caller, reapLeftRunning });
     });
   } catch (error) {
+    // report-ok: a retry that cannot run leaves the worktree for the next project open's
+    // retry (retryFailedDoneCleanups). A removal that fails is reported inside
+    // removeWorktree (reportWorktreeRemovalFailure).
     console.warn(`[TASK-REAP] Worktree removal retry (${options.caller}) failed for ${taskId.slice(0, 8)} (non-fatal):`, error);
     return false;
   }
@@ -527,7 +543,11 @@ export async function cleanupTaskSession(
       context.sessionManager.kill(task.session_id);
       await context.sessionManager.awaitExit(task.session_id);
       context.sessionManager.remove(task.session_id);
-    } catch { /* may already be dead */ }
+    } catch {
+      // report-ok: kill and remove are no-ops for a session that already ended, and
+      // removeByTaskId below removes the task's rows again with no catch, so a real
+      // failure surfaces there.
+    }
     // Guard against concurrent delete: the task row may already be gone by
     // the time awaitExit resolves. Update is idempotent - skip when absent.
     if (tasks.getById(task.id)) {
@@ -602,6 +622,9 @@ export async function cleanupTaskResources(
   // last save the pane flushes as it unmounts does not bring the draft back.
   if (resolvedProjectPath) {
     await discardAnnotationDraft(resolvedProjectPath, task.id, { retire: true }).catch((error: Error) => {
+      // The task's unsent Browser pane annotations stay on disk, and come back if the
+      // task is opened again after a reset.
+      handlerStepReporter.report(error, { tags: { area: 'task_cleanup', step: 'annotation_draft_remove' } });
       console.warn(`[CLEANUP] Failed to remove annotation draft for task ${task.id.slice(0, 8)}: ${error.message}`);
     });
   }
@@ -631,7 +654,10 @@ export async function cleanupTaskResources(
           if (config.git.autoCleanup) {
             // Prune stale worktree metadata so git allows branch deletion
             // even if removeWorktree couldn't fully remove the directory
-            try { await worktreeManager.pruneWorktrees(); } catch { /* best effort */ }
+            try { await worktreeManager.pruneWorktrees(); } catch {
+              // report-ok: a prune that fails leaves stale worktree metadata, and the branch
+              // removal below still runs. The stale cleanup after a failed creation prunes again.
+            }
             await worktreeManager.removeBranch(task.branch_name);
           }
         }
@@ -640,6 +666,10 @@ export async function cleanupTaskResources(
         // fresh agent spawn waiting at USER priority on this project.
       }, { label: `cleanup-worktree:${task.id.slice(0, 8)}`, priority: GitQueuePriority.BACKGROUND });
     } catch (err) {
+      // The worktree and its branch stay on disk after a reset, a demote or a delete. A
+      // removal that fails returns false and is reported inside removeWorktree, so this
+      // is a throw around it.
+      handlerStepReporter.report(err, { tags: { area: 'task_cleanup', step: 'worktree_cleanup' } });
       console.error(`[WORKTREE] Failed to clean up worktree for task ${task.id.slice(0, 8)}:`, err);
     }
     // Only clear DB fields if the directory was actually removed.
@@ -765,6 +795,10 @@ export async function deleteTaskWorktree(
       );
     }
   } catch (err) {
+    // A Done task keeps its worktree on disk until a retry takes it. A removal that
+    // fails returns false and is reported inside removeWorktree, so this is a throw
+    // around it.
+    handlerStepReporter.report(err, { tags: { area: 'task_cleanup', step: 'done_worktree_delete' } });
     console.error(`[WORKTREE] Failed to delete worktree for task ${task.id.slice(0, 8)}:`, err);
   }
 

@@ -117,6 +117,8 @@ export async function hydrateCommandTerminalBrowser(projectId: string, slot: str
   const ownerKey = commandTerminalBrowserOwner(projectId, slot);
   if (hydratedOwners.has(ownerKey)) return;
   hydratedOwners.add(ownerKey);
+  // report-ok: main's IPC wrap reports a handler's rejection, and the pane starts as it does
+  // with no saved layout.
   const saved = await window.electronAPI.browser.getCommandTerminalState(projectId, slot).catch(() => null);
   if (!saved) return;
   const state = useSessionStore.getState();
@@ -151,7 +153,10 @@ function subscribeCommandTerminalBrowserSaves(): () => void {
       void window.electronAPI.browser.setCommandTerminalState(owner.projectId, owner.slot, {
         open: state.browserOpenTasks.has(ownerKey),
         ratio: state.dividerRatio[ownerKey] ?? DEFAULT_SPLIT_RATIO,
-      }).catch(() => undefined);
+      })
+        // report-ok: main's IPC wrap reports a handler's rejection. The pane keeps working,
+        // and only the saved layout misses this change.
+        .catch(() => undefined);
     }
   });
 }

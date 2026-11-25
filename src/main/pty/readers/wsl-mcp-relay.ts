@@ -21,6 +21,8 @@
  * of waiting on an answer that never comes.
  */
 
+import { wslTransportReporter } from './wsl-transport-report';
+
 export interface McpRelayServer {
   /** The running server's address, `http://127.0.0.1:<port>/mcp`. */
   baseUrl: string;
@@ -80,12 +82,30 @@ export async function relayMcpMessage(input: McpRelayInput): Promise<string> {
       signal: input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
+    // report-ok: the loopback MCP server was off, restarting or slow, or the session
+    // ended. The agent that made the call gets a JSON-RPC error that says which.
     if (isTimeout(error)) {
       return errorAnswer(input.body, `Kangentic did not answer within ${Math.round(timeoutMs / 1000)} seconds. The call may still be running there, so check what it changed before calling it again.`);
     }
     return errorAnswer(input.body, `Kangentic's MCP server could not be reached (${describeFetchFailure(error)}). Retry in a moment. If it keeps failing, the Kangentic app may be restarting.`);
   }
-  const text = await response.text().catch(() => '');
+  let bodyFailure: unknown = null;
+  const text = await response.text().catch((error: unknown) => {
+    // The answer's body did not arrive whole. A call that ran out of time is the
+    // server being slow, not a defect, and the reporter itself skips an abort (the
+    // session ended) and a peer that went away.
+    if (!isTimeout(error)) wslTransportReporter.report(error, { tags: { stage: 'wsl_mcp_relay' } });
+    bodyFailure = error ?? new Error('the answer could not be read');
+    return '';
+  });
+  if (bodyFailure !== null) {
+    // The server answered and the answer was lost on the way. On a 2xx the relay
+    // used to print nothing here, so the agent's call waited with no reply. The
+    // call may have run, so the error says to check before calling it again.
+    return errorAnswer(input.body, isTimeout(bodyFailure)
+      ? `Kangentic did not finish its answer within ${Math.round(timeoutMs / 1000)} seconds. The call may have run there, so check what it changed before calling it again.`
+      : `Kangentic's answer did not arrive whole (${describeFetchFailure(bodyFailure)}). The call may have run there, so check what it changed before calling it again.`);
+  }
   const answer = answerLines(text, response.headers.get('content-type') ?? '');
   if (response.ok || answer) return answer;
   return errorAnswer(input.body, describeHttpFailure(response.status, text));
@@ -125,7 +145,8 @@ export function oversizeAnswer(answer: string, sizeBytes: number, limitBytes: nu
     const candidate = (Array.isArray(parsed) ? parsed[0] : parsed) as { id?: unknown } | null;
     if (candidate && (typeof candidate.id === 'string' || typeof candidate.id === 'number')) id = candidate.id;
   } catch {
-    // An answer that is not one JSON line has no id to take.
+    // report-ok: an answer that is not one JSON line has no id to take, and the null
+    // below says so to the caller.
   }
   if (id === null) return null;
   const message = `The result is ${Math.round(sizeBytes / 1024)} KB, more than the ${Math.round(limitBytes / 1024)} KB that can reach this host. Ask for less of it, or have the tool save it to a file (the browser tools take saveToFile) and read the file.`;
@@ -138,6 +159,8 @@ function refuseUrl(url: string): string | null {
   try {
     parsed = new URL(url);
   } catch {
+    // report-ok: a request that names no URL is refused, and the refusal goes back to
+    // the agent as its call's JSON-RPC error.
     return `Not a URL: ${url}`;
   }
   if (parsed.protocol !== 'http:' || parsed.hostname !== '127.0.0.1' || !parsed.pathname.startsWith('/mcp/')) {
@@ -161,7 +184,8 @@ function answerLines(text: string, contentType: string): string {
       const parsed: unknown = JSON.parse(message);
       if (isJsonRpcPayload(parsed)) lines.push(JSON.stringify(parsed));
     } catch {
-      // Not JSON: the caller reports the status instead.
+      // report-ok: a body that is not JSON holds no message, and the caller answers
+      // with the HTTP status instead.
     }
   }
   return lines.map((line) => `${line}\n`).join('');
@@ -193,6 +217,8 @@ function errorAnswer(body: string, message: string): string {
   try {
     parsed = JSON.parse(body);
   } catch {
+    // report-ok: a message that is not JSON carries no request id, so there is no
+    // call to send an error back to.
     return '';
   }
   const requests = (Array.isArray(parsed) ? parsed : [parsed]).filter(isRequest);

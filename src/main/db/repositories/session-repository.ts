@@ -133,6 +133,8 @@ export function parseToolBreakdown(raw: string | null): PerToolStat[] {
     if (!Array.isArray(parsed)) return [];
     return parsed.filter(isPerToolStat);
   } catch {
+    // report-ok: malformed tool_breakdown JSON in a column only Kangentic writes reads as
+    // no tool stats.
     return [];
   }
 }
@@ -966,6 +968,8 @@ export class SessionRepository {
     try {
       parsed = JSON.parse(row.tool_breakdown);
     } catch {
+      // report-ok: an unparseable tool_breakdown in a column only Kangentic writes is left
+      // whole, never rewritten.
       return null;
     }
     if (!Array.isArray(parsed) || parsed.length === 0 || !parsed.every(isPerToolStat)) return null;

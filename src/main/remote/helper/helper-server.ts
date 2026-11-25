@@ -384,6 +384,7 @@ export class HelperServer {
       const result = await this.runRequest(method, params, raw);
       this.endpoint.send({ t: 'reply', id, ok: true, result } satisfies HelperToLinkMessage);
     } catch (error) {
+      // report-ok: runs on the host, which cannot report; the reply carries the failure to main.
       this.endpoint.send({ t: 'reply', id, ok: false, error: toPtyHostError(error) } satisfies HelperToLinkMessage);
     }
   }
@@ -629,6 +630,8 @@ export class HelperServer {
         // from another session or the user can only land in the gap of a few microseconds.
         if (file.expect !== undefined && readCurrentText(target) !== file.expect) {
           conflicts.push(file.path);
+          // report-ok: runs on the host, which cannot report; a staging file that will not go
+          // stays on the host's disk, and the conflict still goes back in the reply.
           await fs.rm(staging, { force: true }).catch(() => undefined);
           continue;
         }
@@ -636,6 +639,8 @@ export class HelperServer {
         written += 1;
       } catch (error) {
         // A failed rename (the target is a folder, the disk is full) leaves no copy of a settings file behind.
+        // report-ok: runs on the host, which cannot report; the write's own error is thrown next
+        // and reaches main in the reply, and a staging file that will not go stays on the host.
         await fs.rm(staging, { force: true }).catch(() => undefined);
         throw error;
       }
@@ -654,7 +659,8 @@ export class HelperServer {
       const home = await fs.realpath(path.resolve(this.options.homeDirectory ?? os.homedir()));
       return isBeneath(home, real) ? real : target;
     } catch {
-      // Not there, a dangling link, or a link that leaves the home: the path as named.
+      // report-ok: runs on the host, which cannot report; not there or a dangling link, so the path
+      // as named is used, and the write that follows carries any real failure in its reply.
       return target;
     }
   }
@@ -665,6 +671,8 @@ export class HelperServer {
     try {
       return (await fs.stat(target)).mode & 0o777;
     } catch {
+      // report-ok: runs on the host, which cannot report; a file that is not there yet has no mode
+      // to keep, so the requested one is used.
       return requested;
     }
   }

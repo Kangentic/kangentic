@@ -242,6 +242,8 @@ export function useTerminalResize(
       const revealIfExpanded = () => {
         if (!committedCollapsedRef.current) setShowContent(true);
       };
+      // report-ok: `finished` rejects when the transition is cancelled, by a collapse or a view
+      // switch mid-expand. The reveal check runs either way.
       heightTransition.finished.then(revealIfExpanded, revealIfExpanded);
     }
   }, [effectiveCollapsed, panelContainerRef]);

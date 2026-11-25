@@ -17,7 +17,7 @@
  */
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { createChokepointReporter, type ChokepointReporter } from '../../analytics/handled-report';
+import { createChokepointReporter, ranForBucket, type ChokepointReporter } from '../../analytics/handled-report';
 
 /** One reporter for the tool callbacks, one for the command handlers behind them. */
 export const mcpToolReporter: ChokepointReporter = createChokepointReporter('mcp_tool');
@@ -27,12 +27,40 @@ export const mcpRequestReporter: ChokepointReporter = createChokepointReporter('
 
 type ToolCallback = (...callbackArgs: unknown[]) => unknown;
 
-/** Run one tool callback, report a throw, and rethrow it. */
-export async function runReportedTool(toolName: string, callback: ToolCallback, callbackArgs: unknown[]): Promise<unknown> {
+/**
+ * Which kind of session asked, for the `caller` tag. One tool behaves differently
+ * for each: a task's agent has a task and a worktree, a Command Terminal has a
+ * slot and no task row, a workflow's agent has only its workflow, the answering
+ * agent has search alone, and `external` is a connection that named no session
+ * Kangentic knows (a client outside it).
+ */
+export type McpToolCaller = 'task' | 'command_terminal' | 'workflow_agent' | 'answer_agent' | 'external';
+
+/** The caller kind of a session the server builder resolved (`resolveMcpCaller`). */
+export function mcpToolCallerOf(caller: { taskId?: string; commandTerminalSlot?: string }): McpToolCaller {
+  if (caller.commandTerminalSlot) return 'command_terminal';
+  return caller.taskId ? 'task' : 'external';
+}
+
+/**
+ * Run one tool callback, report a throw, and rethrow it. The report says who
+ * asked (`caller`) and how long the tool ran first (`ran_for`). Neither is in
+ * the latch key: one defect is one report however it was reached.
+ */
+export async function runReportedTool(
+  toolName: string,
+  callback: ToolCallback,
+  callbackArgs: unknown[],
+  caller: McpToolCaller = 'external',
+): Promise<unknown> {
+  const startedAt = Date.now();
   try {
     return await callback(...callbackArgs);
   } catch (error) {
-    mcpToolReporter.report(error, { tags: { tool: toolName } });
+    mcpToolReporter.report(error, {
+      tags: { tool: toolName },
+      detailTags: { caller, ran_for: ranForBucket(Date.now() - startedAt) },
+    });
     throw error;
   }
 }
@@ -40,14 +68,15 @@ export async function runReportedTool(toolName: string, callback: ToolCallback, 
 /**
  * The server, with every callback `registerTool` is given wrapped by
  * `runReportedTool`. Register tools on the returned proxy; the server itself is
- * unchanged.
+ * unchanged. `caller` is who this server was built for: a server is built per
+ * request, so one value covers every tool on it.
  */
-export function withToolReporting(server: McpServer): McpServer {
+export function withToolReporting(server: McpServer, caller: McpToolCaller = 'external'): McpServer {
   return new Proxy(server, {
     get(target, property, receiver) {
       if (property !== 'registerTool') return Reflect.get(target, property, receiver);
       return (name: string, config: unknown, callback: ToolCallback) => {
-        const reported: ToolCallback = (...callbackArgs) => runReportedTool(name, callback, callbackArgs);
+        const reported: ToolCallback = (...callbackArgs) => runReportedTool(name, callback, callbackArgs, caller);
         return Reflect.apply(target.registerTool, target, [name, config, reported]);
       };
     },

@@ -93,7 +93,8 @@ export async function getCommitGraph(input: GitCommitGraphInput): Promise<GitCom
         baseRef = candidate;
         break;
       } catch {
-        // Ref does not exist (repo uses 'master', or no remote) - try the next.
+        // report-ok: the ref does not exist (repo uses 'master', or no remote), so the next
+        // candidate is tried.
         continue;
       }
     }
@@ -118,6 +119,8 @@ export async function getCommitGraph(input: GitCommitGraphInput): Promise<GitCom
         rawLog = await git.raw(args);
         break;
       } catch {
+        // report-ok: a shallow clone or short history has no mergeBase~N, and an unborn branch
+        // has no HEAD, so the next narrower range is tried.
         continue;
       }
     }
@@ -133,6 +136,8 @@ export async function getCommitGraph(input: GitCommitGraphInput): Promise<GitCom
 
     return { commits, tipHash, baseHash, mergeBaseHash, currentBranch, truncated };
   } catch {
+    // report-ok: gitAt throws when the worktree directory is gone, and the Graph pane then
+    // shows its empty state.
     return emptyResult;
   }
 }

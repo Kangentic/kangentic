@@ -83,6 +83,8 @@ export async function readClipboardImage(
       }
     }
   } catch (error) {
+    // report-ok: a clipboard another app is holding open cannot be read, and null pastes
+    // nothing, as an empty clipboard does.
     console.error('[clipboard] Failed to read the clipboard image:', error);
   }
   return null;
@@ -113,6 +115,8 @@ export async function writeClipboardImage(
     const png = new Blob([new Uint8Array(image.toPNG())], { type: 'image/png' });
     await clipboardTarget.write([createClipboardItem({ 'image/png': png })]);
   } catch (error) {
+    // report-ok: a clipboard another app is holding open refuses the write, and what it
+    // held before stays.
     console.error('[clipboard] Copy Image failed:', error);
   }
 }
@@ -138,6 +142,8 @@ export function writePastedImage(image: NativeImage): string | null {
     fs.writeFileSync(filePath, capClipboardImage(image).toPNG());
     return filePath;
   } catch (error) {
+    // report-ok: a full disk, a scanner holding the new temp file, or a temp folder another
+    // user owns. Null pastes nothing, as an empty clipboard does.
     console.error('[clipboard] Failed to save pasted image:', error);
     return null;
   }
@@ -201,7 +207,9 @@ export function pruneClipboardTempDir(
   try {
     entries = fs.readdirSync(tempDir);
   } catch {
-    return; // directory does not exist yet, or is unreadable
+    // report-ok: ENOENT before the first paste makes the folder. One that cannot be read
+    // is not pruned this time.
+    return;
   }
 
   const files: { filePath: string; modifiedMs: number }[] = [];
@@ -213,7 +221,7 @@ export function pruneClipboardTempDir(
       if (!stats.isFile()) continue;
       files.push({ filePath, modifiedMs: stats.mtimeMs });
     } catch {
-      // Raced with another delete, or unreadable. Skip it.
+      // report-ok: the file raced with another delete or cannot be read, so it is skipped.
     }
   }
 
@@ -231,7 +239,8 @@ export function pruneClipboardTempDir(
       // not drop it as redundant.
       fs.rmSync(files[index].filePath, { force: true });
     } catch {
-      // Best-effort: a file we cannot remove is retried on the next paste.
+      // report-ok: Windows refuses to remove a file a reader holds open, and the next
+      // paste's prune tries it again.
     }
   }
 }

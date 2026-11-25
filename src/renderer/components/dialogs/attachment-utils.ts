@@ -92,6 +92,7 @@ export async function openAttachmentWithToast(
       });
     }
   } catch (error) {
+    // report-ok: main's IPC wrap reports a handler's rejection, and the toast shows the reason.
     const message = rejectionMessage(error);
     useToastStore.getState().addToast({
       title: i18n._(msg`Couldn't open "${{ filename }}"`),

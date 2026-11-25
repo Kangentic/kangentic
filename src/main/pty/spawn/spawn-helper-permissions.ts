@@ -19,7 +19,10 @@ export function spawnHelperCandidatePaths(): string[] {
     const packageJsonPath = require.resolve('node-pty/package.json');
     nodePtyRoot = path.dirname(packageJsonPath);
   } catch {
-    return []; // node-pty not found (shouldn't happen)
+    // report-ok: node-pty cannot be resolved from here, so there is no helper to list.
+    // A shell launch then spawns directly, and a helper left without its execute bit
+    // fails the PTY spawn, which recordSpawnFailure reports as posix-spawnp.
+    return [];
   }
 
   nodePtyRoot = nodePtyRoot.replace('app.asar', 'app.asar.unpacked');
@@ -55,6 +58,9 @@ export function ensureSpawnHelperPermissions(): void {
         console.log(`[APP] Fixed spawn-helper permissions: ${filePath}`);
       }
     } catch (error) {
+      // report-ok: ENOENT is a candidate path that does not exist, and only one of the
+      // two does. Any other failure can leave the helper without its execute bit, and
+      // the PTY spawn that then fails is reported as posix-spawnp by recordSpawnFailure.
       // ENOENT means this candidate path doesn't exist, which is expected
       // (only one of build/Release or prebuilds will exist). Warn on other errors.
       const code = (error as NodeJS.ErrnoException).code;

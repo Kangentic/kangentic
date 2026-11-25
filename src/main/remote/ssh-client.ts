@@ -44,7 +44,8 @@ export function defaultSshClientPaths(
     try {
       if (exists(ssh) && exists(sshKeygen)) return { ssh, sshKeygen };
     } catch {
-      // A file system that cannot answer must not stop the app from starting: the name on PATH is what a terminal runs.
+      // report-ok: a file system that cannot answer must not stop the app from starting, and the
+      // name on PATH, which is what a terminal runs, is used instead.
     }
   }
   return { ssh: 'ssh', sshKeygen: 'ssh-keygen' };

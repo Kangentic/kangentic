@@ -70,7 +70,9 @@ export function LoginTerminal({ loginId, label }: { loginId: string; label: stri
         event.preventDefault();
         void navigator.clipboard.readText().then((text) => {
           if (text && !disposed) terminal.paste(text);
-        }).catch(() => undefined);
+        })
+          // report-ok: the OS denied the clipboard read, and nothing is pasted.
+          .catch(() => undefined);
         return false;
       }
       // Ctrl+C copies a selection; with none it stays the program's interrupt.
@@ -99,6 +101,8 @@ export function LoginTerminal({ loginId, label }: { loginId: string; label: stri
       backlogWritten = true;
       held.length = 0;
     }).catch(() => {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the terminal writes the
+      // live output it held and carries on without the backlog.
       backlogWritten = true;
       for (const chunk of held) terminal.write(chunk);
       held.length = 0;

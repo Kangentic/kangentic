@@ -1,5 +1,6 @@
 import pixelmatch from 'pixelmatch';
 import { readAsDataUrl } from '../../../../lib/read-as-data-url';
+import { errorNameOf } from '../../../../../shared/handled-error-copy';
 
 /**
  * Off-main-thread pixel comparison for the Changes panel's Diff mode. A raster
@@ -26,9 +27,10 @@ export interface PixelDiffRequest {
   color: [number, number, number];
 }
 
+/** A failed comparison relays the class name of what it threw, for the client's report. */
 export type PixelDiffResponse =
   | { id: number; ok: true; maskUrl: string; changedPixels: number; totalPixels: number }
-  | { id: number; ok: false };
+  | { id: number; ok: false; errorName: string };
 
 /**
  * The two members of the dedicated worker scope this file uses. The renderer
@@ -122,6 +124,8 @@ async function comparePixels(request: PixelDiffRequest): Promise<PixelDiffRespon
 workerScope.onmessage = (event) => {
   comparePixels(event.data).then(
     (response) => workerScope.postMessage(response),
-    () => workerScope.postMessage({ id: event.data.id, ok: false }),
+    // report-ok: a worker cannot report. It relays the class name of what the comparison
+    // threw, and the client (pixel-diff-client.ts) reports it as changes/pixel_diff_compare.
+    (error: unknown) => workerScope.postMessage({ id: event.data.id, ok: false, errorName: errorNameOf(error) }),
   );
 };

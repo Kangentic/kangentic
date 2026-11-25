@@ -8,6 +8,7 @@ import { getProjectRepos } from '../ipc/helpers/project-repos';
 import { hasPendingMessageDelivery } from '../automations/turn-end/turn-end-passes';
 import { isRunningWorkflowStepTask } from './workflow-home';
 import { announceWorkflowStall, startWorkflowRecoveryOver } from './workflow-recovery';
+import { workflowEngineReporter } from './workflow-report';
 
 /**
  * A running workflow task whose turn hangs: its agent shows working and has
@@ -90,6 +91,9 @@ export async function checkForHungTurns(context: IpcContext, now: () => number =
       try {
         await checkSession(context, session, now);
       } catch (error) {
+        // A check that keeps failing never interrupts a hung turn and never tells the
+        // user: the board shows the task working for as long as it hangs.
+        workflowEngineReporter.report(error, { tags: { stage: 'hang_check' } });
         console.warn(`[WORKFLOW] Could not check session ${session.id.slice(0, 8)} for a hung turn:`, error);
       }
     }
@@ -142,6 +146,9 @@ async function checkSession(context: IpcContext, session: Session, now: () => nu
       detail: `The agent wrote nothing for ${quietMinutes} minutes while working, so its turn was interrupted.`,
     });
   } catch (error) {
+    // The run log then holds no line saying Kangentic interrupted the turn, so the
+    // user sees an agent that stopped mid-turn with nothing to say why.
+    workflowEngineReporter.report(error, { tags: { stage: 'hang_record' } });
     console.warn('[WORKFLOW] Could not record an interrupted turn:', error);
   }
   // The interrupted turn is a new stall: its idle arms a fresh schedule,
@@ -237,6 +244,8 @@ async function lastHistoryWriteAt(
   try {
     newest = (await fs.promises.stat(historyFile)).mtimeMs;
   } catch {
+    // report-ok: a history file that is gone or cannot be read is not judged, and the next
+    // tick asks again.
     return null;
   }
   if (newest >= enoughAt) return newest;

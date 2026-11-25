@@ -17,6 +17,7 @@ import { useSessionStore } from '../../stores/session-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useToastStore } from '../../stores/toast-store';
 import type { TransientKillOutcome } from '../../stores/session-store/transient-session-slice';
+import { reportRendererFailure } from '../../utils/renderer-failure';
 
 export async function killCommandTerminalInSlot(slot: string): Promise<void> {
   const currentProjectId = useProjectStore.getState().currentProject?.id ?? null;
@@ -25,7 +26,10 @@ export async function killCommandTerminalInSlot(slot: string): Promise<void> {
     if (currentProjectId) {
       outcome = await useSessionStore.getState().killTransientSessionBySlot(currentProjectId, slot);
     }
-  } catch {
+  } catch (error) {
+    // killTransientSessionBySlot answers 'failed' for a rejected kill itself, so a throw is
+    // the store's own. The terminal's process may still be running behind a closed window.
+    reportRendererFailure('command_terminal', 'stop', error);
     outcome = 'failed';
   }
   if (outcome === 'failed') {

@@ -137,8 +137,9 @@ export function CommitGraphPanel({
       setLoaded(true);
       onLoadedRef.current?.(next.commits, next.truncated);
     } catch {
-      // Best-effort, like ChangesPanel: on a transient live-update failure keep
-      // the previous graph; only reveal the empty state if the first load failed.
+      // report-ok: main's IPC wrap reports a handler's rejection. Like ChangesPanel, a
+      // failed live update keeps the previous graph, and only a failed first load
+      // reveals the empty state.
       if (!initialFetchDoneRef.current) {
         setLoaded(true);
         onLoadedRef.current?.([], false);

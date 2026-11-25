@@ -135,6 +135,7 @@ function directoryExists(directory: string): boolean {
   try {
     return fs.statSync(directory).isDirectory();
   } catch {
+    // report-ok: ENOENT for a directory that is gone, and gitAt then throws to its caller.
     return false;
   }
 }

@@ -29,6 +29,7 @@ import { remoteTranscriptSource, type RemoteSessionRegistration } from '../../re
 import { batchShimGiveUpOf, directLaunchOfBatchShim } from '../../agent/shared/npm-shim-target';
 import { buildTypedLaunch, launchRefusal, type TypedLaunch, type TypedLaunchInput } from '../spawn/typed-launch';
 import { accountHomeEnvOf } from '../spawn/account-home-env';
+import { sessionManagerReporter } from '../session-manager-report';
 
 /**
  * Default PTY dimensions a session is spawned at, before any renderer-driven
@@ -244,6 +245,9 @@ async function writeLauncher(launcher: NonNullable<TypedLaunch['launcher']>, ses
     await writeFile(launcher.filePath, launcher.contents, { encoding: 'utf8', mode: 0o600 });
     return true;
   } catch (error) {
+    // The whole command is typed instead, which works only once the shell has
+    // reached its prompt. The launcher exists so a launch does not depend on that.
+    sessionManagerReporter.report(error, { tags: { stage: 'launcher_write' } });
     const code = (error as NodeJS.ErrnoException).code ?? 'unknown';
     console.warn(`[SPAWN] Launcher file write failed (${code}) for session=${sessionId.slice(0, 8)}, typing the command`);
     return false;
@@ -552,6 +556,9 @@ export async function performSpawn(
           : null,
       });
     } catch (error) {
+      // report-ok: kept and handed on. A rejoin throws it below, and a new spawn returns
+      // it as the failed spawn handleSpawnFailure passes to recordSpawnFailure, which
+      // reports it unless the link refused.
       registrationError = error instanceof Error ? error : new Error(String(error));
       releaseRemote();
     }
@@ -841,8 +848,11 @@ export async function performSpawn(
       // produce usage. The spawn-time model seed still shows the model name.
       startAtEnd: input.resuming === true,
       cliTarget: input.cliTarget ?? null,
-    }).catch((err) => {
-      console.warn(`[session-history] attach failed for session=${id.slice(0, 8)}:`, err);
+    }).catch((error: unknown) => {
+      // The reader catches its own file and parser failures, so this is the
+      // attach itself: the session shows no model, tokens or context.
+      sessionManagerReporter.report(error, { tags: { stage: 'history_attach' } });
+      console.warn(`[session-history] attach failed for session=${id.slice(0, 8)}:`, error);
     });
   }
 
@@ -973,6 +983,8 @@ export async function performSpawn(
       // The ring is in the host and outlives the exit (it goes with remove()).
       void context.host.getRawScrollback(id).then(
         (scrollback) => context.emit('pr-candidate', id, scrollback),
+        // report-ok: the host could not hand over the scrollback (down or restarting).
+        // The candidate still fires, and the listener's branch query needs no text.
         () => context.emit('pr-candidate', id, ''),
       );
     }
@@ -1026,7 +1038,8 @@ export async function performSpawn(
     try {
       ptyProcess.write(text);
     } catch (error) {
-      // PTY died between the timer arming and firing; nothing to deliver to.
+      // report-ok: the PTY died between the timer arming and firing, so there is nothing
+      // to deliver to, and its exit path owns the cleanup.
       traceTerminal(id, 'deferred-write-failed', { bytes: text.length, message: String(error) });
     }
   };

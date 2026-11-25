@@ -5,6 +5,7 @@ import { resolveText } from '../../../shared/i18n/text';
 import { createLocaleI18n } from '../../i18n';
 import { useToastStore } from '../../stores/toast-store';
 import { useConfigStore } from '../../stores/config-store';
+import { reportRendererFailure } from '../../utils/renderer-failure';
 import { LANGUAGE_PROMPT_MESSAGES } from './language-messages';
 import { LanguageRestartDialog } from './LanguageRestartDialog';
 import { useLanguageRestart } from './useLanguageRestart';
@@ -13,6 +14,8 @@ import { useLanguageRestart } from './useLanguageRestart';
 function markSuggestionAnswered(): void {
   void useConfigStore.getState()
     .updateConfig({ hasAnsweredLanguageSuggestion: true })
+    // report-ok: main's IPC wrap reports a handler's rejection, and the suggestion may show
+    // again on a later launch.
     .catch((error: unknown) => console.error('Could not record the language suggestion answer:', error));
 }
 
@@ -68,7 +71,12 @@ export function LanguageSuggestion() {
         onDismiss: markSuggestionAnswered,
       });
       raisedToastId = toastId;
-    })().catch((error: unknown) => console.error('Could not offer the system language:', error));
+    })().catch((error: unknown) => {
+      // The first-launch language suggestion never shows, so a user whose system language
+      // ships stays in English with no offer. The catalog load runs here beside the IPC read.
+      reportRendererFailure('language', 'suggestion', error);
+      console.error('Could not offer the system language:', error);
+    });
     return () => {
       cancelled = true;
       if (raisedToastId !== null) {

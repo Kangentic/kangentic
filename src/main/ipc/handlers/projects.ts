@@ -61,6 +61,7 @@ import type { ConfigManager } from '../../config/config-manager';
 import { pickOverridableSubset } from '../../config/config-manager';
 import { RefusalError } from '../../../shared/refusal';
 import { reportRecoveryPassFailure } from '../helpers/recovery-report';
+import { handlerStepReporter } from '../helpers/handler-step-report';
 
 /**
  * Sync the project-level MCP config file with the current settings.
@@ -93,6 +94,9 @@ export function syncProjectMcpConfig(context: IpcContext, projectId: string, pro
       // still grant access -- log so the user can investigate.
       const code = (err as NodeJS.ErrnoException).code;
       if (code !== 'ENOENT') {
+        // The file that names the server's address and token outlives the switch that
+        // turned the server off for this project.
+        handlerStepReporter.report(err, { tags: { area: 'projects', step: 'mcp_config_remove' } });
         console.error('[syncProjectMcpConfig] Failed to delete mcp-config.json:', err);
       }
     }
@@ -112,6 +116,9 @@ export function syncProjectMcpConfig(context: IpcContext, projectId: string, pro
     };
     fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
   } catch (err) {
+    // A Claude session started with this file gets no Kangentic tools, or last launch's
+    // token, which the server refuses.
+    handlerStepReporter.report(err, { tags: { area: 'projects', step: 'mcp_config_write' } });
     console.error('[syncProjectMcpConfig] Failed to write mcp-config.json:', err);
   }
 }
@@ -166,6 +173,9 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
   try {
     detachProjectFromWorkflows(context, projectId);
   } catch (error) {
+    // Workflows homed elsewhere keep counting this board's tasks, and its own workflows'
+    // tasks on other boards stay members of a workflow that is gone.
+    handlerStepReporter.report(error, { tags: { area: 'projects', step: 'workflow_detach' } });
     console.error('[PROJECT_DELETE] Failed to detach the project from its workflows:', error);
   }
 
@@ -183,9 +193,12 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
     await context.sessionManager.closeProjectInPtyHost(projectId);
     closeProjectDb(projectId);
     const dbPath = PATHS.projectDb(projectId);
-    try { fs.unlinkSync(dbPath); } catch { /* may not exist */ }
-    try { fs.unlinkSync(dbPath + '-wal'); } catch { /* may not exist */ }
-    try { fs.unlinkSync(dbPath + '-shm'); } catch { /* may not exist */ }
+    try { fs.unlinkSync(dbPath); } catch {
+      // report-ok: ENOENT when the project never made its database. A file another process
+      // still holds stays in app data, where nothing names it once the project row is gone.
+    }
+    try { fs.unlinkSync(dbPath + '-wal'); } catch { /* report-ok: ENOENT after a clean close. */ }
+    try { fs.unlinkSync(dbPath + '-shm'); } catch { /* report-ok: ENOENT after a clean close. */ }
     WorktreeManager.clearQueue(projectPath);
     if (context.currentProjectId === projectId) {
       context.currentProjectId = null;
@@ -209,6 +222,11 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
     archivedTasks = taskRepo.listArchived();
     tasksRead = true;
   } catch (err) {
+    // With no task list, the delete goes by the session registry and the open pop-outs
+    // (closeUnlistedTaskWindows below). It reaps nothing and detaches no worktree through
+    // git, since no task's folders are known, so the project's processes and git worktree
+    // records outlive it.
+    handlerStepReporter.report(err, { tags: { area: 'projects', step: 'delete_tasks_read' } });
     console.error('[PROJECT_DELETE] Failed to read tasks:', err);
   }
 
@@ -222,13 +240,19 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
       try {
         context.sessionManager.kill(task.session_id);
         sessionExits.push(context.sessionManager.awaitExit(task.session_id));
-      } catch { /* may already be dead */ }
+      } catch {
+        // report-ok: kill is a no-op for a session that already ended, and removeByTaskId
+        // below ends the task's rows again with no catch, so a real failure surfaces there.
+      }
     }
   }
   await Promise.all(sessionExits);
   for (const task of allTasks) {
     if (task.session_id) {
-      try { context.sessionManager.remove(task.session_id); } catch { /* may already be dead */ }
+      try { context.sessionManager.remove(task.session_id); } catch {
+        // report-ok: remove is a no-op for a session that is already gone, and removeByTaskId
+        // below removes the task's rows again with no catch, so a real failure surfaces there.
+      }
     }
   }
   // Every other session of a task, and a spawn still in flight that no
@@ -268,6 +292,9 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
             { label: 'project-delete-worktree' },
           );
         } catch (err) {
+          // The repository keeps a worktree record for a folder the delete then removes.
+          // A removal that fails returns false and is reported inside removeWorktree.
+          handlerStepReporter.report(err, { tags: { area: 'projects', step: 'worktree_detach' } });
           console.error(`[PROJECT_DELETE] Failed to detach worktree for task ${task.id.slice(0, 8)}:`, err);
         }
       }
@@ -283,12 +310,23 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
   //    but existing worktrees from before the change may still have our hooks)
   const directories = [projectPath];
   const worktreesDir = path.join(projectPath, '.kangentic', 'worktrees');
+  // False when the worktree folders could not be listed. Step 7 clears each one's links
+  // before it deletes `.kangentic/` recursively, and that delete follows a link it was
+  // never told about, so an unlisted folder means the recursive delete does not run.
+  let worktreeFoldersListed = true;
   if (fs.existsSync(worktreesDir)) {
     try {
       for (const entry of fs.readdirSync(worktreesDir)) {
         directories.push(path.join(worktreesDir, entry));
       }
-    } catch { /* best effort */ }
+    } catch (error) {
+      // ENOENT: the folder went between the check and the read, so it holds no worktree.
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        worktreeFoldersListed = false;
+        handlerStepReporter.report(error, { tags: { area: 'projects', step: 'delete_links_unreadable' } });
+        console.error(`[PROJECT_DELETE] Could not list ${worktreesDir}, so .kangentic stays on disk:`, error);
+      }
+    }
   }
   for (const directory of directories) {
     for (const adapterName of agentRegistry.list()) {
@@ -305,7 +343,10 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
     if (entries.length === 0 || isOnlyOurs) {
       fs.rmSync(claudeDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
     }
-  } catch { /* may not exist or not readable -- skip */ }
+  } catch {
+    // report-ok: ENOENT when the project has no .claude folder. One that cannot be read or
+    // removed stays as it is, with the hooks step 3 already stripped from its settings file.
+  }
 
   // 5. Close the project DB connections before deleting files: the retrieval
   // worker's and the pty host's, then main's.
@@ -336,13 +377,20 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
           fs.writeFileSync(gitignorePath, newContent);
         }
       }
-    } catch { /* non-fatal */ }
+    } catch {
+      // report-ok: a .gitignore that cannot be read or rewritten (a read-only folder) keeps
+      // the ignore lines Kangentic added, which hide no file the user tracks.
+    }
   }
 
   // 6b. Remove kangentic.json and kangentic.local.json from project root
   if (!isWorktree) {
-    try { fs.unlinkSync(path.join(projectPath, 'kangentic.json')); } catch { /* may not exist */ }
-    try { fs.unlinkSync(path.join(projectPath, 'kangentic.local.json')); } catch { /* may not exist */ }
+    try { fs.unlinkSync(path.join(projectPath, 'kangentic.json')); } catch {
+      // report-ok: ENOENT when the project never wrote a board config file.
+    }
+    try { fs.unlinkSync(path.join(projectPath, 'kangentic.local.json')); } catch {
+      // report-ok: ENOENT when the project has no local board overrides file.
+    }
   }
 
   // 7. Remove .kangentic/ directory (ours entirely)
@@ -350,11 +398,13 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
     // Worktrees a Done move set aside go first, through the deleter that
     // never enters a link, and without waiting for init scripts. The rmSync
     // below would block main for the length of a whole node_modules.
-    await deleteRemovedWorktreesNow(projectPath);
+    const removedCopyHoldsLink = await deleteRemovedWorktreesNow(projectPath);
     // Step 2 reached the worktrees a task on the board named. An archived
     // task's or an unrecorded one still holds its links, and this rmSync
     // follows a junction into the main checkout (measured on Electron 45).
-    let linksCleared = true;
+    // A set-aside copy left on disk with a link in it is followed the same way.
+    let linksCleared = worktreeFoldersListed;
+    if (removedCopyHoldsLink) linksCleared = false;
     for (const worktreePath of directories.slice(1)) {
       if (!(await clearWorktreeLinks(worktreePath))) linksCleared = false;
     }
@@ -365,6 +415,9 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
       try {
         fs.rmSync(kangenticDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
       } catch (err) {
+        // The project is gone from the list while its `.kangentic` folder, worktrees
+        // included, stays on disk with nothing left to sweep it.
+        handlerStepReporter.report(err, { tags: { area: 'projects', step: 'delete_kangentic_folder' } });
         console.error(`[PROJECT_DELETE] Failed to remove ${kangenticDir}:`, err);
       }
     }
@@ -372,9 +425,12 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
 
   // 8. Delete the per-project database file from app data
   const dbPath = PATHS.projectDb(projectId);
-  try { fs.unlinkSync(dbPath); } catch { /* may not exist */ }
-  try { fs.unlinkSync(dbPath + '-wal'); } catch { /* may not exist */ }
-  try { fs.unlinkSync(dbPath + '-shm'); } catch { /* may not exist */ }
+  try { fs.unlinkSync(dbPath); } catch {
+    // report-ok: ENOENT when the project never made its database. A file another process
+    // still holds stays in app data, where nothing names it once the project row is gone.
+  }
+  try { fs.unlinkSync(dbPath + '-wal'); } catch { /* report-ok: ENOENT after a clean close. */ }
+  try { fs.unlinkSync(dbPath + '-shm'); } catch { /* report-ok: ENOENT after a clean close. */ }
 
   // 9. Clear git queue and current project state
   WorktreeManager.clearQueue(projectPath);
@@ -421,9 +477,12 @@ export async function pruneStaleWorktreeProjects(context: IpcContext): Promise<v
     await context.sessionManager.closeProjectInPtyHost(project.id);
     closeProjectDb(project.id);
     const dbPath = PATHS.projectDb(project.id);
-    try { fs.unlinkSync(dbPath); } catch { /* may not exist */ }
-    try { fs.unlinkSync(dbPath + '-wal'); } catch { /* may not exist */ }
-    try { fs.unlinkSync(dbPath + '-shm'); } catch { /* may not exist */ }
+    try { fs.unlinkSync(dbPath); } catch {
+      // report-ok: ENOENT when the preview project never made its database. A file another
+      // process still holds stays in app data, where nothing names it once its row is gone.
+    }
+    try { fs.unlinkSync(dbPath + '-wal'); } catch { /* report-ok: ENOENT after a clean close. */ }
+    try { fs.unlinkSync(dbPath + '-shm'); } catch { /* report-ok: ENOENT after a clean close. */ }
 
     context.projectRepo.delete(project.id);
     prunedAny = true;
@@ -515,7 +574,8 @@ async function resolveDefaultAgent(configManager: ConfigManager): Promise<string
       const info = await adapter.detect(cliPaths[name] ?? null);
       if (info.found) return name;
     } catch {
-      // Detection failed for this agent (corrupt binary, permission error, etc.) - skip it
+      // report-ok: an agent whose CLI cannot be detected (a corrupt binary, no permission) is
+      // skipped, and the next agent or the default is the new project's agent.
     }
   }
   return DEFAULT_AGENT;
@@ -708,6 +768,7 @@ async function endUnownedHostSessions(context: IpcContext, hostId: string, optio
     const ended = await hosting.hostService.endSessionsLeftRunning(hostId, new Set(projects.map((project) => project.id)), { keepSessionIds: waitingToBeTakenBack });
     if (ended > 0) console.log(`[remote] ended ${ended} agent(s) on host ${hostId.slice(0, 8)} that nothing owned`);
   } catch (error) {
+    // report-ok: a host that cannot answer ends nothing, and its next connection checks again.
     console.warn(`[remote] could not check host ${hostId.slice(0, 8)} for agents nothing owns:`, error);
   } finally {
     hostsSweeping.delete(hostId);
@@ -866,12 +927,14 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
       fs.writeFileSync(writeProbePath, '');
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code ?? 'UNKNOWN';
+      // refusal-wrap-ok: the try is a write probe of the user's folder, so its failure is that
+      // folder refusing the write, and the errno goes to the user in the message.
       throw new RefusalError(`${PROJECT_FOLDER_NOT_WRITABLE_PREFIX}${code}: ${normalized}`, { cause: error });
     }
     try {
       fs.unlinkSync(writeProbePath);
     } catch (error) {
-      // The write worked, so the folder is good. A scanner holding the new file
+      // report-ok: the write worked, so the folder is good. A scanner holding the new file
       // leaves an empty file in a gitignored folder, not a reason to refuse.
       console.warn('[PROJECT_OPEN] Could not remove the write probe:', error);
     }
@@ -1000,9 +1063,15 @@ function startToolBreakdownRepair(project: Project): void {
           console.warn(`[TOOL-BREAKDOWN-REPAIR] ${project.name}: ${result.unreadable} event logs could not be read; the next open retries them`);
         }
       })
-      .catch((error) => console.error(`[TOOL-BREAKDOWN-REPAIR] ${project.name} failed:`, error))
+      .catch((error) => {
+        // The per-tool durations saved before tool events were paired stay wrong in Stats.
+        handlerStepReporter.report(error, { tags: { area: 'projects', step: 'tool_breakdown_repair' } });
+        console.error(`[TOOL-BREAKDOWN-REPAIR] ${project.name} failed:`, error);
+      })
       .finally(() => toolBreakdownRepairsInFlight.delete(project.id));
   } catch (error) {
+    // The repair never started, so those durations stay wrong until a later open.
+    handlerStepReporter.report(error, { tags: { area: 'projects', step: 'tool_breakdown_repair' } });
     toolBreakdownRepairsInFlight.delete(project.id);
     console.error(`[TOOL-BREAKDOWN-REPAIR] ${project.name} could not start:`, error);
   }
@@ -1046,6 +1115,8 @@ function scheduleBoardSnapshot(context: IpcContext, project: Project): void {
           profiles: context.boardConfigManager.getBoardProfiles(project.path).length,
         });
       } catch (error) {
+        // report-ok: this feeds only the board_snapshot analytics event, so a miss loses one
+        // count. A database that will not open is reported by the open-failure notifier.
         console.warn('[ANALYTICS] board_snapshot failed:', error);
       }
     });
@@ -1190,6 +1261,8 @@ async function startRevealedProjects(context: IpcContext, hostId: string): Promi
   try {
     await context.remoteHosting?.hostService.endSessionsLeftRunning(hostId, new Set(projects.map((project) => project.id)));
   } catch (error) {
+    // report-ok: a host that cannot say what it still runs starts nothing, and its next
+    // connection tries again (expectFirstConnect).
     console.warn(`[remote] waiting for host ${hostId.slice(0, 8)} before starting its projects again:`, error);
     context.remoteHosting?.expectFirstConnect(hostId);
     return;
@@ -1298,7 +1371,8 @@ export function registerProjectHandlers(context: IpcContext): void {
         ...input,
       });
     } catch (error) {
-      // The shell folder the remote branch just made belongs to no project now.
+      // report-ok: the shell folder the remote branch just made belongs to no project now, so
+      // one that stays costs an unused folder. The create's own error is rethrown below.
       if (requested.remote) await context.remoteHosting?.admin?.removeShellFolder(input.path).catch(() => undefined);
       throw error;
     }
@@ -1320,7 +1394,12 @@ export function registerProjectHandlers(context: IpcContext): void {
     context.projectRepo.delete(id);
     // A remote project's local folder is Kangentic's own shell folder, never the user's: it goes too.
     // Nothing on the host is touched.
-    if (project?.remote) await context.remoteHosting?.admin?.removeShellFolder(project.path).catch(() => undefined);
+    if (project?.remote) {
+      await context.remoteHosting?.admin?.removeShellFolder(project.path).catch((error: unknown) => {
+        // The deleted remote project's shell folder stays on this computer.
+        handlerStepReporter.report(error, { tags: { area: 'projects', step: 'shell_folder_remove' } });
+      });
+    }
   });
 
   ipcMain.handle(IPC.PROJECT_OPEN, async (_, id) => {
@@ -1504,6 +1583,7 @@ export function registerProjectHandlers(context: IpcContext): void {
 
   ipcMain.handle(IPC.PROJECT_SEARCH_ENTRIES, async (_, input: ProjectSearchEntriesInput) => {
     const resolvedCwd = path.resolve(input.cwd);
+    // report-ok: a path that cannot be read is not a directory, and the refusal below says so.
     const stat = await fs.promises.stat(resolvedCwd).catch(() => null);
     if (!stat?.isDirectory()) {
       throw new RefusalError(`Project search path is not a directory: ${resolvedCwd}`);

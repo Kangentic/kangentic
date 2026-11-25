@@ -623,7 +623,8 @@ export class ConfigManager {
       if (parsed === undefined || this.projectOverridesCache.get(cacheKey) !== entry) return;
       this.cacheProjectOverrides(projectPath, parsed.overrides, parsed.rewritten ? null : raw);
     }, (error: unknown) => {
-      // Only a missing file means no overrides; a read the disk refused keeps them.
+      // report-ok: only a missing file means no overrides. A read the disk refused keeps the
+      // last good ones, and the next refresh reads again.
       const missing = (error as NodeJS.ErrnoException | null)?.code === 'ENOENT';
       if (missing && this.projectOverridesCache.get(cacheKey) === entry) {
         this.cacheProjectOverrides(projectPath, null, null);

@@ -232,7 +232,7 @@ describe('probePendingChanges', () => {
     expect(fetchOrder).toBeLessThan(countOrder);
   });
 
-  it('treats a count failure (unborn / detached) as zero', async () => {
+  it('counts zero unpushed commits when the count fails', async () => {
     mockGit.raw.mockResolvedValue('origin\n');
     mockCountLocalOnlyCommits.mockRejectedValue(new Error('unknown revision HEAD'));
 

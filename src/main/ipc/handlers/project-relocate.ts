@@ -17,6 +17,7 @@ import { trackEvent } from '../../analytics/analytics';
 import { agentRegistry } from '../../agent/agent-registry';
 import { replacePathPrefix } from '../../../shared/paths';
 import { discardProjectSpares } from '../helpers/spare-worktrees';
+import { handlerStepReporter } from '../helpers/handler-step-report';
 import type { ProjectRelocateOptions, ProjectRelocateResult, ProjectRelocateWarning } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import { RefusalError } from '../../../shared/refusal';
@@ -138,6 +139,10 @@ export async function relocateProject(
       context.sessionManager.kill(session.id);
       transientExits.push(context.sessionManager.awaitExit(session.id));
     } catch (error) {
+      // The relocate goes on with a terminal that may still run in the old folder. A
+      // rename fails loudly on Windows while a process holds the folder, and on POSIX the
+      // process follows the renamed folder, so the move itself is not stopped here.
+      handlerStepReporter.report(error, { tags: { area: 'relocate', step: 'terminal_kill' } });
       console.warn(`[PROJECT_RELOCATE] Failed to kill transient session ${session.id.slice(0, 8)}:`, error);
     }
   }
@@ -213,6 +218,9 @@ export async function relocateProject(
     try {
       await runGitWithTimeout(resolved, ['worktree', 'repair', ...existingWorktreePaths], { timeoutMs: 30_000 });
     } catch (err) {
+      // Every task worktree's git still points at the old folder, so git fails in each
+      // one until it is repaired by hand.
+      handlerStepReporter.report(err, { tags: { area: 'relocate', step: 'worktree_repair' } });
       console.warn('[PROJECT_RELOCATE] git worktree repair failed (non-fatal):', err);
     }
     // Spare worktrees are not repaired: a pnpm install's junctions hold the
@@ -232,6 +240,9 @@ export async function relocateProject(
     try {
       await adapter.onProjectRelocated(oldPath, resolved);
     } catch (err) {
+      // The agent's own records for the project (transcripts, trust) stay keyed by the old
+      // folder, so its conversations do not resume from the new one.
+      handlerStepReporter.report(err, { tags: { area: 'relocate', step: 'adapter_relocate' } });
       console.warn(`[PROJECT_RELOCATE] ${adapterName} onProjectRelocated failed (non-fatal):`, err);
     }
   }
@@ -245,6 +256,8 @@ export async function relocateProject(
     try {
       await removeDirectoryTree(oldPath);
     } catch (err) {
+      // report-ok: something still holds a file in the old folder. The warning reaches the
+      // renderer, whose "Old folder not removed" toast names the path left on disk.
       warnings.push('source-delete-failed');
       console.warn(`[PROJECT_RELOCATE] Failed to remove old folder after cross-volume move (non-fatal): ${oldPath}`, err);
     }

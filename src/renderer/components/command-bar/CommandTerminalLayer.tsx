@@ -667,6 +667,8 @@ export function CommandTerminalLayer({ onHide, host = 'panel' }: { onHide: () =>
       .then((opened) => {
         if (!opened) showPanelAgain();
       })
+      // report-ok: main's IPC wrap reports a handler's rejection, and showPanelAgain toasts
+      // and puts the terminals back in the panel.
       .catch(showPanelAgain);
   }, [projectId, projectName, onHide]);
 

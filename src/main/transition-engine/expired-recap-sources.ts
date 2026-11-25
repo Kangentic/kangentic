@@ -92,6 +92,9 @@ async function within<Result>(
   const reading = read.then(
     (value) => ({ value, timedOut: false }),
     (error: unknown) => {
+      // report-ok: the recap goes out without this part, and the spawn goes on. A worker that
+      // is down is an expected class, a failure the worker answered was judged where its reply
+      // landed (reportFailedCall in retrieval-client.ts), and the git read catches its own.
       console.warn('[expired-recap] A recap read failed:', error instanceof Error ? error.message : error);
       return { value: null, timedOut: false };
     },

@@ -1,6 +1,7 @@
 import { parseCapabilityRequestPayload, type CapabilityRequestMessage, type CapabilityResponseMessage, type JsonValue, type MoveTaskResponsePayload } from '@kangentic/protocol';
 import { handleTaskMove } from '../../ipc/handlers/task-move';
 import { resolveKnownProject } from './known-project';
+import { mobileBridgeReporter } from '../mobile-bridge-report';
 import type { IpcContext } from '../../ipc/ipc-context';
 
 export async function handleMoveTask(
@@ -65,6 +66,10 @@ export async function handleMoveTask(
   // throw into the ok:false response the phone has always received for it.
   settled.catch((error: unknown) => {
     if (!committed) return;
+    // The phone was already told the move landed, and the router never sees
+    // this rejection. handleTaskMove's own reporters mark what they sent, so a
+    // spawn failure it reported is skipped here and anything else is not lost.
+    mobileBridgeReporter.report(error, { tags: { stage: 'move_after_commit' } });
     console.error(`[mobile-bridge] move-task ${payload.taskId.slice(0, 8)} failed after commit:`, error);
   });
 

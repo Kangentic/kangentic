@@ -73,7 +73,7 @@ export class AttachmentRepository {
     // Delete file from disk
     try {
       fs.unlinkSync(attachment.file_path);
-    } catch { /* file may already be gone */ }
+    } catch { /* report-ok: the file is already gone, and the row is removed either way. */ }
 
     this.db.prepare('DELETE FROM task_attachments WHERE id = ?').run(id);
   }
@@ -83,7 +83,7 @@ export class AttachmentRepository {
     for (const attachment of attachments) {
       try {
         fs.unlinkSync(attachment.file_path);
-      } catch { /* file may already be gone */ }
+      } catch { /* report-ok: the file is already gone, and the rows are removed either way. */ }
     }
 
     this.db.prepare('DELETE FROM task_attachments WHERE task_id = ?').run(taskId);
@@ -95,7 +95,7 @@ export class AttachmentRepository {
         fs.rmdirSync(dir);
         // Also try to remove the parent tasks/<taskId> directory if empty
         fs.rmdirSync(path.dirname(dir));
-      } catch { /* not empty or doesn't exist */ }
+      } catch { /* report-ok: rmdir refuses a folder that is not empty or is already gone. */ }
     }
   }
 

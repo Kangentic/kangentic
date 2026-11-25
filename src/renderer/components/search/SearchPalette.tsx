@@ -112,6 +112,7 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
         setSelectedIndex(0);
       })
       .catch((error) => {
+        // report-ok: main's IPC wrap reports a handler's rejection, and the toast shows the reason.
         if (seq !== requestSeq.current) return;
         const message = rejectionMessage(error);
         useToastStore.getState().addToast({ title: t`Search failed`, message: asSentence(message), variant: 'error' });

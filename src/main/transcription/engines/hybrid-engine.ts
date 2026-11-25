@@ -43,6 +43,9 @@ function fulfilledWithin(promise: Promise<void>, ms: number): Promise<boolean> {
         resolve(true);
       },
       () => {
+        // report-ok: the accurate model did not load, so the release commits the live text.
+        // This runs in the dictation worker, which cannot report: the load's own handler
+        // (ensureFinalLoaded) names a refused model to main.
         clearTimeout(timer);
         resolve(false);
       },

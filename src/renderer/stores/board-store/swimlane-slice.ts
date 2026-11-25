@@ -36,6 +36,7 @@ export const createSwimlaneSlice: StateCreator<BoardStore, [], [], SwimlaneSlice
       const boardProfiles = await window.electronAPI.boardConfig.getBoardProfiles();
       set((state) => ({ boardProfiles: keepIfSameJson(state.boardProfiles, boardProfiles) }));
     } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the last known list stays.
       // A project with no kangentic.json resolves to an empty list on the main
       // side rather than throwing, so reaching here means a genuine IPC failure.
       // Keep the last known list instead of clearing it: `loadBoard()` fires
@@ -54,6 +55,7 @@ export const createSwimlaneSlice: StateCreator<BoardStore, [], [], SwimlaneSlice
       await window.electronAPI.boardConfig.setBoardProfiles(profiles);
       return true;
     } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the toast shows the reason.
       await get().loadBoardProfiles();
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't save profiles`),
@@ -104,6 +106,7 @@ export const createSwimlaneSlice: StateCreator<BoardStore, [], [], SwimlaneSlice
     try {
       await window.electronAPI.swimlanes.reorder(ids);
     } catch (err) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the toast shows the reason.
       await get().loadBoard();
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't reorder columns`),

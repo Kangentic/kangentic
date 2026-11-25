@@ -79,6 +79,8 @@ export async function getBlame(input: GitBlameInput): Promise<GitBlameResult> {
     const rawBlame = await git.raw(['blame', '--line-porcelain', '--', input.filePath]);
     return { lines: parseBlamePorcelain(rawBlame) };
   } catch {
+    // report-ok: git blame refuses an untracked, deleted or binary file, and the gutter then
+    // shows no annotations.
     return { lines: [] };
   }
 }

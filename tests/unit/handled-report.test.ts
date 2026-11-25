@@ -17,6 +17,7 @@ const {
   isReported,
   markReported,
   pathFreeCopy,
+  ranForBucket,
   sendHandledFailure,
   wasSentToErrorReporting,
   EXPECTED_FAILURE_NAMES,
@@ -66,6 +67,11 @@ describe('isExpectedFailure', () => {
       new (await import('../../src/main/boards/adapters/trello/client')).TrelloError('invalid token', 401),
       new (await import('../../src/main/boards/adapters/jira/oauth-tokens')).JiraRefreshUnavailableError(502),
       new (await import('../../src/main/mobile-bridge/transport/relay-client')).RelayDialError({ kind: 'closed', errorFirst: true, closeCode: 1006, stack: 'node' }),
+      // A drop is a state: a request whose wait ran out behind a dropped SSH link
+      // must never read as a defect on any remote path that reports.
+      new (await import('../../src/main/remote/link/host-request-unanswered-error')).HostRequestUnansweredError('the host did not answer watchFiles within 15 s'),
+      // A model file the host did not serve in time is the network or the host, never a defect.
+      new (await import('../../src/main/transcription/models/download-model')).ModelDownloadUnavailableError('Timed out downloading https://models.example.test/model.onnx'),
     ];
     for (const error of constructed) {
       expect(EXPECTED_FAILURE_NAMES.has(error.name), error.name).toBe(true);
@@ -235,6 +241,57 @@ describe('sendHandledFailure', () => {
     expect(JSON.stringify(tags)).not.toContain('Acme');
   });
 
+  // A failed git, gh, az, CLI or script call throws a plain Error whose text is
+  // withheld. Sentry DESKTOP-3D's script failure could not tell an exit from a
+  // kill from a timeout until a release added these to one reporter.
+  it('adds how a child process ended, from spawnWithAbort fields and from an execFile rejection', () => {
+    sendHandledFailure('ipc_handler', Object.assign(new Error("git diff 'fix-acme-billing' exited 128"), { exitCode: 128, timedOut: false }));
+    sendHandledFailure('ipc_handler', Object.assign(new Error('gh killed by signal'), { signal: 'SIGKILL', timedOut: true }));
+    sendHandledFailure('ipc_handler', Object.assign(new Error('Command failed: az boards query'), { code: 2, killed: false, signal: null }));
+    sendHandledFailure('ipc_handler', new Error('Worktree setup failed', { cause: Object.assign(new Error('script'), { exitCode: 1 }) }));
+
+    const tagsOf = (call: number): Record<string, string> => reportHandledError.mock.calls[call][1] as Record<string, string>;
+    expect(tagsOf(0)).toMatchObject({ exit_code: '128', timed_out: 'false' });
+    expect(tagsOf(0)).not.toHaveProperty('exit_signal');
+    expect(tagsOf(1)).toMatchObject({ exit_signal: 'SIGKILL', timed_out: 'true' });
+    expect(tagsOf(1)).not.toHaveProperty('exit_code');
+    expect(tagsOf(2).exit_code).toBe('2');
+    expect(tagsOf(3).exit_code).toBe('1');
+    expect(JSON.stringify(reportHandledError.mock.calls.map((call) => [(call[0] as Error).message, call[1]]))).not.toContain('acme');
+  });
+
+  it('reads no exit code off a numeric code that is not an exit, and no signal that is not a name', () => {
+    // A DOMException carries a numeric legacy `code` and no `killed`.
+    sendHandledFailure('ipc_handler', Object.assign(new Error('could not be cloned'), { code: 25 }));
+    sendHandledFailure('ipc_handler', Object.assign(new Error('x'), { exitCode: 1.5, signal: 'fix-acme-billing', timedOut: 'yes' }));
+    sendHandledFailure('ipc_handler', Object.assign(new Error('x'), { signal: new AbortController().signal }));
+
+    for (const call of reportHandledError.mock.calls) {
+      const tags = call[1] as Record<string, string>;
+      expect(tags).not.toHaveProperty('exit_code');
+      expect(tags).not.toHaveProperty('exit_signal');
+      expect(tags).not.toHaveProperty('timed_out');
+    }
+  });
+
+  // A wrapper reads `Error` and carries no code, so a report of one said nothing
+  // about the SqliteError or ENOSPC under it. The fingerprint stays the wrapper's.
+  it('names what a wrapper wraps, and lets a tag the caller passed win over a derived one', () => {
+    sendHandledFailure('task_move', new Error("Worktree setup failed: 'fix-acme-billing'", { cause: errnoError('ENOSPC') }));
+    sendHandledFailure('worktree_removal', Object.assign(new Error('x'), { exitCode: 1, timedOut: true }), { timed_out: 'false' });
+    sendHandledFailure('task_move', new Error('wrapped', { cause: 'fix-acme-billing' }));
+    sendHandledFailure('task_move', new TypeError('no cause here'));
+
+    const tagsOf = (call: number): Record<string, string> => reportHandledError.mock.calls[call][1] as Record<string, string>;
+    expect(tagsOf(0)).toMatchObject({ error_name: 'Error', cause_name: 'Error', cause_errno: 'ENOSPC' });
+    expect(tagsOf(0)).not.toHaveProperty('errno');
+    expect(reportHandledError.mock.calls[0][3]).toBeUndefined();
+    expect(tagsOf(1)).toMatchObject({ exit_code: '1', timed_out: 'false' });
+    expect(tagsOf(2).cause_name).toBe('NonError');
+    expect(tagsOf(3)).not.toHaveProperty('cause_name');
+    expect(JSON.stringify(reportHandledError.mock.calls.map((call) => [(call[0] as Error).message, call[1]]))).not.toContain('acme');
+  });
+
   it.each([
     ['a V8 TypeError naming the property it read', new TypeError("Cannot read properties of undefined (reading 'Fix Acme billing')")],
     ['a Node ERR_INVALID_ARG_TYPE quoting its value', Object.assign(
@@ -341,6 +398,25 @@ describe('createChokepointReporter', () => {
     expect(reportHandledError).toHaveBeenCalledTimes(1);
     const [, tags] = reportHandledError.mock.calls[0] as [Error, Record<string, string>];
     expect(tags).toMatchObject({ verb: 'read-board', relay_dial_id: '0123456789abcdef', source: 'mobile_verb' });
+  });
+
+  // How long a handler ran and who asked describe one occurrence. In the key,
+  // one defect that fails fast once and slow once would report twice.
+  it('sends detail tags but keeps them out of the latch key, under the report\'s own tags', () => {
+    const reporter = createChokepointReporter('ipc_handler');
+    const reportAfter = (ranFor: string): boolean =>
+      reporter.report(new TypeError('handler failed'), { tags: { channel: 'task:move' }, detailTags: { ran_for: ranFor, channel: 'other' } });
+    expect(reportAfter('<1s')).toBe(true);
+    expect(reportAfter('30s+')).toBe(false);
+    expect(reportHandledError).toHaveBeenCalledTimes(1);
+    const [, tags] = reportHandledError.mock.calls[0] as [Error, Record<string, string>];
+    expect(tags).toMatchObject({ channel: 'task:move', ran_for: '<1s', source: 'ipc_handler' });
+  });
+
+  it.each([
+    [0, '<1s'], [999, '<1s'], [1_000, '1-5s'], [4_999, '1-5s'], [5_000, '5-30s'], [29_999, '5-30s'], [30_000, '30s+'],
+  ])('buckets a call that ran %i ms as %s', (elapsedMs, bucket) => {
+    expect(ranForBucket(elapsedMs)).toBe(bucket);
   });
 
   it('lets a correlation tag add a key but never override one of the report\'s own tags', () => {

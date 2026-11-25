@@ -69,8 +69,10 @@ workflow by the `'agent-session-id'` listener. A start with no conversation to r
 from the saved plan when there is one (`buildWorkflowAgentContinueMessage`, whose reason says
 where it came from): on a workflow whose agent already ran (`not-resumed`, and the pane says it
 started over), or on a plan no agent of the workflow has seen (`saved-elsewhere`: another
-session saved it over MCP, or the user planned by hand while the agent could not start). It is
-not resumed at boot; the view's pane opens it. An open on a workflow with tasks and no agent ever
+session saved it over MCP, or the user planned by hand while the agent could not start). A plan
+that could not be read is not "nothing saved": the message then tells the agent to read the plan
+with `kangentic_get_workflow` before it saves anything, because a save replaces the whole plan.
+It is not resumed at boot; the view's pane opens it. An open on a workflow with tasks and no agent ever
 recorded (`agent_name` null) starts nothing and answers `startsOnRequest`; the pane's Ask for
 changes starts it through the Resume path, so arrival never holds the plan. The rule is
 `awaitsFirstAgent` (`src/shared/workflow-agent-first-open.ts`), which the pane also reads from

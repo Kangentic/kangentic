@@ -24,6 +24,7 @@
 import { withTaskLock } from '../task-lifecycle-lock';
 import { applySuspendDbWrites, reconcileTaskSessionRef } from './session-reconcile';
 import { abortInFlightResume } from './session-resume-controllers';
+import { handlerStepReporter } from '../helpers/handler-step-report';
 import type { Session, SuspendedBy } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import { RefusalError } from '../../../shared/refusal';
@@ -99,6 +100,9 @@ export function pauseTaskSession(
     try {
       options.onAccepted?.();
     } catch (hookError) {
+      // The pause still lands. The caller that answers on acceptance (a paired phone's
+      // pause, the idle timeout's cancel of queued messages) is what is lost.
+      handlerStepReporter.report(hookError, { tags: { area: 'session_resume', step: 'caller_hook' } });
       console.warn('[SESSION_SUSPEND] onAccepted hook threw:', hookError);
     }
 

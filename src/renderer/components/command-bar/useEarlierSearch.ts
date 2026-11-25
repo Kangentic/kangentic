@@ -55,7 +55,8 @@ export function useEarlierSearch(
         .then((result) => {
           if (read === readSequenceRef.current) setAnswer({ projectId, query: trimmed, ...result });
         })
-        // The rail then shows its name matches alone.
+        // report-ok: main's IPC wrap reports a handler's rejection, and the rail then shows
+        // its name matches alone.
         .catch(() => {
           if (read === readSequenceRef.current) setAnswer({ projectId, query: trimmed, hits: [], indexingOff: false });
         });

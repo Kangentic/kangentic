@@ -4,6 +4,7 @@ import { Trans, useLingui } from '@lingui/react/macro';
 import { BaseDialog } from './BaseDialog';
 import { Tooltip } from '../Tooltip';
 import { canonicalIconName, getLoadedIconCatalog, loadIconCatalog, type IconEntry } from '../../utils/icon-registry';
+import { reportRendererFailure } from '../../utils/renderer-failure';
 import { tipLabel } from '../../utils/tooltip';
 
 
@@ -36,7 +37,12 @@ function useAllIcons(): { icons: IconEntry[]; failed: boolean } {
     let current = true;
     loadIconCatalog().then(
       (catalog) => { if (current) setState({ icons: catalog.ALL_ICONS, failed: false }); },
-      () => { if (current) setState({ icons: NO_ICONS, failed: true }); },
+      (error: unknown) => {
+        // The lazy icon map did not load, so the picker shows its failure line and no icon
+        // can be chosen until a restart.
+        reportRendererFailure('icon_picker', 'catalog_load', error);
+        if (current) setState({ icons: NO_ICONS, failed: true });
+      },
     );
     return () => { current = false; };
   }, [loaded]);

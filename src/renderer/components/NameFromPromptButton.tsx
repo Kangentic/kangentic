@@ -84,6 +84,7 @@ export function NameFromPromptButton({ description, onTitle }: NameFromPromptBut
         });
       }
     } catch (error) {
+      // report-ok: main's IPC wrap reports a handler's rejection, and the toast shows the reason.
       if (!mountedRef.current) return;
       useToastStore.getState().addToast({
         title: t`Couldn't generate title`,

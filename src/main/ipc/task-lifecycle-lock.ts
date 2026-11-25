@@ -145,6 +145,8 @@ export function withTaskLock<T>(taskId: string, fn: () => Promise<T>): Promise<T
   // here, and the assertion is sound for our usage.
   const result = heldQueue.add(fn) as Promise<T>;
   result
+    // report-ok: the caller gets this rejection through the returned promise. This
+    // branch only clears the map entry once the queue drains.
     .catch(() => {})
     .finally(() => {
       if (heldQueue.size === 0 && heldQueue.pending === 0) {

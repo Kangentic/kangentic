@@ -28,6 +28,8 @@ const GROUPS_CLOSED_ON_ARRIVAL: ReadonlySet<McpToolCategoryId> = new Set(
 /** The connection check, answering a call that could not be made as a failure with its error. */
 function checkConnection(explicit: boolean): Promise<McpConnectionCheck> {
   return window.electronAPI.mcpServer.checkConnection({ explicit })
+    // report-ok: main's IPC wrap reports a handler's rejection, and the row shows Failed with
+    // the error.
     .catch((error: unknown): McpConnectionCheck => ({ connected: false, error: rejectionMessage(error) }));
 }
 

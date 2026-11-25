@@ -111,7 +111,16 @@ describe('automationRunReporter in a real run', () => {
     expect(reportHandledError).toHaveBeenCalledTimes(1);
     const [copy, tags] = reportHandledError.mock.calls[0];
     expect(copy.message).toBe('Handled automation_runner failure: TypeError');
-    expect(tags).toMatchObject({ source: 'automation_runner', automation_type: 'webhook', error_name: 'TypeError' });
+    // Which trigger ran the row and how many attempts it took ride along: one
+    // defect on enter and at a turn end is two paths, and a first-attempt throw
+    // is not a row that failed after its retries.
+    expect(tags).toMatchObject({
+      source: 'automation_runner',
+      automation_type: 'webhook',
+      automation_trigger: 'enter',
+      attempts: '1',
+      error_name: 'TypeError',
+    });
     expect(JSON.stringify(tags)).not.toContain('Ping');
   });
 

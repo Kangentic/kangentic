@@ -2,6 +2,7 @@ import { SessionRepository } from '../../db/repositories/session-repository';
 import { getProjectDb } from '../../db/database';
 import { createTransitionEngine, resolveInjectionVerifier } from './agent-spawn';
 import { getProjectRepos } from './project-repos';
+import { handlerStepReporter } from './handler-step-report';
 import { reportAutoCommandOutcome } from './auto-command-outcome';
 import { deliverAgentMessageInBackground } from '../../automations/turn-end/agent-message-delivery';
 import { readSessionFinalReply } from '../../automations/turn-end/final-reply-reader';
@@ -210,7 +211,10 @@ async function runRowAgain(
   } catch (error) {
     // The runner isolates every row, so reaching here means the run itself
     // could not start (a repository read, or the budget firing before the
-    // first attempt). It records nothing, so this is the only report.
+    // first attempt). It records nothing, so the detail that comes back as the
+    // result, which the "Couldn't run again" toast shows, is the user's only
+    // report. This catch keeps the throw from the IPC wrap, so it reports here.
+    handlerStepReporter.report(error, { tags: { area: 'task_crud', step: 'automation_run_again' } });
     const detail = error instanceof Error ? error.message : String(error);
     return { ok: false, error: `The automation could not be run: ${detail}` };
   } finally {

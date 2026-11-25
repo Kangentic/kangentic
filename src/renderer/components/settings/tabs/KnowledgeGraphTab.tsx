@@ -132,6 +132,8 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
         .then((next) => {
           if (active) setStatus(next);
         })
+        // report-ok: main's IPC wrap reports a handler's rejection. The last status stays,
+        // and the next poll reads again.
         .catch(() => undefined)
         .finally(() => {
           polling = false;
@@ -161,7 +163,14 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
     setRebuilding(true);
     window.electronAPI.knowledgeGraph
       .rebuildIndex()
-      .catch(() => undefined)
+      .catch((error: unknown) => {
+        // report-ok: main's IPC wrap reports a handler's rejection, and the toast shows the reason.
+        useToastStore.getState().addToast({
+          title: t`Couldn't rebuild the index`,
+          ...ipcFailureToastFields(error),
+          variant: 'error',
+        });
+      })
       // The marks are made at once; the reading continues in the background,
       // so this is just brief button feedback.
       .finally(() => window.setTimeout(() => setRebuilding(false), 1200));
@@ -177,6 +186,7 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
       // Without the plan it cannot say what it would spend, so it does not run,
       // and says so rather than leaving a click that did nothing.
       .catch((error: unknown) => {
+        // report-ok: main's IPC wrap reports a handler's rejection, and the toast shows the reason.
         useToastStore.getState().addToast({
           title: t`Rebuild didn't start`,
           ...ipcFailureToastFields(error),

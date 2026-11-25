@@ -33,6 +33,8 @@ export function loadTaskProfile(
   try {
     profiles = context.boardConfigManager.getBoardProfiles(projectPath ?? undefined);
   } catch (error) {
+    // report-ok: a board config that is missing or mid-write cannot name the profile, and
+    // the task rides the columns' own settings, which is what the Default profile is.
     console.warn(`[task-profile] Could not read Board Profiles for task ${task.id.slice(0, 8)}:`, error);
     return null;
   }

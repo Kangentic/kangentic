@@ -12,6 +12,7 @@ import { applyProfileToLane } from '../../transition-engine/column-strategy';
 import { textLeftToType } from '../../transition-engine/resume-prompt-delivery';
 import { clearSpawnProgress, emitSpawnProgress, type SpawnPhase } from '../../transition-engine/spawn-progress';
 import { loadTaskProfile } from '../helpers/task-profile';
+import { handlerStepReporter } from '../helpers/handler-step-report';
 import { decideSuspendDbAction, isLiveSession } from '../../pty/session-registry';
 import { isAbortError } from '../../../shared/abort-utils';
 import type { Session, SuspendedBy, Task } from '../../../shared/types';
@@ -148,6 +149,8 @@ export async function restartSessionForSettingsChange(
         applySuspendDbWrites(context, projectId, taskId, 'system');
         await context.sessionManager.suspend(sessionId);
       } catch (suspendError) {
+        // The session keeps running on its old settings, and the caller only logs the reason.
+        handlerStepReporter.report(suspendError, { tags: { area: 'session_reconcile', step: 'settings_suspend' } });
         const message = suspendError instanceof Error ? suspendError.message : String(suspendError);
         return { ok: false, reason: `suspend failed: ${message}` };
       }
@@ -233,6 +236,9 @@ export async function restartSessionForSettingsChange(
         return { ok: true };
       } catch (respawnError) {
         if (isAbortError(respawnError)) return { ok: false, reason: 'respawn aborted' };
+        // The session was suspended for the change and did not come back, so the task
+        // sits paused until someone resumes it.
+        handlerStepReporter.report(respawnError, { tags: { area: 'session_reconcile', step: 'settings_respawn' } });
         const message = respawnError instanceof Error ? respawnError.message : String(respawnError);
         return { ok: false, reason: `respawn failed: ${message}` };
       }
@@ -245,6 +251,8 @@ export async function restartSessionForSettingsChange(
     // applySuspendDbWrites must surface as { ok: false } so the fire-and-forget
     // SWIMLANE_UPDATE caller (void withTaskLock) cannot raise an unhandled
     // rejection. The override is already persisted, so the Resume UI can retry.
+    // The restart did not happen, and its caller only logs the reason.
+    handlerStepReporter.report(unexpectedError, { tags: { area: 'session_reconcile', step: 'reconcile_read' } });
     const message = unexpectedError instanceof Error ? unexpectedError.message : String(unexpectedError);
     return { ok: false, reason: `restart failed: ${message}` };
   }
