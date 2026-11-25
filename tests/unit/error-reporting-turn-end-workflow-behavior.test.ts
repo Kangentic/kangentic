@@ -140,7 +140,8 @@ const { SwimlaneRepository } = await import('../../src/main/db/repositories/swim
 const { WorkflowRepository } = await import('../../src/main/db/repositories/workflow-repository');
 const { TaskLinkRepository } = await import('../../src/main/db/repositories/task-link-repository');
 const { setHomeLinkRemover } = await import('../../src/main/db/repositories/workflow-home-links');
-const { registerWorkflowEngine, getWorkflowEngine, workflowEngineReporter } = await import('../../src/main/workflows/workflow-engine-host');
+const { registerWorkflowEngine, getWorkflowEngine } = await import('../../src/main/workflows/workflow-engine-host');
+const { workflowEngineReporter } = await import('../../src/main/workflows/workflow-report');
 const { setWorkflowWake } = await import('../../src/main/workflows/workflow-wake');
 
 import { openTestDatabase } from './helpers/test-database';

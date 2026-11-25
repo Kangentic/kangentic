@@ -28,8 +28,15 @@ vi.mock('../../../src/main/db/repositories/workflow-repository', () => ({
 vi.mock('../../../src/main/workflows/workflow-view-service', () => ({
   listWorkflowSummaries: (...args: unknown[]) => listSummaries(...args),
 }));
+const reportHandledError = vi.hoisted(() => vi.fn());
+vi.mock('../../../src/main/analytics/error-reporting', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  reportHandledError,
+}));
 
 import { workflowWireFacts } from '../../../src/main/mobile-bridge/handlers/workflow-wire';
+import { mobileBridgeReporter } from '../../../src/main/mobile-bridge/mobile-bridge-report';
+import { markReported } from '../../../src/main/analytics/handled-report';
 import type { IpcContext } from '../../../src/main/ipc/ipc-context';
 
 function lane(id: string, position: number, role: Swimlane['role'] = null): Swimlane {
@@ -82,6 +89,8 @@ describe('workflowWireFacts', () => {
     workflowGetById.mockReset().mockReturnValue(undefined);
     existingProjectDb.mockReset().mockReturnValue({});
     agents.clear();
+    reportHandledError.mockReset();
+    mobileBridgeReporter.reset();
   });
 
   it('reads nothing for a board with no workflow task', () => {
@@ -179,6 +188,34 @@ describe('workflowWireFacts', () => {
     workflowGetById.mockImplementation(() => { throw new Error('database will not open'); });
     const facts = workflowWireFacts(context, 'proj-1', [task({ workflow_id: 'wf-1', workflow_project_id: 'proj-gone' })]);
     expect(facts.size).toBe(0);
+  });
+
+  // What a user loses if this goes quiet: a home that opens and then will not list leaves
+  // every card of its workflows without a strip on the phone, with nothing said anywhere.
+  it('reports a home whose workflows opened and then would not read, and still sends no strip', () => {
+    listSummaries.mockImplementation(() => { throw new TypeError('Cannot read properties of undefined (reading \'Fix Acme billing\')'); });
+    workflowGetById.mockImplementation(() => { throw Object.assign(new Error('database disk image is malformed'), { code: 'SQLITE_CORRUPT' }); });
+
+    const facts = workflowWireFacts(context, 'proj-1', [task({ workflow_id: 'wf-1' })]);
+
+    expect(facts.size).toBe(0);
+    expect(reportHandledError.mock.calls.map((call) => call[1])).toEqual([
+      expect.objectContaining({ source: 'mobile_bridge', stage: 'workflow_facts', error_name: 'TypeError' }),
+      expect.objectContaining({ source: 'mobile_bridge', stage: 'workflow_facts', errno: 'SQLITE_CORRUPT' }),
+    ]);
+    const sent = JSON.stringify(reportHandledError.mock.calls.map((call) => [(call[0] as Error).name, (call[0] as Error).message, call[1], call[2], call[3]]));
+    expect(sent).not.toMatch(/acme/i);
+  });
+
+  it('reports nothing for a home database whose failed open was already reported', () => {
+    const openFailure = Object.assign(new Error('unable to open database file'), { code: 'SQLITE_CANTOPEN' });
+    // What getProjectDb's own report does to the error before it rethrows it.
+    markReported(openFailure);
+    listSummaries.mockImplementation(() => { throw openFailure; });
+    workflowGetById.mockImplementation(() => { throw openFailure; });
+
+    expect(workflowWireFacts(context, 'proj-1', [task({ workflow_id: 'wf-1' })]).size).toBe(0);
+    expect(reportHandledError).not.toHaveBeenCalled();
   });
 
   it('sends no strip for a task whose home project was deleted, and reads no workflow there', () => {
