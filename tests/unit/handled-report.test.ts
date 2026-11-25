@@ -24,6 +24,7 @@ const {
 } = await import('../../src/main/analytics/handled-report');
 const { setShuttingDown } = await import('../../src/main/shutdown-state');
 const { RefusalError } = await import('../../src/shared/refusal');
+const { PasteSubmitError } = await import('../../src/main/pty/paste-engine');
 const { isRuntimeDefect } = await import('../../src/shared/handled-error-copy');
 
 function errnoError(code: string, message = `${code}: failed, open 'C:\\Users\\dev\\project\\file'`): NodeJS.ErrnoException {
@@ -398,6 +399,28 @@ describe('createChokepointReporter', () => {
     const turnedAway = new RangeError('another key');
     expect(reporter.report(turnedAway)).toBe(false);
     expect(isReported(turnedAway)).toBe(false);
+  });
+
+  // Every paste failure is one class thrown from one frame, so only the code and
+  // reason tell two cases apart. Red: drop them from the key and the second and
+  // third reports are latched away as repeats of the first.
+  it('keeps paste failures that differ only by code or reason apart, and latches a repeat', () => {
+    const sharedStack = 'PasteSubmitError: paste\n    at pasteAndSubmit (src/main/pty/paste-engine.ts:1:1)';
+    const sharedFacts = { firstWindowTakesData: true, retried: false, pasteModeOff: false, settleOutput: true, firstWindowBytes: '0' } as const;
+    const makePasteError = (code: PasteSubmitError['code'], reason?: 'no-signal' | 'paste-mode-off'): PasteSubmitError => {
+      const error = new PasteSubmitError(code, 'paste', reason ? { facts: { reason, ...sharedFacts } } : {});
+      error.stack = sharedStack;
+      return error;
+    };
+    const reporter = createChokepointReporter('automation');
+
+    expect(reporter.report(makePasteError('no-submission-evidence', 'no-signal'))).toBe(true);
+    expect(reporter.report(makePasteError('no-submission-evidence', 'paste-mode-off'))).toBe(true);
+    expect(reporter.report(makePasteError('held'))).toBe(true);
+    expect(reportHandledError).toHaveBeenCalledTimes(3);
+
+    expect(reporter.report(makePasteError('no-submission-evidence', 'no-signal'))).toBe(false);
+    expect(reportHandledError).toHaveBeenCalledTimes(3);
   });
 
   it('reports nothing while the app quits', () => {

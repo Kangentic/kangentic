@@ -21,6 +21,7 @@ import { isShuttingDown } from '../shutdown-state';
 import { isAbortError } from '../../shared/abort-utils';
 import { isUserConfigurationError } from '../../shared/user-configuration-error';
 import { errorCodeOf, errorNameOf, framesOf, pathFreeCopy } from '../../shared/handled-error-copy';
+import type { PasteFailureFacts, PasteOutputBucket, PasteSubmitError } from '../pty/paste-engine';
 
 export { errorCodeOf, errorNameOf, pathFreeCopy } from '../../shared/handled-error-copy';
 
@@ -203,20 +204,33 @@ export function azServerCodeOf(error: unknown): string | undefined {
   return undefined;
 }
 
-/** The codes and facts a `PasteSubmitError` carries (`pty/paste-engine.ts`), kept here so this module imports no pty code. */
-const PASTE_CODES: ReadonlySet<string> = new Set(['aborted', 'timeout', 'no-submission-evidence', 'held']);
-const PASTE_REASONS: ReadonlySet<string> = new Set(['paste-mode-off', 'no-signal']);
-const PASTE_OUTPUT_BUCKETS: ReadonlySet<string> = new Set(['0', '1-9', '10-49', '50+']);
+/**
+ * The codes and facts a `PasteSubmitError` carries (`pty/paste-engine.ts`). The
+ * import is type-only, so this module loads no pty code, and each record must
+ * name every member of the engine's union: a code, reason or bucket the engine
+ * adds fails the typecheck here instead of dropping its tag.
+ */
+const PASTE_CODE_MEMBERS: Record<PasteSubmitError['code'], true> = {
+  aborted: true,
+  timeout: true,
+  'no-submission-evidence': true,
+  held: true,
+};
+const PASTE_REASON_MEMBERS: Record<PasteFailureFacts['reason'], true> = { 'paste-mode-off': true, 'no-signal': true };
+const PASTE_OUTPUT_BUCKET_MEMBERS: Record<PasteOutputBucket, true> = { '0': true, '1-9': true, '10-49': true, '50+': true };
+const PASTE_CODES: ReadonlySet<string> = new Set(Object.keys(PASTE_CODE_MEMBERS));
+const PASTE_REASONS: ReadonlySet<string> = new Set(Object.keys(PASTE_REASON_MEMBERS));
+const PASTE_OUTPUT_BUCKETS: ReadonlySet<string> = new Set(Object.keys(PASTE_OUTPUT_BUCKET_MEMBERS));
 const PASTE_FLAG_TAGS = [
   ['firstWindowTakesData', 'paste_first_window_data'],
   ['retried', 'paste_retried'],
   ['pasteModeOff', 'paste_mode_off'],
   ['settleOutput', 'paste_settle_output'],
-] as const;
+] as const satisfies ReadonlyArray<readonly [keyof PasteFailureFacts, string]>;
 const PASTE_BUCKET_TAGS = [
   ['firstWindowBytes', 'paste_first_bytes'],
   ['retryWindowBytes', 'paste_retry_bytes'],
-] as const;
+] as const satisfies ReadonlyArray<readonly [keyof PasteFailureFacts, string]>;
 
 /**
  * What a paste that failed saw (`PasteSubmitError.code` and `.facts`), as tags,

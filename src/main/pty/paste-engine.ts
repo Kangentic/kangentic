@@ -122,19 +122,37 @@ export interface PasteFailureFacts {
   retryWindowBytes?: PasteOutputBucket;
 }
 
+/**
+ * Where an automated paste was held: before the write, before the first Enter
+ * (the text is in the prompt), or before the retry Enter (the first Enter was
+ * pressed too).
+ */
+export type PasteHeldStage = 'writing' | 'enter' | 'retry-enter';
+
+/** Each held stage as the engine's own diagnostic names it. */
+const HELD_STAGE_LABELS: Record<PasteHeldStage, string> = {
+  writing: 'writing',
+  enter: 'Enter',
+  'retry-enter': 'the retry Enter',
+};
+
 export class PasteSubmitError extends Error {
   /** `held`: an automated paste the session could not take (see `PasteOptions.automated`). */
   readonly code: 'aborted' | 'timeout' | 'no-submission-evidence' | 'held';
   /** Set on a `no-submission-evidence` throw. */
   readonly facts?: PasteFailureFacts;
-  /** Set on a `held` throw: why the session could not take the keys, in plain words. */
+  /**
+   * Set on a `held` throw: why the session could not take the keys, as a
+   * lower-case clause with no closing period (`pasteFailureDetail` puts it
+   * inside a sentence).
+   */
   readonly heldReason?: string;
-  /** Set on a `held` throw: `enter` once the text is already in the prompt. */
-  readonly heldStage?: 'writing' | 'enter';
+  /** Set on a `held` throw. */
+  readonly heldStage?: PasteHeldStage;
   constructor(
     code: PasteSubmitError['code'],
     message: string,
-    details: { facts?: PasteFailureFacts; heldReason?: string; heldStage?: 'writing' | 'enter' } = {},
+    details: { facts?: PasteFailureFacts; heldReason?: string; heldStage?: PasteHeldStage } = {},
   ) {
     super(message);
     this.name = 'PasteSubmitError';
@@ -162,12 +180,18 @@ export function pasteFailureDetail(error: Pick<PasteSubmitError, 'code' | 'facts
     case 'held': {
       const reason = error.heldReason ?? 'the session could not take keys';
       // Held before an Enter, the text is already in the prompt.
-      return error.heldStage === 'enter'
-        ? `The message was pasted, but Enter was not pressed: ${reason}.`
-        : `The message was not pasted: ${reason}.`;
+      switch (error.heldStage) {
+        case 'enter':
+          return `The message was pasted, but Enter was not pressed: ${reason}.`;
+        case 'retry-enter':
+          return `The message was pasted and Enter was pressed, but the agent showed no sign of taking it and Enter was not pressed again: ${reason}.`;
+        default:
+          return `The message was not pasted: ${reason}.`;
+      }
     }
     case 'aborted':
-      return 'The message was not pasted because it was stopped.';
+      // The stop can land before the write as well as after it.
+      return 'The paste was stopped before it finished.';
   }
 }
 
@@ -455,7 +479,7 @@ export function createPasteEngine(sessionManager: SessionManager): PasteEngine {
        * never dropped. Between the write and the Enter the paste's own total
        * timeout bounds it (`timeoutMs`).
        */
-      const awaitClearance = async (stage: string, signal: AbortSignal | undefined, timeoutMs: number | null): Promise<void> => {
+      const awaitClearance = async (stage: PasteHeldStage, signal: AbortSignal | undefined, timeoutMs: number | null): Promise<void> => {
         if (!options.automated) return;
         if (automatedKeysRefusal(sessionManager, sessionId, source) === null) return;
         const cleared = timeoutMs === null
@@ -466,9 +490,9 @@ export function createPasteEngine(sessionManager: SessionManager): PasteEngine {
         const reason = cleared === 'exited'
           ? 'the session exited'
           : (sessionManager.automatedKeysBlocker(sessionId) ?? 'the session could not take keys in time');
-        throw new PasteSubmitError('held', `paste-engine: ${source} held before ${stage}: ${reason}`, {
+        throw new PasteSubmitError('held', `paste-engine: ${source} held before ${HELD_STAGE_LABELS[stage]}: ${reason}`, {
           heldReason: reason,
-          heldStage: stage === 'writing' ? 'writing' : 'enter',
+          heldStage: stage,
         });
       };
       await awaitClearance('writing', options.signal, options.clearanceTimeoutMs ?? null);
@@ -524,7 +548,7 @@ export function createPasteEngine(sessionManager: SessionManager): PasteEngine {
         // but does not submit (paste content commits, but the Enter handler
         // sees stale state). Routing through the queue + draining gives
         // ConPTY a clean separation between the close marker and \r.
-        await awaitClearance('Enter', linkedSignal, totalTimeoutMs);
+        await awaitClearance('enter', linkedSignal, totalTimeoutMs);
         const tWriteEnter = Date.now();
         sessionManager.write(sessionId, '\r');
         await sessionManager.drain(sessionId);
@@ -556,6 +580,13 @@ export function createPasteEngine(sessionManager: SessionManager): PasteEngine {
           verifier, tWriteEnter, firstWindowTakesData, firstWindowOutput,
         );
         let retried = false;
+        /** What both no-evidence throws report, read at the throw. */
+        const firstWindowFacts = (): Omit<PasteFailureFacts, 'reason' | 'retried' | 'retryWindowBytes'> => ({
+          firstWindowTakesData,
+          pasteModeOff,
+          settleOutput: settle.observedOutput,
+          firstWindowBytes: pasteOutputBucket(firstWindowOutput.bytes),
+        });
         if (evidenceResult === 'timeout') {
           if (pasteModeOff) {
             // TUI disabled bracketed paste mode during our call (modal,
@@ -564,19 +595,10 @@ export function createPasteEngine(sessionManager: SessionManager): PasteEngine {
             throw new PasteSubmitError(
               'no-submission-evidence',
               `paste-engine: ${source} sent paste but agent disabled bracketed-paste mode (modal/prompt focused). Skipped retry to avoid confirming a destructive action.`,
-              {
-                facts: {
-                  reason: 'paste-mode-off',
-                  firstWindowTakesData,
-                  retried: false,
-                  pasteModeOff: true,
-                  settleOutput: settle.observedOutput,
-                  firstWindowBytes: pasteOutputBucket(firstWindowOutput.bytes),
-                },
-              },
+              { facts: { reason: 'paste-mode-off', retried: false, ...firstWindowFacts() } },
             );
           }
-          await awaitClearance('the retry Enter', linkedSignal, totalTimeoutMs);
+          await awaitClearance('retry-enter', linkedSignal, totalTimeoutMs);
           retried = true;
           const tRetryEnter = Date.now();
           sessionManager.write(sessionId, '\r');
@@ -607,11 +629,8 @@ export function createPasteEngine(sessionManager: SessionManager): PasteEngine {
             {
               facts: {
                 reason: 'no-signal',
-                firstWindowTakesData,
                 retried,
-                pasteModeOff,
-                settleOutput: settle.observedOutput,
-                firstWindowBytes: pasteOutputBucket(firstWindowOutput.bytes),
+                ...firstWindowFacts(),
                 ...(retried ? { retryWindowBytes: pasteOutputBucket(retryWindowOutput.bytes) } : {}),
               },
             },

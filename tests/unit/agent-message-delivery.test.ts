@@ -16,6 +16,7 @@ const turnWaits = vi.hoisted(() => [] as Array<{
   sessionId: string;
   signal: AbortSignal | undefined;
   idleWithoutQuietMs: number | undefined;
+  timeoutMs: number | undefined;
   resolve: (result: TurnCompletionResult) => void;
 }>);
 
@@ -23,14 +24,14 @@ vi.mock('../../src/main/transition-engine/turn-completion', () => ({
   waitForTurnCompletion: vi.fn((
     _sessionManager: unknown,
     sessionId: string,
-    options: { signal?: AbortSignal; idleWithoutQuietMs?: number } = {},
+    options: { signal?: AbortSignal; idleWithoutQuietMs?: number; timeoutMs?: number } = {},
   ) => new Promise<TurnCompletionResult>((resolve) => {
     if (options.signal?.aborted) {
       resolve('aborted');
       return;
     }
     options.signal?.addEventListener('abort', () => resolve('aborted'), { once: true });
-    turnWaits.push({ sessionId, signal: options.signal, idleWithoutQuietMs: options.idleWithoutQuietMs, resolve });
+    turnWaits.push({ sessionId, signal: options.signal, idleWithoutQuietMs: options.idleWithoutQuietMs, timeoutMs: options.timeoutMs, resolve });
   })),
 }));
 
@@ -44,6 +45,7 @@ import {
 import { AGENT_NOT_STARTED_REASON } from '../../src/main/transition-engine/terminal-submit-scheduler';
 import { supersedeMessageDeliveries } from '../../src/main/automations/turn-end/turn-end-passes';
 import { PasteSubmitError } from '../../src/main/pty/paste-engine';
+import { RefusalError } from '../../src/shared/refusal';
 
 const TASK_ID = 'task-paste-0001';
 const SESSION_ID = 'session-live-1';
@@ -654,6 +656,73 @@ describe('deliverAgentMessageAndWait', () => {
     turnWaits[1].resolve('completed');
     await delivery;
     expect(context.terminalSubmit.submitContent).toHaveBeenCalledTimes(1);
+  });
+
+  // The wait is bounded once for the whole loop. A fresh bound per pass would
+  // let a burst that keeps retyping hold the delivery past its budget.
+  it('at a turn end, gives each pass what is left of one shared bound, never a fresh one', async () => {
+    const PASTE_TURN_WAIT_MS = 10 * 60_000;
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+      const context = makeContext();
+      context.terminalSubmitScheduler.hasPending.mockReturnValueOnce(true).mockReturnValue(false);
+      const delivery = deliverAgentMessageAndWait(context as never, {
+        taskId: TASK_ID,
+        sessionId: SESSION_ID,
+        message: MULTI_LINE,
+        mode: 'immediate',
+        verifier: null,
+        signal: new AbortController().signal,
+        turnWait: 'always',
+      });
+      await settle();
+      expect(turnWaits).toHaveLength(1);
+      const elapsedMs = 4 * 60_000;
+      vi.setSystemTime(new Date(Date.now() + elapsedMs));
+      turnWaits[0].resolve('completed');
+      await settle();
+      expect(turnWaits).toHaveLength(2);
+
+      const firstTimeout = turnWaits[0].timeoutMs as number;
+      const secondTimeout = turnWaits[1].timeoutMs as number;
+      expect(secondTimeout).toBeLessThan(firstTimeout);
+      expect(firstTimeout).toBeLessThanOrEqual(PASTE_TURN_WAIT_MS);
+      expect(elapsedMs + secondTimeout).toBeLessThanOrEqual(PASTE_TURN_WAIT_MS);
+
+      turnWaits[1].resolve('completed');
+      await delivery;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('at a turn end, refuses with the abort reason and pastes nothing when the run is aborted during the second wait', async () => {
+    const context = makeContext();
+    context.terminalSubmitScheduler.hasPending.mockReturnValue(true);
+    const controller = new AbortController();
+    const delivery = deliverAgentMessageAndWait(context as never, {
+      taskId: TASK_ID,
+      sessionId: SESSION_ID,
+      message: MULTI_LINE,
+      mode: 'immediate',
+      verifier: null,
+      signal: controller.signal,
+      turnWait: 'always',
+      abortReason: 'The run was stopped.',
+    });
+    const rejection = delivery.then(() => null, (error: unknown) => error);
+
+    await settle();
+    turnWaits[0].resolve('completed');
+    await settle();
+    expect(turnWaits).toHaveLength(2);
+    controller.abort();
+
+    const error = await rejection;
+    expect(error).toBeInstanceOf(RefusalError);
+    expect(error).toMatchObject({ message: 'The run was stopped.' });
+    expect(context.terminalSubmit.submitContent).not.toHaveBeenCalled();
   });
 
   it('at a turn end, refuses with the turn wait\'s reason when the agent exits while a burst is pending', async () => {
