@@ -78,6 +78,26 @@ describe('readGitWorkDetail', () => {
     expect(commitFileCount(state)).toBe(1);
   });
 
+  it('counts every changed file when the status listing runs past 1,000,000 characters', async () => {
+    // A folder missing from .gitignore lists every file under it. The listing
+    // was cut at 1,000,000 characters and parsed as a shorter one, so the
+    // Changes button counted about a fifth of the files its panel listed.
+    const folder = path.join(checkout, 'vendor');
+    fs.mkdirSync(folder);
+    const fileCount = 9_000;
+    const longName = 'n'.repeat(110);
+    for (let index = 0; index < fileCount; index += 1) {
+      fs.closeSync(fs.openSync(path.join(folder, `${longName}-${String(index).padStart(5, '0')}`), 'w'));
+    }
+    // The listing really is past the cut, or this case proves nothing.
+    const listing = execFileSync('git', ['status', '--porcelain=v2', '--untracked-files=all', '-z'], {
+      cwd: checkout, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
+    });
+    expect(listing.length).toBeGreaterThan(1_000_000);
+
+    expect((await read()).uncommittedFileCount).toBe(fileCount);
+  }, 60_000);
+
   it('counts a file with unresolved conflicts', async () => {
     git(checkout, 'checkout', '-q', '-b', 'other');
     write('base', 'theirs');

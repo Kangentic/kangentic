@@ -28,6 +28,11 @@ state into decisions, so the badge, the tooltip, the line and the menus cannot d
 `gitWorkBadge` (a PR problem, then uncommitted files, then commits not pushed), `gitNextStep`
 (commit, publish, push, create a pull request, or nothing) and `availableGitActions`.
 
+**The status listing is read whole.** `runGitWithTimeout` keeps 1,000,000 characters of a child's
+output unless the caller raises `maxOutputChars`, and a listing cut there parses as a shorter one.
+The status read raises it, so the uncommitted count matches the files the Changes panel lists: a
+folder of 150,000 untracked files once counted as 32,367.
+
 **Not pushed is commits on no remote-tracking branch** (`rev-list --count HEAD --not --remotes`), not
 `@{upstream}..HEAD`. A task branch is cut from `origin/<base>` and tracks it, and an agent often
 pushes it under another name (`git push origin HEAD:<branch>`), so the upstream count would never
