@@ -292,8 +292,30 @@ export function removalPathClassOf(worktreePath: string, failedPath: unknown): R
 /** One report per removal failure shape per run: a held folder repeats at every retry. */
 const worktreeRemovalReporter = createChokepointReporter('worktree_removal');
 
-/** The Done move's own removal and its one delayed retry: DESKTOP-3P's 0.63.0 callers. */
-const NO_HOLDER_SEEN_CALLERS: ReadonlySet<WorktreeRemovalCaller> = new Set<WorktreeRemovalCaller>(['done_fallback', 'done_retry_delayed']);
+/**
+ * The Done move's own removal and its one delayed retry. A failure of either
+ * leaves a folder the startup retry removes, so no user sees it.
+ */
+const DONE_MOVE_OWN_REMOVAL_CALLERS: ReadonlySet<WorktreeRemovalCaller> = new Set<WorktreeRemovalCaller>(['done_fallback', 'done_retry_delayed']);
+
+/** Send a failed removal to Aptabase as a count, in place of a Sentry report. */
+function countWorktreeRemovalFailure(
+  input: { profile: WorktreeRemovalProfile; caller: WorktreeRemovalCaller },
+  errno: string,
+  reason: 'reap_left_running' | 'no_holder_seen',
+  message: string,
+): void {
+  console.log(`[WORKTREE] Counting but not reporting a removal failure (${reason}): caller=${input.caller} errno=${errno}`);
+  trackEvent('app_error', {
+    source: 'worktree_removal',
+    message,
+    reason,
+    caller: input.caller,
+    profile: input.profile,
+    errno,
+    platform: process.platform,
+  });
+}
 
 /**
  * A worktree that could not be removed: the folder stays on disk, retried at the
@@ -309,15 +331,16 @@ const NO_HOLDER_SEEN_CALLERS: ReadonlySet<WorktreeRemovalCaller> = new Set<Workt
  *   once the process ends (15 events, every one `EBUSY` on Windows).
  * - A Done move's own removal or its delayed retry, on Windows, refused `EBUSY`
  *   on the folder itself with no holder seen, no timeout and no refusal. Every
- *   probe came back empty: the reap left nothing of the task there, and the
- *   holder scan found nothing. The one holder of Kangentic's ever measured, the
- *   Changes panel's folder watch, is released before every attempt. So the
- *   event reads the same for an editor, Explorer, an indexer or antivirus as for
- *   a handle of ours, and another one cannot point at anything new. The folder
- *   stays and the startup retry removes it, so no user sees it (0.63.0: one
- *   install, `done_fallback` then `done_retry_delayed`). The cost, accepted by
- *   the owner: a future Kangentic handle leak in a worktree shows only as an
- *   Aptabase count. Every other shape still reports.
+ *   probe came back empty. The reap left nothing of the task there, and the
+ *   holder scan found nothing or failed (a failed or timed-out scan names no
+ *   one either). The one holder of Kangentic's ever measured, the Changes
+ *   panel's folder watch, is released before every attempt. So the event reads
+ *   the same for an editor, Explorer, an indexer or antivirus as for a handle of
+ *   ours, and another one cannot point at anything new. The folder stays and the
+ *   startup retry removes it, so no user sees it. This has a cost. A future
+ *   Kangentic handle leak in a worktree shows only as an Aptabase count. Every
+ *   other shape still reports. The history is in docs/telemetry/error-reporting.md,
+ *   "Counted, not reported".
  *
  * `holders: none` is no evidence against a kept process: the holder scan reads
  * command lines, and a process holding the folder only as its working directory
@@ -333,16 +356,7 @@ function reportWorktreeRemovalFailure(input: {
 }): void {
   const errno = input.attempt.errno ?? 'none';
   if (input.reapLeftRunning) {
-    console.log(`[WORKTREE] Counting but not reporting a removal the task's reap left a process in: caller=${input.caller} errno=${errno}`);
-    trackEvent('app_error', {
-      source: 'worktree_removal',
-      message: 'A worktree the reap left a process in could not be removed',
-      reason: 'reap_left_running',
-      caller: input.caller,
-      profile: input.profile,
-      errno,
-      platform: process.platform,
-    });
+    countWorktreeRemovalFailure(input, errno, 'reap_left_running', 'A worktree the reap left a process in could not be removed');
     return;
   }
   if (
@@ -351,19 +365,11 @@ function reportWorktreeRemovalFailure(input: {
     && input.attempt.pathClass === 'root'
     && !input.holders
     && !input.timedOut
+    // A refused attempt carries no errno today, so this guards a future one that does.
     && input.attempt.refused !== true
-    && NO_HOLDER_SEEN_CALLERS.has(input.caller)
+    && DONE_MOVE_OWN_REMOVAL_CALLERS.has(input.caller)
   ) {
-    console.log(`[WORKTREE] Counting but not reporting a held folder no probe explains: caller=${input.caller} errno=${errno}`);
-    trackEvent('app_error', {
-      source: 'worktree_removal',
-      message: 'A worktree no probe saw a holder of could not be removed',
-      reason: 'no_holder_seen',
-      caller: input.caller,
-      profile: input.profile,
-      errno,
-      platform: process.platform,
-    });
+    countWorktreeRemovalFailure(input, errno, 'no_holder_seen', 'A worktree no probe saw a holder of could not be removed');
     return;
   }
   const failure = new Error('A worktree could not be removed') as NodeJS.ErrnoException;

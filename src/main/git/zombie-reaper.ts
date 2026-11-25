@@ -832,8 +832,9 @@ export async function describeWorktreeHolders(
     const skipPids = _internals.buildSelfSkipSet(rows, process.pid);
     return _internals.findWorktreePathHolders(rows, worktreePath, skipPids);
   } catch (error) {
-    // report-ok: a holder scan that fails or times out names no one, and the failed removal
-    // it was asked about is reported by removeWorktreeInternal either way.
+    // report-ok: a holder scan that fails or times out names no one, the same answer as a
+    // scan that found nothing. removeWorktreeInternal reports or counts the failed removal
+    // it was asked about through reportWorktreeRemovalFailure.
     console.warn('[REAPER] holder scan failed:', error);
     return [];
   }

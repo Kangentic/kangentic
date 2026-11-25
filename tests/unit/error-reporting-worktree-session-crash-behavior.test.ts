@@ -348,6 +348,18 @@ describe('worktree removal failure report', () => {
       })]);
     });
 
+    // The reap-left-running count is checked first. Stubbing win32 makes the shape also
+    // match the no-holder count, so swapping the two branches would change the reason.
+    it.each(['done_fallback', 'done_retry_delayed'] as const)('counts %s as a reap leftover, not as an unexplained hold', async (caller) => {
+      stubPlatform('win32');
+
+      const removed = await removeFailingWorktree('moderate', rootBusy(), { caller, reapLeftRunning: true });
+
+      expect(removed).toBe(false);
+      expect(hoisted.reportHandledError).not.toHaveBeenCalled();
+      expect(removalCounts()).toEqual([expect.objectContaining({ reason: 'reap_left_running', caller })]);
+    });
+
     type Neighbor = {
       name: string;
       platform?: NodeJS.Platform;
@@ -390,6 +402,7 @@ describe('worktree removal failure report', () => {
       },
       { name: 'the startup retry', caller: 'startup_retry' },
       { name: 'a cleanup', caller: 'cleanup' },
+      { name: 'no caller named', caller: 'other' },
       { name: 'a retry after a Stop', caller: 'done_retry_stop' },
       { name: 'a retry after a recheck', caller: 'done_retry_recheck' },
       { name: 'a retry after a late reap', caller: 'done_retry_late_reap' },
