@@ -138,6 +138,16 @@ To roll back to a previous version, run `npx kangentic@X.Y.Z` with the desired v
 9. **`npx kangentic`** now downloads the new version's signed binaries.
 10. **`/release` Step 8 marks the Sentry issues this release fixes.** It scans the released commit range for `DESKTOP-*` shortIds and resolves each one against `Kangentic@X.Y.Z`, the release that carries the fix. It runs last because the Sentry release object is created by the bundler plugin during the build in step 3, so it does not exist any earlier, and a marker naming the release an issue was last seen on reopens that issue on exactly the builds that lack the fix. The step reports rather than blocks: the release is already published by then. See [the sentry skill's "Resolution markers"](../../.claude/skills/sentry/SKILL.md) for the request shapes and the traps.
 
+**Queuing a release behind work in flight.** `/release-workflow [patch|minor|major|X.Y.Z] [#N ...]`,
+typed in a Command Terminal, builds and starts a board workflow named `Release X.Y.Z`. The cards it
+names, or the ones the owner picks from those past To Do, join it where they are. A release task
+runs `/release` once they are all in Done. A kangentic.com task runs that repo's
+`/sync-release X.Y.Z` once the release task is in Done, which it reaches only after Step 7 has
+checked the published release. The release task's route is Executing alone, so its
+`Findings: applied` line takes it straight to Done. With no bump named, the title is a prediction
+from the commit subjects, and the release task renames both cards if `/release` derives another
+version. See `.claude/skills/release-workflow/SKILL.md`.
+
 ### Commit Conventions
 
 All commits must use [Conventional Commits](https://www.conventionalcommits.org/) format. A husky commit-msg hook runs commitlint to enforce this. The config in `package.json` extends `@commitlint/config-conventional` with one change: footer lines have no length cap, because a `/code-review` commit carries its `Refuted:` and `Decisions:` ledger as one trailer-shaped line per item, and a later pass reads each item back from that one line (`tests/unit/review-ledger-commitlint.test.ts`). The commit skills (`/commit`, `/pull-request`, `/merge-pull-request`, `/merge-back`) auto-generate conventional commit messages from diffs.

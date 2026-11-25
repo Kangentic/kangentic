@@ -19,7 +19,8 @@
  *    A pass with a step only a person can do ends on `Needs owner:` instead, which matches neither.
  * 2. Testing: /pull-request prints the On to Merge line in its success report step and names the
  *    row that reads it, and its escalation step's line does not match the row.
- * 3. Executing: the Apply findings message asks for exactly the On to Code Review line.
+ * 3. Executing: the Apply findings message asks for exactly the On to Code Review line, and so does
+ *    the release brief /release-workflow files, whose route ends at Executing so the line means Done.
  * 4. Merge: /merge-pull-request prints the Finish line in its report step and names the row that
  *    reads it, and prints the Back to Testing line in its re-verify step. Back to Testing returns a
  *    red-CI stop to Testing a limited number of times, and Testing's On to Merge allows one more run
@@ -288,6 +289,15 @@ describe('board turn-end contracts: Executing', () => {
     expect(matchFinalLine(matcher, 'The publish needs an npm login.\n\nNeeds owner: sign in to npm').met, 'a Needs owner reply must not be nudged').toBe(false);
     expect(matchFinalLine(matcher, 'Two findings left.').met, 'any other reply is nudged').toBe(true);
     expectTextIn(turnEndRow('Executing', 'Apply findings').message ?? '', 'the Apply findings message', 'a line that starts "Needs owner:"');
+  });
+
+  // The release task's route is Executing alone, so this line is the only thing that takes a
+  // shipped release's card to Done and starts the kangentic.com sync behind it. A reworded row
+  // would leave both waiting with nothing erroring.
+  it('has the /release-workflow release brief end on exactly the On to Code Review line', () => {
+    const skillPath = '.claude/skills/release-workflow/SKILL.md';
+    const releaseBrief = sectionOf(readRepositoryFile(skillPath), skillPath, '## The release brief');
+    expectTextIn(releaseBrief, `${skillPath} release brief`, `\`${finalLineOf('Executing', 'On to Code Review')}\``);
   });
 });
 
