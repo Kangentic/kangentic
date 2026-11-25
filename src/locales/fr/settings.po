@@ -1521,8 +1521,9 @@ msgid "Font size"
 msgstr "Taille de police"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "For a failed automation, its trigger and, for a pasted message, fixed codes for what the paste saw and a size range for the output after it (never the output)"
-msgstr ""
+msgstr "Pour une automatisation en échec, son déclencheur et, pour un message collé, des codes fixes sur ce que le collage a observé et une plage de taille pour la sortie qui a suivi (jamais la sortie elle-même)"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
 msgid "For a handled error, its type, a fixed failure code and, for an interface crash, the names of the components it was in (never the error's own text)"
