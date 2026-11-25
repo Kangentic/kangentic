@@ -21,7 +21,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { createPasteEngine, sanitizeForPaste, PasteSubmitError, pasteFailureDetail } from '../../src/main/pty/paste-engine';
+import { createPasteEngine, sanitizeForPaste, PasteSubmitError, pasteFailureDetail, pasteOutputBucket, POST_ENTER_DATA_FLOOR_BYTES } from '../../src/main/pty/paste-engine';
 import { AUTOMATED_KEYS_HOLD_LOG_MS, resetAutomatedKeysGuardForTests } from '../../src/main/pty/automated-keys-guard';
 import type { SubmissionVerifier } from '../../src/shared/types';
 
@@ -120,6 +120,47 @@ describe('sanitizeForPaste', () => {
   });
   it('strips other C0 controls', () => {
     expect(sanitizeForPaste('a\x07b\x1bc\x00d')).toBe('abcd');
+  });
+});
+
+describe('pasteOutputBucket', () => {
+  it.each([
+    [-1, '0'],
+    [0, '0'],
+    [1, '1-9'],
+    [9, '1-9'],
+    [10, '10-49'],
+    [POST_ENTER_DATA_FLOOR_BYTES - 1, '10-49'],
+    [POST_ENTER_DATA_FLOOR_BYTES, '50+'],
+    [5000, '50+'],
+  ])('puts %i bytes in the %s bucket', (bytes, bucket) => {
+    expect(pasteOutputBucket(bytes)).toBe(bucket);
+  });
+});
+
+describe('pasteFailureDetail', () => {
+  const noSignalFacts = { reason: 'no-signal', firstWindowTakesData: true, retried: true, pasteModeOff: false, settleOutput: true, firstWindowBytes: '0', retryWindowBytes: '0' } as const;
+  const modeOffFacts = { reason: 'paste-mode-off', firstWindowTakesData: true, retried: false, pasteModeOff: true, settleOutput: true, firstWindowBytes: '0' } as const;
+
+  it.each([
+    ['timeout', new PasteSubmitError('timeout', 'x'), 'The paste did not finish in time.'],
+    ['aborted', new PasteSubmitError('aborted', 'x'), 'The paste was stopped before it finished.'],
+    ['held at writing', new PasteSubmitError('held', 'x', { heldReason: 'a prompt is open', heldStage: 'writing' }), 'The message was not pasted: a prompt is open.'],
+    ['held at enter', new PasteSubmitError('held', 'x', { heldReason: 'a prompt is open', heldStage: 'enter' }), 'The message was pasted, but Enter was not pressed: a prompt is open.'],
+    [
+      'held at retry-enter',
+      new PasteSubmitError('held', 'x', { heldReason: 'a prompt is open', heldStage: 'retry-enter' }),
+      'The message was pasted and Enter was pressed, but the agent showed no sign of taking it and Enter was not pressed again: a prompt is open.',
+    ],
+    ['held with no reason', new PasteSubmitError('held', 'x', { heldStage: 'enter' }), 'The message was pasted, but Enter was not pressed: the session could not take keys.'],
+    ['no evidence, no signal', new PasteSubmitError('no-submission-evidence', 'x', { facts: noSignalFacts }), 'The message was pasted, but the agent showed no sign of taking it.'],
+    [
+      'no evidence, paste mode off',
+      new PasteSubmitError('no-submission-evidence', 'x', { facts: modeOffFacts }),
+      'The message was pasted while the agent had a prompt or dialog open, so Enter was not pressed again.',
+    ],
+  ])('says it in one sentence for %s', (_label, error, sentence) => {
+    expect(pasteFailureDetail(error)).toBe(sentence);
   });
 });
 
@@ -791,6 +832,10 @@ describe('PasteEngine.pasteAndSubmit', () => {
     await expect(promise).rejects.toMatchObject({
       facts: { reason: 'paste-mode-off', retried: false, pasteModeOff: true, settleOutput: true, firstWindowBytes: '0' },
     });
+    const facts = ((await promise.catch((error: unknown) => error)) as PasteSubmitError).facts;
+    expect(facts).toBeDefined();
+    expect(facts?.retried).toBe(false);
+    expect(facts).not.toHaveProperty('retryWindowBytes');
     // The Browser pane's toast keys on this text (`translatePasteSubmitError`).
     await expect(promise).rejects.toThrow('bracketed-paste mode');
   });
@@ -997,8 +1042,42 @@ describe('PasteEngine.pasteAndSubmit for an automated sender', () => {
     const error = await settled;
     expect((error as PasteSubmitError).code).toBe('held');
     expect((error as PasteSubmitError).message).toContain('the session exited');
+    expect(error).toMatchObject({ heldStage: 'writing', heldReason: 'the session exited' });
     expect(mockSessionManager.writeRawCalls).toHaveLength(0);
     expect(pasteFailureDetail(error as PasteSubmitError)).toBe('The message was not pasted: the session exited.');
+  });
+
+  // The first Enter went out and showed no sign of a submit; a prompt then
+  // opened, so the retry Enter would answer it. The retry is held, not sent.
+  it('holds the retry Enter when a prompt opens after the first Enter, having pressed Enter once', async () => {
+    const promise = engine.pasteAndSubmit('s1', 'hello', { automated: true, source: 'workflow-nudge' });
+    const settled = promise.catch((error: unknown) => error);
+    await tick();
+    mockSessionManager.flushDrain();
+    await tick();
+    expect(mockSessionManager.writeRawCalls).toHaveLength(1);
+
+    await settleAfterWrite();
+    expect(mockSessionManager.writeCalls).toEqual([{ id: 's1', data: '\r' }]);
+    mockSessionManager.flushDrain();
+    await tick();
+
+    // Paste mode stays on, so the first evidence window times out into the retry.
+    mockSessionManager.blocker = 'a permission prompt is open';
+    vi.advanceTimersByTime(3001);
+    await tick();
+    expect(mockSessionManager.writeCalls).toHaveLength(1);
+    mockSessionManager.emit('exit', 's1', 0);
+    await tick();
+
+    const error = await settled;
+    expect(error).toBeInstanceOf(PasteSubmitError);
+    expect(error).toMatchObject({ code: 'held', heldStage: 'retry-enter', heldReason: 'the session exited' });
+    expect((error as PasteSubmitError).message).toContain('held before the retry Enter');
+    expect(mockSessionManager.writeCalls).toEqual([{ id: 's1', data: '\r' }]);
+    expect(pasteFailureDetail(error as PasteSubmitError)).toBe(
+      'The message was pasted and Enter was pressed, but the agent showed no sign of taking it and Enter was not pressed again: the session exited.',
+    );
   });
 
   // A hold at the Enter comes after the write, so the text is in the prompt.
