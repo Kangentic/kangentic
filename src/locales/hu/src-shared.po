@@ -42,6 +42,10 @@ msgid "{label} has started. Removing the link changes nothing."
 msgstr "{label} már elindult. A kapcsolat eltávolítása nem változtat semmin."
 
 #: src/shared/workflow-refusals.ts
+msgid "{label} is already in a workflow."
+msgstr ""
+
+#: src/shared/workflow-refusals.ts
 #, fuzzy
 msgid "{label} is done and stays with its workflow."
 msgstr "{label} kész, és a munkafolyamatában marad."
@@ -50,6 +54,10 @@ msgstr "{label} kész, és a munkafolyamatában marad."
 #, fuzzy
 msgid "{label} is done. Its plan approval can no longer change."
 msgstr "{label} kész. A tervjóváhagyása már nem módosítható."
+
+#: src/shared/workflow-refusals.ts
+msgid "{label} is done. Only a task not yet in Done can join a workflow."
+msgstr ""
 
 #: src/shared/workflow-refusals.ts
 #, fuzzy

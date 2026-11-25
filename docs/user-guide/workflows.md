@@ -102,9 +102,15 @@ view, and ends when its workflow is deleted or finishes.
 the pointer says what a release would do, or why it cannot. In the inspector, the route list
 starts at To Do and ends at Done, both locked on, and its switches turn each column between them on
 or off for that task; the X on a link row removes the link, and Add blocker makes the task wait for
-another. A control that would break a rule stays in place, disabled, and its
-tooltip says why (a task that has started, or has no task left to wait for, cannot get a new
-blocker; a step it has reached cannot change). Remove takes a task out of the workflow.
+another. Its menu lists the workflow's tasks first, then, under a divider, the tasks on the same
+board that are in no workflow and not in Done, and Find narrows both by title or number. Picking one
+of those takes it into the workflow where it is, in To Do or already started, so a task can wait on
+work already in flight; from then on the workflow drives it like any of its tasks. An agent can do
+the same for a task on any board over MCP. A control that would break a rule stays in place,
+disabled, and its tooltip says why (a task that has started cannot get a new blocker; a step it has
+reached cannot change). Before Start, a planned task that takes in a started board task cannot wait
+either: Add blocker and a drawn link stay open on it and refuse with that reason. Remove takes a
+task out of the workflow.
 
 **Moving on.** When a task's agent finishes a turn, the Automation agent (Settings > Workflows)
 judges whether that column's work is done and the agent is not waiting on you. Done moves the task

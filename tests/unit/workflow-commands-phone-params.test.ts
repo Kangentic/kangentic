@@ -248,3 +248,19 @@ describe('kangentic_save_workflow refuses a wrong-typed planned task field', () 
     expect(createWorkflowWithPlan).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * kangentic_add_workflow_task's waitsFor takes a number or id, or
+ * { task, project } for a task on another board (#1211). A wrong shape is
+ * refused by the handler itself, since a caller can reach it without zod.
+ */
+describe('kangentic_add_workflow_task refuses a wrong-typed waitsFor entry', () => {
+  const refusal = 'waitsFor must be a list of task numbers or ids, or { task, project } entries.';
+  for (const waitsFor of ['1208', [5], [{ project: 'kangentic' }], [{ task: '1208', project: 7 }], [null]]) {
+    it(JSON.stringify(waitsFor), async () => {
+      resolveWorkflow.mockReturnValueOnce({ id: 'wf-1', title: 'Release 0.63.1' });
+      const response = await commandHandlers.add_workflow_task({ workflow: 'wf-1', title: 'Release', waitsFor }, context);
+      expect(response).toEqual({ success: false, error: refusal });
+    });
+  }
+});

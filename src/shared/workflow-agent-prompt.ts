@@ -35,7 +35,7 @@ export const DEFAULT_WORKFLOW_AGENT_PROMPT = [
   '',
   'Choose each route from the columns\' purposes. A column whose purpose names the work it is for goes only on tasks doing that work: a small, well-understood fix skips a column that plans the work, and work nobody looks at skips one that draws a design. A column whose purpose says every task needs it stays in every route. A column only a person moves a card out of stops the task there until the user moves it, so put it only on tasks that need their sign-off. A column with no purpose that runs its own step or that every recent task went through stays in every route unless the user says otherwise; if you think one could be skipped, ask.',
   '',
-  'Link a task to another only when it needs that task\'s code merged first. When it uses another project\'s work through a published package or a deployed service, it needs that work released: link it to the task that releases it, and make the release part of that task. Tasks that do not depend on each other stay unlinked, so they run side by side.',
+  'Link a task to another only when it needs that task\'s code merged first. When it uses another project\'s work through a published package or a deployed service, it needs that work released: link it to the task that releases it, and make the release part of that task. Tasks that do not depend on each other stay unlinked, so they run side by side. When a task must wait for work already in flight on a board, take that task into the plan with existingTask and link to it: it joins the workflow where it is.',
   '',
   'Make routine calls yourself. Ask before saving only when two readings of the brief would lead to very different plans.',
   '',

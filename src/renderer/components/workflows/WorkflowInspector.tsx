@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, CircleCheckBig, Folder, Layers, Plus, SquareTerminal, Workflow as WorkflowIcon, X } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
-import type { PlanApproval, Task, WorkflowBoardEnds, WorkflowDetail, WorkflowRouteStep, WorkflowViewTask } from '../../../shared/types';
+import type { PlanApproval, Task, WorkflowBoardEnds, WorkflowDetail, WorkflowJoinCandidate, WorkflowRouteStep, WorkflowViewTask } from '../../../shared/types';
+import { useWorkflowStore } from '../../stores/workflow-store';
+import { FIELD_CONTROL_CLASS } from '../Field';
 import { WORKFLOW_REFUSAL_MESSAGES } from '../../../shared/workflow-refusals';
 import { translateText } from '../../i18n/translate';
 import { agentCannotApprovePlans, normalizeTaskPlanApproval, taskPlanApprovalTip } from '../../../shared/plan-approval';
@@ -264,15 +266,18 @@ function RouteRows({ task, held, onToggle, doneColumnColor, ends }: {
 // ---------------------------------------------------------------------------
 
 /** Where a linked task is, as its card strip names it: To Do until it starts, its column while it works. */
-function LinkColumn({ task, projectName }: { task: WorkflowViewTask; projectName: string | null }) {
+/** A row's column: a started task's column with its glyph, or To Do when `column` is null. */
+function ColumnLabel({ column, projectName }: {
+  column: { name: string; color: string | null; icon: string | null } | null;
+  projectName: string | null;
+}) {
   const { t } = useLingui();
-  const current = task.steps.find((step) => step.state === 'current');
   const prefix = projectName ? `${projectName} / ` : '';
-  if (task.place === 'working' && current) {
+  if (column) {
     return (
       <span className="inline-flex items-center gap-1 text-xs text-fg-muted">
-        <ColumnGlyph column={{ icon: current.icon, role: null }} size={11} color={current.color} />
-        {prefix}{current.name}
+        <ColumnGlyph column={{ icon: column.icon, role: null }} size={11} color={column.color} />
+        {prefix}{column.name}
       </span>
     );
   }
@@ -282,6 +287,11 @@ function LinkColumn({ task, projectName }: { task: WorkflowViewTask; projectName
       {prefix}{t({ message: 'To Do', context: 'column role' })}
     </span>
   );
+}
+
+function LinkColumn({ task, projectName }: { task: WorkflowViewTask; projectName: string | null }) {
+  const current = task.steps.find((step) => step.state === 'current');
+  return <ColumnLabel column={task.place === 'working' && current ? current : null} projectName={projectName} />;
 }
 
 function LinkRow({ linked, projectName, removeRefusal, onSelect, onRemove }: {
@@ -329,7 +339,28 @@ function LinkRow({ linked, projectName, removeRefusal, onSelect, onRemove }: {
   );
 }
 
-/** The dashed Add blocker button and its list of what this task can wait for. */
+/** Does a row match what was typed in Find: its title, or its number with or without `#`? */
+function matchesFind(query: string, title: string, displayId: number | null): boolean {
+  const wanted = query.trim().toLowerCase();
+  if (!wanted) return true;
+  if (title.toLowerCase().includes(wanted)) return true;
+  const number = wanted.replace(/^#/, '');
+  return displayId !== null && number.length > 0 && String(displayId).startsWith(number);
+}
+
+/** A board task's column, as `LinkColumn` draws a workflow task's. */
+function CandidateColumn({ candidate, projectName }: { candidate: WorkflowJoinCandidate; projectName: string | null }) {
+  return <ColumnLabel column={candidate.place === 'working' ? candidate.column : null} projectName={projectName} />;
+}
+
+const ADD_BLOCKER_ROW_CLASS = 'flex flex-col gap-0.5 w-full px-2.5 py-1.5 rounded text-left hover:bg-surface-hover/60';
+
+/**
+ * The dashed Add blocker button and its list of what this task can wait for:
+ * the workflow's own tasks, then under a divider the tasks on this task's
+ * board outside the workflow. Picking one of those makes it wait for that
+ * task, which joins the workflow where it is. Find narrows both lists.
+ */
 function AddBlocker({ detail, task, refusal, onAdd, projectNameOf }: {
   detail: WorkflowDetail;
   task: WorkflowViewTask;
@@ -339,10 +370,28 @@ function AddBlocker({ detail, task, refusal, onAdd, projectNameOf }: {
 }) {
   const { t } = useLingui();
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  // The board's tasks outside the workflow, read when the menu opens; null until they arrive.
+  const [boardTasks, setBoardTasks] = useState<WorkflowJoinCandidate[] | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const candidates = useMemo(() => (open ? blockerCandidates(detail, task.key) : []), [open, detail, task.key]);
+  const shownMembers = candidates.filter((candidate) => matchesFind(query, candidate.title, candidate.displayId));
+  const shownBoardTasks = (boardTasks ?? []).filter((candidate) => matchesFind(query, candidate.title, candidate.displayId));
   const { style, placement } = usePopoverPosition(triggerRef, menuRef, open, { mode: 'dropdown', strategy: 'fixed', matchTriggerWidth: true });
+  const homeProjectId = detail.homeProjectId;
+  const workflowId = detail.workflow.id;
+  const boardProjectId = task.projectId;
+  const boardName = projectNameOf(task);
+
+  useEffect(() => {
+    if (!open) return;
+    let current = true;
+    void useWorkflowStore.getState().listJoinCandidates(homeProjectId, workflowId, boardProjectId).then((found) => {
+      if (current) setBoardTasks(found);
+    });
+    return () => { current = false; };
+  }, [open, homeProjectId, workflowId, boardProjectId]);
 
   useEffect(() => {
     if (!open) return;
@@ -370,7 +419,14 @@ function AddBlocker({ detail, task, refusal, onAdd, projectNameOf }: {
         <button
           ref={triggerRef}
           type="button"
-          onClick={() => setOpen((current) => !current)}
+          onClick={() => {
+            // Each open starts with an empty Find and reads the board again.
+            if (!open) {
+              setQuery('');
+              setBoardTasks(null);
+            }
+            setOpen(!open);
+          }}
           disabled={refusal !== null}
           className="flex items-center justify-center gap-1.5 w-full h-[30px] mt-2 rounded border border-dashed border-edge text-xs text-fg-faint enabled:hover:text-fg-muted enabled:hover:border-edge-input disabled:opacity-45 disabled:cursor-not-allowed transition-colors"
           data-testid="workflow-add-blocker"
@@ -384,10 +440,24 @@ function AddBlocker({ detail, task, refusal, onAdd, projectNameOf }: {
         style={style}
         portal
         transformOrigin={placement.vertical === 'above' ? 'bottom center' : 'top center'}
-        className="fixed z-[2147483646] max-h-72 overflow-y-auto bg-surface-raised border border-edge-input rounded-md shadow-xl p-1"
+        // The board's tasks arrive after the menu opens, so it caps itself by
+        // the room on its side (popover-escapes-clipping.md).
+        className="fixed z-[2147483646] max-h-[min(18rem,var(--popover-available-height,18rem))] overflow-y-auto bg-surface-raised border border-edge-input rounded-md shadow-xl p-1"
         data-testid="workflow-add-blocker-menu"
       >
-        {candidates.map((candidate) => (
+        <div className="sticky top-0 z-10 bg-surface-raised p-1 pb-1.5">
+          <input
+            type="text"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={t`Find a task`}
+            aria-label={t`Find a task`}
+            autoFocus
+            className={FIELD_CONTROL_CLASS}
+            data-testid="workflow-add-blocker-find"
+          />
+        </div>
+        {shownMembers.map((candidate) => (
           <button
             key={candidate.key}
             type="button"
@@ -395,7 +465,7 @@ function AddBlocker({ detail, task, refusal, onAdd, projectNameOf }: {
               setOpen(false);
               onAdd(candidate.key);
             }}
-            className="flex flex-col gap-0.5 w-full px-2.5 py-1.5 rounded text-left hover:bg-surface-hover/60"
+            className={ADD_BLOCKER_ROW_CLASS}
             data-testid="workflow-add-blocker-option"
             data-task-key={candidate.key}
           >
@@ -406,6 +476,33 @@ function AddBlocker({ detail, task, refusal, onAdd, projectNameOf }: {
             <LinkColumn task={candidate} projectName={projectNameOf(candidate)} />
           </button>
         ))}
+        {shownMembers.length > 0 && shownBoardTasks.length > 0 && (
+          <div role="separator" className="my-1 mx-1.5 border-t border-edge/60" data-testid="workflow-add-blocker-divider" />
+        )}
+        {shownBoardTasks.map((candidate) => (
+          <button
+            key={candidate.taskId}
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              void useWorkflowStore.getState().addCardBlockerIn(homeProjectId, workflowId, task.key, candidate);
+            }}
+            className={ADD_BLOCKER_ROW_CLASS}
+            data-testid="workflow-add-blocker-board-task"
+            data-task-id={candidate.taskId}
+          >
+            <span className="flex items-baseline gap-2 min-w-0">
+              <span className="flex-1 min-w-0 truncate text-[13px] text-fg">{candidate.title}</span>
+              <span className="shrink-0 text-xs text-fg-muted">#{candidate.displayId}</span>
+            </span>
+            <CandidateColumn candidate={candidate} projectName={boardName} />
+          </button>
+        ))}
+        {boardTasks !== null && shownMembers.length === 0 && shownBoardTasks.length === 0 && (
+          <div className="px-2.5 py-1.5 text-[13px] text-fg-muted" data-testid="workflow-add-blocker-empty">
+            {query.trim() ? <Trans>No task matches.</Trans> : translateText(WORKFLOW_REFUSAL_MESSAGES.noBlockerCandidates)}
+          </div>
+        )}
       </OverlayPopover>
     </>
   );
@@ -610,8 +707,7 @@ function TaskPanel({
   const blockedBy = detail.links.filter((link) => link.blockedKey === task.key).map((link) => findTask(detail, link.blockerKey)).filter((linked): linked is WorkflowViewTask => linked !== null);
   const blocking = detail.links.filter((link) => link.blockerKey === task.key).map((link) => findTask(detail, link.blockedKey)).filter((linked): linked is WorkflowViewTask => linked !== null);
   const held = planHeld;
-  // Memoized: with no other guard in the way it walks every task's links.
-  const addRefusal = useMemo(() => (held ? translateText(WORKFLOW_REFUSAL_MESSAGES.agentWorking) : addBlockerRefusal(detail, task)), [held, detail, task]);
+  const addRefusal = held ? translateText(WORKFLOW_REFUSAL_MESSAGES.agentWorking) : addBlockerRefusal(task);
   const removeReason = held ? translateText(WORKFLOW_REFUSAL_MESSAGES.agentWorking) : removeRefusal(task);
   const onAnotherBoard = task.projectId !== detail.homeProjectId;
   // A board's name is data; the stand-in names a board the read could not.

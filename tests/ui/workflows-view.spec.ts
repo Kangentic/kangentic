@@ -74,6 +74,11 @@ interface SeedExtras {
    * unreadable (its link holds) or gone (the engine drops its link).
    */
   missingBlocker?: 'unreadable' | 'gone';
+  /**
+   * Three ordinary tasks on board 1, in no workflow: #1208 in Code Review,
+   * #1209 in Done, and #1212 in To Do.
+   */
+  outsideTasks?: boolean;
 }
 
 function seedScript(seed: Seed, sidebarWidth: number, iconlessColumn: string | null = null, extras: SeedExtras = {}): string {
@@ -134,6 +139,18 @@ function seedScript(seed: Seed, sidebarWidth: number, iconlessColumn: string | n
          pid: 9414, status: 'running', shell: 'bash', cwd: '/mock/kangentic', startedAt: seededAt, exitCode: null,
        });`
     : '';
+  const outsideTasks = extras.outsideTasks
+    ? `[[1208, 'Fix the release notes link', 3], [1209, 'Bump the protocol', 6], [1212, 'Tidy the changelog', 0]].forEach(function (row, index) {
+         state.tasks.push({
+           id: 't' + row[0], display_id: row[0], title: row[1], description: '',
+           swimlane_id: 'lane-' + row[2], position: 100 + index, agent: 'claude', session_id: null, worktree_path: null, branch_name: null,
+           pr_number: null, pr_url: null, pr_state: null, base_branch: null, use_worktree: 0, labels: [], priority: 0,
+           attachment_count: 0, archived_at: row[2] === 6 ? seededAt : null, workflow_id: null, workflow_project_id: null,
+           route_start_swimlane_id: null, route_last_swimlane_id: null, skipped_swimlane_ids: [], canvas_x: null, canvas_y: null,
+           created_at: seededAt, updated_at: seededAt,
+         });
+       });`
+    : '';
   // Yesterday at 18:20 in the page's own time zone, so the note's day is the page's.
   const pausedAt = seed === 'paused'
     ? `var pausedAt = new Date(); pausedAt.setDate(pausedAt.getDate() - 1); pausedAt.setHours(18, 20, 0, 0);
@@ -167,6 +184,7 @@ function seedScript(seed: Seed, sidebarWidth: number, iconlessColumn: string | n
         });
       });
       ${otherBoard}
+      ${outsideTasks}
       ${sessionSeed}
       return { currentProjectId: '${PROJECT_ID}' };
     });
@@ -182,6 +200,7 @@ async function launch(seed: Seed, options: { width?: number; sidebarWidth?: numb
     sessionTaskId: options.sessionTaskId,
     skipDeleteConfirm: options.skipDeleteConfirm,
     missingBlocker: options.missingBlocker,
+    outsideTasks: options.outsideTasks,
   }));
   await gotoVite(page, VITE_URL);
   await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
@@ -1311,9 +1330,9 @@ test.describe('Workflows inspector', () => {
     }
   });
 
-  // An empty list is a dead end, so with nothing left to wait for the button
-  // is disabled and says why, and no menu opens.
-  test('Add blocker is disabled with the reason once no task is left to wait for', async () => {
+  // The board's own tasks outside the workflow can still be picked, so the
+  // button stays live; the menu says so when neither list has a task.
+  test('Add blocker says no task is left once neither list has one', async () => {
     const { browser, page } = await launch('running');
     try {
       await card(page, 't419').click();
@@ -1325,10 +1344,105 @@ test.describe('Workflows inspector', () => {
         await options.first().click();
         await expect(options).toHaveCount(0);
       }
-      await expect(addBlocker).toBeDisabled();
-      await expect(addBlocker).toHaveAccessibleDescription('No task it can wait for.');
-      await addBlocker.click({ force: true });
-      await expect(byTestId(page, 'workflow-add-blocker-menu')).toBeHidden();
+      await expect(addBlocker).toBeEnabled();
+      await addBlocker.click();
+      await expect(byTestId(page, 'workflow-add-blocker-empty')).toHaveText('No task it can wait for.');
+      await expect(options).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // #1211: a workflow task can wait on work already in flight. Add blocker
+  // lists the board's tasks outside the workflow under a divider, Find narrows
+  // both lists, and picking one takes it into the workflow where it is.
+  test('Add blocker takes in a task on the board that is already started', async () => {
+    const { browser, page } = await launch('running', { outsideTasks: true });
+    try {
+      await card(page, 't419').click();
+      await byTestId(page, 'workflow-add-blocker').click();
+      const boardTasks = page.locator('[data-testid="workflow-add-blocker-board-task"]');
+      const options = page.locator('[data-testid="workflow-add-blocker-option"]');
+      await test.step('lists the board tasks not in Done, newest first, under a divider', async () => {
+        await expect(boardTasks).toHaveCount(2);
+        await expect(boardTasks.nth(0)).toHaveAttribute('data-task-id', 't1212');
+        await expect(boardTasks.nth(1)).toHaveAttribute('data-task-id', 't1208');
+        await expect(options).toHaveCount(5);
+        await expect(byTestId(page, 'workflow-add-blocker-divider')).toBeVisible();
+      });
+      await test.step('Find narrows both lists by number', async () => {
+        await byTestId(page, 'workflow-add-blocker-find').fill('#1208');
+        await expect(boardTasks).toHaveCount(1);
+        await expect(options).toHaveCount(0);
+        await expect(byTestId(page, 'workflow-add-blocker-divider')).toHaveCount(0);
+      });
+      await test.step('picking it takes it in, and the task waits for it', async () => {
+        await boardTasks.first().click();
+        await expect(card(page, 't1208')).toBeVisible();
+        await expect(page.locator('[data-testid="workflow-link-row"][data-task-key="t1208"]')).toBeVisible();
+      });
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // The Find box of the same menu: it matches a title in any case or a number
+  // with no '#', says so when nothing matches, starts empty on each open, and
+  // each board row names its column.
+  test('Add blocker Find matches by title or bare number, reports no match, and resets on reopen', async () => {
+    const { browser, page } = await launch('running', { outsideTasks: true });
+    try {
+      await card(page, 't419').click();
+      const addBlocker = byTestId(page, 'workflow-add-blocker');
+      const find = byTestId(page, 'workflow-add-blocker-find');
+      const boardTasks = page.locator('[data-testid="workflow-add-blocker-board-task"]');
+      const options = page.locator('[data-testid="workflow-add-blocker-option"]');
+      await addBlocker.click();
+      await expect(boardTasks).toHaveCount(2);
+      await expect(options).toHaveCount(5);
+
+      await test.step('each board task row shows its column', async () => {
+        await expect(page.locator('[data-testid="workflow-add-blocker-board-task"][data-task-id="t1208"]')).toContainText('Code Review');
+        await expect(page.locator('[data-testid="workflow-add-blocker-board-task"][data-task-id="t1212"]')).toContainText('To Do');
+      });
+
+      await test.step('a title in another case leaves the matching board task', async () => {
+        await find.fill('RELEASE NOTES');
+        await expect(boardTasks).toHaveCount(1);
+        await expect(boardTasks.first()).toHaveAttribute('data-task-id', 't1208');
+        await expect(options).toHaveCount(0);
+      });
+
+      await test.step('a number without # shows that board task', async () => {
+        await find.fill('1208');
+        await expect(boardTasks).toHaveCount(1);
+        await expect(boardTasks.first()).toHaveAttribute('data-task-id', 't1208');
+      });
+
+      await test.step('nothing matching says No task matches.', async () => {
+        await find.fill('zzz no such task');
+        await expect(boardTasks).toHaveCount(0);
+        await expect(options).toHaveCount(0);
+        await expect(byTestId(page, 'workflow-add-blocker-empty')).toHaveText('No task matches.');
+      });
+
+      await test.step('reopening clears Find and restores both lists', async () => {
+        await addBlocker.click();
+        await expect(byTestId(page, 'workflow-add-blocker-menu')).toHaveCount(0);
+        await addBlocker.click();
+        await expect(find).toHaveValue('');
+        await expect(boardTasks).toHaveCount(2);
+        await expect(options).toHaveCount(5);
+        // Escape closes it too, and the next open is clean again.
+        await find.fill('1212');
+        await expect(boardTasks).toHaveCount(1);
+        await page.keyboard.press('Escape');
+        await expect(byTestId(page, 'workflow-add-blocker-menu')).toHaveCount(0);
+        await addBlocker.click();
+        await expect(find).toHaveValue('');
+        await expect(boardTasks).toHaveCount(2);
+        await expect(options).toHaveCount(5);
+      });
     } finally {
       await browser.close();
     }

@@ -59,7 +59,7 @@ const PLANNED_TASK_SCHEMA = z.object({
   title: z.string().max(300).describe('The task\'s title.'),
   description: z.string().max(TASK_DESCRIPTION_MAX_LENGTH).optional().describe(`What the task's agent should do. Write the plan into it: the agent reads it as its brief. At most ${TASK_DESCRIPTION_MAX_LENGTH} characters: it rides the agent's command line.`),
   project: z.string().optional().describe('Put the task on another registered project\'s board (name or id) when its work is in that repository. Omit for this project. Use only projects the user named.'),
-  existingTask: z.string().optional().describe('Take in a task already in To Do on that board (its number or id) instead of creating one.'),
+  existingTask: z.string().optional().describe('Take in a task already on that board (its number or id) instead of creating one: in To Do or already started, not in Done or another workflow. It joins where it is, and links name it by this key. Use it to wait on work already in flight: a started one can be a blocker, never the task that waits.'),
   routeStart: z.string().optional().describe(`The first column it visits. ${COLUMN_NAME_DESCRIPTION} Omit to start in the first column after To Do.`),
   routeLast: z.string().optional().describe(`The last column it visits before Done. ${COLUMN_NAME_DESCRIPTION} Omit to visit through the column before Done.`),
   skip: z.array(z.string()).optional().describe('Columns inside its route it skips, such as one that only plans the work, for a small, well-understood task. Never skip a column the user\'s process depends on without asking.'),
@@ -184,7 +184,10 @@ export function registerWorkflowTools(
         routeStart: z.string().optional().describe(COLUMN_NAME_DESCRIPTION),
         routeLast: z.string().optional().describe(COLUMN_NAME_DESCRIPTION),
         skip: z.array(z.string()).optional().describe('Columns inside its route it skips.'),
-        waitsFor: z.array(z.string()).optional().describe('Tasks in this workflow it waits for: a task number on the workflow\'s own board, or the id of one on any of its boards.'),
+        waitsFor: z.array(z.union([
+          z.string(),
+          z.object({ task: z.string().describe('Its number or id.'), project: z.string().optional().describe(TASK_PROJECT_DESCRIPTION) }),
+        ])).optional().describe('Tasks it waits for: a number on the workflow\'s own board, an id on any board, or { task, project } for a number on another board. A task outside this workflow joins it where it is (started or not; not one in Done or in another workflow). One of this workflow already in Done is left out.'),
         ...RUN_SETTINGS_SHAPE,
         ...TASK_PLAN_APPROVAL_SHAPE,
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
@@ -216,7 +219,7 @@ export function registerWorkflowTools(
   server.registerTool(
     'kangentic_link_workflow_tasks',
     {
-      description: 'Make one task in a started workflow wait for another to reach Done. Only a task still in To Do can wait, and only for one not yet done; a link that would close a loop is refused.',
+      description: 'Make one task in a started workflow wait for another to reach Done. Only a task still in To Do can wait, and only for one not yet done; a link that would close a loop is refused. An end not in the workflow joins it where it is, started or not, so a workflow task can wait on work already in flight on any board; one in Done or in another workflow is refused.',
       inputSchema: LINK_SCHEMA,
       annotations: MUTATING_ANNOTATIONS,
     },

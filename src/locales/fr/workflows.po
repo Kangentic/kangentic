@@ -311,6 +311,10 @@ msgstr "Chaque parcours commence dans {name}"
 msgid "Failed to load the workflows"
 msgstr "Échec du chargement des workflows"
 
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgid "Find a task"
+msgstr ""
+
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
 msgid "Find in terminal"
 msgstr ""
@@ -424,6 +428,10 @@ msgstr "Aucune conversation pour l'instant"
 #, fuzzy
 msgid "No task matches the search."
 msgstr "Aucune tâche ne correspond à la recherche."
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgid "No task matches."
+msgstr ""
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
 #, fuzzy

@@ -693,6 +693,10 @@ msgstr "No se pudo generar el título"
 msgid "Couldn't link the tasks"
 msgstr "No se pudieron vincular las tareas"
 
+#: src/renderer/stores/workflow-store.ts
+msgid "Couldn't list the board's tasks"
+msgstr ""
+
 #: src/renderer/pop-out/roots/PopOutCommandTerminalRoot.tsx
 #, fuzzy
 msgid "Couldn't load the terminals for this window."

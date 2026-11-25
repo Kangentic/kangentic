@@ -7466,6 +7466,22 @@
         if (task.archived_at || (lane && lane.role === 'done')) return 'done';
         return lane && lane.role === 'todo' ? 'todo' : 'working';
       }
+      // Why a board task cannot join a workflow, or null when it can.
+      // KEEP IN SYNC with joinRefusal in src/main/workflows/workflow-service.ts
+      // and the texts in src/shared/workflow-refusals.ts.
+      function joinRefusalOf(task, projectId) {
+        var label = '#' + task.display_id;
+        if (placeOf(task) === 'done') return label + ' is done. Only a task not yet in Done can join a workflow.';
+        if (task.workflow_id) return label + ' is already in a workflow.';
+        if (!todoLane(projectId) || !doneLane(projectId)) return label + ' is on a board with no To Do or no Done column, which a workflow needs.';
+        return null;
+      }
+      // Why a planned task cannot wait for another: it takes in a board task
+      // that has started. KEEP IN SYNC with plannedWaitRefusal in workflow-service.ts.
+      function plannedWaitRefusalOf(planned) {
+        var row = planned && planned.existing_task_id ? tasks.find(function (task) { return task.id === planned.existing_task_id; }) : null;
+        return row && placeOf(row) !== 'todo' ? '#' + row.display_id + ' has started. Only a task in To Do can wait for another.' : null;
+      }
       function stepsOf(task, place, projectId) {
         var onRoute = routeColumns(task, projectId).map(function (lane) { return lane.id; });
         var current = laneOf(task.swimlane_id);
@@ -7882,6 +7898,32 @@
           var draft = entry.workflow.draft || { tasks: [], links: [] };
           if (entry.workflow.state !== 'draft') throw new Error('"' + entry.workflow.title + '" has already started.');
           if (draft.tasks.length === 0) throw new Error('"' + entry.workflow.title + '" has no tasks yet. Save a plan with kangentic_save_workflow first.');
+          // Main's Start re-checks every board task the plan takes in before it
+          // writes anything (KEEP IN SYNC with startWorkflow in
+          // src/main/workflows/workflow-service.ts): it is still there, can
+          // still join, a started one's route still holds its column, and a
+          // started one is no link's waiting end.
+          var cannotWaitByKey = {};
+          draft.tasks.forEach(function (planned) {
+            if (!planned.existing_task_id) return;
+            var board = boardOf(entry, planned);
+            var existing = tasks.find(function (task) { return task.id === planned.existing_task_id; });
+            if (!existing) throw new Error('"' + planned.title + '" takes in a board task that is gone. Save the plan again without it.');
+            var refusal = joinRefusalOf(existing, board);
+            if (refusal) throw new Error('"' + planned.title + '" takes in a board task that can no longer join: ' + refusal + ' Save the plan again without it.');
+            var lane = laneOf(existing.swimlane_id);
+            if (lane && lane.role !== 'todo') {
+              if (!routeColumns(planned, board).some(function (column) { return column.id === lane.id; })) {
+                throw new Error('"' + planned.title + '": #' + existing.display_id + ' is in ' + lane.name + ', so its route must include ' + lane.name + '. Save the plan again with a route that does.');
+              }
+            }
+            if (placeOf(existing) !== 'todo') cannotWaitByKey[planned.key] = '#' + existing.display_id + ' has started. Only a task in To Do can wait for another.';
+          });
+          draft.links.forEach(function (link) {
+            if (!cannotWaitByKey[link.blocked]) return;
+            var titleOf = function (key) { var found = draft.tasks.find(function (task) { return task.key === key; }); return found ? found.title : key; };
+            throw new Error('"' + titleOf(link.blocked) + '" cannot wait for "' + titleOf(link.blocker) + '": ' + cannotWaitByKey[link.blocked] + ' Save the plan again without that link.');
+          });
           var idByKey = {};
           draft.tasks.forEach(function (planned) {
             // Each task starts in its own board's To Do.
@@ -7890,12 +7932,8 @@
             var row;
             if (planned.existing_task_id) {
               // Main's Start takes a board task in where it is (setWorkflowMembership)
-              // and creates nothing; one that left To Do refuses the Start.
+              // and creates nothing.
               row = tasks.find(function (task) { return task.id === planned.existing_task_id; });
-              var lane = row ? laneOf(row.swimlane_id) : null;
-              if (!row || row.archived_at || !lane || lane.role !== 'todo' || row.workflow_id) {
-                throw new Error('"' + planned.title + '" takes in a board task that is no longer in To Do. Save the plan again without it.');
-              }
             } else {
               // Main's Start creates every other task with its planned run settings.
               row = buildTaskRow(Object.assign(
@@ -8032,6 +8070,66 @@
           entry.workflow.revision += 1;
           emit(homeOf(entry), workflowId, true);
         },
+        // KEEP IN SYNC with listJoinCandidates and joinRefusal in src/main/workflows/.
+        listJoinCandidates: async function (projectId, workflowId, boardProjectId) {
+          var entry = requireEntry(projectId, workflowId);
+          var home = homeOf(entry);
+          var planned = ((entry.workflow.draft && entry.workflow.draft.tasks) || [])
+            .map(function (task) { return task.existing_task_id; })
+            .filter(Boolean);
+          return tasks.filter(function (task) {
+            if ((task.projectId || home) !== boardProjectId) return false;
+            return planned.indexOf(task.id) === -1 && joinRefusalOf(task, boardProjectId) === null;
+          }).sort(function (first, second) { return second.display_id - first.display_id; }).map(function (task) {
+            var lane = laneOf(task.swimlane_id);
+            return {
+              projectId: boardProjectId,
+              taskId: task.id,
+              displayId: task.display_id,
+              title: task.title,
+              place: placeOf(task) === 'todo' ? 'todo' : 'working',
+              column: { name: lane ? lane.name : '', color: (lane && lane.color) || null, icon: (lane && lane.icon) || null },
+            };
+          });
+        },
+        // A board task outside the workflow joins it where it is, as main's
+        // addCardBlocker does: into the plan before Start, now after.
+        addCardBlocker: async function (projectId, workflowId, blockedKey, cardProjectId, cardTaskId) {
+          var entry = requireEntry(projectId, workflowId);
+          var card = tasks.find(function (task) { return task.id === cardTaskId; });
+          if (!card) throw new Error('That task is no longer on its board.');
+          var refusal = joinRefusalOf(card, cardProjectId);
+          if (refusal) throw new Error(refusal);
+          if (entry.workflow.state === 'draft') {
+            editDraft(entry, function (draft) {
+              var blockedPlanned = draft.tasks.find(function (task) { return task.key === blockedKey; });
+              if (!blockedPlanned) throw new Error('That task is no longer in the plan.');
+              var waitRefusal = plannedWaitRefusalOf(blockedPlanned);
+              if (waitRefusal) throw new Error(waitRefusal);
+              if (draft.tasks.some(function (task) { return task.existing_task_id === card.id; })) throw new Error('#' + card.display_id + ' is already in this plan.');
+              var used = draft.tasks.map(function (task) { return task.key; });
+              var index = draft.tasks.length + 1;
+              while (used.indexOf('task-' + index) !== -1) index += 1;
+              var key = 'task-' + index;
+              draft.tasks.push({
+                key: key, title: card.title, description: '', project_id: cardProjectId === homeOf(entry) ? null : cardProjectId,
+                existing_task_id: card.id, route_start_swimlane_id: null, route_last_swimlane_id: null, skipped_swimlane_ids: [],
+                labels: [], priority: 0, canvas_x: null, canvas_y: null, plan_approval: null,
+                base_branch: null, use_worktree: null, run_mode: 'column_settings', profile_id: null, agent_override: null,
+                model_override: null, effort_override: null, permission_mode: null,
+              });
+              draft.links.push({ blocker: key, blocked: blockedKey });
+            });
+            return;
+          }
+          var blocked = requireTask(entry, blockedKey);
+          if (placeOf(blocked) !== 'todo') throw new Error('#' + blocked.display_id + ' has started. Only a task in To Do can wait for another.');
+          membership(card, entry, { route_start_swimlane_id: null, route_last_swimlane_id: null, skipped_swimlane_ids: [] });
+          card.automations_disabled = false;
+          links.push({ workflow_id: workflowId, blocker_task_id: card.id, blocked_task_id: blocked.id });
+          entry.workflow.revision += 1;
+          emit(homeOf(entry), workflowId, true);
+        },
         setLink: async function (projectId, workflowId, blockerKey, blockedKey, linked) {
           var entry = requireEntry(projectId, workflowId);
           if (blockerKey === blockedKey) throw new Error('A task cannot wait for itself.');
@@ -8039,6 +8137,8 @@
             editDraft(entry, function (draft) {
               draft.links = draft.links.filter(function (link) { return !(link.blocker === blockerKey && link.blocked === blockedKey); });
               if (!linked) return;
+              var waitRefusal = plannedWaitRefusalOf(draft.tasks.find(function (task) { return task.key === blockedKey; }));
+              if (waitRefusal) throw new Error(waitRefusal);
               if (wouldLoop(draft.links, blockerKey, blockedKey)) throw new Error('That link closes a loop. A workflow\'s links cannot go in a circle.');
               draft.links.push({ blocker: blockerKey, blocked: blockedKey });
             });

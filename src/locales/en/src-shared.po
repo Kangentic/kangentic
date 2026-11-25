@@ -36,12 +36,20 @@ msgid "{label} has started. Removing the link changes nothing."
 msgstr "{label} has started. Removing the link changes nothing."
 
 #: src/shared/workflow-refusals.ts
+msgid "{label} is already in a workflow."
+msgstr "{label} is already in a workflow."
+
+#: src/shared/workflow-refusals.ts
 msgid "{label} is done and stays with its workflow."
 msgstr "{label} is done and stays with its workflow."
 
 #: src/shared/workflow-refusals.ts
 msgid "{label} is done. Its plan approval can no longer change."
 msgstr "{label} is done. Its plan approval can no longer change."
+
+#: src/shared/workflow-refusals.ts
+msgid "{label} is done. Only a task not yet in Done can join a workflow."
+msgstr "{label} is done. Only a task not yet in Done can join a workflow."
 
 #: src/shared/workflow-refusals.ts
 msgid "{label} is done. Removing the link changes nothing."

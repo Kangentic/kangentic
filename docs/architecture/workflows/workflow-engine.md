@@ -68,6 +68,17 @@ src/main/workflows/
 - **The workflow agent** that plans a workflow is a transient session with its own MCP scope; see
   [Workflow agent](workflow-agent.md).
 
+- **A task joins a workflow where it is.** A plan's `existingTask`, a link to a task outside the
+  workflow (`linkTasks`, `kangentic_add_workflow_task`'s `waitsFor`, Add blocker's board tasks) and
+  Start's re-check all ask one rule, `joinRefusal`: a task joins unless it is archived, in Done, in
+  another workflow, or on a board with no To Do or no Done column. To Do or started does not
+  matter to joining. It matters only where the task would wait: only a task in To Do (or planned)
+  can be a link's waiting end, so a started task joins as a blocker. A link takes its outside end in first
+  (`takeIntoWorkflow`, route following its board, its automations pause lifted) and writes the link
+  second, since a link to a task outside the workflow reads as gone. So every link stays inside one
+  workflow and the engine needs no notion of an outside blocker: a started task that joins is driven
+  by the step check from its next turn end, as any started member is.
+
 - **A stored project id can outlive its project.** A task's home (`workflow_project_id`), a link's
   far end and a planned task's board are ids in another record, and `getProjectDb` on main creates
   a database for any id it is given. Those reads go through `getExistingProjectDb`, which never

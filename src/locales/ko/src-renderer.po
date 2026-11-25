@@ -693,6 +693,10 @@ msgstr "제목을 생성할 수 없음"
 msgid "Couldn't link the tasks"
 msgstr "작업을 연결할 수 없음"
 
+#: src/renderer/stores/workflow-store.ts
+msgid "Couldn't list the board's tasks"
+msgstr ""
+
 #: src/renderer/pop-out/roots/PopOutCommandTerminalRoot.tsx
 #, fuzzy
 msgid "Couldn't load the terminals for this window."

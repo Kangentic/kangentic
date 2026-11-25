@@ -231,6 +231,36 @@ describe('formatWorkflow: which board a task is on', () => {
       expect(saved.draft?.tasks.find((task) => task.key === 'phone')?.project_id).toBe('mobile');
       expect(saved.draft?.tasks.find((task) => task.key === 'api')?.project_id).toBeNull();
     });
+
+    // #1211: Add blocker puts a board task in the plan that no agent wrote, so
+    // the read has to hand it back, or the agent's next save plans a new task
+    // with that title in its place.
+    it('keeps a task the plan takes in when the plan is read and sent back: the printed existingTask is one save_workflow takes', () => {
+      const mobileDb = harness.dbs.get('mobile') as Database.Database;
+      const executing = (mobileDb.prepare("SELECT id FROM swimlanes WHERE name = 'Executing'").get() as { id: string }).id;
+      const inFlight = new TaskRepository(mobileDb).create({ title: 'Bump the protocol', description: '', swimlane_id: executing });
+      const workflow = service.createWorkflowWithPlan(context, 'home', {}, {
+        tasks: [
+          { key: 'protocol', title: 'Bump the protocol', project: 'kangentic-mobile', existingTask: String(inFlight.display_id) },
+          { key: 'release', title: 'Release' },
+        ],
+        links: [{ blocker: 'protocol', blocked: 'release' }],
+      });
+      const line = lineOf(formatWorkflow(service.readWorkflow(context, 'home', workflow.id)), 'Bump the protocol');
+      expect(line).toContain(`existingTask "${inFlight.id}"`);
+      expect(line).toContain(`In Executing (#${inFlight.display_id}, taken in at Start)`);
+      const printedTask = /existingTask "([^"]+)"/.exec(line)?.[1];
+
+      const saved = service.savePlan(context, 'home', workflow.id, {
+        tasks: [
+          { key: 'protocol', title: 'Bump the protocol', project: 'kangentic-mobile', existingTask: printedTask },
+          { key: 'release', title: 'Release' },
+        ],
+        links: [{ blocker: 'protocol', blocked: 'release' }],
+      });
+
+      expect(saved.draft?.tasks.find((task) => task.key === 'protocol')?.existing_task_id).toBe(inFlight.id);
+    });
   });
 
   describe('a task the workflow stalled on', () => {

@@ -123,6 +123,9 @@ function describeRunSettings(task: WorkflowTaskView): string {
   const settings = task.runSettings;
   const parts: string[] = [];
   if (task.board !== null) parts.push(`project "${task.board}"`);
+  // A task the plan takes in at Start, by its id (an id names it on any board).
+  // Without it a read and save back would plan a new task in its place.
+  if (task.taskId) parts.push(`existingTask "${task.taskId}"`);
   if (settings.base_branch) parts.push(`baseBranch "${settings.base_branch}"`);
   if (settings.use_worktree !== null) parts.push(`useWorktree ${settings.use_worktree === 1}`);
   if (task.profileName) parts.push(`profile "${task.profileName}"`);

@@ -58,7 +58,11 @@ for. A workflow not started lists its planned tasks by key, each with any run se
 the default, in `kangentic_save_workflow`'s own names (`project "API", baseBranch "develop",
 useWorktree false, profile "Heavy"`), so a plan read and sent back keeps them. A planned task
 reads `In To Do (created at Start)`, or, when it takes in a board task with `existingTask`, names
-that task: `In To Do (#921, taken in at Start)`. A started task on
+that task and the column it is in: `In Code Review (#921, taken in at Start)`. A taken-in task whose
+row is gone reads `In no column, gone from its board (taken in at Start)`, and Start refuses it.
+The task's settings name it as `existingTask "<id>"`, so a plan read and sent back takes in the
+same task rather than planning a new one, and a started task's route must include the column it
+is in. A started task on
 another project's board says which (`#7 ... In Review on board "API"`), and so does a blocker
 there (`Waits for #7 on "API"`), since task numbers count per board. A blocker whose project's
 database will not open reads `a task on "API" that could not be read`, and still holds its task. A
@@ -114,8 +118,11 @@ task, and the links. Omit `workflow` to create one. Nothing reaches a board unti
 
 Each planned task takes `key` (unique in the plan), `title`, `description` (max 27500 chars: it
 rides the agent's command line), and optionally
-`project` (another board, by name), `existingTask` (a To Do task to take in instead of creating
-one), `routeStart`, `routeLast`, `skip` (column names), `labels` (plain names or `{ name, color }`, as
+`project` (another board, by name), `existingTask` (a task on that board to take in instead of
+creating one, by number or id: in To Do or already started, not in Done, archived or another
+workflow; it joins where it is, so a plan can wait on work already in flight by linking to its key.
+A started one can be a link's `blocker` but not its `blocked` end, since only a task in To Do waits),
+`routeStart`, `routeLast`, `skip` (column names), `labels` (plain names or `{ name, color }`, as
 [kangentic_create_task](task-tools.md#kangentic_create_task) takes them) and `priority` (an index
 into the project's priority scale; a task on this board is checked against it).
 
@@ -233,7 +240,7 @@ Add a task to a started workflow. It lands in To Do and starts once nothing it w
 | `taskProject` | string | No | Another project's board to put it on. |
 | `routeStart` / `routeLast` | string | No | First and last columns it visits. |
 | `skip` | string[] | No | Columns inside its route it skips. |
-| `waitsFor` | string[] | No | Tasks in this workflow it waits for: a task number on the workflow's own board, or the id of a task on any of its boards. Numbers count per board, so a task on another board is named by its id. |
+| `waitsFor` | array | No | Tasks it waits for, each a string (a number on the workflow's own board, or an id on any board) or `{ task, project }` (a number or id on that project's board). Numbers count per board. A task not in the workflow joins it where it is, started or not; one in Done, archived or in another workflow is refused, and nothing is written. A task of the workflow already in Done is left out, since waiting for it changes nothing. |
 | `baseBranch`, `useWorktree`, `runMode`, `profile`, `agentOverride`, `modelOverride`, `effortOverride`, `permissionMode` | | No | Its run settings, as [`kangentic_save_workflow`](#kangentic_save_workflow)'s planned tasks take them. The task is created with them. |
 | `planApproval` | string \| null | No | Its own plan approval, as a planned task takes it. Omitted or `null` follows the plan columns on its route. |
 | `project` | string | No | Project name or UUID. Omit for the active project. |
@@ -252,6 +259,15 @@ nothing.
 
 Make a task in a started workflow wait for another to reach Done. Only a task still in To Do can
 wait, only for one not yet done, and a link that closes a loop is refused.
+
+Either end may be a task not in the workflow, on any board: the link takes it in where it is, as a
+full workflow task. It is locked while the workflow moves it, gets the step check at each turn end,
+pauses and resumes with the workflow, and counts toward its completion. Its automations pause is
+lifted, as joining any workflow does. A task in Done, archived, or in another workflow is refused
+(`#1208 is done. Only a task not yet in Done can join a workflow.`, `#1208 is already in a
+workflow.`). Every check runs before anything is written. The reply names what joined: `Linked: 1210
+now waits for 1208 to reach Done. #1208 joined "Release 0.63.1" where it is.` A number alone names a
+task on the workflow's own board; pass `blockerProject` for another board, or use the task's id.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

@@ -21,8 +21,10 @@ import {
   WorkflowRequestError,
 } from '../../workflows/workflow-service';
 import {
+  addCardBlocker,
   addViewTask,
   createWorkflowForView,
+  listJoinCandidates,
   listWorkflowSummaries,
   listWorkflowSupersessions,
   readWorkflowDetail,
@@ -116,6 +118,17 @@ export function registerWorkflowHandlers(context: IpcContext): void {
     (_, projectId: string, workflowId: string, blockerKey: string, blockedKey: string, linked: boolean) => {
       requireWorkflowAgentIdle(context, workflowId);
       setViewLink(context, projectId, workflowId, blockerKey, blockedKey, linked === true);
+    },
+  );
+
+  ipcMain.handle(IPC.WORKFLOW_LIST_JOIN_CANDIDATES, (_, projectId: string, workflowId: string, boardProjectId: string) =>
+    listJoinCandidates(context, projectId, workflowId, boardProjectId));
+
+  ipcMain.handle(
+    IPC.WORKFLOW_ADD_CARD_BLOCKER,
+    (_, projectId: string, workflowId: string, blockedKey: string, cardProjectId: string, cardTaskId: string) => {
+      requireWorkflowAgentIdle(context, workflowId);
+      addCardBlocker(context, projectId, workflowId, blockedKey, cardProjectId, cardTaskId);
     },
   );
 

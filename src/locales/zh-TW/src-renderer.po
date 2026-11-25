@@ -583,6 +583,10 @@ msgstr "無法產生標題"
 msgid "Couldn't link the tasks"
 msgstr "無法連結任務"
 
+#: src/renderer/stores/workflow-store.ts
+msgid "Couldn't list the board's tasks"
+msgstr ""
+
 #: src/renderer/pop-out/roots/PopOutCommandTerminalRoot.tsx
 msgid "Couldn't load the terminals for this window."
 msgstr "無法載入此視窗的終端機。"
