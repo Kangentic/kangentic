@@ -196,7 +196,7 @@ describe('metrics snapshot timer', () => {
 describe('diff watch', () => {
   // Sentry DESKTOP-58: a Changes panel watch that failed after arming. Node
   // builds that error with the watched path in its message and `path`.
-  it('reports a failed watch under source diff_watch, grouped as an environment failure, with no path', async () => {
+  it('reports a failed watch under source diff_watch_lost, grouped as an environment failure, with no path', async () => {
     const fs = (await import('node:fs')).default;
     const os = await import('node:os');
     const path = await import('node:path');
@@ -222,7 +222,7 @@ describe('diff watch', () => {
       vi.advanceTimersByTime(REARM_DELAYS_MS[0]);
 
       expect(onlyReportTags()).toMatchObject({
-        source: 'diff_watch',
+        source: 'diff_watch_lost',
         watch: 'tree',
         rearm: 'held',
         errno: 'UNKNOWN',
@@ -230,7 +230,7 @@ describe('diff watch', () => {
         error_name: 'Error',
       });
       const [reportedError, tags, contexts, fingerprint] = reportHandledError.mock.calls[0] as [Error, unknown, unknown, unknown];
-      expect(reportedError.message).toBe('Handled diff_watch failure: Error');
+      expect(reportedError.message).toBe('Handled diff_watch_lost failure: Error');
       expect(fingerprint).toEqual(['handled-env', 'Error', 'UNKNOWN']);
       const reportedText = JSON.stringify({ message: reportedError.message, tags, contexts, fingerprint });
       expect(reportedText).not.toContain(path.basename(watchedDirectory));

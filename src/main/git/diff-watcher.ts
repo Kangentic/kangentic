@@ -16,7 +16,7 @@ const DEBOUNCE_MS = 500;
  * watch armed again, `polling` when it did not and a poll drives the
  * subscribers instead), and the errno the reporter adds. No path is sent.
  */
-const diffWatchReporter = createChokepointReporter('diff_watch');
+const diffWatchReporter = createChokepointReporter('diff_watch_lost');
 
 /** The three watches a local path arms, as the `watch` tag names them. */
 type WatchKind = 'tree' | 'git_meta' | 'git_logs';
