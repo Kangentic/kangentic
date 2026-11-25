@@ -31,7 +31,7 @@ vi.mock('../../src/main/agent/commands/task-commands', () => ({
 }));
 
 import { registerTaskTools } from '../../src/main/agent/mcp-http/task-tools';
-import { createToolArgumentNotices } from '../../src/main/agent/mcp-http/tool-call-logging';
+import { createToolArgumentNotices, logMcpToolArguments, type InspectedToolName } from '../../src/main/agent/mcp-http/tool-call-logging';
 import { appendNoticeLine } from '../../src/main/agent/mcp-http/handler-helpers';
 import type { RequestResolver } from '../../src/main/agent/mcp-http/project-resolver';
 import type { TaskCounter, McpToolResult } from '../../src/main/agent/mcp-http/handler-helpers';
@@ -275,5 +275,82 @@ describe('kangentic_update_task - labels-absent notice', () => {
     const text = textOf(await server.getHandler('kangentic_update_task')({ taskId: '42', description: 'x' }));
 
     expect(text).not.toContain('[Labels not received]');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The raw body through to the response. The tests above set the notices
+// record by hand, so none of them can show what a caller's `labels: []`
+// does. These run the real detection on a raw tools/call body first, then
+// call the handler with the same arguments and the same record, which is
+// the order the HTTP server runs them in. `labels: []` is how an agent says
+// "no labels, on purpose" (#1205): absent is the drop signature, empty is not.
+// ---------------------------------------------------------------------------
+
+describe('labels: [] as the explicit "no labels" signal, raw body to response', () => {
+  const LONG_DESCRIPTION = 'x'.repeat(6400);
+
+  async function callThroughDetection(
+    toolName: InspectedToolName,
+    toolArguments: Record<string, unknown>,
+  ): Promise<string> {
+    const notices = createToolArgumentNotices();
+    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      logMcpToolArguments(
+        { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: toolName, arguments: toolArguments } },
+        notices,
+      );
+    } finally {
+      consoleLogSpy.mockRestore();
+      consoleWarnSpy.mockRestore();
+    }
+    registerTaskTools(server as never, makeResolver(), TASK_COUNTER, notices);
+    return textOf(await server.getHandler(toolName)(toolArguments));
+  }
+
+  describe.each([
+    { toolName: 'kangentic_create_task' as const, baseArguments: { title: 'T' }, handlerMock: mockCreateTask },
+    { toolName: 'kangentic_update_task' as const, baseArguments: { taskId: '42' }, handlerMock: mockUpdateTask },
+  ])('$toolName', ({ toolName, baseArguments, handlerMock }) => {
+    it('adds no note for a long description with labels: []', async () => {
+      const text = await callThroughDetection(toolName, { ...baseArguments, description: LONG_DESCRIPTION, labels: [] });
+
+      expect(text).not.toContain('[Labels not received]');
+      expect(handlerMock.mock.calls[0][0]).toMatchObject({ labels: [] });
+    });
+
+    it('still adds the note for a long description with labels omitted', async () => {
+      const text = await callThroughDetection(toolName, { ...baseArguments, description: LONG_DESCRIPTION });
+
+      expect(text).toContain('[Labels not received]');
+      expect(text).toContain('6400-char description');
+      // The note teaches the signal where the agent sees it.
+      expect(text).toContain('labels: []');
+    });
+
+    it('adds no note for a long description with populated labels, and passes them through', async () => {
+      const text = await callThroughDetection(toolName, { ...baseArguments, description: LONG_DESCRIPTION, labels: ['bug'] });
+
+      expect(text).not.toContain('[Labels not received]');
+      expect(handlerMock.mock.calls[0][0]).toMatchObject({ labels: ['bug'] });
+    });
+  });
+
+  it('on an update, the note says to resend labels to keep them, since labels: [] clears them', async () => {
+    // An update that omitted labels kept the task's labels. Pointing that
+    // agent only at [] would teach it to wipe them.
+    const text = await callThroughDetection('kangentic_update_task', { taskId: '42', description: LONG_DESCRIPTION });
+
+    expect(text).toContain('To keep the task\'s labels, resend them');
+    expect(text).not.toContain('If the task should have no labels');
+  });
+
+  it('on a create, the note says to pass labels: [], since a new task has no labels to keep', async () => {
+    const text = await callThroughDetection('kangentic_create_task', { title: 'T', description: LONG_DESCRIPTION });
+
+    expect(text).toContain('If the task should have no labels, pass labels: []');
+    expect(text).not.toContain('To keep the task\'s labels');
   });
 });
