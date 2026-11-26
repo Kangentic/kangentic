@@ -1,5 +1,5 @@
 import React from 'react';
-import { SquareKanban, CircleDot, Cloud, FolderGit2 } from 'lucide-react';
+import { SquareKanban, CircleDot, Cloud, FolderGit2, Terminal } from 'lucide-react';
 import { msg } from '@lingui/core/runtime-macro';
 import { GitHubIcon } from '../icons/GitHubIcon';
 import { ArtifactPlatformLogo } from '../VendorMark';
@@ -104,6 +104,11 @@ export interface SourceTypeOption {
    * Import dialog shows their names under the title.
    */
   bodyListsPaths?: boolean;
+  /**
+   * The source field is a script, shown as a textarea. Enter inserts a newline;
+   * Connect submits.
+   */
+  multiline?: boolean;
 }
 
 export interface Provider {
@@ -119,6 +124,7 @@ export interface Provider {
 
 const OBSIDIAN_FOLDER_DIALOG_TITLE = msg({ message: 'Choose a folder in your Obsidian vault', context: 'import folder dialog' });
 const REPO_FOLDER_LABEL = msg({ message: 'Repository folder', context: 'import provider' });
+const SCRIPT_LABEL = msg({ message: 'Script', context: 'import provider' });
 
 export const PROVIDERS: Provider[] = [
   {
@@ -302,6 +308,25 @@ export const PROVIDERS: Provider[] = [
         repoFolder: true,
         itemsHaveNoState: true,
         bodyListsPaths: true,
+      },
+    ],
+  },
+  {
+    id: 'script',
+    label: SCRIPT_LABEL,
+    icon: <Terminal size={16} />,
+    available: true,
+    sourceTypes: [
+      {
+        value: 'script',
+        label: SCRIPT_LABEL,
+        description: msg({ message: 'A command that prints JSON tasks', context: 'import source type' }),
+        fieldLabel: msg({ message: 'Script', context: 'import source field' }),
+        placeholder: 'node scripts/list-changes.js', // i18n-ok: an example command
+        hint: msg({ message: 'Runs in the project folder. Print a JSON array of items with id, title and body.', context: 'import source type' }),
+        icon: <Terminal size={16} />,
+        multiline: true,
+        itemsHaveNoState: true,
       },
     ],
   },

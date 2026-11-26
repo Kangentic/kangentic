@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Board integration
-description: The BoardAdapter contract for importing issues from GitHub, Azure DevOps, Asana, Jira, Linear, Trello and GitLab and notes from an Obsidian vault, safeStorage async-API behavior for stored credentials, Jira's per-site and GitLab's per-server sign-ins, Linear's API key and OAuth sign-in, the browser sign-ins for Jira and Trello through the kangentic.com token service, the daily check that the shipped Trello, Jira, Linear and GitLab sign-ins still work, the keep-alive pass that renews an idle sign-in, GitLab's own browser sign-in, Trello's Connect dialog, the folder-added Obsidian sources, the Repository folder source read from the project's default branch, a source's Label, the registry and URL parsers, and the steps to add a provider.
+description: The BoardAdapter contract for importing issues from GitHub, Azure DevOps, Asana, Jira, Linear, Trello and GitLab and notes from an Obsidian vault, safeStorage async-API behavior for stored credentials, Jira's per-site and GitLab's per-server sign-ins, Linear's API key and OAuth sign-in, the browser sign-ins for Jira and Trello through the kangentic.com token service, the daily check that the shipped Trello, Jira, Linear and GitLab sign-ins still work, the keep-alive pass that renews an idle sign-in, GitLab's own browser sign-in, Trello's Connect dialog, the folder-added Obsidian sources, the Repository folder source read from the project's default branch, the Script source that runs a command in the project folder, a source's Label, the registry and URL parsers, and the steps to add a provider.
 tags: [boards, import, adapters, credentials]
 sources:
   - resource: src/main/boards/board-registry.ts
@@ -16,7 +16,7 @@ sources:
 ---
 # Board integration
 
-Kangentic imports issues from external boards (GitHub Issues, GitHub Projects, Azure DevOps, Asana, Jira, Linear, Trello, GitLab), and notes and checklist items from an Obsidian vault, into the backlog. Each provider is wrapped behind a common `BoardAdapter` interface so auth, fetching, mapping, and download logic stay isolated to a single folder per provider.
+Kangentic imports issues from external boards (GitHub Issues, GitHub Projects, Azure DevOps, Asana, Jira, Linear, Trello, GitLab), notes and checklist items from an Obsidian vault, and tasks from a command that prints JSON, into the backlog. Each provider is wrapped behind a common `BoardAdapter` interface so auth, fetching, mapping, and download logic stay isolated to a single folder per provider.
 
 This doc covers the adapter system and how to add a new board provider.
 
@@ -53,6 +53,7 @@ src/main/boards/
     obsidian/         # a vault on this computer: two source types, added by folder
     trello/           # API key + user token, read-only, dedicated IPC group
     repo-folder/      # a folder of the project's own repository, read from its default branch
+    import-script/    # a command in the project folder that prints JSON tasks
   board-registry.ts   # BoardRegistry + boardRegistry singleton
   sign-in-keep-alive.ts  # the pass that asks each adapter to renew its idle sign-ins
   index.ts
@@ -586,8 +587,8 @@ per change. Nothing here writes to the repository.
   through `gitAt`, so a remote project's git runs on its host, and a host that cannot answer is an
   error, never an empty list.
 - **The project.** The repository is the folder's repo-relative path. The backlog handlers pass
-  every adapter a `SourceProject` (the project's folder and default branch) beside it; this is the
-  one adapter that reads it.
+  every adapter a `SourceProject` (the project's folder and default branch) beside it; this adapter
+  and the Script source read it.
 - **Items.** `folder-tree.ts` classifies once, for the list and for Browse. A file counts unless it
   is a dot-file or a README. A folder counts only when it holds a top-level file that is not a
   dot-file, so an `archive/` of subfolders drops out, and a change moved into it drops from the
@@ -602,6 +603,29 @@ per change. Nothing here writes to the repository.
   folder the branch does not have is refused by `prepareSource` before anything is saved.
 - **Reads.** One `ls-tree` lists the whole commit, and a reconcile's fetch and prune share it
   through a five-second reuse window, as Obsidian's do.
+
+## Script
+
+`src/main/boards/adapters/import-script/`, source `script`. A command run in the project's folder
+(or on a remote project's host) whose stdout is a JSON array of `{id, title, body}`. Each item
+becomes a backlog task. No sign-in. Kangentic does not scan directories or name the cards: the
+script does that.
+
+- **The saved value is the script.** The add form is a textarea. Enter inserts a newline; Connect
+  submits. A short command (`node scripts/list-changes.js`) or a few lines both work. Complex
+  scanning belongs in a file in the repository; the saved value just runs it.
+- **How it runs.** Locally, the same shell the user's terminals use (`sessionManager.getShell`),
+  in its non-interactive form (`resolveScriptInvocation`: cmd `/c`, PowerShell `-Command`, POSIX
+  `-c`, WSL `bash -lc`). The start goes through `resolveShellLaunch` and `spawnOffMain`, with
+  stdout collected. A remote project runs `sh -c` on the host through the helper's `runCommand`
+  (not the run-script wrapper, which discards output) in the host's project folder. Timeout is
+  15 seconds. A reply past 256 KiB is a refusal, never a truncated success.
+- **JSON.** An array. Each item needs a non-empty string `id` and `title`; `body` defaults to
+  empty. A UTF-8 BOM is stripped. Duplicate ids, non-JSON, a non-zero exit, a timeout, and more
+  than 500 items are refusals the Import UI shows. `prepareSource` only checks the script is not
+  blank; the command runs when Import fetches.
+- **Items.** `externalId` is `id`, `stateCategory` is `open`, `labels` is empty, `externalUrl` is
+  empty. The source's Label is still applied at import through `withSourceTaskLabel`.
 
 ## A source's Label
 
@@ -642,8 +666,9 @@ The contract is locked in by `tests/unit/board-registry.test.ts`, which fails if
 | Obsidian Checklist items | stable | none | Same folder source. Each task line (`- [ ]`, `- [x]`, `- [/]`, `- [-]`) is a task, with the Tasks plugin's markers and Kanban plugin lanes. |
 | Trello | stable | none | API key plus user token, sent only in an `Authorization: OAuth` header and stored encrypted in `trello-credentials.json` under the config directory. Kangentic's own key also signs in through the browser, with nothing to paste (see Trello's Connect dialog). Read-only: a board is read whole (lists and cards, archived ones included), and Closed means an archived card or a card on an archived list. Boards are picked from a list under their Workspace. Ships its own `boards:trello:*` IPC group. |
 | Repository folder | stable | `git` | A folder of the project's own repository, read from its default branch (local or `origin`, whichever is newer). No sign-in. Each file or folder inside is a task. |
+| Script | stable | none | A command in the project's folder that prints a JSON array of items with id, title and body. No sign-in. Runs in the user's shell locally, or on a remote project's host. |
 
-The registry enumerates all 11 providers, and every one is stable. Stable providers dispatch normally. A provider still marked `stub` would not be offered in the import UI (`src/renderer/components/backlog/import-providers.tsx` lists only the stable ones), and IPC handlers would short-circuit it before any throwing method runs.
+The registry enumerates all 12 providers, and every one is stable. Stable providers dispatch normally. A provider still marked `stub` would not be offered in the import UI (`src/renderer/components/backlog/import-providers.tsx` lists only the stable ones), and IPC handlers would short-circuit it before any throwing method runs.
 
 ### Trello's Connect dialog
 

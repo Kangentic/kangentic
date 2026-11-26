@@ -13,6 +13,7 @@ import { trackFeatureUsed, isKnownAnalyticsFeature } from '../analytics/usage';
 import { ProjectRepository } from '../db/repositories/project-repository';
 import { ProjectGroupRepository } from '../db/repositories/project-group-repository';
 import { SessionManager } from '../pty/session-manager';
+import { setImportScriptShellLookup } from '../boards';
 import { UtilityPtyHostTransport } from '../pty/host/utility-pty-host-transport';
 import { PTY_HOST_STALL_AT_QUIT_FILE_NAME } from '../pty/host/pty-host-report';
 import { setOffMainExecutor } from '../utility-process/off-main-exec';
@@ -163,6 +164,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
     stallAtQuitFilePath: path.join(PATHS.configDir, PTY_HOST_STALL_AT_QUIT_FILE_NAME),
   });
   const sessionManager = new SessionManager({ ptyHostTransport });
+  setImportScriptShellLookup(() => sessionManager.getShell());
   ptyHostTransport.start();
   // What each agent CLI answered on an earlier launch, so listing the agents
   // starts no CLI nobody is using (agent-probe-store.ts). Main is the only

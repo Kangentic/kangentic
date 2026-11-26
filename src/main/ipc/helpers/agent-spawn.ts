@@ -352,9 +352,9 @@ export function setupStillRunningNote(initScript: string): string {
  * Whether a message may follow a fresh spawn's task template in the same
  * opening (#1138). Sent after the spawn, a long one waited out the agent's
  * whole first turn, and a short one was typed into it at the scheduler's
- * fallback. A slash command runs only as a prompt's first word, and a
- * `deferred` message waits for the template's turn to end, so both still go
- * after the spawn.
+ * fallback. A slash command runs only as a prompt's first word, so it does
+ * not follow the template: on a cold spawn it takes the opening slot instead.
+ * A `deferred` message waits for the template's turn to end.
  */
 function canFollowTemplate(message: string | undefined, mode: AutoCommandMode | undefined): message is string {
   return message !== undefined && message.trim() !== '' && mode === 'immediate' && !isSlashCommand(message);
@@ -1090,12 +1090,18 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     // message, and a promptless fresh spawn (an isolated review column) would
     // otherwise sit at an empty prompt, emit no 'thinking' event, and make the
     // keystroke scheduler wait out its full 30s fallback before the message
-    // appears. That reads as "the automation never ran". Where the slot holds
-    // the task template, a message that may follow it (`canFollowTemplate`)
-    // goes in the same opening, after it (`joinsTemplate`).
+    // appears. That reads as "the automation never ran". An immediate slash
+    // command on a cold spawn takes the slot too, and this spawn skips the
+    // task template so the command stays the prompt's first word. Where the
+    // slot still holds the task template, a message that may follow it
+    // (`canFollowTemplate`) goes in the same opening, after it (`joinsTemplate`).
     const overrideBeforeTake = pendingTaskOverride;
     const message = takeMessage(pendingPrompt?.message ?? '');
-    const promptSlotOpen = canResumeDestination || skipPromptTemplate === true;
+    const skipForImmediateSlash = !canResumeDestination
+      && pendingPrompt?.mode === 'immediate'
+      && isSlashCommand(message);
+    const effectiveSkipTemplate = skipPromptTemplate === true || skipForImmediateSlash;
+    const promptSlotOpen = canResumeDestination || effectiveSkipTemplate;
     // Judged on the message the spawn sends, which a task's own command can
     // replace, with the row's mode.
     const mayFollowTemplate = canFollowTemplate(message, pendingPrompt?.mode);
@@ -1167,7 +1173,7 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
         ? options.setupStillRunning
         : undefined;
       const outcome = await engine.resumeSuspendedSession(
-        beforeSpawn, toLane.permission_mode, skipPromptTemplate, opening.prompt, signal,
+        beforeSpawn, toLane.permission_mode, effectiveSkipTemplate, opening.prompt, signal,
         targetAgent,
         setupNote,
         {

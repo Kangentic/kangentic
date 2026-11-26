@@ -267,3 +267,31 @@ test.describe('The Repository folder source', () => {
     await browser.close();
   });
 });
+
+test.describe('The Script source', () => {
+  test('saves a command and its Label, with no Browse', async () => {
+    const { browser, page } = await launchPage();
+    await createProject(page, 'import-script');
+    await openPopover(page);
+    await page.locator('[data-testid="add-import-source-btn"]').click();
+    await page.locator('[data-testid="import-provider-script"]').click();
+
+    const scriptInput = page.locator('[data-testid="import-source-url-input"]');
+    const labelInput = page.locator('[data-testid="import-source-label-input"]');
+
+    await expect(scriptInput).toBeVisible();
+    await expect(page.locator('[data-testid="import-source-browse-btn"]')).toHaveCount(0);
+    await expect(scriptInput).toHaveJSProperty('tagName', 'TEXTAREA');
+
+    await scriptInput.fill('node scripts/list-changes.js');
+    await expect(labelInput).toHaveValue('list-changes.js');
+    await labelInput.fill('openspec');
+    await page.locator('[data-testid="import-source-connect-btn"]').click();
+    await expect(page.locator('[data-testid="import-dialog"]')).toBeVisible();
+    expect(await readMock(page, '__mockImportSourcesAddCalls')).toEqual([
+      { source: 'script', url: 'node scripts/list-changes.js', taskLabel: 'openspec' },
+    ]);
+
+    await browser.close();
+  });
+});

@@ -1,4 +1,5 @@
 export { boardRegistry, BoardRegistry, repoFolderAdapter } from './board-registry';
+export { setImportScriptShellLookup } from './adapters/import-script';
 export type {
   BoardAdapter,
   AdapterStatus,

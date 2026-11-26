@@ -88,6 +88,11 @@ msgstr "{sourceLabel} en {host}"
 msgid "{summary}."
 msgstr "{summary}."
 
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "A command that prints JSON tasks"
+msgstr ""
+
 #: src/renderer/components/backlog/ImportSourceForm.tsx
 #, fuzzy
 msgid "About {about}"
@@ -477,6 +482,10 @@ msgstr ""
 
 #: src/renderer/components/backlog/ImportSourceForm.tsx
 msgid "From the link. Put on every task it imports."
+msgstr ""
+
+#: src/renderer/components/backlog/ImportSourceForm.tsx
+msgid "From the script. Put on every task it imports."
 msgstr ""
 
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
@@ -894,12 +903,27 @@ msgstr ""
 msgid "Retry"
 msgstr "Reintentar"
 
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Runs in the project folder. Print a JSON array of items with id, title and body."
+msgstr ""
+
 #: src/renderer/components/backlog/ImportSourceForm.tsx
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #, fuzzy
 msgctxt "button"
 msgid "Save"
 msgstr "Guardar"
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import provider"
+msgid "Script"
+msgstr ""
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source field"
+msgid "Script"
+msgstr ""
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy

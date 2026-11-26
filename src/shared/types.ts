@@ -6085,7 +6085,8 @@ export type ExternalSource =
   | 'obsidian_notes'
   | 'obsidian_checklist'
   | 'gitlab'
-  | 'repo_folder';
+  | 'repo_folder'
+  | 'script';
 
 export interface ImportSource {
   id: string;

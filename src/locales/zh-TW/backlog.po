@@ -77,6 +77,11 @@ msgstr "{host} 上的 {sourceLabel}"
 msgid "{summary}."
 msgstr "{summary}。"
 
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "A command that prints JSON tasks"
+msgstr ""
+
 #: src/renderer/components/backlog/ImportSourceForm.tsx
 msgid "About {about}"
 msgstr "關於 {about}"
@@ -420,6 +425,10 @@ msgstr "取自資料夾名稱，加到它匯入的每個任務上。"
 #: src/renderer/components/backlog/ImportSourceForm.tsx
 msgid "From the link. Put on every task it imports."
 msgstr "取自連結，加到它匯入的每個任務上。"
+
+#: src/renderer/components/backlog/ImportSourceForm.tsx
+msgid "From the script. Put on every task it imports."
+msgstr ""
 
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
 #, fuzzy
@@ -791,11 +800,26 @@ msgstr "存放庫資料夾"
 msgid "Retry"
 msgstr "重試"
 
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Runs in the project folder. Print a JSON array of items with id, title and body."
+msgstr ""
+
 #: src/renderer/components/backlog/ImportSourceForm.tsx
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 msgctxt "button"
 msgid "Save"
 msgstr "儲存"
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import provider"
+msgid "Script"
+msgstr ""
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source field"
+msgid "Script"
+msgstr ""
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 msgid "Select all"

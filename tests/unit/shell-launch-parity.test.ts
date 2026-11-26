@@ -10,7 +10,7 @@ import path from 'node:path';
 // Two checks keep that true. A literal `shell: true` is the usual way to launch
 // a shell with child_process, and it appears in src/main only inside
 // shell-launch.ts, so a new one anywhere else is a launch that skipped the
-// helper. And the four known launch sites must keep calling resolveShellLaunch,
+// helper. And the known launch sites must keep calling resolveShellLaunch,
 // so a refactor cannot quietly drop one.
 //
 // Not covered: a hand-written `[shell, '-c', command]` launch, and `exec()`,
@@ -27,6 +27,7 @@ const LAUNCH_SITES = [
   'src/main/ipc/handlers/system.ts',
   'src/main/automations/adapters/run-script/index.ts',
   'src/main/git/spawn-with-abort.ts',
+  'src/main/boards/adapters/import-script/runner.ts',
 ];
 
 function collectSourceFiles(directory: string): string[] {

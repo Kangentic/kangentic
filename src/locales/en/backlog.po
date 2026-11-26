@@ -74,6 +74,11 @@ msgstr "{sourceLabel} on {host}"
 msgid "{summary}."
 msgstr "{summary}."
 
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "A command that prints JSON tasks"
+msgstr "A command that prints JSON tasks"
+
 #: src/renderer/components/backlog/ImportSourceForm.tsx
 msgid "About {about}"
 msgstr "About {about}"
@@ -403,6 +408,10 @@ msgstr "From the folder name. Put on every task it imports."
 #: src/renderer/components/backlog/ImportSourceForm.tsx
 msgid "From the link. Put on every task it imports."
 msgstr "From the link. Put on every task it imports."
+
+#: src/renderer/components/backlog/ImportSourceForm.tsx
+msgid "From the script. Put on every task it imports."
+msgstr "From the script. Put on every task it imports."
 
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
 msgid "GitLab rejected this token."
@@ -749,11 +758,26 @@ msgstr "Repository folder"
 msgid "Retry"
 msgstr "Retry"
 
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Runs in the project folder. Print a JSON array of items with id, title and body."
+msgstr "Runs in the project folder. Print a JSON array of items with id, title and body."
+
 #: src/renderer/components/backlog/ImportSourceForm.tsx
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 msgctxt "button"
 msgid "Save"
 msgstr "Save"
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import provider"
+msgid "Script"
+msgstr "Script"
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source field"
+msgid "Script"
+msgstr "Script"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 msgid "Select all"
