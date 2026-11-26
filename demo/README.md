@@ -1232,9 +1232,15 @@ run prints it:
 - `browser-annotations` draws its badges' numbers in `system-ui` inside a closed shadow root, which
   keeps the page's CSS away from them and keeps every measure out too, so each OS draws the digit
   in its own face where the gate cannot leave it out. Its pixels are not held; its layout is.
-- `workflow-draft`, `settings-workflows` and the two redis scenes (`ssh-remote-project`,
-  `ssh-remote-host`) break one long text a word differently at 125 or 150 percent, where Chromium
-  lays text out with fractional advances. Their text is held at whole scales only.
+- `workflow-draft`, `settings-privacy` and the two redis scenes
+  (`ssh-remote-project`, `ssh-remote-host`) break one long text a word differently at 125 or 150
+  percent, where a sub-pixel difference moves one break. Chromium lays text out with fractional
+  advances there, and draws a 1px border one device pixel thick (0.8 and 0.67 CSS px), which
+  widens the box inside it. On `settings-privacy` the glyph widths match the poster to 0.01 px,
+  and the settings borders make the column 0.2 and 0.33 px wider, enough for one more word on a
+  Privacy line that fills it to within 0.2 px. Their text is held at whole scales only.
+  `settings-workflows` was on this list until v0.64.0's posters, when its text matched at 125 and
+  150 percent with nothing skipped, so its text is held at every scale again.
 
 What the gate found is fixed at the cause. The Changes scenes reported ready before the diff had
 laid out: Monaco lands the diff and folds the unchanged regions a task later, which moved every

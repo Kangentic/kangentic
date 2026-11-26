@@ -58,8 +58,10 @@ export interface GateCase {
  *                     the page is held.
  *   held-terminals    a terminal held at a smaller type takes another grid at another display
  *                     scale; its terminals are held only at the poster's own scale.
- *   fractional-wraps  a long text breaks one word differently at 125 or 150 percent, where
- *                     Chromium lays text out with fractional advances; its text is held only at
+ *   fractional-wraps  a long text breaks one word differently at 125 or 150 percent, where a
+ *                     sub-pixel difference moves one break. Chromium lays text out with
+ *                     fractional advances, and draws a 1px border one device pixel thick (0.8 and
+ *                     0.67 CSS px), which widens the box inside it. Its text is held only at
  *                     whole scales.
  *   pixels            something on the frame is drawn to the frame's running clock, so where it
  *                     ends depends on when the shot lands; its layout and terminals are held.
@@ -87,7 +89,7 @@ export const GATE_KNOWN_DIFFERENCES: Record<string, { skips: GateKnownDifference
   'task-mcp': { skips: 'held-terminals', reason: HELD_TERMINAL_REASON },
   'command-terminal-tiled': { skips: 'held-terminals', reason: HELD_TERMINAL_REASON },
   'workflow-draft': { skips: 'fractional-wraps', reason: 'the draft\'s long description breaks one word later at 125 and 150 percent, where Chromium lays text out with fractional advances' },
-  'settings-workflows': { skips: 'fractional-wraps', reason: 'the Workflow agent prompt breaks one word differently at 150 percent, where Chromium lays text out with fractional advances' },
+  'settings-privacy': { skips: 'fractional-wraps', reason: 'the Privacy line on automation paste facts fills its column to within 0.2 px; at 125 and 150 percent Chromium draws the settings panel\'s 1px borders one device pixel thick, so the column is 0.2 and 0.33 px wider and "fixed" fits on its first line (run 45706413566)' },
   'browser-annotations': { skips: 'pixels', reason: 'the annotation badges draw their numbers in system-ui inside a closed shadow root (annotationLayerScript.ts keeps the page\'s CSS away from them), so each OS draws the digit in its own face and no measure can reach the text to leave it out; the page around them, and its layout, are held' },
   'activity-overlay': { skips: 'pixels', reason: 'the overlay draws each session\'s timeline up to the frame\'s running clock, so its bars end a few pixels further along on a slower runner (3 device px on macOS in run 45118082966); its text, clocks included, is held' },
   'ssh-remote-project': { skips: 'fractional-wraps', reason: 'the cut-short description on the "Fix flaky replication test on slow disks" card breaks one word later at 150 percent, where Chromium lays text out with fractional advances' },
