@@ -146,6 +146,8 @@ A Cursor on a remote host over SSH (#913) runs as `cursor-agent`, found by the h
 | `plan` | `--trust --mode plan`, session screen stays open | Plan (Read-Only) |
 | `bypassPermissions` | `--trust -p ... --output-format stream-json`, or `--trust` and the session screen with no prompt | Non-Interactive (Full Access) |
 
+Cursor has no `dontAsk` or `auto` mode, so neither is offered. A stored one starts the way `bypassPermissions` does: on the print path, or on the session screen when there is no prompt.
+
 ## Model seed
 
 A start with a column model passes `--model <id>`, and `configuredModelFromCommand` reads it back
