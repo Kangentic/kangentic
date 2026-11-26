@@ -2222,6 +2222,30 @@ describe('Config Manager - project overrides served from memory', () => {
     expect(configManager.getEffectiveConfig(projectDir).theme).toBe('ember');
   });
 
+  it('aborts an in-flight re-read before saving the same file', async () => {
+    const projectDir = path.join(tmpDir, 'proj-abort-reread');
+    writeProjectConfig(projectDir, JSON.stringify({ theme: 'forest' }));
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const configManager = await createConfigManager();
+    expect(configManager.getEffectiveConfig(projectDir).theme).toBe('forest');
+    // A hanging promise: a real overlapping readFile is what Windows refuses a
+    // rename over, so this test only checks that save aborts the signal.
+    const readFile = vi.spyOn(fs.promises, 'readFile').mockImplementation(
+      () => new Promise<string>(() => undefined),
+    );
+
+    vi.setSystemTime(Date.now() + 1001);
+    configManager.getEffectiveConfig(projectDir);
+    const refreshCall = readFile.mock.calls.find((call) => call[0] === projectConfigPath(projectDir));
+    expect(refreshCall?.[1]).toEqual(expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    const signal = (refreshCall?.[1] as { signal: AbortSignal }).signal;
+
+    configManager.saveProjectOverrides(projectDir, { theme: 'ember' });
+
+    expect(signal.aborted).toBe(true);
+    expect(configManager.getEffectiveConfig(projectDir).theme).toBe('ember');
+  });
+
   it('does not serve a save that did not reach disk', async () => {
     const projectDir = path.join(tmpDir, 'proj-unwritable');
     fs.mkdirSync(projectDir, { recursive: true });

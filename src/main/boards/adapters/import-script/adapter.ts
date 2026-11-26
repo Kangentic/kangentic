@@ -11,7 +11,6 @@ import {
   type BoardAdapter,
   type DownloadedAttachment,
   type PrerequisiteResult,
-  type PreparedSource,
   type SourceProject,
   registerSourceUrlParser,
 } from '../../shared';
@@ -58,13 +57,6 @@ export class ImportScriptAdapter implements BoardAdapter {
 
   async checkCli(): Promise<ImportCheckCliResult> {
     return { available: true, authenticated: true };
-  }
-
-  /** A blank script is refused before anything is saved. The command is not run here. */
-  async prepareSource(repository: string): Promise<PreparedSource> {
-    const script = repository.trim();
-    if (!script) throw new RefusalError('No script to run.');
-    return { label: firstLineOf(script), repository: script };
   }
 
   async fetch(

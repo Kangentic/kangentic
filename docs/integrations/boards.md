@@ -622,8 +622,9 @@ script does that.
   15 seconds. A reply past 256 KiB is a refusal, never a truncated success.
 - **JSON.** An array. Each item needs a non-empty string `id` and `title`; `body` defaults to
   empty. A UTF-8 BOM is stripped. Duplicate ids, non-JSON, a non-zero exit, a timeout, and more
-  than 500 items are refusals the Import UI shows. `prepareSource` only checks the script is not
-  blank; the command runs when Import fetches.
+  than 500 items are refusals the Import UI shows. Add saves the script the same way GitHub
+  saves a URL (`ImportSourceStore.add`); the command runs when Import fetches. A blank script
+  is refused by the form and by fetch.
 - **Items.** `externalId` is `id`, `stateCategory` is `open`, `labels` is empty, `externalUrl` is
   empty. The source's Label is still applied at import through `withSourceTaskLabel`.
 

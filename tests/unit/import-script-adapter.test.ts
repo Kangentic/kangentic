@@ -178,18 +178,15 @@ describe('ImportScriptAdapter', () => {
     await expect(adapter.fetch(fetchInput(), noneImported, project)).rejects.toThrow(/JSON array/);
   });
 
-  it('prepareSource refuses a blank script and does not run it', async () => {
-    const runner = makeRunner();
-    const adapter = new ImportScriptAdapter(runner);
-    await expect(adapter.prepareSource('  ')).rejects.toThrow(/No script/);
-    expect(runner.runLocal).not.toHaveBeenCalled();
+  it('does not implement prepareSource, so add saves through ImportSourceStore alone', () => {
+    const adapter = new ImportScriptAdapter(makeRunner());
+    expect(adapter.prepareSource).toBeUndefined();
   });
 
-  it('prepareSource keeps the script as the repository', async () => {
-    const adapter = new ImportScriptAdapter(makeRunner());
-    await expect(adapter.prepareSource(`  ${SCRIPT}  `)).resolves.toEqual({
-      label: SCRIPT,
-      repository: SCRIPT,
-    });
+  it('fetch refuses a blank script and does not run it', async () => {
+    const runner = makeRunner();
+    const adapter = new ImportScriptAdapter(runner);
+    await expect(adapter.fetch(fetchInput('  '), noneImported, project)).rejects.toThrow(/No script/);
+    expect(runner.runLocal).not.toHaveBeenCalled();
   });
 });
