@@ -1,7 +1,7 @@
 ---
 type: Guide
 title: Backlog
-description: "The backlog staging view: creating and editing items, labels and the priority scale, filtering, bulk Move to Board, drag reorder, and Import, which pulls GitHub Issues, GitHub Projects, Azure DevOps, Asana, Jira, Linear, Trello and GitLab items, and Obsidian notes and checklist items, with incremental sync and duplicate detection."
+description: "The backlog staging view: creating and editing items, labels and the priority scale, filtering, bulk Move to Board, drag reorder, and Import, which pulls GitHub Issues, GitHub Projects, Azure DevOps, Asana, Jira, Linear, Trello and GitLab items, Obsidian notes and checklist items, a repository folder, and a project script, with incremental sync and duplicate detection."
 tags: [backlog, import, labels, priorities]
 sources:
   - resource: src/renderer/components/backlog/
