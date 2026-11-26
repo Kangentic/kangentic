@@ -490,6 +490,7 @@ export function ImportDialog({ source, onClose, onSourceReplaced }: ImportDialog
         source: source.source,
         repository: source.repository,
         sourceId: source.id,
+        ...(sourceTaskLabel ? { taskLabel: sourceTaskLabel } : {}),
         issues: selectedIssues.map((issue) => ({
           externalId: issue.externalId,
           externalUrl: issue.externalUrl,

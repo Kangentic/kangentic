@@ -634,9 +634,10 @@ name). The add form fills it from the last part of the typed link or the picked 
 ending dropped) until the user types in it, and a blank Label is not saved. A source picker
 (Linear, Trello) connects on pick, so its Label is set afterwards. **Edit source** in a saved row's
 menu changes or clears it through `BACKLOG_IMPORT_SOURCES_UPDATE` (`ImportSourceStore.update`).
-`BACKLOG_IMPORT_EXECUTE` takes the saved source's id (`sourceId`) and adds its Label to every item
-it creates, unless the item already carries it in any letter case. Promote carries the labels on
-to the task.
+`BACKLOG_IMPORT_EXECUTE` takes the Label the dialog held (`taskLabel`) and the saved source's id
+(`sourceId`). The dialog's Label is added to every item it creates, unless the item already
+carries it in any letter case. `sourceId` is the fallback when the dialog did not send a Label.
+Promote carries the labels on to the task.
 
 ## Adding a New Provider
 

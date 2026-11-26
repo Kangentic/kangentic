@@ -261,7 +261,11 @@ test.describe('The Repository folder source', () => {
     await test.step('the import names the saved source, whose Label main adds', async () => {
       await page.locator('[data-testid="import-issue-add-login"]').click();
       await page.locator('[data-testid="import-execute-btn"]').click();
-      await expect.poll(() => readMock(page, '__lastImportExecuteInput')).toMatchObject({ source: 'repo_folder', sourceId: 'repo-src' });
+      await expect.poll(() => readMock(page, '__lastImportExecuteInput')).toMatchObject({
+        source: 'repo_folder',
+        sourceId: 'repo-src',
+        taskLabel: 'openspec',
+      });
     });
 
     await browser.close();

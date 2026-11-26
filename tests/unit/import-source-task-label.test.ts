@@ -159,6 +159,18 @@ describe('BACKLOG_IMPORT_EXECUTE with a saved source', () => {
     expect(await importedLabels([makeIssue({ labels: ['bug'] })], undefined)).toEqual([['bug']]);
   });
 
+  it("uses the dialog's Label when the saved source is missing", async () => {
+    savedSources = [];
+    await handlerFor(IPC.BACKLOG_IMPORT_EXECUTE)(null, {
+      source: 'script',
+      repository: 'node scripts/list-changes.js',
+      sourceId: 'gone',
+      taskLabel: 'changes',
+      issues: [makeIssue({ labels: [] })],
+    });
+    expect(backlogRepoMock.create.mock.calls[0][0].labels).toEqual(['changes']);
+  });
+
   it('withSourceTaskLabel ignores a blank Label', () => {
     expect(withSourceTaskLabel(['bug'], '   ')).toEqual(['bug']);
   });

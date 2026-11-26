@@ -13,6 +13,27 @@ import { migrateLegacyMemoryKeys } from './legacy-memory-keys';
 import { timeSyncWork } from '../diagnostics/event-loop-lag';
 import { PREVIOUS_TERMINAL_DEFAULTS, isPreviousTerminalDefault, nativeTerminalDefaults } from '../../shared/terminal-native-defaults';
 
+/**
+ * Settings writes replace `.kangentic/config.json` wholesale. Import sources
+ * live in that file and are not a setting, so a snapshot that omitted them
+ * (or held an older list) would drop a source Import Tasks just saved. Copy
+ * the live list from disk; ignore `importSources` on the incoming payload.
+ */
+function withPreservedImportSources(
+  configPath: string,
+  overrides: Partial<AppConfig>,
+): Record<string, unknown> {
+  const payload: Record<string, unknown> = { ...overrides };
+  delete payload.importSources;
+  try {
+    const existing = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
+    if (Array.isArray(existing.importSources)) payload.importSources = existing.importSources;
+  } catch {
+    // No file yet, or unreadable: write the overrides as they are.
+  }
+  return payload;
+}
+
 /** `DEFAULT_CONFIG` with this platform's native terminal font, size and cursor, as a
  *  fresh copy: the shallow spread the load paths used shared `DEFAULT_CONFIG`'s nested
  *  `terminal` object, which a later write to `this.config.terminal` would mutate. */
@@ -574,12 +595,18 @@ export class ConfigManager {
   /** Same non-throwing contract as `save()`, for the per-project `.kangentic/config.json`.
    *  Returns whether the write reached disk. When it did, `getEffectiveConfig`
    *  serves the new overrides at once; when it did not, the next read goes back
-   *  to the unchanged file, so the change is lost rather than served unsaved. */
+   *  to the unchanged file, so the change is lost rather than served unsaved.
+   *
+   *  Import sources are not a setting. This write replaces the whole file, so a
+   *  settings snapshot taken before Import Tasks added a source would drop it.
+   *  The live `importSources` list is copied from disk and never taken from
+   *  `overrides`. */
   saveProjectOverrides(projectPath: string, overrides: Partial<AppConfig>): boolean {
     const configPath = path.join(projectPath, '.kangentic', 'config.json');
-    const persisted = safeWriteJson(configPath, overrides, 'config_project_override');
+    const toWrite = withPreservedImportSources(configPath, overrides);
+    const persisted = safeWriteJson(configPath, toWrite, 'config_project_override');
     if (persisted) {
-      this.cacheProjectOverrides(projectPath, overrides, null);
+      this.cacheProjectOverrides(projectPath, toWrite as Partial<AppConfig>, null);
     } else {
       this.projectOverridesCache.delete(this.overridesKey(projectPath));
     }
