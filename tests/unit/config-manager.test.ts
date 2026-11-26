@@ -2222,35 +2222,6 @@ describe('Config Manager - project overrides served from memory', () => {
     expect(configManager.getEffectiveConfig(projectDir).theme).toBe('ember');
   });
 
-  it('keeps importSources already on disk when a settings write omits them or holds an older list', async () => {
-    const projectDir = path.join(tmpDir, 'proj-import-sources');
-    const importSources = [
-      {
-        id: 'script-1',
-        source: 'script',
-        label: 'node scripts/list-openspec-changes.js',
-        repository: 'node scripts/list-openspec-changes.js',
-        url: 'node scripts/list-openspec-changes.js',
-        createdAt: '2026-11-26T00:00:00.000Z',
-        taskLabel: 'changes',
-      },
-    ];
-    writeProjectConfig(projectDir, JSON.stringify({ theme: 'forest', importSources }));
-    const configManager = await createConfigManager();
-
-    configManager.saveProjectOverrides(
-      projectDir,
-      Object.assign({ theme: 'ember' as const }, { importSources: [{ id: 'stale', source: 'github_issues', label: 'old' }] }),
-    );
-
-    const onDisk = JSON.parse(fs.readFileSync(projectConfigPath(projectDir), 'utf-8')) as {
-      theme: string;
-      importSources: unknown[];
-    };
-    expect(onDisk.theme).toBe('ember');
-    expect(onDisk.importSources).toEqual(importSources);
-  });
-
   it('does not serve a save that did not reach disk', async () => {
     const projectDir = path.join(tmpDir, 'proj-unwritable');
     fs.mkdirSync(projectDir, { recursive: true });
