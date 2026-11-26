@@ -61,8 +61,8 @@
  * The last three describes pin the held messages (src/main/held-messages) on the
  * paths the enter-group tests do not reach: the handoff branch's one typed message
  * (pointer, column message, held text) and its slash-command paste, a move
- * superseded before `deliverHeldRemainder` runs, and a slash command typed at a
- * fresh spawn with no prompt slot. Each test names its own red-green line.
+ * superseded before `deliverHeldRemainder` runs, and a slash command that takes
+ * a fresh spawn's opening slot. Each test names its own red-green line.
  *
  * Red-green: delete the `if (outcome?.recapOnly) return { withholdMessages: ... }`
  * line in `startAgent` and the first test fails; key it on `outcome?.startOver`
@@ -945,15 +945,16 @@ describe('spawnAgent: the task\'s own auto_command in a column with no row that 
     );
   });
 
-  it('keeps a slash command out of a plain fresh spawn\'s opening, and types it after', async () => {
+  it('puts a slash command in a plain fresh spawn\'s opening, and sends nothing after it', async () => {
     await runEnterGroup({
       rows: [],
       taskFields: { auto_command: '/standup' },
       noResumableDestination: true,
     });
 
-    expect(mockResumeSuspendedSession.mock.calls[0][3]).toBeUndefined();
-    expect(deliveredMessages()).toEqual(['/standup']);
+    expect(mockResumeSuspendedSession.mock.calls[0][2]).toBe(true);
+    expect(mockResumeSuspendedSession.mock.calls[0][3]).toBe('/standup');
+    expect(deliveredMessages()).toEqual([]);
   });
 
   it('delivers nothing when the spawn was recap-only, because the recap is the session\'s whole prompt', async () => {
@@ -1983,7 +1984,7 @@ describe('spawnAgent: held messages when the move is superseded after the agent 
   });
 });
 
-describe('spawnAgent: a slash command typed at a fresh spawn with no prompt slot', () => {
+describe('spawnAgent: a slash command that takes a fresh spawn\'s opening slot', () => {
   let consoleLogSpy: ReturnType<typeof vi.spyOn>;
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 
@@ -1998,30 +1999,23 @@ describe('spawnAgent: a slash command typed at a fresh spawn with no prompt slot
     consoleErrorSpy.mockRestore();
   });
 
-  // Red-green: in `deliverToAgent`, drop the `if (opening.heldAfterTurn) {
-  // heldAfterLeadTurn = true; } else {` branch so the held text always joins.
-  // The claim is then handed to the slash command's delivery
-  // (`heldHandedOff = true`), `pasteHeldAfterTurn` never runs, and that
-  // delivery's report settles the claim, which the last assertion catches.
-  it('types the command alone and pastes the held text after its turn', async () => {
+  // Red-green: in `composeOpeningMessage`, drop the slash `heldAfterTurn` branch
+  // so the held text joins the opening. `pasteHeldAfterTurn` never runs, and
+  // `commitWhenSessionRuns` settles the claim with the prompt.
+  it('puts the command in the opening and pastes the held text after its turn', async () => {
     const claim = fakeHeldClaim();
     mockClaimHeldMessages.mockReturnValue(claim);
 
     await runEnterGroup({ rows: [messageRow('/code-review main')], noResumableDestination: true });
 
-    // The task template took the prompt slot, so the command was typed and nothing held rode the resume.
-    expect(mockResumeSuspendedSession.mock.calls[0][3]).toBeUndefined();
-    expect(deliveredMessages()).toEqual(['/code-review main']);
+    expect(mockResumeSuspendedSession.mock.calls[0][2]).toBe(true);
+    expect(mockResumeSuspendedSession.mock.calls[0][3]).toBe('/code-review main');
+    expect(deliveredMessages()).toEqual([]);
     expect(mockPasteHeldAfterTurn).toHaveBeenCalledTimes(1);
     expect(mockPasteHeldAfterTurn).toHaveBeenCalledWith(expect.anything(), claim, 'session-new');
-    // After the command, never before it.
-    expect(mockDeliverAgentMessageInBackground.mock.invocationCallOrder[0])
-      .toBeLessThan(mockPasteHeldAfterTurn.mock.invocationCallOrder[0]);
+    expect(mockDeliverAgentMessageInBackground).not.toHaveBeenCalled();
     expect(mockCommitWhenSessionRuns).not.toHaveBeenCalled();
     expect(claim.release).not.toHaveBeenCalled();
-
-    // The typed command carries nothing of the claim, so its report settles nothing.
-    reportOutcomeOf(mockDeliverAgentMessageInBackground, injectionReport(['/code-review main']));
     expect(mockSettleClaimFromReport).not.toHaveBeenCalled();
   });
 });
