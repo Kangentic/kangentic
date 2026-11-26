@@ -3,7 +3,10 @@
  *
  * Verifies that:
  *  1. When maxConcurrentSessions is exceeded, extra sessions are queued
- *  2. Queued sessions promote to running when active sessions exit
+ *  2. Queued sessions promote to running when active sessions exit. The
+ *     wiring this needs a real PTY for: a killed session keeps its slot
+ *     until the pty host reports the PTY's exit, and that exit is what
+ *     marks the row exited and promotes the queue.
  *  3. Multiple tasks moved to an agent column simultaneously each get
  *     their own distinct session (no "missing tab" bug)
  *
@@ -85,22 +88,36 @@ async function waitForRunningCount(page: Page, count: number, timeoutMs = 15000)
     .toBe(count);
 }
 
-/**
- * Get session counts by status via IPC.
- */
-async function getSessionCounts(page: Page): Promise<{ running: number; queued: number; exited: number }> {
+/** One row of main's session registry, as `sessions.list()` reports it. */
+interface SessionRow {
+  id: string;
+  taskId: string;
+  status: string;
+}
+
+/** Main's session registry (`listSessions`), not the renderer's replica. */
+async function listSessionRows(page: Page): Promise<SessionRow[]> {
   return page.evaluate(async () => {
     const sessions = await window.electronAPI.sessions.list();
-    let running = 0;
-    let queued = 0;
-    let exited = 0;
-    for (const s of sessions) {
-      if (s.status === 'running') running++;
-      else if (s.status === 'queued') queued++;
-      else if (s.status === 'exited') exited++;
-    }
-    return { running, queued, exited };
+    return sessions.map((session) => ({ id: session.id, taskId: session.taskId, status: session.status }));
   });
+}
+
+/**
+ * The status of one session by id, or 'missing' when its row is gone. Polled
+ * as a value, so a timeout prints what the row actually read.
+ */
+async function sessionStatus(page: Page, sessionId: string): Promise<string> {
+  const rows = await listSessionRows(page);
+  return rows.find((row) => row.id === sessionId)?.status ?? 'missing';
+}
+
+/** Count of rows per status, as one comparable value. */
+function countByStatus(rows: SessionRow[]): { running: number; queued: number } {
+  return {
+    running: rows.filter((row) => row.status === 'running').length,
+    queued: rows.filter((row) => row.status === 'queued').length,
+  };
 }
 
 // =========================================================================
@@ -248,40 +265,50 @@ test.describe('Claude Agent -- Session Queue', () => {
       }, { taskId: taskId!, swimlaneId: planningSwimlaneId! });
     }
 
-    // Wait for at least 2 running sessions
-    await waitForRunningCount(page, 2);
+    // At cap 2, two of the three tasks run and the third waits in the queue.
+    // Polled as one value so a timeout prints the counts it last saw.
+    await expect
+      .poll(async () => countByStatus(await listSessionRows(page)), {
+        timeout: 10_000,
+        intervals: [100, 250, 500],
+        message: 'Expected 2 running sessions and 1 queued at maxConcurrentSessions 2',
+      })
+      .toEqual({ running: 2, queued: 1 });
 
-    // All 3 should have sessions (running or queued)
-    const counts = await getSessionCounts(page);
-    expect(counts.running + counts.queued).toBeGreaterThanOrEqual(2);
+    const rowsAtCap = await listSessionRows(page);
+    // Each task has its own row: the queued one is the third task, not a
+    // second session of a task already running.
+    expect(new Set(rowsAtCap.map((row) => row.taskId))).toEqual(new Set(taskIds));
+    const queuedSessionId = rowsAtCap.find((row) => row.status === 'queued')!.id;
+    const killedSessionId = rowsAtCap.find((row) => row.status === 'running')!.id;
+    const survivingSessionId = rowsAtCap.find((row) => row.status === 'running' && row.id !== killedSessionId)!.id;
 
-    // Kill one running session to trigger queue promotion (if anything is queued)
-    const runningSessions = await page.evaluate(async () => {
-      const sessions = await window.electronAPI.sessions.list();
-      return sessions.filter((s: { status: string }) => s.status === 'running').map((s: { id: string }) => s.id);
-    });
-    expect(runningSessions.length).toBeGreaterThanOrEqual(2);
-
-    // Kill the first running session
+    // Resolves once main has run kill() under the task lock.
     await page.evaluate(async (sessionId) => {
       await window.electronAPI.sessions.kill(sessionId);
-    }, runningSessions[0]);
+    }, killedSessionId);
 
-    // Wait for queue to settle - kill must register as exited, and at least
-    // one slot should still be running (either an original or one promoted
-    // from the queue). Poll instead of a fixed sleep so we leave as soon as
-    // the kill + promotion cycle is reflected.
+    // kill() only closes the PTY. The row reads 'running' and still holds its
+    // slot until the PTY's exit lands (onPtyExit), so wait on that row by id.
     await expect
-      .poll(
-        async () => {
-          const counts = await getSessionCounts(page);
-          return counts.exited >= 1 && counts.running >= 1;
-        },
-        { timeout: 10_000, intervals: [200, 500] },
-      )
-      .toBe(true);
-    const finalCounts = await getSessionCounts(page);
-    expect(finalCounts.running).toBeGreaterThanOrEqual(1);
-    expect(finalCounts.exited).toBeGreaterThanOrEqual(1);
+      .poll(async () => sessionStatus(page, killedSessionId), {
+        timeout: 10_000,
+        intervals: [100, 250, 500],
+        message: 'Expected the killed session to read exited once its PTY exits',
+      })
+      .toBe('exited');
+
+    // The freed slot promotes the queued session. A promotion keeps its id.
+    await expect
+      .poll(async () => sessionStatus(page, queuedSessionId), {
+        timeout: 15_000,
+        intervals: [100, 250, 500],
+        message: 'Expected the queued session to be promoted to running',
+      })
+      .toBe('running');
+
+    // The cap held: the survivor and the promoted session, nothing more.
+    expect(await sessionStatus(page, survivingSessionId)).toBe('running');
+    expect(countByStatus(await listSessionRows(page))).toEqual({ running: 2, queued: 0 });
   });
 });
