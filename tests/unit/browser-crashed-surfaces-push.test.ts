@@ -6,17 +6,25 @@
  * red for a page that stopped in an offscreen lane or a pop-out, or turn red under the
  * wrong owner, or the push floods every window on each pane register.
  *
- * Real `guest-crash-state` runs here. Only the registry (its entries and its membership
- * subscription) and `broadcast` are doubles, so a crash is driven the way Electron drives
- * it: a `render-process-gone` event on a tracked guest.
+ * Real `guest-crash-state` runs here. On main's side only the registry (its entries and its
+ * membership subscription) and `broadcast` are doubles, so a crash is driven the way Electron
+ * drives it: a `render-process-gone` event on a tracked guest. The last describe also loads the
+ * real preload over a faked `contextBridge` and `ipcRenderer`, wired to main's handlers and
+ * broadcast by channel name.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 
-const { registryEntries, membershipListeners, broadcastMock } = vi.hoisted(() => ({
+type RendererListener = (event: unknown, payload: unknown) => void;
+
+const { registryEntries, membershipListeners, broadcastMock, rendererListeners, exposeInMainWorldMock, rendererInvokeMock } = vi.hoisted(() => ({
   registryEntries: [] as Array<{ taskId: string; webContentsId: number }>,
   membershipListeners: [] as Array<() => void>,
   broadcastMock: vi.fn(),
+  // The preload's side of the bridge, for the round trip at the end of this file.
+  rendererListeners: new Map<string, Set<(event: unknown, payload: unknown) => void>>(),
+  exposeInMainWorldMock: vi.fn(),
+  rendererInvokeMock: vi.fn(),
 }));
 
 vi.mock('electron', () => ({
@@ -32,6 +40,26 @@ vi.mock('electron', () => ({
   Notification: { isSupported: vi.fn(() => false) },
   dialog: { showOpenDialog: vi.fn() },
   shell: { openPath: vi.fn(), openExternal: vi.fn() },
+  contextBridge: { exposeInMainWorld: exposeInMainWorldMock },
+  ipcRenderer: {
+    send: vi.fn(),
+    invoke: rendererInvokeMock,
+    on: (channel: string, listener: RendererListener) => {
+      const listeners = rendererListeners.get(channel) ?? new Set<RendererListener>();
+      listeners.add(listener);
+      rendererListeners.set(channel, listeners);
+    },
+    removeListener: (channel: string, listener: RendererListener) => {
+      rendererListeners.get(channel)?.delete(listener);
+    },
+  },
+  webUtils: { getPathForFile: vi.fn() },
+}));
+
+// The preload registers window listeners at module scope.
+vi.mock('../../src/preload/diagnostics/renderer-crash-capture', () => ({
+  installRendererCrashCapture: vi.fn(),
+  reportPushCallbackFailure: vi.fn(),
 }));
 
 vi.mock('../../src/main/browser/browser-url-store', () => ({
@@ -63,6 +91,8 @@ vi.mock('../../src/main/pop-out/window-broadcast', () => ({
 import { crashedSurfaces, registerBrowserHandlers } from '../../src/main/ipc/handlers/browser';
 import { setGuestCrashChangeListener, trackGuestCrash } from '../../src/main/browser/guest-crash-state';
 import { IPC } from '../../src/shared/ipc-channels';
+import { ipcMain } from 'electron';
+import type { ElectronAPI } from '../../src/shared/types';
 
 const TASK_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
 const OWNER_KEY = 'command-terminal::proj-1::slot-1';
@@ -210,5 +240,82 @@ describe('the crashed-surfaces push', () => {
     registryEntries.length = 0;
     fireMembershipChange();
     expect(crashedBroadcasts()).toEqual([{ [TASK_ID]: 'out-of-memory' }, {}]);
+  });
+});
+
+/**
+ * The map from main to a window, through the real preload (task #1226).
+ *
+ * What a user loses if it goes: every renderer test stubs `electronAPI`, so a preload that
+ * listened or invoked on another channel, or a main that never answered the read, would leave
+ * the marks green in the app with every other test passing. The read matters on its own: after
+ * a window reload, an HMR update or a pop-out opening, a page that is still stopped is red only
+ * because of it, since the push already went out.
+ *
+ * The renderer's invoke is routed to main's handler of the same channel, and main's broadcast
+ * to the renderer's listeners of the same channel, so a mismatch on either side reads red.
+ *
+ * Red-green: drop the `BROWSER_CRASHED_SURFACES_GET` handler from browser.ts, or point the
+ * preload's `onCrashedSurfaces` at another channel, and this test fails.
+ */
+describe('the crashed-surfaces map through the preload', () => {
+  const guests: Array<ReturnType<typeof trackedGuest>> = [];
+
+  /** The handler main registered last for a channel; registration runs before each test. */
+  function mainHandler(channel: string): ((event: unknown, ...args: unknown[]) => unknown) | undefined {
+    const registered = vi.mocked(ipcMain.handle).mock.calls.filter((call) => call[0] === channel).at(-1);
+    return registered?.[1] as ((event: unknown, ...args: unknown[]) => unknown) | undefined;
+  }
+
+  async function exposedApi(): Promise<ElectronAPI> {
+    await import('../../src/preload/preload');
+    const exposure = exposeInMainWorldMock.mock.calls.find((call) => call[0] === 'electronAPI');
+    if (!exposure) throw new Error('the preload never exposed window.electronAPI');
+    return exposure[1] as ElectronAPI;
+  }
+
+  beforeEach(() => {
+    broadcastMock.mockClear();
+    membershipListeners.length = 0;
+    registryEntries.length = 0;
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    registerBrowserHandlers(makeContext() as unknown as Parameters<typeof registerBrowserHandlers>[0]);
+    rendererInvokeMock.mockImplementation(async (channel: string, ...args: unknown[]) => {
+      const handler = mainHandler(channel);
+      if (!handler) throw new Error(`main registered no handler for ${channel}`);
+      return handler({}, ...args);
+    });
+    broadcastMock.mockImplementation((_window: unknown, channel: string, payload: unknown) => {
+      for (const listener of rendererListeners.get(channel) ?? []) listener({}, payload);
+    });
+  });
+
+  afterEach(() => {
+    for (const guest of guests.splice(0)) guest.destroy();
+    setGuestCrashChangeListener(null);
+    registryEntries.length = 0;
+    broadcastMock.mockReset();
+    rendererInvokeMock.mockReset();
+    vi.restoreAllMocks();
+  });
+
+  it('a window reads the map main holds, then hears each change until it unsubscribes', async () => {
+    const api = await exposedApi();
+    const guest = trackedGuest(9301);
+    guests.push(guest);
+    registryEntries.push({ taskId: OWNER_KEY, webContentsId: 9301 });
+    // Stopped before the window subscribed: only the read can tell it.
+    guest.crash('oom');
+
+    await expect(api.browser.getCrashedSurfaces()).resolves.toEqual({ [OWNER_KEY]: 'out-of-memory' });
+
+    const received: Array<Record<string, string>> = [];
+    const unsubscribe = api.browser.onCrashedSurfaces((surfaces) => received.push(surfaces));
+    guest.revive();
+    expect(received).toEqual([{}]);
+
+    unsubscribe();
+    guest.crash('killed');
+    expect(received).toEqual([{}]);
   });
 });
