@@ -20,7 +20,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { simpleGit } from 'simple-git';
-import { gitAt, GIT_OUTPUT_MAX_BUFFER, parseDiffStatSummary, parseStatusSummary } from '../../src/main/git/git-client';
+import { gitAt, GitDirectoryMissingError, GIT_OUTPUT_MAX_BUFFER, parseDiffStatSummary, parseStatusSummary } from '../../src/main/git/git-client';
 import { setOffMainExecutor, type OffMainExecutor } from '../../src/main/utility-process/off-main-exec';
 
 let workspace: string;
@@ -113,7 +113,19 @@ describe('gitAt routing', () => {
     const executor = vi.fn<OffMainExecutor>();
     setOffMainExecutor(executor);
 
-    expect(() => gitAt(path.join(workspace, 'missing'))).toThrow('Cannot use simple-git on a directory that does not exist');
+    let thrown: unknown;
+    try {
+      gitAt(path.join(workspace, 'missing'));
+    } catch (error) {
+      thrown = error;
+    }
+    // Named, so a churn read racing a worktree removal can tell it apart, with
+    // the stat failure as its cause so a report says ENOENT. The message stays
+    // simple-git's, which callers read.
+    expect(thrown).toBeInstanceOf(GitDirectoryMissingError);
+    expect((thrown as Error).name).toBe('GitDirectoryMissingError');
+    expect((thrown as Error).message).toBe('Cannot use simple-git on a directory that does not exist');
+    expect(((thrown as Error).cause as NodeJS.ErrnoException).code).toBe('ENOENT');
     expect(executor).not.toHaveBeenCalled();
   });
 
@@ -238,5 +250,47 @@ describe('the parsers on fixed output', () => {
       { path: 'fresh.txt', index: '?', working_dir: '?' },
     ]);
     expect(summary.not_added).toEqual(['fresh.txt']);
+  });
+});
+
+// A Kangentic worktree sits inside the project's own checkout. Found probing
+// Sentry DESKTOP-5N's churn reads: with the worktree's `.git` file gone, git
+// walked up and answered for the main checkout, so a churn read wrote the
+// project's churn as the task's and a HEAD read named the main branch.
+describe('git at the root of a Kangentic worktree', () => {
+  let project: string;
+  let worktree: string;
+
+  beforeAll(() => {
+    project = path.join(workspace, 'ceiling-project');
+    fs.mkdirSync(project);
+    run(project, ['init', '-b', 'main']);
+    run(project, ['config', 'user.email', 'dev@example.com']);
+    run(project, ['config', 'user.name', 'Dev']);
+    fs.writeFileSync(path.join(project, '.gitignore'), '.kangentic/\n');
+    fs.writeFileSync(path.join(project, 'README.md'), 'project\n');
+    run(project, ['add', '-A']);
+    run(project, ['commit', '-q', '-m', 'base']);
+    worktree = path.join(project, '.kangentic', 'worktrees', 'task-1');
+    run(project, ['worktree', 'add', '-q', '-b', 'task-branch', worktree]);
+  });
+
+  it('reads the worktree\'s own branch while its .git file is there', async () => {
+    expect(await gitAt(worktree).revparse(['--abbrev-ref', 'HEAD'])).toBe('task-branch');
+  });
+
+  it('fails as not a repository once its .git file is gone, instead of reading the main checkout', async () => {
+    // Windows marks the file hidden; removing it is what a removal does first.
+    fs.rmSync(path.join(worktree, '.git'), { force: true });
+    // Plain git from the same folder still walks up: the stop is the client's.
+    expect(run(worktree, ['rev-parse', '--abbrev-ref', 'HEAD']).trim()).toBe('main');
+
+    const failure = await gitAt(worktree).revparse(['--abbrev-ref', 'HEAD']).then(
+      () => { throw new Error('git answered for the main checkout'); },
+      (rejection: unknown) => rejection,
+    );
+
+    expect((failure as { name?: string }).name).toBe('GitCommandError');
+    expect((failure as { gitCause?: string }).gitCause).toBe('not_a_repository');
   });
 });

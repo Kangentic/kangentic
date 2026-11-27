@@ -62,9 +62,11 @@ vi.mock('../../src/main/git/worktree-head', () => ({
   readWorktreeHead: mockReadWorktreeHead,
 }));
 
-// The waits a Done removal makes before it moves the worktree, recorded in
-// call order: the churn read the Done move just fired into the worktree, then
-// a creation still setting the path up.
+// The waits a removal makes before it touches the worktree, recorded in call
+// order: the churn read fired into the worktree just before (by the Done move,
+// or by the agent's exit ahead of a cleanup), then, for a Done removal, a
+// creation still setting the path up. The real wait on a pending read is
+// `cleanup-waits-for-churn-read.test.ts`.
 vi.mock('../../src/main/ipc/handlers/git-stats-capture', () => ({
   waitForChurnRead: async () => { callOrder.push('churn-wait'); },
 }));
@@ -403,9 +405,10 @@ describe('cleanupTaskResources', () => {
 
     await cleanupTaskResources(context as never, task, tasks as never, undefined, context.currentProjectPath);
 
-    // Same ordering contract as deleteTaskWorktree: the orphan reap runs
-    // BEFORE the git lock is taken.
-    expect(callOrder).toEqual(['prepare', 'withLock']);
+    // Same ordering contract as deleteTaskWorktree: the churn read the agent's
+    // exit fired is waited out first, then the orphan reap runs BEFORE the git
+    // lock is taken.
+    expect(callOrder).toEqual(['churn-wait', 'prepare', 'withLock']);
     expect(mockPrepareWorktreeForRemoval).toHaveBeenCalledWith(task.worktree_path, 'moderate');
     // Distinct label from deleteTaskWorktree's remove-worktree:<id8>, and
     // BACKGROUND priority so a batch of cleanups never parks a fresh spawn
@@ -445,7 +448,7 @@ describe('cleanupTaskResources', () => {
     // pruneWorktrees/removeBranch both fire, and only AFTER withLock has been
     // entered (i.e. as part of the locked operation, following removeWorktree
     // - they are gated on `removed` inside that same callback).
-    expect(callOrder).toEqual(['prepare', 'withLock', 'pruneWorktrees', 'removeBranch']);
+    expect(callOrder).toEqual(['churn-wait', 'prepare', 'withLock', 'pruneWorktrees', 'removeBranch']);
     expect(mockRemoveBranch).toHaveBeenCalledWith('feature-11');
     expect(tasks.update).toHaveBeenCalledWith({ id: 'task-11', worktree_path: null, branch_name: null, resolved_base_branch: null });
   });

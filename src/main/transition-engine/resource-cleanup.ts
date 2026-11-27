@@ -19,6 +19,7 @@ import { holdsPRIdentity } from '../pr/pr-identity';
 import { withTaskLock } from '../ipc/task-lifecycle-lock';
 import { NOTHING_LEFT_RUNNING, reapVerdictOf, type ReapVerdict } from '../ipc/helpers/reap-verdict';
 import { removeSessionFolders } from '../ipc/helpers/session-folders';
+import { waitForChurnRead } from '../ipc/handlers/git-stats-capture';
 import { workflowKeepsRuns, type AutomationRunRepository } from '../db/repositories/automation-run-repository';
 import { WorkflowRepository } from '../db/repositories/workflow-repository';
 import { getExistingProjectDb } from '../db/database';
@@ -436,6 +437,10 @@ async function cleanBacklogTaskResources(
       // too, branches and row included, as the check above does.
       for (const worktreePath of candidateWorktreePaths) {
         if (!fs.existsSync(worktreePath)) continue;
+        // The exit of a session ended above fired a churn capture into this worktree.
+        // Let it finish before the folder goes, as every other removal does; with no
+        // read in flight this returns at once.
+        await waitForChurnRead(worktreePath);
         const linksCleared = await clearWorktreeLinks(worktreePath);
         if (isWorktreeCreationInFlight(worktreePath)) {
           console.log(`[RESOURCE_CLEANUP] Stopped cleaning task "${task.title}" (${shortId}): a creation started setting up ${worktreePath}`);

@@ -838,7 +838,11 @@ in one Sentry org, one triage surface.
       `annotation_draft_remove`, `history_list`, `history_find`, `history_write`,
       `history_read`, `history_locate`
     - `git_diff`: `local_only_count`, `linked_commits_read`
-    - `git_stats`: `churn_write`, `churn_capture`
+    - `git_stats`: `churn_write`, `churn_capture`. `churn_write` skips a read whose folder was
+      removed under it or holds no repository (`not_a_repository`, `GitDirectoryMissingError`,
+      `ENOENT` on a folder that is gone). Every failed read, skipped or reported, writes git's
+      first fatal line (or the error's name and code) to the local log under `[GIT_STATS]`, which
+      is not a Sentry breadcrumb.
     - `handoff`: `handoff_record`, `handoff_prepare`, `handoff_start`, `handoff_finalize`
     - `mcp_watch`: `connection_check`, `session_start_check`
     - `monitor`: `snapshot_fetch`, `snapshot_push`
@@ -1526,7 +1530,8 @@ in one Sentry org, one triage surface.
   local or on an SSH host) throws a `GitCommandError` (`src/main/git/git-command-error.ts`), whose
   `gitCause` any handled report sends as the `git_cause` tag: `unknown_revision` (a revision that
   names nothing, such as the HEAD of a repository with no commits), `missing_object` (a full hash
-  the repository no longer holds), `not_a_repository`, `dubious_ownership`, `ref_lock`,
+  the repository no longer holds), `not_a_repository`, `broken_gitfile` (a worktree's `.git`
+  file that is empty or names no folder), `dubious_ownership`, `ref_lock`,
   `index_lock`, `corrupt_index`, `permission`, `no_space`, or `other`. It is read from git's
   stderr only, since a failed `show` can print file text first, and
   `tests/unit/git-failure-cause-real-git.test.ts` produces each phrase but the full disk.

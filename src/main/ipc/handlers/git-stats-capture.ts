@@ -1,5 +1,9 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { DiffService, type ChurnSummary } from '../../git/diff-service';
 import { viaGitRead, GitReadPriority } from '../../git/git-read-queue';
+import { isInsideGitCheckout } from '../../git/git-checks';
+import { remoteGitRunnerFor } from '../../git/remote-git';
 import type { SessionRepository } from '../../db/repositories/session-repository';
 import type { UsageHistoryRepository } from '../../db/repositories/usage-history-repository';
 import type { Task } from '../../../shared/types';
@@ -26,12 +30,25 @@ function churnDirectoryKey(gitDir: string): string {
 }
 
 /**
- * Wait, at most `timeoutMs`, for every churn read in flight in `gitDir` to
- * settle. A Done move fires its capture into the worktree just before it moves
- * the worktree aside, and a read whose directory vanished mid-diff reports
- * nothing. Never rejects.
+ * How long a worktree removal waits for the churn capture fired into the
+ * worktree just before it: the Done move's own, or the one the agent's exit
+ * fired ahead of a delete (from the board or an MCP tool), a To Do reset or a
+ * Backlog demote. That read is six git processes at background priority,
+ * about a second on a quiet machine; past this the removal goes ahead, and a
+ * read that then finds its folder gone writes nothing and is not reported
+ * (`churnFolderGone`), so it never overwrites an earlier capture.
  */
-export async function waitForChurnRead(gitDir: string, timeoutMs: number): Promise<void> {
+const CHURN_READ_WAIT_MS = 15_000;
+
+/**
+ * Wait, at most `timeoutMs` (`CHURN_READ_WAIT_MS` unless a caller names
+ * another), for every churn read in flight in `gitDir` to settle. A Done move fires its capture into the worktree just before it moves
+ * the worktree aside, and a delete, a To Do reset or a Backlog demote fires one
+ * from the agent's exit just before it removes the worktree. Waiting keeps that
+ * last capture. A read that outlives the wait and finds its folder gone is
+ * skipped, not reported (`churnFolderGone`). Never rejects.
+ */
+export async function waitForChurnRead(gitDir: string, timeoutMs: number = CHURN_READ_WAIT_MS): Promise<void> {
   const prefix = `${churnDirectoryKey(gitDir)}\0`;
   const reads = [...churnReadsInFlight].filter(([key]) => key.startsWith(prefix)).map(([, read]) => read);
   if (reads.length === 0) return;
@@ -73,6 +90,59 @@ function readChurnShared(gitDir: string, baseBranch: string): Promise<ChurnSumma
 }
 
 /**
+ * Whether a task's worktree folder is still there with its `.git` file gone,
+ * as partway through a removal, or after one that failed halfway. A
+ * Kangentic worktree sits inside the project's own checkout
+ * (`.kangentic/worktrees/`), so git started there walks up and reads the main
+ * checkout instead, and its churn would be written as the task's. A remote
+ * project's folder here is an empty stand-in with no `.git`, and its git runs
+ * on the host, so it never counts.
+ */
+function worktreeLostItsGitFile(worktreePath: string): boolean {
+  if (remoteGitRunnerFor(worktreePath) !== null) return false;
+  return fs.existsSync(worktreePath) && !fs.existsSync(path.join(worktreePath, '.git'));
+}
+
+/**
+ * Whether a failed churn read met a folder that is gone or is no longer a
+ * repository: a worktree removed under the read, which is expected and not a
+ * defect. Matched by `name` and shape, not `instanceof`: this runs in a
+ * rejection handler, and an import of either class reads a module that many
+ * tests replace with a partial mock, where a missing export throws and the
+ * skip becomes an unhandled rejection. `churnFailureLine` matches the same way.
+ * - `GitCommandError` with `not_a_repository`: git started in a folder that
+ *   was mid-removal (Sentry DESKTOP-5R, 5Y), or one with no repository.
+ * - `GitDirectoryMissingError`: `gitAt` found the folder gone (DESKTOP-5X).
+ * - ENOENT: the pty host could not start git in a cwd that is gone
+ *   (DESKTOP-5S). Only while the folder is in fact gone, since a git binary
+ *   missing from PATH fails with ENOENT too.
+ */
+function churnFolderGone(error: unknown, gitDir: string): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error.name === 'GitDirectoryMissingError') return true;
+  if (error.name === 'GitCommandError') return (error as { gitCause?: unknown }).gitCause === 'not_a_repository';
+  return (error as NodeJS.ErrnoException).code === 'ENOENT' && !fs.existsSync(gitDir);
+}
+
+/**
+ * One line for the local log about a failed churn read: git's own `fatal:` or
+ * `error:` line from stderr, else the error's name and code. Never the
+ * message, which for git starts with stdout, and a failed diff's stdout can
+ * hold file text. The line can name paths, so it goes to the local log only,
+ * under a tag that is not a Sentry breadcrumb.
+ */
+function churnFailureLine(error: unknown): string {
+  if (!(error instanceof Error)) return typeof error;
+  const stderr = (error as { stderr?: unknown }).stderr;
+  if (error.name === 'GitCommandError' && typeof stderr === 'string') {
+    const gitLine = stderr.split(/\r?\n/).find((line) => /^(?:fatal|error): /.test(line));
+    if (gitLine) return gitLine;
+  }
+  const code = (error as NodeJS.ErrnoException).code;
+  return code ? `${error.name} ${code}` : error.name;
+}
+
+/**
  * Capture git churn (lines added/removed, files changed) for a task, and
  * write it to BOTH the `sessions` row and the `usage_history` row for
  * `canonicalRecordId` - the record id finalizing right now (the caller's
@@ -91,11 +161,11 @@ function readChurnShared(gitDir: string, baseBranch: string): Promise<ChurnSumma
  *   (see `setTaskGitStats`), keeping exactly one non-zero row per task
  *   lineage - consistent with the snapshot-token design in
  *   `captureSessionMetrics`.
- * - A no-clobber guard: an all-zero result (a git error, or a capture that
- *   runs after the branch is already merged - e.g. move-to-Done in the PR
- *   flow, where the worktree is gone and HEAD is already past the merge-base)
- *   is treated as "nothing to report," not "the branch has 0 churn," so it
- *   can never wipe a real capture made earlier in the task's life.
+ * - A no-clobber guard: an all-zero result (a capture that runs after the
+ *   branch is already merged, where HEAD is already past the merge-base) is
+ *   treated as "nothing to report," not "the branch has 0 churn," so it can
+ *   never wipe a real capture made earlier in the task's life. A read that
+ *   fails writes nothing either, so it never wipes one.
  * - A landed-work guard: once the task's PR is merged, or the task is archived
  *   (only the move into Done archives) with a capture already stored, the
  *   stored capture is the branch's final measure and nothing is read. A merged
@@ -106,8 +176,15 @@ function readChurnShared(gitDir: string, baseBranch: string): Promise<ChurnSumma
  * - Two captures that overlap share one git read (`readChurnShared`), and each
  *   still writes its own record, in the order its read settled.
  *
- * Best-effort: returns early if there is no git directory; every failure is
- * swallowed so a git error never breaks the calling finalization flow.
+ * Best-effort. It returns early, reading nothing, in three cases:
+ * - there is no git directory;
+ * - the task has no worktree and no repository sits at or above the project
+ *   folder, so the read cannot succeed;
+ * - the task's worktree folder has lost its `.git` file, so git would read the
+ *   main checkout (`worktreeLostItsGitFile`).
+ *
+ * No failure reaches the calling finalization flow. A read whose folder was
+ * removed under it is logged and skipped; every other failure is reported.
  */
 export function captureGitChurn(
   task: Task,
@@ -121,6 +198,11 @@ export function captureGitChurn(
     const gitDir = task.worktree_path ?? projectPath;
     if (!gitDir) return;
     if (task.pr_state === 'merged') return;
+    // A task with no worktree reads the project folder, and in a folder with no
+    // repository above it every read fails (`git diff` exits 128).
+    if (!task.worktree_path && !isInsideGitCheckout(gitDir)) return;
+    const worktreePath = task.worktree_path;
+    if (worktreePath && worktreeLostItsGitFile(worktreePath)) return;
 
     const records = sessionRepo.listForTaskNewestFirst(task.id);
     const hasStoredCapture = records.some((record) => (
@@ -134,12 +216,17 @@ export function captureGitChurn(
     void readChurnShared(gitDir, baseBranch)
       .then((stats) => {
         if (stats.linesAdded === 0 && stats.linesRemoved === 0 && stats.filesChanged === 0) return;
+        // The `.git` file can go while the read runs; what it read then was the main checkout.
+        if (worktreePath && worktreeLostItsGitFile(worktreePath)) return;
         sessionRepo.setTaskGitStats(recordIds, canonicalRecordId, stats);
         usageHistoryRepo.setTaskGitStats(recordIds, canonicalRecordId, stats);
       })
       .catch((error: unknown) => {
-        // The task's lines added and removed never reach Stats. A git error reads as zero
-        // inside the read, so what lands here is the queue or the two writes.
+        // The churn since the last capture never reaches Stats. The read throws on git's
+        // failures, and the common one is a worktree removed under it, which is skipped.
+        // The rest (a fatal line the classifier does not know, a failed write) report.
+        console.warn(`[GIT_STATS] Churn read failed for task ${task.id.slice(0, 8)}: ${churnFailureLine(error)}`);
+        if (churnFolderGone(error, gitDir)) return;
         handlerStepReporter.report(error, { tags: { area: 'git_stats', step: 'churn_write' } });
       });
   } catch (error) {
