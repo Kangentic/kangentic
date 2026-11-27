@@ -268,6 +268,43 @@ describe('error reporting runtime behavior (module-state gated)', () => {
       expect(mocks.setContextSpy).not.toHaveBeenCalled();
     });
 
+    it('adds a sqlite_busy context of the holder buckets to a SQLITE_BUSY report (Sentry DESKTOP-5V)', async () => {
+      const errorReporting = await importFreshErrorReporting();
+      const holders = await import('../../src/main/diagnostics/sqlite-busy-holders');
+      holders.resetRetrievalWriteHolds();
+      errorReporting.initErrorReporting();
+      holders.recordRetrievalWriteHold(9_800);
+      errorReporting.setSqliteBusyContextSource(() => holders.buildSqliteBusyContext('no'));
+
+      errorReporting.reportHandledError(new Error('database is locked'), { source: 'session_handlers', errno: 'SQLITE_BUSY' });
+
+      expect(mocks.setContextSpy.mock.calls).toEqual([
+        ['sqlite_busy', { retrieval_longest_hold: '5-10s', pty_host_held: 'no' }],
+      ]);
+    });
+
+    it('sends a SQLITE_BUSY report without the context when the holder source throws or is unset', async () => {
+      const errorReporting = await importFreshErrorReporting();
+      errorReporting.initErrorReporting();
+
+      errorReporting.reportHandledError(new Error('database is locked'), { source: 'session_handlers', errno: 'SQLITE_BUSY' });
+      errorReporting.setSqliteBusyContextSource(() => { throw new Error('transport gone'); });
+      errorReporting.reportHandledError(new Error('database is locked'), { source: 'session_handlers', errno: 'SQLITE_BUSY' });
+
+      expect(mocks.sentryMock.captureException).toHaveBeenCalledTimes(2);
+      expect(mocks.setContextSpy).not.toHaveBeenCalled();
+    });
+
+    it('adds no sqlite_busy context to an EMFILE report', async () => {
+      const errorReporting = await importFreshErrorReporting();
+      errorReporting.initErrorReporting();
+      errorReporting.setSqliteBusyContextSource(() => ({ retrieval_longest_hold: 'none', pty_host_held: 'no' }));
+
+      errorReporting.reportHandledError(new Error('EMFILE: open failed'), { source: 'config', errno: 'EMFILE' });
+
+      expect(mocks.setContextSpy.mock.calls.map(([name]) => name)).toEqual(['descriptor_table']);
+    });
+
     it('makes ZERO Sentry calls when the module was never initialized (the opt-out promise gate)', async () => {
       const errorReporting = await importFreshErrorReporting();
       // Deliberately do NOT call initErrorReporting() - this is the

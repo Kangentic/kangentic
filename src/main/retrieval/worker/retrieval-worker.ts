@@ -35,7 +35,7 @@ import type {
   RetrievalMethod,
   ToWorkerMessage,
 } from './protocol';
-import { errorShapeOf } from './protocol';
+import { errorShapeOf, LONG_WRITE_HOLD_MS } from './protocol';
 
 const parentPort = process.parentPort;
 
@@ -83,7 +83,11 @@ function initialize(message: InitMessage): void {
   // loop (Sentry DESKTOP-4P); with no thread they run here, as before.
   checkpointRunner.configure(message.checkpointThreadPath ?? null);
   setAfterCommitHook(createCheckpointPacer());
-  installWriteBudget();
+  // A long hold also goes to main, which names it on a `SQLITE_BUSY` report
+  // (Sentry DESKTOP-5V). Posted after the commit, so a hold under way is not.
+  installWriteBudget((heldMs) => {
+    if (heldMs >= LONG_WRITE_HOLD_MS) post({ type: 'write-hold', heldMs: Math.round(heldMs) });
+  });
   vecLoadablePath = message.vecLoadablePath;
   if (!vecLoadablePath) vecLoadError = 'the sqlite-vec extension was not found';
   setProjectDbInitializer((db: Database.Database) => {

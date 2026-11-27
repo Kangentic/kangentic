@@ -3130,6 +3130,10 @@ msgstr "What we collect"
 msgid "What we don't collect"
 msgstr "What we don't collect"
 
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "When a database write had to wait, a range for how long a background write held the database"
+msgstr "When a database write had to wait, a range for how long a background write held the database"
+
 #: src/renderer/components/settings/settings-registry.ts
 msgid "When a plan finishes and the task auto-moves"
 msgstr "When a plan finishes and the task auto-moves"

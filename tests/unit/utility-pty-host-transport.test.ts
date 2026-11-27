@@ -1072,6 +1072,44 @@ describe('UtilityPtyHostTransport', () => {
     expect(lifecycle.onHostDown).not.toHaveBeenCalled();
   });
 
+  // A SQLITE_BUSY report names whether the host's own watchdog saw its loop
+  // held (Sentry DESKTOP-5V). The host's evidence, not ping timing: main is
+  // the thread stuck in the busy wait, so a ping reads late either way.
+  describe('hostHeldWithin', () => {
+    const WATCHDOG_LINE = '[pty-host] event loop held 5 s in transcript:flush';
+
+    it('says no until the host writes a watchdog line, yes within the window after it, and no once the window passes', () => {
+      const { transport } = makeTransport();
+      transport.start();
+      const tail = stderrTails[stderrTails.length - 1];
+      const start = Date.now();
+
+      expect(transport.hostHeldWithin(30_000, start)).toBe('no');
+      tail.text = `an earlier line\n${WATCHDOG_LINE}`;
+      expect(transport.hostHeldWithin(30_000, start + 1_000)).toBe('yes');
+      expect(transport.hostHeldWithin(30_000, start + 32_000)).toBe('no');
+    });
+
+    it('notices a line on the heartbeat tick, so a later read still dates it from then', async () => {
+      const { transport } = makeTransport();
+      transport.start();
+      latestChild().emit('message', { type: 'ready' });
+      const tail = stderrTails[stderrTails.length - 1];
+      tail.text = WATCHDOG_LINE;
+      await vi.advanceTimersByTimeAsync(5_000);
+      const noticedAt = Date.now();
+
+      expect(transport.hostHeldWithin(30_000, noticedAt + 29_000)).toBe('yes');
+      expect(transport.hostHeldWithin(30_000, noticedAt + 31_000)).toBe('no');
+    });
+
+    it('is unknown with no host stderr to read', () => {
+      const { transport } = makeTransport();
+
+      expect(transport.hostHeldWithin(30_000)).toBe('unknown');
+    });
+  });
+
   // A caller tells a slow host from a lost one by type, never by message: the
   // task reap reports them as `host_timeout` and `host_exited` (DESKTOP-1X).
   describe('typed rejections', () => {

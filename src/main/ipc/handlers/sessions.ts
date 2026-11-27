@@ -11,7 +11,8 @@ import { retrievalClient } from '../../retrieval/retrieval-client';
 import { collectRemoteTargets } from '../../retrieval/remote-targets';
 import { UsageHistoryRepository } from '../../db/repositories/usage-history-repository';
 import { TaskRepository } from '../../db/repositories/task-repository';
-import { getProjectDb } from '../../db/database';
+import { getOpenProjectDb, getProjectDb } from '../../db/database';
+import { isSqliteError } from '../../db/sqlite-error';
 import { getProjectRepos, notifySpawnBlocked } from '../helpers';
 import { isUserSetupFailureClass, lineTooLongSentence, reportPtyPortFailure } from '../../pty/agent-launch-report';
 import { linkPR, autoLinkPRForTask, recordPushedBranchForSession } from '../../pr/pr-linking';
@@ -1341,6 +1342,7 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
     // changed if the user switched projects while the agent was running.
     const resolvedProjectId = context.sessionManager.getSessionProjectId(sessionId);
     if (!resolvedProjectId) return;
+    let move: PlanExitMove | null = null;
     try {
       const session = context.sessionManager.getSession(sessionId);
       if (!session) return;
@@ -1359,29 +1361,116 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
       const target = planExitTargetFor(context, task, task.swimlane_id, swimlanes, resolvedProjectPath);
       if (!target) return;
 
-      const position = tasks.list(target.id).length;
-      // 'auto-move' sends TASK_AUTO_MOVED, emits the board-changed event this
-      // path never used to, and resolves the PR for the new lane - all inside
-      // handleTaskMove now. The push in particular used to be a raw
-      // webContents.send here, which bypassed sendToRenderer and so never
-      // reached the IPC recorder: a plan-exit auto-move was invisible in the
-      // dev IPC log, which is exactly the blind spot that made this class of
-      // staleness bug hard to attribute.
-      await handleTaskMove(
-        context,
-        { taskId: task.id, targetSwimlaneId: target.id, targetPosition: position },
-        'auto-move',
-        resolvedProjectId,
-        resolvedProjectPath,
-        { continuationPrompt: buildPlanExitContinuationPrompt(target.name) },
-      );
-
+      move = {
+        sessionId,
+        projectId: resolvedProjectId,
+        projectPath: resolvedProjectPath,
+        taskId: task.id,
+        fromSwimlaneId: task.swimlane_id,
+        targetId: target.id,
+        targetName: target.name,
+      };
+      await performPlanExitMove(context, move);
       console.log(`[plan-exit] Auto-moved "${task.title}" -> "${target.name}"`);
     } catch (error) {
+      // Another connection held the project database's write lock for the whole
+      // 5 s busy wait (Sentry DESKTOP-5V). Try once more, later: a retry here
+      // would hold main's thread in a second synchronous busy wait.
+      if (move && isSqliteBusy(error)) {
+        console.warn('[plan-exit] Auto-move found the database busy, retrying once');
+        schedulePlanExitRetry(context, move, error);
+        return;
+      }
       console.error('[plan-exit] Auto-move failed:', error);
       sessionHandlersReporter.report(error, { tags: { stage: 'plan_exit_move' } });
     }
   });
+}
+
+/** How long a plan-exit move that found the database busy waits before its one retry. */
+export const PLAN_EXIT_BUSY_RETRY_MS = 750;
+
+/** A plan-exit auto-move, as the first attempt resolved it. */
+interface PlanExitMove {
+  sessionId: string;
+  projectId: string;
+  projectPath: string | null;
+  taskId: string;
+  fromSwimlaneId: string;
+  targetId: string;
+  targetName: string;
+}
+
+function isSqliteBusy(error: unknown): boolean {
+  return isSqliteError(error) && error.code === 'SQLITE_BUSY';
+}
+
+async function performPlanExitMove(context: IpcContext, move: PlanExitMove, expectedFromSwimlaneId?: string): Promise<void> {
+  const { tasks } = getProjectRepos(context, move.projectId);
+  const position = tasks.list(move.targetId).length;
+  // 'auto-move' sends TASK_AUTO_MOVED, emits the board-changed event this
+  // path never used to, and resolves the PR for the new lane - all inside
+  // handleTaskMove now. The push in particular used to be a raw
+  // webContents.send here, which bypassed sendToRenderer and so never
+  // reached the IPC recorder: a plan-exit auto-move was invisible in the
+  // dev IPC log, which is exactly the blind spot that made this class of
+  // staleness bug hard to attribute.
+  await handleTaskMove(
+    context,
+    { taskId: move.taskId, targetSwimlaneId: move.targetId, targetPosition: position },
+    'auto-move',
+    move.projectId,
+    move.projectPath,
+    {
+      continuationPrompt: buildPlanExitContinuationPrompt(move.targetName),
+      ...(expectedFromSwimlaneId !== undefined ? { expectedFromSwimlaneId } : {}),
+    },
+  );
+}
+
+function schedulePlanExitRetry(context: IpcContext, move: PlanExitMove, firstError: unknown): void {
+  const timer = setTimeout(() => { void retryPlanExitMove(context, move, firstError); }, PLAN_EXIT_BUSY_RETRY_MS);
+  timer.unref?.();
+}
+
+/** One macrotask, so a worker's write-hold message queued behind main's busy wait lands before the report reads it. */
+function nextMacrotask(): Promise<void> {
+  return new Promise((resolve) => { setTimeout(resolve, 0); });
+}
+
+/**
+ * The one retry of a plan-exit move that found the database busy. The task lock
+ * is held only to check the task is still where the first attempt found it,
+ * with the same session: `handleTaskMove` takes that lock itself, and it is not
+ * reentrant. The move then re-checks the column under its own lock
+ * (`expectedFromSwimlaneId`), so a move made in the gap wins.
+ */
+async function retryPlanExitMove(context: IpcContext, move: PlanExitMove, firstError: unknown): Promise<void> {
+  try {
+    if (!getOpenProjectDb(move.projectId)) return; // the project closed meanwhile
+    const verdict = await withTaskLock(move.taskId, async (): Promise<'retry' | 'landed' | 'superseded'> => {
+      const { tasks } = getProjectRepos(context, move.projectId);
+      const task = tasks.getById(move.taskId);
+      if (!task) return 'superseded';
+      // The first attempt's write committed and a later step failed.
+      if (task.swimlane_id === move.targetId) return 'landed';
+      if (task.swimlane_id !== move.fromSwimlaneId) return 'superseded';
+      if (task.session_id !== move.sessionId || !context.sessionManager.getSession(move.sessionId)) return 'superseded';
+      return 'retry';
+    });
+    if (verdict === 'superseded') return;
+    if (verdict === 'landed') {
+      await nextMacrotask();
+      sessionHandlersReporter.report(firstError, { tags: { stage: 'plan_exit_move' }, detailTags: { plan_exit_retry: 'landed' } });
+      return;
+    }
+    await performPlanExitMove(context, move, move.fromSwimlaneId);
+    console.log(`[plan-exit] Auto-moved to "${move.targetName}" on retry`);
+  } catch (error) {
+    console.error('[plan-exit] Auto-move retry failed:', error);
+    await nextMacrotask();
+    sessionHandlersReporter.report(error, { tags: { stage: 'plan_exit_move' }, detailTags: { plan_exit_retry: 'failed' } });
+  }
 }
 
 /**

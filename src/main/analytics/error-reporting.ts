@@ -130,9 +130,34 @@ export type ErrorReportContexts = Record<string, Record<string, unknown>>;
  * so every handled route gets it. Only these reports: on every event it would
  * also need pruning from a crash a later run uploads.
  */
-function withDescriptorTableContext(tags: Record<string, string>, contexts: ErrorReportContexts): ErrorReportContexts {
-  if (tags.errno !== 'EMFILE') return contexts;
-  return { ...contexts, descriptor_table: getDescriptorTableContext() };
+function withEnvironmentContexts(tags: Record<string, string>, contexts: ErrorReportContexts): ErrorReportContexts {
+  if (tags.errno === 'EMFILE') return { ...contexts, descriptor_table: getDescriptorTableContext() };
+  if (tags.errno === 'SQLITE_BUSY') {
+    const holders = readSqliteBusyContext();
+    return holders ? { ...contexts, sqlite_busy: holders } : contexts;
+  }
+  return contexts;
+}
+
+/**
+ * A `SQLITE_BUSY` report also says who else may have held the lock (Sentry
+ * DESKTOP-5V): buckets and yes/no only, from `sqlite-busy-holders.ts`. The
+ * source is set where the pty host transport exists (`register-all.ts`), so
+ * this module imports neither the retrieval client nor the pty host.
+ */
+let sqliteBusyContextSource: (() => Record<string, string>) | null = null;
+
+export function setSqliteBusyContextSource(source: (() => Record<string, string>) | null): void {
+  sqliteBusyContextSource = source;
+}
+
+function readSqliteBusyContext(): Record<string, string> | null {
+  try {
+    return sqliteBusyContextSource?.() ?? null;
+  } catch {
+    // report-ok: the context is an extra on a report already going out; the report still sends without it
+    return null;
+  }
 }
 
 /**
@@ -150,7 +175,7 @@ export function reportHandledError(
   if (!active) return false;
   if (isUserConfigurationError(error)) return false;
   try {
-    const allContexts = withDescriptorTableContext(tags, contexts);
+    const allContexts = withEnvironmentContexts(tags, contexts);
     Sentry.withScope((scope) => {
       for (const [tagKey, tagValue] of Object.entries(tags)) scope.setTag(tagKey, tagValue);
       for (const [contextName, contextValue] of Object.entries(allContexts)) {

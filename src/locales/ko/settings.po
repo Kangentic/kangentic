@@ -3825,6 +3825,10 @@ msgstr "수집하는 항목"
 msgid "What we don't collect"
 msgstr "수집하지 않는 항목"
 
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "When a database write had to wait, a range for how long a background write held the database"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "When a plan finishes and the task auto-moves"

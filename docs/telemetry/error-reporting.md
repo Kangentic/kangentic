@@ -17,6 +17,7 @@ sources:
   - resource: src/main/analytics/native-crash-event.ts
   - resource: src/main/diagnostics/host-memory.ts
   - resource: src/main/diagnostics/descriptor-table.ts
+  - resource: src/main/diagnostics/sqlite-busy-holders.ts
   - resource: src/main/analytics/reportable-module-name.ts
   - resource: src/main/analytics/renderer-classification.ts
   - resource: src/main/utility-process/stderr-tail.ts
@@ -1702,6 +1703,29 @@ in one Sentry org, one triage surface.
     pipe (microsoft/node-pty#947). That leak lands in whichever process spawned the PTY, so it
     reaches main once the pty host has fallen back into it. The pty host core now closes the pipe
     when it releases a PTY (`docs/architecture/sessions/agent-absence-sweep.md`).
+- **A `SQLITE_BUSY` report says who else may have held the lock** (`src/main/diagnostics/sqlite-busy-holders.ts`,
+  Sentry DESKTOP-5V). DESKTOP-5V was a plan-exit auto-move whose write waited out main's 5 s busy
+  timeout, then a second write that waited out another, about 10 s with main's thread blocked.
+  Main holds one synchronous connection per project and no write spans an `await`, so it cannot
+  hold the lock against itself: the holder is the retrieval worker or the pty host's transcript
+  writer.
+  - Every handled report whose `errno` tag is `SQLITE_BUSY` carries a flat `sqlite_busy` context
+    in `reportHandledError`, from the source `register-all.ts` sets (`setSqliteBusyContextSource`).
+  - `retrieval_longest_hold` is the longest write hold the retrieval worker reported in the last
+    30 s, as `none`, `<1s`, `1-5s`, `5-10s`, `10-30s` or `30s+`. The worker posts a `write-hold`
+    message for each commit that held the lock 1 s or more (`LONG_WRITE_HOLD_MS`), in production
+    too. It posts at the commit, so a hold still under way is missing from it.
+  - `pty_host_held` is `yes` when the pty host's own event-loop watchdog wrote a line in the last
+    30 s, `no` when it did not, and `unknown` with no host stderr to read. It reads the host's
+    evidence, not the heartbeat: main is the thread stuck in the busy wait, so its pings read late
+    either way.
+  - A busy plan-exit move is retried once, 750 ms later and off the first attempt's stack
+    (`PLAN_EXIT_BUSY_RETRY_MS` in `ipc/handlers/sessions.ts`), and reports only when the retry
+    fails (`plan_exit_retry: failed`) or finds the first attempt's write had landed before a later
+    step failed (`landed`). The retry waits one macrotask before it reports, so a `write-hold`
+    message queued behind main's busy wait lands first, and the report goes out about 11 s after
+    the first wait began, by when a hold of DESKTOP-5V's length has usually committed.
+  - No count, path or message is sent. Settings > Privacy lists it under what is collected.
 - **A worker crash is logged after its stderr pipe ends.** Electron 44.5.0 drains a utility
   process's stderr after `exit`, so `UtilityRestartPolicy.recordCrash` holds the crash's log line
   and latch report until the pipe ends, bounded at 500 ms (`STDERR_DRAIN_BOUND_MS`). Measured on
@@ -1969,7 +1993,7 @@ this".
   is global, grows every event, and widens what `redact-event-paths.ts` walks.
   `tests/unit/gpu-health.test.ts` runs the builder's output through the real `@sentry/core`
   `normalize`. The other contexts were audited for the same flattening and hold only flat values:
-  `host_memory`, `native_crash`, `task_reap`, `descriptor_table`, `call_site` (a list of strings) and
+  `host_memory`, `native_crash`, `task_reap`, `descriptor_table`, `sqlite_busy`, `call_site` (a list of strings) and
   `diff_viewer_N`.
 - **A GPU failure that killed the last run also downgrades this one, once.** When
   `killedTheLastRun` (`gpuEndedPreviousRun`, above) holds, `src/main/index.ts` has already started Chromium with

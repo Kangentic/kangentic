@@ -32,6 +32,7 @@ import { EventEmitter } from 'node:events';
 import { app, utilityProcess, type UtilityProcess } from 'electron';
 import { PATHS } from '../config/paths';
 import { recordRelayedSyncSpan } from '../diagnostics/event-loop-lag';
+import { recordRetrievalWriteHold } from '../diagnostics/sqlite-busy-holders';
 import { unpacked } from '../utility-process/paths';
 import { UtilityRestartPolicy } from '../utility-process/restart-policy';
 import { StderrTail, UTILITY_PROCESS_STDIO, captureWorkerStderr, watchdogLine } from '../utility-process/stderr-tail';
@@ -275,6 +276,10 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
     }
     if (record.type === 'slow-span') {
       recordRelayedSyncSpan(`worker:${record.label}`, record.ms);
+      return;
+    }
+    if (record.type === 'write-hold') {
+      recordRetrievalWriteHold(record.heldMs);
       return;
     }
     if (record.type === 'log') logFromWorker(record.level, record.text);

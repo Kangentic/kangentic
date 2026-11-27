@@ -39,6 +39,7 @@ import {
   READY_TIMEOUT_MS,
 } from '../../src/main/retrieval/retrieval-client';
 import { errorShapeOf } from '../../src/main/retrieval/worker/protocol';
+import { longestRetrievalWriteHoldWithin, resetRetrievalWriteHolds, SQLITE_BUSY_LOOKBACK_MS } from '../../src/main/diagnostics/sqlite-busy-holders';
 import { vecLoadCause } from '../../src/main/retrieval/vec-load-cause';
 import { UtilityRestartPolicy } from '../../src/main/utility-process/restart-policy';
 import {
@@ -846,6 +847,17 @@ describe('RetrievalClient', () => {
       ['graph-changed', 'project-1', undefined],
       ['graph-progress', 'project-1', progress],
     ]);
+    client.dispose();
+  });
+
+  it('keeps a long write hold the worker posts, for a SQLITE_BUSY report to name (Sentry DESKTOP-5V)', () => {
+    resetRetrievalWriteHolds();
+    const client = new RetrievalClient();
+    void client.call('projects.summaries', { projectIds: [] }).catch(() => undefined);
+    lastChild().emit('message', { type: 'write-hold', heldMs: 9_400 });
+
+    expect(longestRetrievalWriteHoldWithin(SQLITE_BUSY_LOOKBACK_MS)).toBe(9_400);
+    resetRetrievalWriteHolds();
     client.dispose();
   });
 
