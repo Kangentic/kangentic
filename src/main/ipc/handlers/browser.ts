@@ -26,6 +26,8 @@ import { clearBrowserPaneReason } from '../../browser/browser-pane-reason';
 import { setBrowserPaneOpenerHost, offscreenSurfaceUrl } from '../../browser/browser-pane-opener';
 import { installLaneHandoff } from '../../browser/browser-lane-handoff';
 import { destroyLane, laneTaskIds, setLaneChangeListener } from '../../browser/browser-lane-manager';
+import { guestCrashReason, setGuestCrashChangeListener } from '../../browser/guest-crash-state';
+import { browserCrashKind, type BrowserCrashKind } from '../../../shared/browser-crash';
 import { broadcast } from '../../pop-out/window-broadcast';
 import { popOutWindowManager } from '../../pop-out/pop-out-window-manager';
 import { relayLinkToPopOut } from '../../browser/pop-out-link-relay';
@@ -188,6 +190,14 @@ export function registerBrowserHandlers(context: IpcContext): void {
   // lists `BROWSER_OFFSCREEN_SURFACES` and seeds the set in its own bootstrap.
   setLaneChangeListener(() => {
     broadcast(context.mainWindow, IPC.BROWSER_OFFSCREEN_SURFACES, laneTaskIds());
+  });
+
+  // Which owners' pages have stopped, sent to every window on each change (task
+  // #1226). Main is the one writer because a page can stop where no renderer of
+  // the window showing the badge runs: an offscreen lane, or a pane in a Browser
+  // pop-out. The same surfaces that hear the offscreen set declare this channel.
+  setGuestCrashChangeListener(() => {
+    broadcast(context.mainWindow, IPC.BROWSER_CRASHED_SURFACES, crashedSurfaces());
   });
 
   // A Command Terminal's Browser pane, offscreen page, pop-out and saved URL
@@ -558,6 +568,10 @@ export function registerBrowserHandlers(context: IpcContext): void {
   // one.
   ipcMain.handle(IPC.BROWSER_OFFSCREEN_SURFACES_GET, () => laneTaskIds());
 
+  // The stopped-page map, asked for on mount and after an HMR update, since a
+  // page can stay stopped across a reload of the window showing its badge.
+  ipcMain.handle(IPC.BROWSER_CRASHED_SURFACES_GET, () => crashedSurfaces());
+
   // A Command Terminal slot's saved Browser layout. Routed by the explicit
   // project id, never the ambient one: the detached Command Terminal window and
   // a backgrounded project's slot both ask for a project that may not be open.
@@ -614,6 +628,20 @@ export function registerBrowserHandlers(context: IpcContext): void {
   // that window's renderer, which keeps its own store (pop-out-link-relay.ts).
   ipcMain.handle(IPC.BROWSER_POP_OUT_NAVIGATE, (_event, projectId: unknown, ownerKey: unknown, url: unknown) =>
     relayLinkToPopOut(popOutWindowManager, projectId, ownerKey, url));
+}
+
+/**
+ * Which browser owners' pages have stopped, by owner key, with why (task #1226).
+ * Read off the surfaces the registry holds, so a page is reported under the task
+ * or Command Terminal it belongs to, whichever window or lane it runs in.
+ */
+export function crashedSurfaces(): Record<string, BrowserCrashKind> {
+  const surfaces: Record<string, BrowserCrashKind> = {};
+  for (const entry of browserPaneRegistry.list()) {
+    const reason = guestCrashReason(entry.webContentsId);
+    if (reason !== null) surfaces[entry.taskId] = browserCrashKind(reason);
+  }
+  return surfaces;
 }
 
 function isGuestId(value: unknown): value is number {

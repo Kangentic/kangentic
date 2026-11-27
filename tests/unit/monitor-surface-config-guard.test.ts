@@ -44,6 +44,11 @@ const onOffscreenSurfacesMock = vi.fn();
 const syncSessionsMock = vi.fn().mockResolvedValue(undefined);
 const loadBrowserOffscreenTasksMock = vi.fn().mockResolvedValue(undefined);
 const setBrowserOffscreenTasksMock = vi.fn();
+// The stopped-page map (task #1226): the hosted pill's badge and the cards'
+// globes turn red from it, and this window reads and follows it itself.
+const onCrashedSurfacesMock = vi.fn();
+const loadBrowserCrashedTasksMock = vi.fn().mockResolvedValue(undefined);
+const setBrowserCrashedTasksMock = vi.fn();
 // The table's Agent, Model and Permission cells read the installed agents, and
 // nothing else in this window loads them, so bootstrap and hmrResync call the
 // real config store's loadAgentList, which reads `agents.list`.
@@ -68,7 +73,7 @@ const setQueueSnapshotMock = vi.fn();
       onChanged: monitorOnChangedMock,
     },
     sessions: { onActivity: sessionsOnActivityMock, onFirstOutput: sessionsOnFirstOutputMock, onQueueChanged: sessionsOnQueueChangedMock },
-    browser: { onOffscreenSurfaces: onOffscreenSurfacesMock },
+    browser: { onOffscreenSurfaces: onOffscreenSurfacesMock, onCrashedSurfaces: onCrashedSurfacesMock },
   },
 };
 
@@ -78,6 +83,8 @@ vi.mock('../../src/renderer/stores/session-store', () => ({
       syncSessions: syncSessionsMock,
       loadBrowserOffscreenTasks: loadBrowserOffscreenTasksMock,
       setBrowserOffscreenTasks: setBrowserOffscreenTasksMock,
+      loadBrowserCrashedTasks: loadBrowserCrashedTasksMock,
+      setBrowserCrashedTasks: setBrowserCrashedTasksMock,
       markFirstOutput: markFirstOutputMock,
       syncQueueSnapshot: syncQueueSnapshotMock,
       setQueueSnapshot: setQueueSnapshotMock,
@@ -248,6 +255,31 @@ describe('monitorSurface bootstrap: offscreen-surfaces wiring', () => {
     monitorSurface.hmrResync?.();
 
     expect(loadBrowserOffscreenTasksMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads the stopped-page map on mount and follows its push, so a page that stops elsewhere turns this window red', () => {
+    const unsubscribe = vi.fn();
+    let pushedCallback: ((surfaces: Record<string, string>) => void) | undefined;
+    onCrashedSurfacesMock.mockImplementation((callback: (surfaces: Record<string, string>) => void) => {
+      pushedCallback = callback;
+      return unsubscribe;
+    });
+
+    monitorSurface.bootstrap({}, { signal: controller.signal });
+    expect(loadBrowserCrashedTasksMock).toHaveBeenCalledTimes(1);
+
+    pushedCallback?.({ 'task-a': 'out-of-memory' });
+    expect(setBrowserCrashedTasksMock).toHaveBeenCalledWith({ 'task-a': 'out-of-memory' });
+
+    controller.abort();
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+
+    monitorSurface.hmrResync?.();
+    expect(loadBrowserCrashedTasksMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('declares the stopped-page push, or broadcast never reaches this window', () => {
+    expect(POP_OUT_SURFACES.monitor.channels).toContain(IPC.BROWSER_CRASHED_SURFACES);
   });
 
   it('loads the installed agents on mount and again on a Fast Refresh, for the table\'s own labels', async () => {

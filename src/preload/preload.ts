@@ -3,6 +3,7 @@ import { IPC } from '../shared/ipc-channels';
 import type { BrowserPaneOpenPurpose, QueueSnapshot, StopScriptFailedEvent } from '../shared/types';
 import type { ElectronAPI, WorkflowChangedEvent, WorkflowCompletedEvent, WorkflowStalledEvent, LeftoverProcessReport, LeftoverStopSettled, AutomationInterruptedSummary, AutomationRunFailure, NotificationEventKey, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, AssistantMessageTrailEntry, SessionEvent, UpdateDownloadedInfo, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, ConversationExpiredNotice, BrowserDownloadDone, BrowserViewportOverride, GuestMouseButtonEvent, RendererErrorContext, KnowledgeGraphAnswerStreamPush, KnowledgeGraphBuildProgress, KnowledgeGraphAnswerContext, DevSeedKnowledgeGraphDemoPlan, McpConnectionFailure, SpawnWarningKind } from '../shared/types';
 import type { AnnouncementsChangedPayload } from '../shared/announcements';
+import type { BrowserCrashKind } from '../shared/browser-crash';
 import { POPOUT_ARG_PREFIX } from '../shared/pop-out-arg';
 import { readLocaleArgument, type AppLocale } from '../shared/i18n/locales';
 import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from '../shared/pop-out';
@@ -1084,6 +1085,12 @@ const api: ElectronAPI = {
       return () => ipcRenderer.removeListener(IPC.BROWSER_OFFSCREEN_SURFACES, handler);
     },
     getOffscreenSurfaces: () => ipcRenderer.invoke(IPC.BROWSER_OFFSCREEN_SURFACES_GET),
+    onCrashedSurfaces: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, surfaces: Record<string, BrowserCrashKind>) => callback(surfaces);
+      ipcRenderer.on(IPC.BROWSER_CRASHED_SURFACES, handler);
+      return () => ipcRenderer.removeListener(IPC.BROWSER_CRASHED_SURFACES, handler);
+    },
+    getCrashedSurfaces: () => ipcRenderer.invoke(IPC.BROWSER_CRASHED_SURFACES_GET),
     closeOffscreenSurface: (taskId, projectId) =>
       ipcRenderer.invoke(IPC.BROWSER_OFFSCREEN_CLOSE, taskId, projectId),
     getCommandTerminalState: (projectId, slot) =>

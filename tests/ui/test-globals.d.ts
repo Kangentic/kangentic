@@ -72,6 +72,8 @@ declare global {
       /** Seed the set a renderer reads on mount, for a surface that already
        *  existed before this renderer did. */
       seedOffscreenSurfaces: (taskIds: string[]) => void;
+      /** Fire main's "these owners' pages have stopped" push. Takes the WHOLE map, as main does. */
+      emitCrashedSurfaces: (surfaces: Record<string, 'out-of-memory' | 'crashed'>) => void;
     };
 
     /** Captures the URL most recently submitted by BrowserEmptyState mounts. */

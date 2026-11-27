@@ -110,6 +110,13 @@ export const monitorSurface: SurfaceDescriptor<'monitor'> = {
       useSessionStore.getState().setBrowserOffscreenTasks(taskIds);
     });
     if (unsubscribeOffscreen) signal.addEventListener('abort', unsubscribeOffscreen);
+    // Which owners' pages have stopped (task #1226): the hosted pill's badge and
+    // the cards' globes turn red from it. The same read-then-push as above.
+    void useSessionStore.getState().loadBrowserCrashedTasks();
+    const unsubscribeCrashed = window.electronAPI.browser?.onCrashedSurfaces?.((surfaces) => {
+      useSessionStore.getState().setBrowserCrashedTasks(surfaces);
+    });
+    if (unsubscribeCrashed) signal.addEventListener('abort', unsubscribeCrashed);
 
     const unsubscribeConfig = useConfigStore.subscribe((state, previous) => {
       if (deepEqual(state.config.monitor, previous.config.monitor)) return;
@@ -130,6 +137,7 @@ export const monitorSurface: SurfaceDescriptor<'monitor'> = {
     // set, and a surface can sit unchanged across the whole session, so the
     // push alone leaves a hosted pill dark after a Fast Refresh.
     void useSessionStore.getState().loadBrowserOffscreenTasks();
+    void useSessionStore.getState().loadBrowserCrashedTasks();
     void useConfigStore.getState().loadAgentList();
   },
 

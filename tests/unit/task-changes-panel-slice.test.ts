@@ -513,6 +513,50 @@ describe('loadBrowserOffscreenTasks', () => {
 });
 
 // ---------------------------------------------------------------------------
+// setBrowserCrashedTasks / loadBrowserCrashedTasks (task #1226)
+// ---------------------------------------------------------------------------
+
+describe('setBrowserCrashedTasks', () => {
+  it('replaces the map on a change, keeps the same reference on a repeat, and empties on an empty push', () => {
+    const { actions, getState } = createTestStore();
+    const empty = getState().browserCrashedTasks;
+
+    actions.setBrowserCrashedTasks({ 'task-1': 'out-of-memory' });
+    const first = getState().browserCrashedTasks;
+    expect(first).not.toBe(empty);
+    expect(first.get('task-1')).toBe('out-of-memory');
+
+    // Every card subscribes to this map, so an unchanged push keeps its reference.
+    actions.setBrowserCrashedTasks({ 'task-1': 'out-of-memory' });
+    expect(getState().browserCrashedTasks).toBe(first);
+
+    // A changed reason for the same owner is a change.
+    actions.setBrowserCrashedTasks({ 'task-1': 'crashed' });
+    expect(getState().browserCrashedTasks.get('task-1')).toBe('crashed');
+
+    actions.setBrowserCrashedTasks({});
+    expect(getState().browserCrashedTasks.size).toBe(0);
+  });
+
+  it('reads the map from main on mount, and leaves it as it was when the read fails', async () => {
+    vi.stubGlobal('window', {
+      electronAPI: { browser: { getCrashedSurfaces: vi.fn().mockResolvedValue({ 'task-2': 'crashed' }) } },
+    });
+    const { actions, getState } = createTestStore();
+    await actions.loadBrowserCrashedTasks();
+    expect(getState().browserCrashedTasks.get('task-2')).toBe('crashed');
+
+    vi.stubGlobal('window', {
+      electronAPI: { browser: { getCrashedSurfaces: vi.fn().mockRejectedValue(new Error('ipc unavailable')) } },
+    });
+    const before = getState().browserCrashedTasks;
+    await actions.loadBrowserCrashedTasks();
+    expect(getState().browserCrashedTasks).toBe(before);
+    vi.unstubAllGlobals();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // setChangesScope
 // ---------------------------------------------------------------------------
 

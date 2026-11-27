@@ -642,6 +642,14 @@ export const IPC = {
   // update. A push-only channel leaves a reloaded renderer blank until the next
   // change, and an offscreen surface can sit unchanged for the whole session.
   BROWSER_OFFSCREEN_SURFACES_GET: 'browser:offscreenSurfacesGet',
+  // Main -> renderer: which browser owners' pages have stopped (their renderer
+  // process is gone), keyed by owner key with why, the whole map on every
+  // change. The Browser pill's badge and the card globes turn red from it. Main
+  // is the one writer because a page can stop where no renderer of this window
+  // runs: an offscreen lane, or a pane in a Browser pop-out (task #1226).
+  BROWSER_CRASHED_SURFACES: 'browser:crashedSurfaces',
+  // Renderer -> main: the same map, asked for on mount and after an HMR update.
+  BROWSER_CRASHED_SURFACES_GET: 'browser:crashedSurfacesGet',
   // Renderer -> main: the user's "Close browser" on a task whose surface is
   // OFFSCREEN. There is no guest in `browserGuestTasks` to retire and no pane
   // to unmount, so the ordinary close path is a silent no-op for it - which

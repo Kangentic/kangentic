@@ -372,6 +372,9 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
       // browser that exists - which is the invisibility this whole mechanism was
       // built to remove, reappearing in one host.
       IPC.BROWSER_OFFSCREEN_SURFACES,
+      // The same pill's badge and the cards' globes turn red while a page has
+      // stopped, which main reports for every window (task #1226).
+      IPC.BROWSER_CRASHED_SURFACES,
       // The agent list this window loaded at a launch is the last launch's. Main
       // says when its own read differs, and the Agent, Model and Permission
       // cells list again.
@@ -449,6 +452,9 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
       IPC.BROWSER_PANE_OPEN_REQUEST,
       IPC.BROWSER_PANE_CLOSE_REQUEST,
       IPC.BROWSER_OFFSCREEN_SURFACES,
+      // The Globe pill's badge and the Running row's globe turn red while the
+      // page has stopped (task #1226).
+      IPC.BROWSER_CRASHED_SURFACES,
       // The model and effort pickers read the agent list, which at a launch is
       // the last launch's until main's own read says it differs.
       IPC.AGENT_LIST_CHANGED,

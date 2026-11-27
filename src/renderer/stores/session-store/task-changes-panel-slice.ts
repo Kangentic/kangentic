@@ -91,14 +91,14 @@ export interface TaskChangesPanelSlice {
    */
   browserGuestTasks: Map<string, number>;
   /**
-   * Tasks whose live pane's page has stopped (its `<webview>` fired
-   * `render-process-gone`), keyed like `browserGuestTasks`, with why. Set by
-   * `BrowserPane` on the crash and cleared on the page's next `dom-ready` or when
-   * the guest goes away. The pane shows its crashed cover from its own state;
-   * this is for the surfaces OUTSIDE the pane, which turn red while a hidden or
-   * parked pane's page is stopped: the header's Browser button and the card
-   * globes (task #1226, design D4 B). An offscreen lane has no pane to report
-   * one, so it never appears here. Never persisted.
+   * Browser owners whose page has stopped (its renderer process is gone), keyed
+   * like `browserGuestTasks`, with why, pushed from main
+   * (`BROWSER_CRASHED_SURFACES`, the whole map per change). The pane shows its
+   * crashed cover from its own state; this is for the surfaces OUTSIDE the pane,
+   * which turn red while the page is stopped: the Browser pill's badge and the
+   * card globes (task #1226, design D4 B). Main is the one writer because a page
+   * can stop where no renderer of this window runs: an offscreen lane, or a pane
+   * in a Browser pop-out. Never persisted.
    */
   browserCrashedTasks: Map<string, BrowserCrashKind>;
   /**
@@ -234,10 +234,13 @@ export interface TaskChangesPanelSlice {
    * guest for the same task cannot erase the newer one.
    */
   clearBrowserGuest: (taskId: string, webContentsId: number) => void;
-  /** The task's pane page stopped, and why. */
-  setBrowserCrashed: (taskId: string, kind: BrowserCrashKind) => void;
-  /** The task's pane page loaded again. */
-  clearBrowserCrashed: (taskId: string) => void;
+  /**
+   * Replace the stopped-page map from main's push (or the mount-time read).
+   * Takes the WHOLE map, never a delta, as `setBrowserOffscreenTasks` does.
+   */
+  setBrowserCrashedTasks: (surfaces: Record<string, BrowserCrashKind>) => void;
+  /** Read the stopped-page map from main, on mount and from the HMR resync (Pattern B). */
+  loadBrowserCrashedTasks: () => Promise<void>;
   /**
    * Replace the offscreen-surface set from main's push (or the mount-time
    * read). Takes the WHOLE set, never a delta: main is the only authority, and
@@ -507,31 +510,26 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
     if (current.get(taskId) !== webContentsId) return;
     const next = new Map(current);
     next.delete(taskId);
-    // A browser that is gone leaves no stopped-page mark behind it.
-    const crashed = get().browserCrashedTasks;
-    if (crashed.has(taskId)) {
-      const nextCrashed = new Map(crashed);
-      nextCrashed.delete(taskId);
-      set({ browserGuestTasks: next, browserCrashedTasks: nextCrashed });
-      return;
-    }
     set({ browserGuestTasks: next });
   },
 
-  setBrowserCrashed: (taskId, kind) => {
+  setBrowserCrashedTasks: (surfaces) => {
+    // Replace only on a real change: every card on the board subscribes to this
+    // map, as to the offscreen set.
     const current = get().browserCrashedTasks;
-    if (current.get(taskId) === kind) return;
-    const next = new Map(current);
-    next.set(taskId, kind);
-    set({ browserCrashedTasks: next });
+    const entries = Object.entries(surfaces);
+    if (current.size === entries.length && entries.every(([ownerKey, kind]) => current.get(ownerKey) === kind)) return;
+    set({ browserCrashedTasks: new Map(entries) });
   },
 
-  clearBrowserCrashed: (taskId) => {
-    const current = get().browserCrashedTasks;
-    if (!current.has(taskId)) return;
-    const next = new Map(current);
-    next.delete(taskId);
-    set({ browserCrashedTasks: next });
+  loadBrowserCrashedTasks: async () => {
+    // Optional-chained, as `loadBrowserOffscreenTasks` is: a Vite full reload can
+    // run this before the preload bridge is re-injected.
+    // report-ok: main's IPC wrap reports a handler's rejection, and the map stays as the
+    // last push left it.
+    const surfaces = await window.electronAPI.browser?.getCrashedSurfaces?.().catch(() => null);
+    if (!surfaces) return;
+    get().setBrowserCrashedTasks(surfaces);
   },
 
   setBrowserOffscreenTasks: (taskIds) => {

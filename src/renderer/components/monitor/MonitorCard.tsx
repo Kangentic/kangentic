@@ -41,6 +41,7 @@ import { isStoppedReason } from '../board/agent-wait';
 import { stripMarkdown } from '../../utils/strip-markdown';
 import { useConfigStore } from '../../stores/config-store';
 import { useSessionStore } from '../../stores/session-store';
+import { commandTerminalBrowserOwner } from '../../../shared/browser-owner';
 import { bucketOf, formatMonitorStatus, monitorActivityMark, monitorSlotKind, needsUser } from './monitor-view-model';
 
 /**
@@ -462,9 +463,14 @@ function MonitorFullCard({
       [row.sessionId],
     ),
   );
-  // The task's pane page stopped (task #1226), as the board card's globe reads it.
-  // A Command Terminal row's surface is keyed by its slot, not this id, so it reads none.
-  const browserCrash = useSessionStore((state) => state.browserCrashedTasks.get(row.taskId));
+  // The row's page stopped (task #1226), as the board card's globe reads it. A
+  // Command Terminal's surface is keyed by its slot's owner key, never its
+  // synthetic task id, so that row looks its slot up on its session.
+  const browserCrash = useSessionStore((state) => {
+    if (!row.isCommandTerminal) return state.browserCrashedTasks.get(row.taskId);
+    const slot = state._sessionByTaskId.get(row.taskId)?.commandTerminalSlot;
+    return slot ? state.browserCrashedTasks.get(commandTerminalBrowserOwner(row.projectId, slot)) : undefined;
+  });
   // The board card's clamp, off the same setting and through the same helper,
   // rather than a row count this card decided for itself.
   const isCompact = cardDensity === 'compact';
@@ -514,7 +520,18 @@ function MonitorFullCard({
         )}
         {/* After #N and before the globe, as on the board card (#1160). */}
         {shownPriority !== 0 && <PriorityBadge priority={shownPriority} variant="inline" />}
-        {row.browserRunning && <BrowserAliveGlobe testId="monitor-card-browser-alive" crash={browserCrash} />}
+        {row.browserRunning && (
+          <BrowserAliveGlobe
+            testId="monitor-card-browser-alive"
+            crash={browserCrash}
+            // A Command Terminal has no task to open, so its stopped tip names the terminal.
+            crashTip={row.isCommandTerminal
+              ? browserCrash === 'out-of-memory'
+                ? i18n._(msg`The page in this terminal's browser ran out of memory. Open the terminal to reload it.`)
+                : i18n._(msg`The page in this terminal's browser crashed. Open the terminal to reload it.`)
+              : undefined}
+          />
+        )}
       </div>
 
       {!isCompact && row.prUrl && (

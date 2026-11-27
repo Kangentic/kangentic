@@ -21,6 +21,7 @@ import type {
   GitWorkStateInput,
 } from './git-work-state';
 import type { GuestBrowserShortcut } from './browser-pane-guest-shortcuts';
+import type { BrowserCrashKind } from './browser-crash';
 import { PREVIOUS_TERMINAL_DEFAULTS } from './terminal-native-defaults';
 import {
   DEFAULT_AGENT_ACCOUNTS_CONFIG,
@@ -10967,6 +10968,15 @@ export interface ElectronAPI {
      *  offscreen surface can sit unchanged for a whole session and a
      *  push-only channel would leave a reloaded renderer blank. */
     getOffscreenSurfaces: () => Promise<string[]>;
+    /**
+     * Which browser owners' pages have stopped (out of memory, or a crash), keyed
+     * by owner key (a task id, or a Command Terminal owner key) with why. The
+     * whole map on every change, never a delta. The Browser pill's badge and the
+     * card globes turn red from it, wherever the page runs.
+     */
+    onCrashedSurfaces: (callback: (surfaces: Record<string, BrowserCrashKind>) => void) => () => void;
+    /** The same map, asked for on mount and after an HMR update. */
+    getCrashedSurfaces: () => Promise<Record<string, BrowserCrashKind>>;
     /** The user's Close, for a task whose surface is offscreen: there is no
      *  guest to retire and no pane to unmount, so main destroys the offscreen
      *  window directly. True when something was closed. */
