@@ -1,6 +1,6 @@
 /**
  * Why a Browser pane page stopped, in the two words the user and the agent are
- * given (task #1226, design D2 A).
+ * given (task #1226, decision 48 in the embedded browser decision log).
  *
  * Electron reports eight `render-process-gone` reasons. Running out of memory
  * is the one a user can act on (their own dev app is leaking, or the site is

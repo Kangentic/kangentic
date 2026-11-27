@@ -469,7 +469,7 @@ export function TaskDetailHeader({
                 tip={browserOpen ? t`Hide browser` : t`Show browser`}
                 keys="taskDetail.toggleBrowser"
                 // Hiding is not closing: the page stays loaded, which the name does not say.
-                // A stopped page says why, ahead of either (task #1226, design D4 B).
+                // A stopped page says why, ahead of either (task #1226, browser decision 48).
                 detail={browserCrash === 'out-of-memory'
                   ? t`Page ran out of memory`
                   : browserCrash === 'crashed'
@@ -486,9 +486,12 @@ export function TaskDetailHeader({
                   Red and still while its page has stopped, which a hidden or parked
                   pane's cover cannot show. */}
               {browserAlive && (
-                browserCrash
-                  ? <IconBadge kind="problems" testId="browser-toggle-alive" />
-                  : <IconBadge kind="running" pulse driving={browserDriving} testId="browser-toggle-alive" />
+                <IconBadge
+                  kind={browserCrash ? 'problems' : 'running'}
+                  pulse={!browserCrash}
+                  driving={!browserCrash && browserDriving}
+                  testId="browser-toggle-alive"
+                />
               )}
             </div>
           )}

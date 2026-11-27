@@ -525,11 +525,7 @@ function MonitorFullCard({
             testId="monitor-card-browser-alive"
             crash={browserCrash}
             // A Command Terminal has no task to open, so its stopped tip names the terminal.
-            crashTip={row.isCommandTerminal
-              ? browserCrash === 'out-of-memory'
-                ? i18n._(msg`The page in this terminal's browser ran out of memory. Open the terminal to reload it.`)
-                : i18n._(msg`The page in this terminal's browser crashed. Open the terminal to reload it.`)
-              : undefined}
+            host={row.isCommandTerminal ? 'terminal' : 'task'}
           />
         )}
       </div>

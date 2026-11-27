@@ -398,14 +398,6 @@ msgstr "Changer de branche"
 msgid "Terminal name"
 msgstr "Nom du terminal"
 
-#: src/renderer/components/command-bar/CommandTerminalRail.tsx
-msgid "The page in this terminal's browser crashed. Open the terminal to reload it."
-msgstr ""
-
-#: src/renderer/components/command-bar/CommandTerminalRail.tsx
-msgid "The page in this terminal's browser ran out of memory. Open the terminal to reload it."
-msgstr ""
-
 #: src/renderer/components/command-bar/CommandTerminalLayer.tsx
 #, fuzzy
 msgid "The terminals are back in the panel."

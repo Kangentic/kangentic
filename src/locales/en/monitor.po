@@ -284,14 +284,6 @@ msgstr "Table"
 msgid "Task"
 msgstr "Task"
 
-#: src/renderer/components/monitor/MonitorCard.tsx
-msgid "The page in this terminal's browser crashed. Open the terminal to reload it."
-msgstr "The page in this terminal's browser crashed. Open the terminal to reload it."
-
-#: src/renderer/components/monitor/MonitorCard.tsx
-msgid "The page in this terminal's browser ran out of memory. Open the terminal to reload it."
-msgstr "The page in this terminal's browser ran out of memory. Open the terminal to reload it."
-
 #: src/renderer/components/monitor/monitor-view-model.ts
 msgid "Waiting for your approval {when}"
 msgstr "Waiting for your approval {when}"

@@ -352,14 +352,6 @@ msgstr "切换分支"
 msgid "Terminal name"
 msgstr "终端名称"
 
-#: src/renderer/components/command-bar/CommandTerminalRail.tsx
-msgid "The page in this terminal's browser crashed. Open the terminal to reload it."
-msgstr ""
-
-#: src/renderer/components/command-bar/CommandTerminalRail.tsx
-msgid "The page in this terminal's browser ran out of memory. Open the terminal to reload it."
-msgstr ""
-
 #: src/renderer/components/command-bar/CommandTerminalLayer.tsx
 msgid "The terminals are back in the panel."
 msgstr "终端已回到面板中。"

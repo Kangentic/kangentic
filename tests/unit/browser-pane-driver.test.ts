@@ -57,7 +57,7 @@ import {
   waitForDialogInterception,
 } from '../../src/main/browser/cdp/cdp';
 import { markAgentControl } from '../../src/main/browser/passkey-guard';
-import { withGuest, validateNavigationUrl, NAVIGATE_TIMEOUT_MS } from '../../src/main/browser/browser-pane-driver';
+import { withGuest, validateNavigationUrl, reviveCrashedGuest, NAVIGATE_TIMEOUT_MS } from '../../src/main/browser/browser-pane-driver';
 import { trackGuestCrash } from '../../src/main/browser/guest-crash-state';
 import { EventEmitter } from 'node:events';
 import { KeyboardFocusNotInGuestError } from '../../src/main/browser/cdp/keyboard-focus';
@@ -780,5 +780,73 @@ describe('withGuest - a crashed page', () => {
     expect(result.error.kind).toBe('page-crashed');
     expect(body).not.toHaveBeenCalled();
     expect(guest.reloads).toBe(1);
+  });
+
+  it('refuses a guest Electron reports crashed that this module never heard of, saying "it crashed"', async () => {
+    const guest = crashableGuest(11, { reloadRevives: true });
+    // No render-process-gone event: only `isCrashed()` knows.
+    guest.crashed = true;
+    const body = vi.fn(async () => 'ran');
+    const result = await withGuest({ selector: { projectId: 'p' }, capability: 'observe', config: config() }, body);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.kind).toBe('page-crashed');
+    expect(result.error.detail).toContain('it crashed');
+    expect(body).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `reviveCrashedGuest` on its own: the reload that starts a stopped page again, shared by
+ * every caller that arrives before it finishes (task #1226).
+ */
+describe('reviveCrashedGuest', () => {
+  function revivableGuest(id: number, options: { reloadThrows: boolean }) {
+    const events = new EventEmitter();
+    const guest = {
+      id,
+      reloads: 0,
+      reload: () => {
+        guest.reloads += 1;
+        if (options.reloadThrows) throw new Error('guest is being torn down');
+      },
+      once: (name: string, listener: (...args: unknown[]) => void) => { events.once(name, listener); return guest; },
+      removeListener: (name: string, listener: (...args: unknown[]) => void) => { events.removeListener(name, listener); return guest; },
+      domReady: () => events.emit('dom-ready'),
+      domReadyListeners: () => events.listenerCount('dom-ready'),
+    };
+    return guest;
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('resolves false at once, with no dom-ready listener left behind, when reload throws', async () => {
+    const guest = revivableGuest(21, { reloadThrows: true });
+    // No timer is advanced: a throwing reload must not wait out the navigation bound.
+    await expect(reviveCrashedGuest(guest as never)).resolves.toBe(false);
+    expect(guest.reloads).toBe(1);
+    expect(guest.domReadyListeners()).toBe(0);
+  });
+
+  it('shares one reload between revives that arrive before dom-ready, then reloads again once settled', async () => {
+    const guest = revivableGuest(22, { reloadThrows: false });
+    const first = reviveCrashedGuest(guest as never);
+    const second = reviveCrashedGuest(guest as never);
+    expect(guest.reloads).toBe(1);
+
+    guest.domReady();
+    await expect(Promise.all([first, second])).resolves.toEqual([true, true]);
+    expect(guest.reloads).toBe(1);
+
+    const third = reviveCrashedGuest(guest as never);
+    expect(guest.reloads).toBe(2);
+    guest.domReady();
+    await expect(third).resolves.toBe(true);
   });
 });

@@ -29,22 +29,22 @@ const GUEST_ID = 4343;
 
 const preConfig = `
   window.__mockPreConfigure(function (state) {
-    var ts = new Date().toISOString();
+    var timestamp = new Date().toISOString();
     state.projects.push({ id: '${PROJECT_ID}', name: 'Browser Crash Test', path: '${PROJECT_PATH}', github_url: null,
-      default_agent: 'claude', last_opened: ts, created_at: ts });
+      default_agent: 'claude', last_opened: timestamp, created_at: timestamp });
     state.projectConfigs['${PROJECT_PATH}'] = { browser: { enabled: true } };
     var laneIds = {};
-    state.DEFAULT_SWIMLANES.forEach(function (s, i) {
-      var id = 'lane-bc-' + s.name.toLowerCase().replace(/\\s+/g, '-');
-      laneIds[s.name] = id;
-      state.swimlanes.push(Object.assign({}, s, { id: id, position: i, created_at: ts }));
+    state.DEFAULT_SWIMLANES.forEach(function (swimlane, index) {
+      var id = 'lane-bc-' + swimlane.name.toLowerCase().replace(/\\s+/g, '-');
+      laneIds[swimlane.name] = id;
+      state.swimlanes.push(Object.assign({}, swimlane, { id: id, position: index, created_at: timestamp }));
     });
     state.sessions.push({ id: '${SESSION_ID}', taskId: '${TASK_ID}', projectId: '${PROJECT_ID}', pid: 9996,
-      status: 'running', shell: 'bash', cwd: '${PROJECT_PATH}', startedAt: ts, exitCode: null });
+      status: 'running', shell: 'bash', cwd: '${PROJECT_PATH}', startedAt: timestamp, exitCode: null });
     state.tasks.push({ id: '${TASK_ID}', title: '${TASK_TITLE}', description: '',
       swimlane_id: laneIds['Code Review'], position: 0, agent: 'claude', session_id: '${SESSION_ID}',
       worktree_path: null, branch_name: null, pr_number: null, pr_url: null, base_branch: 'main',
-      archived_at: null, created_at: ts, updated_at: ts });
+      archived_at: null, created_at: timestamp, updated_at: timestamp });
     return { currentProjectId: '${PROJECT_ID}' };
   });
 `;
@@ -129,6 +129,8 @@ test('a crashed page is covered, says why, reloads, and turns the marks outside 
       return Boolean(hit?.closest('[data-testid="browser-pane-crashed"]'));
     });
     expect(barCoveredByCrash).toBe(true);
+    // A guest captures its own events past a cover, so the page itself goes inert.
+    await expect(page.locator('[data-testid="browser-webview"]')).toHaveCSS('pointer-events', 'none');
     // The pane writes no mark outside itself: main's push is the one writer.
     await expect(page.locator('[data-testid="browser-toggle-alive"]')).toHaveAttribute('data-badge', 'running');
     await crashedSurfaces({ [TASK_ID]: 'out-of-memory' });
@@ -142,6 +144,8 @@ test('a crashed page is covered, says why, reloads, and turns the marks outside 
     await crashedSurfaces({});
     await expect(page.locator('[data-testid="browser-pane-crashed"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="browser-toggle-alive"]')).toHaveAttribute('data-badge', 'running');
+    // The next load hands the page its pointer back.
+    await expect(page.locator('[data-testid="browser-webview"]')).toHaveCSS('pointer-events', 'auto');
   });
 
   await test.step('any other reason reads "It crashed."', async () => {
@@ -155,11 +159,19 @@ test('a crashed page is covered, says why, reloads, and turns the marks outside 
     const badge = page.locator('[data-testid="browser-toggle-alive"]');
     await expect(badge).toHaveAttribute('data-badge', 'problems');
     await expect(page.locator('[data-testid="browser-toggle"]')).toHaveAccessibleDescription(/Page crashed/);
+    // An out-of-memory stop words the pill's detail its own way.
+    await crashedSurfaces({ [TASK_ID]: 'out-of-memory' });
+    await expect(page.locator('[data-testid="browser-toggle"]')).toHaveAccessibleDescription(/Page ran out of memory/);
   });
 
-  await test.step('with the window closed, the card globe is red with its tip', async () => {
+  await test.step('with the window closed, the card globe is red with its tip, for either kind', async () => {
     await page.locator('[data-testid="task-detail-dialog"]').getByRole('button', { name: 'Close', exact: true }).first().click();
     const globe = page.locator('[data-testid="task-card-browser-alive"]');
+    // Main's map still says out-of-memory from the step above.
+    await expect(globe).toHaveAttribute('data-crash-kind', 'out-of-memory');
+    await expect(globe).toHaveAccessibleDescription(/ran out of memory\. Open the task to reload it\./);
+    await expect(globe.locator('svg')).toHaveAttribute('aria-label', 'Browser page stopped');
+    await crashedSurfaces({ [TASK_ID]: 'crashed' });
     await expect(globe).toHaveAttribute('data-crash-kind', 'crashed');
     await expect(globe).toHaveAccessibleDescription(/crashed\. Open the task to reload it\./);
   });

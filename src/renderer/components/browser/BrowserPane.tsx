@@ -526,7 +526,7 @@ function BrowserPaneActive({
   // its registration, handle and jar stay, and a reload runs the page in a new
   // process. The next successful `dom-ready` lifts the cover, whoever reloaded:
   // the cover's button, the toolbar, F5, or an agent's navigate. The red marks
-  // outside the pane (design D4 B) come from main's push, not from here, because
+  // outside the pane (decision 48) come from main's push, not from here, because
   // a page can stop where no pane of this window runs.
   const [crashKind, setCrashKind] = useState<BrowserCrashKind | null>(null);
   useEffect(() => {
