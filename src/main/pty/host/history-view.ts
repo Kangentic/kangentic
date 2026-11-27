@@ -53,8 +53,35 @@ export const HISTORY_VIEW_TIMING: HistoryViewTiming = { showWaitMs: 2000, writeO
  *  not entered the alternate screen yet. */
 type Phase = 'opening' | 'open' | 'closing';
 
-function sameRows(first: readonly string[], second: readonly string[]): boolean {
-  return first.length === second.length && first.every((row, index) => row === second[index]);
+/** The rows that differ between two looks at a screen of the same height. */
+function changedRows(first: readonly string[], second: readonly string[]): Set<number> {
+  const changed = new Set<number>();
+  for (let index = 0; index < Math.max(first.length, second.length); index += 1) {
+    if (first[index] !== second[index]) changed.add(index);
+  }
+  return changed;
+}
+
+/**
+ * Rows outside the volatile set that must change for a toggle to count as having moved the screen.
+ * Measured on Claude Code 2.1.328 in a 40-row terminal: the transcript view of a one-turn conversation
+ * changed 8 rows, and one opened mid-turn 37. A spinner or a status row is one or two.
+ */
+const MOVED_ROWS = 3;
+
+/**
+ * Whether a toggle moved the screen: enough of the rows that held still before it changed after it.
+ * A spinner, a timer or a status row repaints on its own, so a row that changed in the look before the
+ * toggle says nothing, and one or two rows changing say little (Sentry DESKTOP-5K). A screen whose
+ * height changed (a resize) counts as moved, as it always did. A turn that scrolls every row inside
+ * one poll leaves too little to compare and reads as not moved: that costs the report and the second
+ * toggle, which an agent that ignored the first would take as a fresh open.
+ */
+function screenMoved(before: readonly string[], after: readonly string[], volatileRows: ReadonlySet<number>): boolean {
+  if (before.length !== after.length) return true;
+  let moved = 0;
+  for (const index of changedRows(before, after)) if (!volatileRows.has(index)) moved += 1;
+  return moved >= MOVED_ROWS;
 }
 
 interface Mark {
@@ -102,8 +129,15 @@ export class HistoryViews {
     const mark: Mark = { phase: 'opening', closeRequested: false, toggleOnWriteOut: false };
     this.marks.set(sessionId, mark);
     let toggled = false;
-    const screenBeforeToggle = this.dependencies.screenRows(sessionId);
-    if (!view.isShowing(screenBeforeToggle)) {
+    const firstLook = this.dependencies.screenRows(sessionId);
+    if (!view.isShowing(firstLook)) {
+      // A second look one poll later names the rows that change with no key at all.
+      await new Promise((resolve) => setTimeout(resolve, this.timing.pollMs));
+      if (this.marks.get(sessionId) !== mark) return 'not-running';
+      // The agent may have left the alternate screen during the look, and a toggle there types into its prompt.
+      if (!this.dependencies.inAltScreen(sessionId)) return this.abandon(sessionId, 'not-fullscreen');
+      const screenBeforeToggle = this.dependencies.screenRows(sessionId);
+      const volatileRows = changedRows(firstLook, screenBeforeToggle);
       if (!this.dependencies.write(sessionId, view.toggleKeys)) return this.abandon(sessionId, 'not-running');
       toggled = true;
       const shown = await this.waitFor(() => view.isShowing(this.dependencies.screenRows(sessionId)), this.timing.showWaitMs);
@@ -112,7 +146,7 @@ export class HistoryViews {
         // The screen moved, so the toggle opened something `isShowing` does not
         // know: put the agent back rather than leave it in that view. A screen that
         // did not move took no toggle (a dialog that ignores the key), and gets none.
-        if (!sameRows(this.dependencies.screenRows(sessionId), screenBeforeToggle)) {
+        if (screenMoved(screenBeforeToggle, this.dependencies.screenRows(sessionId), volatileRows)) {
           this.dependencies.write(sessionId, view.toggleKeys);
           return this.abandon(sessionId, 'unrecognized-view');
         }

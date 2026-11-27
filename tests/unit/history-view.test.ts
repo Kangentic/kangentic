@@ -106,6 +106,37 @@ describe('HistoryViews.open', () => {
     expect(views.isActive('session-1')).toBe(false);
   });
 
+  // Sentry DESKTOP-5K: a turn in flight repaints its spinner row on every frame, which read as the
+  // toggle moving the screen, so the host pressed Ctrl+O a second time and reported a view drift.
+  it('reads a screen whose only change is a spinner as not moved: no second toggle and no report', async () => {
+    const agent = standInAgent({ answers: false });
+    let frame = 0;
+    const dependencies = {
+      ...agent.dependencies(),
+      screenRows: () => [`✻ Thinking… (${(frame += 1)}s · esc to interrupt)`, ...PROMPT_SCREEN.slice(1)],
+    };
+    const views = new HistoryViews(dependencies, FAST);
+
+    await expect(views.open('session-1')).resolves.toBe('did-not-open');
+    expect(agent.state.writes).toEqual(['\x0f']);
+  });
+
+  it('still reads a view that repaints the screen as moved while a spinner row ticks', async () => {
+    // An update that rewords the footer, opened during a turn: the spinner row ticks the whole time.
+    const reworded = ['─'.repeat(40), '  Viewing transcript · ctrl+o to toggle', 'line one of the conversation', 'line two of the conversation'];
+    const agent = standInAgent({ transcriptScreen: reworded });
+    let frame = 0;
+    const base = agent.dependencies();
+    const dependencies = {
+      ...base,
+      screenRows: () => [`✻ Thinking… (${(frame += 1)}s)`, ...(agent.state.view === 'transcript' ? reworded : PROMPT_SCREEN.slice(1))],
+    };
+    const views = new HistoryViews(dependencies, FAST);
+
+    await expect(views.open('session-1')).resolves.toBe('unrecognized-view');
+    expect(agent.state.writes).toEqual(['\x0f', '\x0f']);
+  });
+
   it('backs out of the transcript mode it opened when the write-out never leaves the alternate screen', async () => {
     const agent = standInAgent({ writesOut: false });
     const views = new HistoryViews(agent.dependencies(), FAST);
@@ -360,6 +391,108 @@ describe('CLAUDE_HISTORY_VIEW.isShowing', () => {
   it('never reads the prompt view as transcript mode, even when the conversation quotes the footer', () => {
     expect(CLAUDE_HISTORY_VIEW.isShowing(PROMPT_SCREEN)).toBe(false);
     expect(CLAUDE_HISTORY_VIEW.isShowing(['  The footer reads Showing detailed transcript in that mode.', ...PROMPT_SCREEN])).toBe(false);
+    expect(CLAUDE_HISTORY_VIEW.isShowing(['', '  The footer reads Showing detailed transcript in that mode.'])).toBe(false);
     expect(CLAUDE_HISTORY_VIEW.isShowing([])).toBe(false);
+  });
+
+  // Measured on Claude Code 2.1.328 (Linux, 120 by 40): with a turn streaming, the footer row carries the
+  // turn's status first. Read only at the row's start, that view was filed as unrecognized (Sentry DESKTOP-5K).
+  it('reads transcript mode opened mid-turn, whose footer starts with the turn\'s status', () => {
+    expect(CLAUDE_HISTORY_VIEW.isShowing(['  37', '  38', 'working · Showing detailed transcript · ctrl+o to toggle · ↑/↓ to scroll · v to open in code · ? for'])).toBe(true);
+  });
+});
+
+describe('HistoryViews.open, how far the screen must move after the toggle', () => {
+  /**
+   * An agent that ignores the toggle. Row 0 ticks on every look, so it differs between the two looks
+   * before the toggle and is volatile. After the toggle, `rowsChangedByToggle` other rows change.
+   */
+  function tickingAgent(rowsChangedByToggle: number, extraRowAfterToggle = false) {
+    const agent = standInAgent({ answers: false });
+    let tick = 0;
+    const dependencies = {
+      ...agent.dependencies(),
+      screenRows: () => {
+        const rows = [`✻ Working (${(tick += 1)}s)`, ...PROMPT_SCREEN.slice(1)];
+        if (agent.state.writes.length > 0) {
+          for (let index = 1; index <= rowsChangedByToggle; index += 1) rows[index] = `changed row ${index}`;
+          if (extraRowAfterToggle) rows.push('one more row');
+        }
+        return rows;
+      },
+    };
+    return { agent, views: new HistoryViews(dependencies, FAST) };
+  }
+
+  it('reads two changed rows beside a ticking row as not moved: no second toggle', async () => {
+    const { agent, views } = tickingAgent(2);
+    await expect(views.open('session-1')).resolves.toBe('did-not-open');
+    expect(agent.state.writes).toEqual(['\x0f']);
+    expect(views.isActive('session-1')).toBe(false);
+  });
+
+  it('reads three changed rows beside a ticking row as moved: the toggle goes back and the view is reported', async () => {
+    const { agent, views } = tickingAgent(3);
+    await expect(views.open('session-1')).resolves.toBe('unrecognized-view');
+    expect(agent.state.writes).toEqual(['\x0f', '\x0f']);
+    expect(views.isActive('session-1')).toBe(false);
+  });
+
+  it('reads a screen whose height changed after the toggle as moved', async () => {
+    const { agent, views } = tickingAgent(0, true);
+    await expect(views.open('session-1')).resolves.toBe('unrecognized-view');
+    expect(agent.state.writes).toEqual(['\x0f', '\x0f']);
+  });
+});
+
+describe('HistoryViews.open, an agent that leaves the alternate screen during the first look', () => {
+  it('answers not-fullscreen with no key typed and leaves no mark, so a later open is not blocked', async () => {
+    const agent = standInAgent();
+    const base = agent.dependencies();
+    let altScreenChecks = 0;
+    // Check 1 is the entry check. Check 2 is the re-check after the poll: the agent has left by then.
+    const dependencies = {
+      ...base,
+      inAltScreen: (sessionId: string) => ((altScreenChecks += 1) === 2 ? false : base.inAltScreen(sessionId)),
+    };
+    const views = new HistoryViews(dependencies, FAST);
+
+    await expect(views.open('session-1')).resolves.toBe('not-fullscreen');
+    expect(agent.state.writes).toEqual([]);
+    expect(views.isActive('session-1')).toBe(false);
+
+    await expect(views.open('session-1')).resolves.toBe('opened');
+    expect(agent.state.writes).toEqual(['\x0f', '[']);
+  });
+});
+
+describe('CLAUDE_HISTORY_VIEW.isShowing, the status prefix', () => {
+  const footer = 'Showing detailed transcript · ctrl+o to toggle';
+
+  it('reads a prefix of up to 40 characters with no middle dot', () => {
+    expect(CLAUDE_HISTORY_VIEW.isShowing(['', `${'x'.repeat(40)} · ${footer}`])).toBe(true);
+  });
+
+  it('does not read a prefix that itself holds a middle dot', () => {
+    expect(CLAUDE_HISTORY_VIEW.isShowing(['', `see x · y · ${footer}`])).toBe(false);
+  });
+
+  it('does not read a prefix of 41 characters or more', () => {
+    expect(CLAUDE_HISTORY_VIEW.isShowing(['', `${'x'.repeat(41)} · ${footer}`])).toBe(false);
+  });
+
+  it('does not read a separator with an empty prefix', () => {
+    expect(CLAUDE_HISTORY_VIEW.isShowing(['', `· ${footer}`])).toBe(false);
+  });
+});
+
+describe('HistoryViews.open mid-turn', () => {
+  it('opens a transcript view whose footer starts with the turn\'s status, and toggles nothing twice', async () => {
+    const midTurn = ['  36', '  37', '  38', 'working · Showing detailed transcript · ctrl+o to toggle · ↑/↓ to scroll'];
+    const agent = standInAgent({ transcriptScreen: midTurn });
+    const views = new HistoryViews(agent.dependencies(), FAST);
+
+    await expect(views.open('session-1')).resolves.toBe('opened');
+    expect(agent.state.writes).toEqual(['\x0f', '[']);
   });
 });
