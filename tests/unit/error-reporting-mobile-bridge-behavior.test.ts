@@ -575,13 +575,19 @@ describe('bridge state files that are there and will not load', () => {
     expect(reportHandledError).not.toHaveBeenCalled();
   });
 
-  it('reports push registrations that will not parse, under stage push_registrations_load, and starts empty', async () => {
+  it('reports push registrations that will not parse, under stage push_registrations_load, with why, and starts empty', async () => {
     fs.writeFileSync(path.join(temporaryDirectory, 'mobile-push-registrations.json'), `{"device-1": "${USER_TEXT}`);
     const { PushRegistrationStore } = await import('../../src/main/mobile-bridge/push/push-registration-store');
 
     expect(new PushRegistrationStore().list()).toEqual([]);
 
-    expectOneReport({ stage: 'push_registrations_load', error_name: 'SyntaxError' });
+    // JSON.parse quotes its input, so the parse error rides only as cause_name.
+    expectOneReport({
+      stage: 'push_registrations_load',
+      load_cause: 'truncated',
+      error_name: 'PushRegistrationsCorruptError',
+      cause_name: 'SyntaxError',
+    });
   });
 
   /** The next read of `fileName` fails as a file another program holds, then reads work again. */

@@ -821,6 +821,17 @@ describe('read-* response parsers', () => {
     expect(parseReadBoardResponsePayload({ projects: [{ id: 'p-1', name: 'Alpha' }] })).toEqual({ projects: [{ id: 'p-1', name: 'Alpha' }] });
   });
 
+  // A phone that registered earlier in its process registers again only on an
+  // explicit false, so the parser must keep false and must not invent a value.
+  it('carries pushRegistered on a project list, and leaves it absent when absent or malformed (pre-0.30.0 desktop)', () => {
+    const projects = [{ id: 'p-1', name: 'Alpha' }];
+    expect(parseReadBoardResponsePayload({ projects, pushRegistered: false })).toEqual({ projects, pushRegistered: false });
+    expect(parseReadBoardResponsePayload({ projects, pushRegistered: true })).toEqual({ projects, pushRegistered: true });
+    expect('pushRegistered' in parseReadBoardResponsePayload({ projects })).toBe(false);
+    // A hint, so a malformed value is dropped rather than failing the bootstrap listing.
+    expect('pushRegistered' in parseReadBoardResponsePayload({ projects, pushRegistered: 'no' })).toBe(false);
+  });
+
   it('parses a read-board snapshot', () => {
     const snapshot: JsonValue = {
       projectId: 'p-1',

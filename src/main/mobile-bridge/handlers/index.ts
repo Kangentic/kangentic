@@ -23,7 +23,7 @@ export interface CapabilityHandlerDeps {
   /** Bridge-owned, never `context.diffWatcher` - that instance is shared with the renderer's git-diff panel and is single-watch-per-path, so a bridge teardown would kill the renderer's live watch (and vice versa). */
   diffWatcher: DiffWatcher;
   getSubscriptions: (deviceId: string) => SubscriptionRegistry;
-  /** Bridge-owned push registration sidecar; register-push writes it, the push notifier reads it. */
+  /** Bridge-owned push registration sidecar; register-push writes it, the push notifier reads it, read-board's project list says whether it holds the device. */
   pushRegistrations: PushRegistrationStore;
   /** Bridge-owned, throttled spawn-progress label changes; read-board forwards them as task-updated. */
   spawnProgressFeed: Pick<SpawnProgressFeed, 'onTaskSpawnProgressChanged'>;
@@ -41,7 +41,7 @@ export function registerCapabilityHandlers(router: CapabilityRouter, deps: Capab
   router.register('read-stream', (request, session) =>
     handleReadStream(request, session, deps.context, deps.getSubscriptions(session.deviceId)));
   router.register('read-board', (request, session) =>
-    handleReadBoard(request, session, deps.context, deps.getSubscriptions(session.deviceId), deps.spawnProgressFeed, deps.queuePlaceFeed));
+    handleReadBoard(request, session, deps.context, deps.getSubscriptions(session.deviceId), deps.spawnProgressFeed, deps.queuePlaceFeed, deps.pushRegistrations));
   router.register('read-diff', (request, session) =>
     handleReadDiff(request, session, deps.context, deps.getSubscriptions(session.deviceId), deps.diffWatcher));
   router.register('send-user-message', (request) => handleSendUserMessage(request, deps.context));

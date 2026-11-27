@@ -744,6 +744,14 @@ in one Sentry org, one triage surface.
     failed after its subscription ended report nothing. `wire-mappers.ts` runs in the retrieval
     worker and cannot report.
 
+    A registrations file that reads but will not parse, or is not an object, is renamed to
+    `mobile-push-registrations.json.corrupt`, so the next registration writes a clean file. It
+    reports as `PushRegistrationsCorruptError` under `push_registrations_load`, with `load_cause`
+    (`empty`, `nul_filled`, `truncated` or `invalid`) and the parse error as `cause_name`. It is
+    an environment failure, so it groups on `['handled-env', 'PushRegistrationsCorruptError',
+    load_cause]`. Sentry DESKTOP-5H was such a file, kept for two app runs with every push dropped
+    in between.
+
     A roster or registrations file that is there and cannot be read may be whole, so nothing is
     written over it on the strength of that read. The change that would have been saved (a
     pairing, a revoke, a rename, a capability change, a registration) is not, and it is reported

@@ -28,6 +28,7 @@ import type { SubscriptionRegistry } from '../session/subscription-registry';
 import type { BoardChangedEvent } from '../board-event-bus';
 import type { SpawnProgressFeed } from '../spawn-progress-feed';
 import type { QueuePlaceFeed } from '../queue-place-feed';
+import type { PushRegistrationStore } from '../push/push-registration-store';
 import { getInFlightSpawnProgress } from '../../transition-engine/spawn-progress';
 import { sendEvent } from './send-event';
 import { deriveProjectAccentColor } from './project-color';
@@ -124,6 +125,7 @@ export async function handleReadBoard(
   subscriptions: SubscriptionRegistry,
   spawnProgressFeed: Pick<SpawnProgressFeed, 'onTaskSpawnProgressChanged'>,
   queuePlaceFeed: Pick<QueuePlaceFeed, 'onQueuePlacesChanged'>,
+  pushRegistrations: Pick<PushRegistrationStore, 'registrationState'>,
 ): Promise<CapabilityResponseMessage> {
   const payload = parseCapabilityRequestPayload('read-board', request.payload);
 
@@ -140,7 +142,19 @@ export async function handleReadBoard(
     const groups = context.projectGroupRepo
       .list()
       .map((group) => ({ id: group.id, name: group.name, position: group.position }));
-    const responsePayload: ReadBoardResponsePayload = { projects, groups };
+    // Every phone bootstrap reads this list first, and a phone registers for
+    // push once per app process, so this is where one whose registration the
+    // desktop lost (a corrupt file set aside, Sentry DESKTOP-5H) learns to
+    // register again (protocol 0.30.0). Said only for a device that may
+    // register, and never while the registrations file will not read.
+    const registrationState = session.capabilities.has('register-push')
+      ? pushRegistrations.registrationState(session.deviceId)
+      : 'unknown';
+    const responsePayload: ReadBoardResponsePayload = {
+      projects,
+      groups,
+      ...(registrationState !== 'unknown' ? { pushRegistered: registrationState === 'registered' } : {}),
+    };
     return { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(responsePayload) };
   }
 

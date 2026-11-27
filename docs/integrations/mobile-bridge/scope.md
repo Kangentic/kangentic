@@ -1,7 +1,7 @@
 ---
 type: Design
 title: Scope and protocol history
-description: What shipped in each bridge phase and protocol release from 0.2.0 to 0.29.0 with the reason for each change, including the derived pairing slot in 0.12.0 and the start, pause and command-terminal verbs, the workflow fields, the task report read, the paused session id, the resume on open and card fields in 0.28.0, who paused a task and the card switches in 0.29.0, and what stays out of scope.
+description: What shipped in each bridge phase and protocol release from 0.2.0 to 0.30.0 with the reason for each change, including the derived pairing slot in 0.12.0 and the start, pause and command-terminal verbs, the workflow fields, the task report read, the paused session id, the resume on open and card fields in 0.28.0, who paused a task and the card switches in 0.29.0, the missing push registration flag in 0.30.0, and what stays out of scope.
 tags: [mobile, protocol, history, roadmap]
 sources:
   - resource: packages/protocol/CHANGELOG.md
@@ -181,6 +181,14 @@ One section per bridge phase and protocol release, oldest first, each saying wha
 - Grants: none.
 - Why: 4fe1dfbdb (with 724b55b22) made the desktop card read "Paused while idle" for the idle timeout's pause and gave the task window's Resume button a line saying whether the pause holds, and 18f351747 added switches that hide the priority meter and the label row on cards. The phone draws the desktop card 1:1 and had neither fact.
 - The phone-side adoption is the mobile app's own change, gated on this package publishing.
+
+## Protocol 0.30.0: tell a phone the desktop holds no push registration for it
+
+- Protocol: `pushRegistered?: boolean` on `ReadBoardProjectListResponsePayload`, the listing every phone bootstrap reads first. A value that is not a boolean is dropped, as a malformed group is, so it can never fail the listing. Additive; `PROTOCOL_VERSION` stays '3'. Absent means a pre-0.30.0 desktop, a desktop whose registrations file will not read, or a device without the `register-push` grant, and reads as registered.
+- Desktop: `read-board` asks `PushRegistrationStore.registrationState(deviceId)` for a device that holds `register-push`, and sends `false` when the store holds no registration for it. A registrations file that will not parse is now set aside as `mobile-push-registrations.json.corrupt`, so the store starts empty and the phone's next registration writes a clean file.
+- Grants: none.
+- Why: Sentry DESKTOP-5H. A corrupt registrations file loaded as empty and stayed, so every push was dropped, and a phone registers once per app process, so nothing put the registration back until the phone app restarted.
+- The phone-side adoption (on `pushRegistered === false`, reset the once-per-process registration state and register again) is the mobile app's own change, gated on this package publishing.
 
 ## Out of scope: later phases
 

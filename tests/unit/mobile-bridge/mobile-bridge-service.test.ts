@@ -191,7 +191,10 @@ function rewireReadsToLatestRosterWrite(identityJson: string): void {
 
 beforeEach(() => {
   existsSyncSpy.mockReset();
-  readFileSyncSpy.mockReset();
+  // No file exists yet by default, so a read throws ENOENT as the real one does.
+  readFileSyncSpy.mockReset().mockImplementation(() => {
+    throw Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT', syscall: 'open' });
+  });
   writeFileSyncSpy.mockReset();
   mkdirSyncSpy.mockReset();
   unlinkSyncSpy.mockReset();
