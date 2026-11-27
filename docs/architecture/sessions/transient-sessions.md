@@ -39,7 +39,9 @@ Main is the authority for the pairing. `ManagedSession` retains `commandTerminal
 DB row, so this does not make a transient session persistent), and `toSession` carries them to the
 renderer on every session row. The flag marks a label the user set or cleared by hand
 (`session:renameTransient`), which the namer and the resume seed then leave alone. A row main ends
-only to start it again in its slot (a move to another account, `restartCommandTerminalOn`) also
+only to start it again in its slot (a move to another account, `restartCommandTerminalOn`, or an
+update of an SSH host's program, `remote/program-update.ts`, both through
+`endCommandTerminalForRestart`) also
 carries `commandTerminalRespawn` on its removal's snapshot: the window stays and adopts the slot's
 next terminal, and closes after 60 s if none arrives. `planTransientRecovery`
 (`src/renderer/stores/session-store/transient-recovery.ts`) rebuilds the map from that on every
