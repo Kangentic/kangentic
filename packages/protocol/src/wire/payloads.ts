@@ -368,6 +368,16 @@ export interface ReadBoardProjectListResponsePayload {
    * is exactly the pre-0.11.0 behaviour.
    */
   groups?: ReadBoardProjectGroup[];
+  /**
+   * Whether this desktop holds a push registration for the requesting device
+   * (protocol 0.30.0). False means it holds none, for example after it set
+   * aside a corrupt registrations file, so a phone that wants notifications
+   * calls `register-push` again even if it registered earlier in this app
+   * process. Absent from an older desktop, from one that could not read its
+   * registrations, and for a device without the `register-push` grant: treat
+   * as registered.
+   */
+  pushRegistered?: boolean;
 }
 
 /** Returned when the request carries a projectId - a snapshot of that project's board. */
@@ -569,7 +579,13 @@ export function parseReadBoardResponsePayload(payload: JsonValue): ReadBoardResp
             : [],
         )
       : undefined;
-    return { projects, ...(groups !== undefined ? { groups } : {}) };
+    // Dropped like a malformed group rather than failing the listing: it is
+    // a hint, and absent reads as registered, the behaviour before 0.30.0.
+    return {
+      projects,
+      ...(groups !== undefined ? { groups } : {}),
+      ...(typeof payload.pushRegistered === 'boolean' ? { pushRegistered: payload.pushRegistered } : {}),
+    };
   }
 
   if (typeof payload.projectId !== 'string') throw new Error('read-board response is missing "projectId"');

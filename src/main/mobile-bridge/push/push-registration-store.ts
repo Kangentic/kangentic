@@ -11,7 +11,12 @@
  *
  * Loading is tolerant: a missing or corrupt file, or a malformed entry,
  * degrades to "that registration drops out" rather than throwing into
- * the notifier's send path. A file that is there and cannot be read is
+ * the notifier's send path. A corrupt file (one that will not parse, or
+ * is not an object) is set aside as `<file>.corrupt` and reported with a
+ * fixed `load_cause`, so the next registration writes a clean file and a
+ * phone told it holds none (`registrationState`) registers again. Sentry
+ * DESKTOP-5H was one such file kept for two app runs, with every push
+ * dropped in between. A file that is there and cannot be read is
  * different: it may be whole, so it is read again on the next call and
  * nothing is written over it until a read succeeds.
  */
@@ -62,6 +67,39 @@ function isPushRegistration(value: unknown): value is PushRegistration {
   return Array.isArray(record.categories) && record.categories.every(isPushCategory);
 }
 
+/** Why a registrations file that read did not load, as the `load_cause` tag. */
+export type PushRegistrationsLoadCause = 'empty' | 'nul_filled' | 'truncated' | 'invalid';
+
+/** Whether the store holds a device's registration. `unknown` while the file is there and will not read. */
+export type PushRegistrationState = 'registered' | 'absent' | 'unknown';
+
+/**
+ * The one error a corrupt registrations file reports as, whatever the cause,
+ * so each `load_cause` is one Sentry issue. A parse failure rides as `cause`.
+ */
+export class PushRegistrationsCorruptError extends Error {
+  constructor(options?: { cause?: unknown }) {
+    super('The push registrations file is corrupt', options);
+    this.name = 'PushRegistrationsCorruptError';
+  }
+}
+
+/**
+ * The shape of a file that would not load. NUL bytes are what an OS crash or a
+ * power loss can leave in a file whose rename landed before its data did. A
+ * file that opens a JSON value and never closes it was cut off mid-write,
+ * which a bare write straight onto the target (0.63.0 and earlier) could do.
+ */
+function loadCauseOf(raw: string): PushRegistrationsLoadCause {
+  const trimmed = raw.trim();
+  if (trimmed === '') return 'empty';
+  if (raw.includes('\0')) return 'nul_filled';
+  if ((trimmed.startsWith('{') && !trimmed.endsWith('}')) || (trimmed.startsWith('[') && !trimmed.endsWith(']'))) {
+    return 'truncated';
+  }
+  return 'invalid';
+}
+
 export class PushRegistrationStore {
   /** Lazy in-memory mirror of the sidecar; null until the first load(). */
   private registrations: Map<string, PushRegistration> | null = null;
@@ -79,8 +117,9 @@ export class PushRegistrationStore {
 
   /**
    * Reads the sidecar into memory, dropping malformed entries. A missing file
-   * and one that will not parse load as empty and are kept. A file that is there
-   * and could not be read loads as empty for this call only.
+   * loads as empty and is kept. A corrupt one is set aside and reported, and
+   * loads as empty and is kept. A file that is there and could not be read
+   * loads as empty for this call only.
    */
   load(): Map<string, PushRegistration> {
     if (this.registrations) return this.registrations;
@@ -101,22 +140,59 @@ export class PushRegistrationStore {
       this.unreadable = null;
     }
     if (raw !== null) {
+      let parsed: unknown;
       try {
-        const parsed: unknown = JSON.parse(raw);
-        if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-          for (const [deviceId, entry] of Object.entries(parsed)) {
-            if (isPushRegistration(entry)) loaded.set(deviceId, entry);
-          }
-        }
+        parsed = JSON.parse(raw);
       } catch (error) {
-        // The file will not parse, so every paired phone stops getting
-        // notifications until it registers again.
-        mobileBridgeReporter.report(error, { tags: { stage: 'push_registrations_load' } });
-        console.warn('[mobile-bridge/push-registration-store] failed to parse registrations, starting empty:', error);
+        // report-ok: setAsideCorruptFile reports it, as PushRegistrationsCorruptError
+        // with this parse error as its cause.
+        this.setAsideCorruptFile(raw, error);
+        this.registrations = loaded;
+        return loaded;
+      }
+      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+        for (const [deviceId, entry] of Object.entries(parsed)) {
+          if (isPushRegistration(entry)) loaded.set(deviceId, entry);
+        }
+      } else {
+        this.setAsideCorruptFile(raw, null);
       }
     }
     this.registrations = loaded;
     return loaded;
+  }
+
+  /**
+   * Every paired phone gets no notifications until it registers again, so the
+   * file is moved out of the way and the next registration writes a clean one.
+   * The copy kept beside it is for diagnosis; a later corrupt file replaces it.
+   */
+  private setAsideCorruptFile(raw: string, parseError: unknown): void {
+    const loadCause = loadCauseOf(raw);
+    const filePath = this.filePath();
+    try {
+      fs.renameSync(filePath, `${filePath}.corrupt`);
+    } catch (error) {
+      // report-ok: the next registration replaces the corrupt file through
+      // safeWriteJson, so a set-aside that failed loses only the copy kept for
+      // diagnosis. The corrupt file itself is reported below.
+      console.warn('[mobile-bridge/push-registration-store] could not set the corrupt registrations aside:', error);
+    }
+    const corruptError = new PushRegistrationsCorruptError(parseError === null ? undefined : { cause: parseError });
+    // A file the machine left unreadable, not a code path, so it groups by cause.
+    mobileBridgeReporter.report(corruptError, {
+      tags: { stage: 'push_registrations_load', load_cause: loadCause },
+      fingerprint: ['handled-env', corruptError.name, loadCause],
+    });
+    console.warn(`[mobile-bridge/push-registration-store] the registrations were corrupt (${loadCause}), set aside and starting empty`);
+  }
+
+  /** Whether this desktop holds `deviceId`'s registration, for the phone's bootstrap read. */
+  registrationState(deviceId: string): PushRegistrationState {
+    const registrations = this.load();
+    // load() sets `unreadable` only on a read that failed while the file was there, and clears it on the next read that works.
+    if (this.unreadable !== null) return 'unknown';
+    return registrations.has(deviceId) ? 'registered' : 'absent';
   }
 
   private save(): void {
