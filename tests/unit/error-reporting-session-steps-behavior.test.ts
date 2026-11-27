@@ -19,6 +19,9 @@
  * once per run, and each test installs only the mocks its module needs.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { IPC } from '../../src/shared/ipc-channels';
 import { reportedFailures, reportedText, type ReportedFailure } from './helpers/reported-failures';
 
@@ -527,12 +530,26 @@ describe('auto_spawn steps', () => {
 
 describe('git_stats steps', () => {
   const nonZeroChurn = { linesAdded: 12, linesRemoved: 3, filesChanged: 2 };
+  type Churn = typeof nonZeroChurn;
 
-  function installChurnMocks(churn: { linesAdded: number; linesRemoved: number; filesChanged: number }): void {
+  /** Every folder a churn read was started in. */
+  const readDirectories: string[] = [];
+
+  /**
+   * The read answers `churn`, or rejects with what `failure` returns. `duringRead`
+   * runs inside the read, before it answers.
+   */
+  function installChurnMocks(churn: Churn | { failure: () => unknown }, duringRead?: () => void): void {
+    readDirectories.length = 0;
     installMocks({
       '../../src/main/git/diff-service': () => ({
         DiffService: class {
-          async getChurnSummary() { return churn; }
+          constructor(directory: string) { readDirectories.push(directory); }
+          async getChurnSummary(): Promise<Churn> {
+            duringRead?.();
+            if ('failure' in churn) throw churn.failure();
+            return churn;
+          }
         },
       }),
       '../../src/main/git/git-read-queue': () => ({
@@ -542,15 +559,185 @@ describe('git_stats steps', () => {
     });
   }
 
-  function churnArguments(overrides: { setSession?: () => void; setUsage?: () => void; listRecords?: () => unknown[] } = {}) {
+  function churnArguments(overrides: {
+    setSession?: () => void;
+    setUsage?: () => void;
+    listRecords?: () => unknown[];
+    worktreePath?: string | null;
+  } = {}) {
     const sessionRepo = {
       listForTaskNewestFirst: overrides.listRecords ?? (() => [{ id: 'record-1' }]),
       setTaskGitStats: vi.fn(overrides.setSession ?? (() => undefined)),
     };
     const usageHistoryRepo = { setTaskGitStats: vi.fn(overrides.setUsage ?? (() => undefined)) };
-    const task = { id: 'task-ccc00003', title: USER_TEXT, worktree_path: '/mock/worktree', pr_state: null, archived_at: null, base_branch: null };
+    const worktreePath = overrides.worktreePath === undefined ? '/mock/worktree' : overrides.worktreePath;
+    const task = { id: 'task-ccc00003', title: USER_TEXT, worktree_path: worktreePath, pr_state: null, archived_at: null, base_branch: null };
     return { sessionRepo, usageHistoryRepo, task };
   }
+
+  /** Run one capture whose read fails, and give its rejection time to land. */
+  async function captureFailingWith(failure: () => unknown, worktreePath: string): Promise<void> {
+    installChurnMocks({ failure });
+    const { captureGitChurn } = await import('../../src/main/ipc/handlers/git-stats-capture');
+    const { sessionRepo, usageHistoryRepo, task } = churnArguments({ worktreePath });
+    captureGitChurn(task as never, sessionRepo as never, usageHistoryRepo as never, 'record-1', '/mock/project', 'main');
+    await vi.waitFor(() => expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('[GIT_STATS] Churn read failed')));
+    await settle();
+    expect(sessionRepo.setTaskGitStats).not.toHaveBeenCalled();
+  }
+
+  /** A folder no test writes and nothing creates: its walk up meets no `.git` before the root. */
+  function folderWithNoRepository(): string {
+    return path.join(path.parse(os.tmpdir()).root, `kangentic-no-repository-${process.pid}`, 'project');
+  }
+
+  // Sentry DESKTOP-5R, 5Y, 5S, 5X: a worktree removed under the read. Expected, so not a defect.
+  describe('a read whose folder was removed under it', () => {
+    it('reports nothing for git refusing a folder that is not a repository any more', async () => {
+      const { GitCommandError } = await import('../../src/main/git/git-command-error');
+      const notARepository = () => new GitCommandError({ stdout: '', stderr: `fatal: not a git repository: /mock/project/.git/worktrees/${USER_TEXT}\n`, exitCode: 128 });
+
+      await captureFailingWith(notARepository, '/mock/worktree');
+
+      expect(reportHandledError).not.toHaveBeenCalled();
+      expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('fatal: not a git repository'));
+    });
+
+    it('reports nothing for a git that could not start in a folder that is gone', async () => {
+      const cwdGone = () => Object.assign(new Error('spawn git ENOENT'), { code: 'ENOENT' });
+
+      await captureFailingWith(cwdGone, folderWithNoRepository());
+
+      expect(reportHandledError).not.toHaveBeenCalled();
+    });
+
+    it('reports nothing for gitAt finding the folder gone', async () => {
+      const { gitAt } = await import('../../src/main/git/git-client');
+      const gone = folderWithNoRepository();
+      const folderMissing = () => {
+        try {
+          gitAt(gone);
+        } catch (error) {
+          return error;
+        }
+        return new Error('gitAt did not throw');
+      };
+
+      await captureFailingWith(folderMissing, gone);
+
+      expect(reportHandledError).not.toHaveBeenCalled();
+    });
+  });
+
+  /** A real worktree folder with its own `.git` file, removed after the test. */
+  function realWorktree(): { worktreePath: string; remove: () => void } {
+    const worktreePath = fs.mkdtempSync(path.join(os.tmpdir(), 'churn-worktree-'));
+    fs.writeFileSync(path.join(worktreePath, '.git'), 'gitdir: /mock/project/.git/worktrees/1\n');
+    return { worktreePath, remove: () => fs.rmSync(worktreePath, { recursive: true, force: true }) };
+  }
+
+  it('still reports an ENOENT from a folder that is still there, which is not a removal', async () => {
+    // A git missing from PATH fails the same way, and its folder is fine.
+    const gitMissing = () => Object.assign(new Error('spawn git ENOENT'), { code: 'ENOENT' });
+    const worktree = realWorktree();
+    try {
+      await captureFailingWith(gitMissing, worktree.worktreePath);
+    } finally {
+      worktree.remove();
+    }
+
+    expectOnlyStepReport('git_stats', 'churn_write', 'Error');
+  });
+
+  // Found while probing half-removed worktrees: a worktree sits inside the project's own
+  // checkout, so with its `.git` file gone git reads the main checkout, and that churn
+  // would overwrite the task's last real capture.
+  describe('a worktree folder whose .git file is gone', () => {
+    it('starts no read', async () => {
+      const worktree = realWorktree();
+      try {
+        fs.rmSync(path.join(worktree.worktreePath, '.git'), { force: true });
+        fs.writeFileSync(path.join(worktree.worktreePath, 'leftover.txt'), 'x\n');
+        installChurnMocks(nonZeroChurn);
+        const { captureGitChurn } = await import('../../src/main/ipc/handlers/git-stats-capture');
+        const { sessionRepo, usageHistoryRepo, task } = churnArguments({ worktreePath: worktree.worktreePath });
+
+        captureGitChurn(task as never, sessionRepo as never, usageHistoryRepo as never, 'record-1', '/mock/project', 'main');
+        await settle();
+
+        expect(readDirectories).toEqual([]);
+        expect(sessionRepo.setTaskGitStats).not.toHaveBeenCalled();
+        expect(usageHistoryRepo.setTaskGitStats).not.toHaveBeenCalled();
+      } finally {
+        worktree.remove();
+      }
+    });
+
+    it('writes nothing when the .git file goes while the read runs', async () => {
+      const worktree = realWorktree();
+      try {
+        installChurnMocks(nonZeroChurn, () => fs.rmSync(path.join(worktree.worktreePath, '.git'), { force: true }));
+        const { captureGitChurn } = await import('../../src/main/ipc/handlers/git-stats-capture');
+        const { sessionRepo, usageHistoryRepo, task } = churnArguments({ worktreePath: worktree.worktreePath });
+
+        captureGitChurn(task as never, sessionRepo as never, usageHistoryRepo as never, 'record-1', '/mock/project', 'main');
+        await vi.waitFor(() => expect(readDirectories).toEqual([worktree.worktreePath]));
+        await settle();
+
+        expect(sessionRepo.setTaskGitStats).not.toHaveBeenCalled();
+        expect(usageHistoryRepo.setTaskGitStats).not.toHaveBeenCalled();
+        expect(reportHandledError).not.toHaveBeenCalled();
+      } finally {
+        worktree.remove();
+      }
+    });
+  });
+
+  // Sentry DESKTOP-5N: git died on a fatal line the classifier does not know.
+  it('still reports a git failure it cannot name, and keeps git\'s line in the local log only', async () => {
+    const { GitCommandError } = await import('../../src/main/git/git-command-error');
+    const unknownFatal = () => new GitCommandError({ stdout: `${USER_TEXT}\n`, stderr: `fatal: something git said about ${USER_TEXT}\n`, exitCode: 128 });
+
+    await captureFailingWith(unknownFatal, '/mock/worktree');
+
+    expectOnlyStepReport('git_stats', 'churn_write', 'GitCommandError');
+    expect(stepReports()[0].tags).toMatchObject({ git_cause: 'other' });
+    expect(console.warn).toHaveBeenCalledWith(`[GIT_STATS] Churn read failed for task task-ccc: fatal: something git said about ${USER_TEXT}`);
+  });
+
+  describe('a task with no worktree', () => {
+    it('starts no read in a folder with no repository above it', async () => {
+      installChurnMocks(nonZeroChurn);
+      const { captureGitChurn } = await import('../../src/main/ipc/handlers/git-stats-capture');
+      const { sessionRepo, usageHistoryRepo, task } = churnArguments({ worktreePath: null });
+
+      captureGitChurn(task as never, sessionRepo as never, usageHistoryRepo as never, 'record-1', folderWithNoRepository(), 'main');
+      await settle();
+
+      expect(readDirectories).toEqual([]);
+      expect(sessionRepo.setTaskGitStats).not.toHaveBeenCalled();
+      expect(reportHandledError).not.toHaveBeenCalled();
+    });
+
+    it('still reads a project that is a subfolder of a repository', async () => {
+      const repository = fs.mkdtempSync(path.join(os.tmpdir(), 'churn-subfolder-'));
+      try {
+        fs.mkdirSync(path.join(repository, '.git'));
+        const projectFolder = path.join(repository, 'packages', 'app');
+        fs.mkdirSync(projectFolder, { recursive: true });
+        installChurnMocks(nonZeroChurn);
+        const { captureGitChurn } = await import('../../src/main/ipc/handlers/git-stats-capture');
+        const { sessionRepo, usageHistoryRepo, task } = churnArguments({ worktreePath: null });
+
+        captureGitChurn(task as never, sessionRepo as never, usageHistoryRepo as never, 'record-1', projectFolder, 'main');
+        await vi.waitFor(() => expect(sessionRepo.setTaskGitStats).toHaveBeenCalledWith(['record-1'], 'record-1', nonZeroChurn));
+
+        expect(readDirectories).toEqual([projectFolder]);
+      } finally {
+        fs.rmSync(repository, { recursive: true, force: true });
+      }
+    });
+  });
 
   it('reports a stats write that throws, off the finalization path', async () => {
     installChurnMocks(nonZeroChurn);

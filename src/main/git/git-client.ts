@@ -1,6 +1,9 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { execFileAsync } from '../utility-process/off-main-exec';
+import { childProcessEnv } from '../shared/child-env';
 import { GitCommandError } from './git-command-error';
+import { isKangenticWorktree } from './kangentic-worktree-path';
 import { remoteGitRunnerFor, type RemoteGitRunner } from './remote-git';
 
 /**
@@ -94,6 +97,25 @@ type ExecFailure = Error & {
 };
 
 /**
+ * The env for git run at the root of a Kangentic worktree
+ * (`<project>/.kangentic/worktrees/<slug>`, which `isKangenticWorktree`
+ * reads), or undefined for any other folder, which keeps main's env as before.
+ *
+ * A worktree sits inside the project's own checkout. With its `.git` file
+ * gone, partway through a removal or after one that failed halfway, git walks
+ * up and answers for the main checkout: a churn read wrote the project's
+ * churn as the task's, and a HEAD read named the main checkout's branch.
+ * `GIT_CEILING_DIRECTORIES` at the worktrees folder stops that walk, so git
+ * reads the worktree's own `.git` or fails `not a git repository`. Measured
+ * on a real half-removed worktree (`tests/unit/git-client.test.ts`).
+ */
+function worktreeGitEnvironment(directory: string): Record<string, string> | undefined {
+  const resolved = path.resolve(directory);
+  if (!isKangenticWorktree(resolved)) return undefined;
+  return childProcessEnv({ GIT_CEILING_DIRECTORIES: path.dirname(resolved) });
+}
+
+/**
  * Run `git <args>` in `directory` with simple-git's success rule: a non-zero
  * exit is a failure only when stderr is not empty, and its message is stdout
  * then stderr. A child that could not start rejects with its own error.
@@ -102,11 +124,13 @@ export async function runGitCommand(directory: string, args: readonly string[]):
   // A remote project's folder here is an empty stand-in, so its git runs on the host, under the same rule.
   const remote = remoteGitRunnerFor(directory);
   if (remote) return runRemoteGitCommand(remote, args);
+  const env = worktreeGitEnvironment(directory);
   try {
     const { stdout } = await execFileAsync('git', args, {
       cwd: directory,
       windowsHide: true,
       maxBuffer: GIT_OUTPUT_MAX_BUFFER,
+      ...(env ? { env } : {}),
     });
     return stdout;
   } catch (error) {
@@ -131,12 +155,28 @@ export async function runRemoteGitCommand(remote: RemoteGitRunner, args: readonl
   throw new GitCommandError({ stdout, stderr: result.stderr, exitCode: result.code });
 }
 
-function directoryExists(directory: string): boolean {
+/**
+ * What `gitAt` throws for a directory that is not there, with simple-git's
+ * message, which callers read. The stat failure rides as `cause`, so a report
+ * says ENOENT or EACCES. A caller that can expect the folder to go (a churn
+ * read racing a worktree removal) matches it by name.
+ */
+export class GitDirectoryMissingError extends Error {
+  constructor(options?: ErrorOptions) {
+    super('Cannot use simple-git on a directory that does not exist', options);
+    this.name = 'GitDirectoryMissingError';
+  }
+}
+
+/** Null when `directory` is a directory; otherwise the error `gitAt` throws for it. */
+function missingDirectoryError(directory: string): GitDirectoryMissingError | null {
   try {
-    return fs.statSync(directory).isDirectory();
-  } catch {
-    // report-ok: ENOENT for a directory that is gone, and gitAt then throws to its caller.
-    return false;
+    if (fs.statSync(directory).isDirectory()) return null;
+    return new GitDirectoryMissingError();
+  } catch (statError) {
+    // report-ok: the stat failure (ENOENT for a directory that is gone) is handed on as the
+    // cause of the error gitAt throws to its caller.
+    return new GitDirectoryMissingError({ cause: statError });
   }
 }
 
@@ -289,8 +329,7 @@ class OffMainGitClient implements GitClient {
  * try still fails where it failed before.
  */
 export function gitAt(directory: string): GitClient {
-  if (!directoryExists(directory)) {
-    throw new Error('Cannot use simple-git on a directory that does not exist');
-  }
+  const missing = missingDirectoryError(directory);
+  if (missing) throw missing;
   return new OffMainGitClient(directory);
 }

@@ -29,6 +29,23 @@ export function isProjectGitRepo(projectPath: string): boolean {
   return remoteGitRunnerFor(projectPath) !== null || isGitRepo(projectPath);
 }
 
+/**
+ * Whether git run in `folder` can find a repository: a remote project's host has one, or a `.git` entry (a folder, or
+ * a worktree's file) sits in the folder or any folder above it, the walk git itself makes. Unlike `isProjectGitRepo`,
+ * a project that is a subfolder of a repository counts, since a read run there reads that repository. Synchronous
+ * `existsSync` calls, one per level, and no process.
+ */
+export function isInsideGitCheckout(folder: string): boolean {
+  if (remoteGitRunnerFor(folder) !== null) return true;
+  let current = path.resolve(folder);
+  for (;;) {
+    if (fs.existsSync(path.join(current, '.git'))) return true;
+    const parent = path.dirname(current);
+    if (parent === current) return false;
+    current = parent;
+  }
+}
+
 /** Check whether the project path is a git worktree (has `.git` as a file, not a directory). */
 export function isInsideWorktree(projectPath: string): boolean {
   const dotGit = path.join(projectPath, '.git');
@@ -40,24 +57,7 @@ export function isInsideWorktree(projectPath: string): boolean {
   }
 }
 
-/**
- * Check whether the project path IS a Kangentic-managed worktree checkout.
- *
- * A preview project's path looks like `<parent>/.kangentic/worktrees/<slug>`.
- * We check that the immediate parent dir is `worktrees` and its parent is
- * `.kangentic`. This avoids false positives when the app itself runs from
- * inside a worktree (e.g. the CWD contains `.kangentic/worktrees/` early
- * in the path, but the project isn't itself a preview worktree).
- */
-export function isKangenticWorktree(projectPath: string): boolean {
-  // Normalize all separators to forward slashes so the check works on any OS
-  const normalized = projectPath.replace(/\\/g, '/');
-  const segments = normalized.split('/').filter(Boolean);
-  if (segments.length < 3) return false;
-  const parentSegment = segments[segments.length - 2];
-  const grandparentSegment = segments[segments.length - 3];
-  return parentSegment === 'worktrees' && grandparentSegment === '.kangentic';
-}
+export { isKangenticWorktree } from './kangentic-worktree-path';
 
 /** Check whether a file is tracked by git (committed or staged). Async: this
  *  shells out to git, and its one caller (ensureGitignore) runs on the

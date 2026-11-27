@@ -378,14 +378,6 @@ export async function retryDoneWorktreeRemoval(
 export const DONE_REMOVAL_RETRY_DELAY_MS = 10_000;
 
 /**
- * How long a Done move's removal waits for the churn capture it just fired into
- * the worktree. That read is six git processes at background priority, about a
- * second on a quiet machine; past this the removal goes ahead and the capture
- * reports nothing, which never overwrites an earlier one.
- */
-const CHURN_READ_WAIT_MS = 15_000;
-
-/**
  * Retry a Done move's worktree removal once, a little later, when it failed.
  * On Windows any process still closing files in the directory fails the
  * removal ("Permission denied"), and one that is on its way out is gone
@@ -632,6 +624,10 @@ export async function cleanupTaskResources(
   // Remove worktree + branch
   if (task.worktree_path && resolvedProjectPath) {
     let removed = false;
+    // The agent's exit that cleanupTaskSession awaited fired a churn capture into
+    // this worktree. Let it finish before the folder goes, as `deleteTaskWorktree`
+    // does, so the task keeps its last capture.
+    await waitForChurnRead(task.worktree_path);
     // Capture the tip before the checkout goes, as `deleteTaskWorktree` does:
     // the commit is the one anchor that survives a reset, and a task whose PR
     // was not linked yet when the reset ran (resolver down) can otherwise never
@@ -755,7 +751,7 @@ export async function deleteTaskWorktree(
   // The Done move fired its churn capture into this worktree just before this
   // call. The in-place delete below used to give it 30 s of slack; a move
   // aside takes the directory at once.
-  await waitForChurnRead(task.worktree_path, CHURN_READ_WAIT_MS);
+  await waitForChurnRead(task.worktree_path);
 
   let removed = false;
   // True once the worktree sits in removed-worktrees/ and the deleter has to

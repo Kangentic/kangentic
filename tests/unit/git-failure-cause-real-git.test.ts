@@ -126,6 +126,23 @@ describe('a refusal from real git', () => {
     expect((await refusalOf(plainFolder, ['status', '--porcelain'])).gitCause).toBe('not_a_repository');
   });
 
+  // Read while probing for Sentry DESKTOP-5N, a churn read that died on a line the
+  // classifier did not know. Not attributed to it: a removal deletes the file, and
+  // only a write that stopped short leaves one like these.
+  it.each<[string, string]>([
+    ['empty', ''],
+    ['cut short before its path', 'gitdir: '],
+  ])('names a worktree whose .git file is %s', async (label, content) => {
+    const worktree = path.join(workspace, `acme-gitfile-${label.split(' ')[0]}`);
+    run(repository, ['worktree', 'add', '-q', '-b', `acme-gitfile-${label.split(' ')[0]}`, worktree]);
+    const gitFile = path.join(worktree, '.git');
+    // Windows marks the file hidden, which a plain overwrite refuses.
+    fs.rmSync(gitFile, { force: true });
+    fs.writeFileSync(gitFile, content);
+
+    expect((await refusalOf(worktree, ['diff', '--stat=4096', 'HEAD'])).gitCause).toBe('broken_gitfile');
+  });
+
   it('names a repository git reads as another user\'s', async () => {
     // git's own switch for this check, and no config that could list the folder as safe.
     const emptyConfig = path.join(workspace, 'empty-gitconfig');

@@ -8,8 +8,8 @@
  * chain can settle before asserting on the repo writes.
  *
  * Pins two regression risks:
- *   1. The no-clobber guard: an all-zero diff result (a git error, or a
- *      capture that runs after the branch is already merged) must write to
+ *   1. The no-clobber guard: an all-zero diff result (a capture that runs
+ *      after the branch is already merged) must write to
  *      NEITHER repo, so it can never wipe a real capture made earlier in the
  *      task's life.
  *   2. One-row-per-task consolidation: `setTaskGitStats` is called with the
@@ -42,6 +42,11 @@ vi.mock('../../src/main/git/diff-service', () => ({
     }
   },
 }));
+
+// The `/mock/project` fallback stands for a project folder git can read. The
+// guard for a folder with no repository is pinned in
+// error-reporting-session-steps-behavior.test.ts, on real folders.
+vi.mock('../../src/main/git/git-checks', () => ({ isInsideGitCheckout: () => true }));
 
 // ---------------------------------------------------------------------------
 // Import under test (after the mock is registered)

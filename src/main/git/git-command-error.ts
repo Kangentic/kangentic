@@ -33,6 +33,8 @@ export type GitFailureCause =
   /** A full hash whose object the repository no longer holds. */
   | 'missing_object'
   | 'not_a_repository'
+  /** A worktree's `.git` file that is empty or names no folder: git cannot find the repository it points at. */
+  | 'broken_gitfile'
   /** The folder belongs to another user and is not in `safe.directory`. */
   | 'dubious_ownership'
   | 'ref_lock'
@@ -58,6 +60,7 @@ const GIT_REFUSALS: ReadonlyArray<readonly [GitFailureCause, RegExp]> = [
   ['unknown_revision', /^fatal: (?:ambiguous argument '.*': unknown revision or path not in the working tree|invalid object name '|Not a valid (?:object|commit) name |Needed a single revision)/m],
   ['missing_object', /^fatal: bad object /m],
   ['not_a_repository', GIT_NOT_A_REPOSITORY],
+  ['broken_gitfile', /^fatal: (?:invalid gitfile format|no path in gitfile): /m],
   ['dubious_ownership', /^fatal: detected dubious ownership in repository\b/m],
   ['ref_lock', GIT_REF_LOCK],
   ['index_lock', /^fatal: Unable to create '.*index\.lock': File exists/m],
@@ -93,12 +96,18 @@ export interface GitCommandFailure {
 export class GitCommandError extends Error {
   readonly gitCause: GitFailureCause;
   readonly exitCode: number;
+  /**
+   * What git wrote to stderr, apart from stdout, which can hold file text. For
+   * a local log line only, never a report: it names paths and branches.
+   */
+  readonly stderr: string;
 
   constructor(failure: GitCommandFailure, options?: ErrorOptions) {
     super(`${failure.stdout}${failure.stderr}`, options);
     this.name = 'GitCommandError';
     this.gitCause = gitFailureCause(failure.stderr);
     this.exitCode = failure.exitCode;
+    this.stderr = failure.stderr;
     // The throw site on top, not this constructor: a chokepoint latches on the
     // first frame, and it would otherwise be the same for every runner.
     Error.captureStackTrace?.(this, GitCommandError);
