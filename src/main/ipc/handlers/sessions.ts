@@ -1433,7 +1433,11 @@ function schedulePlanExitRetry(context: IpcContext, move: PlanExitMove, firstErr
   timer.unref?.();
 }
 
-/** One macrotask, so a worker's write-hold message queued behind main's busy wait lands before the report reads it. */
+/**
+ * One macrotask, which usually lets a worker's write-hold message queued
+ * behind main's busy wait land before the report reads it. Nothing orders the
+ * two, so the holder context can still miss it.
+ */
 function nextMacrotask(): Promise<void> {
   return new Promise((resolve) => { setTimeout(resolve, 0); });
 }
