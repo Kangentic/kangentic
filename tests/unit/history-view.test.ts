@@ -159,12 +159,33 @@ describe('HistoryViews.open', () => {
     expect(classic.state.writes).toEqual([]);
   });
 
-  it('answers not-running when the session goes while it waits', async () => {
+  it('answers not-running, and types no toggle, when the session goes during the look before the toggle', async () => {
     const agent = standInAgent({ answers: false });
     const views = new HistoryViews(agent.dependencies(), FAST);
     const opening = views.open('session-1');
     views.remove('session-1');
     await expect(opening).resolves.toBe('not-running');
+    expect(agent.state.writes).toEqual([]);
+  });
+
+  it('answers not-running, and types no write-out, when the session goes while the toggle is answered', async () => {
+    const agent = standInAgent();
+    const base = agent.dependencies();
+    let views: HistoryViews | null = null;
+    // The session goes the moment its toggle is typed, so the removal lands during the show wait.
+    const dependencies = {
+      ...base,
+      write: (sessionId: string, keys: string) => {
+        const written = base.write(sessionId, keys);
+        if (keys === '\x0f') views?.remove(sessionId);
+        return written;
+      },
+    };
+    views = new HistoryViews(dependencies, FAST);
+
+    await expect(views.open('session-1')).resolves.toBe('not-running');
+    expect(agent.state.writes).toEqual(['\x0f']);
+    expect(views.isActive('session-1')).toBe(false);
   });
 
   it('serves a second open from the view the first one opened', async () => {
