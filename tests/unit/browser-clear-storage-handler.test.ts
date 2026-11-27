@@ -155,6 +155,8 @@ vi.mock('node:fs', () => ({
 
 vi.mock('../../src/main/browser/browser-pane-registry', () => ({
   browserPaneRegistry: {
+    // The crashed-surfaces push re-reads the map on every membership change.
+    onMembershipChange: vi.fn(),
     register: fakeRegistryRegister,
     unregister: fakeRegistryUnregister,
     unregisterByWebContentsId: fakeRegistryUnregisterByWebContentsId,

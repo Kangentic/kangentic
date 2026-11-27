@@ -918,9 +918,12 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
                 testId="command-bar-browser-toggle"
               />
               {browserAlive && (
-                browserCrash
-                  ? <IconBadge kind="problems" testId="command-bar-browser-toggle-alive" />
-                  : <IconBadge kind="running" pulse driving={browserDriving} testId="command-bar-browser-toggle-alive" />
+                <IconBadge
+                  kind={browserCrash ? 'problems' : 'running'}
+                  pulse={!browserCrash}
+                  driving={!browserCrash && browserDriving}
+                  testId="command-bar-browser-toggle-alive"
+                />
               )}
             </div>
           )}

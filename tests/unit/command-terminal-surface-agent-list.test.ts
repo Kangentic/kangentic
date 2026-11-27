@@ -28,11 +28,15 @@ const sessionPushMocks = {
 };
 const loadBrowserOffscreenTasksMock = vi.fn();
 const loadBrowserCrashedTasksMock = vi.fn();
+const setBrowserCrashedTasksMock = vi.fn();
+const syncSessionsMock = vi.fn();
+const onCrashedSurfacesMock = vi.fn();
 
 (globalThis as Record<string, unknown>).window = {
   electronAPI: {
     agents: { list: agentsListMock, onListChanged: agentsOnListChangedMock },
     sessions: sessionPushMocks,
+    browser: { onCrashedSurfaces: onCrashedSurfacesMock },
   },
 };
 
@@ -41,6 +45,8 @@ vi.mock('../../src/renderer/stores/session-store', () => ({
     getState: () => ({
       loadBrowserOffscreenTasks: loadBrowserOffscreenTasksMock,
       loadBrowserCrashedTasks: loadBrowserCrashedTasksMock,
+      setBrowserCrashedTasks: setBrowserCrashedTasksMock,
+      syncSessions: syncSessionsMock,
       sessions: [],
     }),
   },
@@ -65,6 +71,8 @@ describe('commandTerminalSurface bootstrap: agent list changed', () => {
     agentsOnListChangedMock.mockReturnValue(() => {});
     loadBrowserOffscreenTasksMock.mockResolvedValue(undefined);
     loadBrowserCrashedTasksMock.mockResolvedValue(undefined);
+    syncSessionsMock.mockResolvedValue(undefined);
+    onCrashedSurfacesMock.mockReturnValue(() => {});
     useConfigStore.setState({ agentList: [], agentListLoaded: false });
     controller = new AbortController();
   });
@@ -114,5 +122,66 @@ describe('commandTerminalSurface bootstrap: agent list changed', () => {
 
   it('is sent the list-changed push, which the surface must declare to receive', () => {
     expect(POP_OUT_SURFACES['command-terminal'].channels).toContain(IPC.AGENT_LIST_CHANGED);
+  });
+});
+
+/**
+ * The stopped-page map (task #1226): the detached Command Terminal runs no App.tsx, so
+ * its Globe pill badge and Running-row globes turn red only if this bootstrap reads and
+ * follows the map itself. Red-green: drop the load, the subscription, its unsubscribe, the
+ * hmrResync load or the channel from the surface's list, and the matching test reads red.
+ */
+describe('commandTerminalSurface bootstrap: stopped-page wiring', () => {
+  let controller: AbortController;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    for (const pushMock of Object.values(sessionPushMocks)) pushMock.mockReturnValue(() => {});
+    agentsListMock.mockResolvedValue([]);
+    agentsOnListChangedMock.mockReturnValue(() => {});
+    loadBrowserOffscreenTasksMock.mockResolvedValue(undefined);
+    loadBrowserCrashedTasksMock.mockResolvedValue(undefined);
+    syncSessionsMock.mockResolvedValue(undefined);
+    onCrashedSurfacesMock.mockReturnValue(() => {});
+    controller = new AbortController();
+  });
+
+  afterEach(() => {
+    controller.abort();
+  });
+
+  it('reads the map on mount and forwards a push to the session store', () => {
+    let pushedCallback: ((surfaces: Record<string, string>) => void) | undefined;
+    onCrashedSurfacesMock.mockImplementation((callback: (surfaces: Record<string, string>) => void) => {
+      pushedCallback = callback;
+      return () => {};
+    });
+
+    commandTerminalSurface.bootstrap({}, { signal: controller.signal });
+    expect(loadBrowserCrashedTasksMock).toHaveBeenCalledTimes(1);
+    expect(onCrashedSurfacesMock).toHaveBeenCalledTimes(1);
+
+    pushedCallback?.({ 'command-terminal::proj-1::slot-1': 'crashed' });
+    expect(setBrowserCrashedTasksMock).toHaveBeenCalledWith({ 'command-terminal::proj-1::slot-1': 'crashed' });
+  });
+
+  it('stops following the push on abort', () => {
+    const unsubscribe = vi.fn();
+    onCrashedSurfacesMock.mockReturnValue(unsubscribe);
+
+    commandTerminalSurface.bootstrap({}, { signal: controller.signal });
+    expect(unsubscribe).not.toHaveBeenCalled();
+
+    controller.abort();
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('hmrResync reads the map again, so a Fast Refresh does not leave the pill without its badge', () => {
+    commandTerminalSurface.hmrResync?.();
+    expect(loadBrowserCrashedTasksMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('declares the stopped-page push, or broadcast never reaches this window', () => {
+    expect(POP_OUT_SURFACES['command-terminal'].channels).toContain(IPC.BROWSER_CRASHED_SURFACES);
   });
 });

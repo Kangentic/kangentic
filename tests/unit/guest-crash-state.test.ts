@@ -39,6 +39,18 @@ describe('guest crash state', () => {
     expect(guestCrashReason(503)).toBeNull();
   });
 
+  it('reads a guest Electron reports crashed as crashed, with no reason, when no event was heard', () => {
+    const guest = { ...trackedGuest(505), isCrashed: () => true };
+    expect(isGuestCrashed(guest as never)).toBe(true);
+    expect(guestCrashReason(505)).toBeNull();
+  });
+
+  it('reads a guest with no isCrashed method as alive', () => {
+    const guest = trackedGuest(506);
+    expect('isCrashed' in guest).toBe(false);
+    expect(isGuestCrashed(guest as never)).toBe(false);
+  });
+
   it('announces each change, so the stopped-page push goes out, and stays quiet when nothing changed', () => {
     const announced: number[] = [];
     setGuestCrashChangeListener(() => announced.push(announced.length));

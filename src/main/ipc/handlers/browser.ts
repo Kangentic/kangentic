@@ -196,9 +196,24 @@ export function registerBrowserHandlers(context: IpcContext): void {
   // #1226). Main is the one writer because a page can stop where no renderer of
   // the window showing the badge runs: an offscreen lane, or a pane in a Browser
   // pop-out. The same surfaces that hear the offscreen set declare this channel.
-  setGuestCrashChangeListener(() => {
-    broadcast(context.mainWindow, IPC.BROWSER_CRASHED_SURFACES, crashedSurfaces());
-  });
+  //
+  // The map joins two sources, so it is re-read when either changes: a crash
+  // or its clear, and the registry's membership. A guest that stopped before
+  // its pane registered, or a guest re-registered under another owner, changes
+  // the map with no crash event. Sent only when the map differs from the last
+  // one sent, because every pane and lane register is a membership change. The
+  // handler lives as long as the app, so the subscription is never released.
+  // Nothing has crashed when the handlers register, so the last map sent is empty.
+  let lastCrashedSurfacesKey = crashedSurfacesKey({});
+  const pushCrashedSurfaces = (): void => {
+    const surfaces = crashedSurfaces();
+    const nextKey = crashedSurfacesKey(surfaces);
+    if (nextKey === lastCrashedSurfacesKey) return;
+    lastCrashedSurfacesKey = nextKey;
+    broadcast(context.mainWindow, IPC.BROWSER_CRASHED_SURFACES, surfaces);
+  };
+  setGuestCrashChangeListener(pushCrashedSurfaces);
+  browserPaneRegistry.onMembershipChange(pushCrashedSurfaces);
 
   // A Command Terminal's Browser pane, offscreen page, pop-out and saved URL
   // end with the terminal, which has no `sessions` row for the task path's
@@ -642,6 +657,14 @@ export function crashedSurfaces(): Record<string, BrowserCrashKind> {
     if (reason !== null) surfaces[entry.taskId] = browserCrashKind(reason);
   }
   return surfaces;
+}
+
+/** A crashed-surfaces map as one comparable string, independent of the registry's order. */
+function crashedSurfacesKey(surfaces: Record<string, BrowserCrashKind>): string {
+  return Object.entries(surfaces)
+    .map(([ownerKey, kind]) => `${ownerKey}=${kind}`)
+    .sort()
+    .join('\n');
 }
 
 function isGuestId(value: unknown): value is number {

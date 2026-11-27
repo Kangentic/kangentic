@@ -230,8 +230,26 @@ function pageCrashedDetail(handle: string, webContentsId: number): string {
  * its id, so its registry handle, the pane's registration and its cookie jar
  * all stay. Resolves true on the new page's `dom-ready`, false when it never
  * comes, which the caller reports as `page-crashed`.
+ *
+ * The revive runs before the drive lock, so two navigates on one stopped page
+ * can arrive together. They share one reload: a second `reload()` would start
+ * the page again just as the first brought it back.
  */
-export async function reviveCrashedGuest(webContents: WebContents): Promise<boolean> {
+export function reviveCrashedGuest(webContents: WebContents): Promise<boolean> {
+  const webContentsId = webContents.id;
+  const inFlight = revivesInFlight.get(webContentsId);
+  if (inFlight) return inFlight;
+  const revive = reloadCrashedGuest(webContents).finally(() => {
+    revivesInFlight.delete(webContentsId);
+  });
+  revivesInFlight.set(webContentsId, revive);
+  return revive;
+}
+
+/** One pending revive per guest, keyed by webContents id (`reviveCrashedGuest`). */
+const revivesInFlight = new Map<number, Promise<boolean>>();
+
+function reloadCrashedGuest(webContents: WebContents): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     const onReady = (): void => {
       clearTimeout(timer);

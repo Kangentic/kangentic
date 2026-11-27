@@ -232,9 +232,7 @@ function RunningRow({ projectId, terminal, front, onBringToFront, onStop }: Runn
           testId="command-terminal-running-browser"
           tip={t`Browser running for the agent. Close it from the terminal's menu to free memory.`}
           crash={browserCrash}
-          crashTip={browserCrash === 'out-of-memory'
-            ? t`The page in this terminal's browser ran out of memory. Open the terminal to reload it.`
-            : t`The page in this terminal's browser crashed. Open the terminal to reload it.`}
+          host="terminal"
         />
       )}
       {menuPosition && (

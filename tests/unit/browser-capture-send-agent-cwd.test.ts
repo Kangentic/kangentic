@@ -41,6 +41,8 @@ vi.mock('../../src/main/browser/browser-lane-handoff', () => ({
 
 vi.mock('../../src/main/browser/browser-pane-registry', () => ({
   browserPaneRegistry: {
+    // The crashed-surfaces push re-reads the map on every membership change.
+    onMembershipChange: vi.fn(),
     register: vi.fn(),
     unregister: vi.fn(),
     unregisterByWebContentsId: vi.fn(),

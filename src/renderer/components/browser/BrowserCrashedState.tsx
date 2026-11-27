@@ -4,7 +4,7 @@ import type { BrowserCrashKind } from '../../../shared/browser-crash';
 
 /**
  * The cover a Browser pane shows over a page whose renderer process is gone
- * (task #1226, signed-off design D1 A, D2 A, D3 A).
+ * (task #1226, decision 48 in docs/architecture/embedded-browser/decision-log.md).
  *
  * Opaque, over the page area only, in the slot the loading cover uses, and laid
  * out like `BrowserEmptyState`. It does not depend on what a dead `<webview>`
@@ -19,7 +19,7 @@ import type { BrowserCrashKind } from '../../../shared/browser-crash';
 export function BrowserCrashedState({ kind, onReload }: { kind: BrowserCrashKind; onReload: () => void }) {
   return (
     <div
-      // z-20: above the annotation bar's z-10, which floats over the page (D3 A).
+      // z-20: above the annotation bar's z-10, which floats over the page.
       className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 px-6 bg-surface"
       data-testid="browser-pane-crashed"
       data-crash-kind={kind}

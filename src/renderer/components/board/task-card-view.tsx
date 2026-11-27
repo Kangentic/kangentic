@@ -257,7 +257,7 @@ export function useTaskCardViewModel(task: Task): TaskCardViewModel {
     (s) => s.browserGuestTasks.has(task.id) || s.browserOffscreenTasks.has(task.id),
   );
   // Its page stopped (task #1226): a hidden or parked pane's cover is out of sight.
-  const browserCrash = useSessionStore((s) => s.browserCrashedTasks.get(task.id));
+  const browserCrash = useSessionStore((state) => state.browserCrashedTasks.get(task.id));
 
   // Label display config. Wrap the `?? {}` / `?? []` fallbacks in useMemo so
   // they return a stable reference; otherwise a fresh empty object/array each
@@ -403,29 +403,35 @@ function DisplayIdBadge({ task, view, hidden }: { task: Task; view: TaskCardView
  * shown in the pane. Not a click target: the card's own click opens the task,
  * where the kebab's "Close browser" is. Shared with the Agent Monitor's card.
  */
-export function BrowserAliveGlobe({ testId, tip, crash, crashTip }: {
+export function BrowserAliveGlobe({ testId, tip, crash, host = 'task' }: {
   testId: string;
   tip?: string;
   /** The page stopped, and why: the globe turns red and its tip says so. */
   crash?: BrowserCrashKind;
-  /** A host whose browser is not a task's (a Command Terminal) words the stopped tip itself. */
-  crashTip?: string;
+  /** Whose browser it is, which names what to open to reload a stopped page. */
+  host?: 'task' | 'terminal';
 }) {
   const { t } = useLingui();
   // A Command Terminal's Running row passes its own tip: its Close browser is in
   // the terminal's menu, not a task's. A stopped page turns the globe red and
-  // says why ahead of the running tip (task #1226, design D4 B): a hidden or
-  // parked pane's cover is out of sight, and this may be the only place it shows.
-  const crashLabel = crash === undefined
-    ? undefined
-    : crashTip ?? (crash === 'out-of-memory'
+  // says why ahead of the running tip (task #1226, decision 48 in the embedded
+  // browser decision log): a hidden or parked pane's cover is out of sight, and
+  // this may be the only place it shows.
+  let crashLabel: string | undefined;
+  if (crash !== undefined && host === 'terminal') {
+    crashLabel = crash === 'out-of-memory'
+      ? t`The page in this terminal's browser ran out of memory. Open the terminal to reload it.`
+      : t`The page in this terminal's browser crashed. Open the terminal to reload it.`;
+  } else if (crash !== undefined) {
+    crashLabel = crash === 'out-of-memory'
       ? t`The page in this task's browser ran out of memory. Open the task to reload it.`
-      : t`The page in this task's browser crashed. Open the task to reload it.`);
+      : t`The page in this task's browser crashed. Open the task to reload it.`;
+  }
   const label = crashLabel ?? tip ?? t`Browser running for the agent. Close it from the task menu to free memory.`;
   return (
     <Tooltip label={label}>
       <span className={`${crash ? 'text-danger' : 'text-active'} shrink-0 flex`} data-testid={testId} data-crash-kind={crash}>
-        <Globe size={12} aria-label={t`Browser running`} />
+        <Globe size={12} aria-label={crash ? t`Browser page stopped` : t`Browser running`} />
       </span>
     </Tooltip>
   );

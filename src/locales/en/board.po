@@ -165,6 +165,10 @@ msgid "Branch <0>{displayBranch}</0> will be kept"
 msgstr "Branch <0>{displayBranch}</0> will be kept"
 
 #: src/renderer/components/board/task-card-view.tsx
+msgid "Browser page stopped"
+msgstr "Browser page stopped"
+
+#: src/renderer/components/board/task-card-view.tsx
 msgid "Browser running"
 msgstr "Browser running"
 
@@ -477,6 +481,14 @@ msgstr "The page in this task's browser crashed. Open the task to reload it."
 #: src/renderer/components/board/task-card-view.tsx
 msgid "The page in this task's browser ran out of memory. Open the task to reload it."
 msgstr "The page in this task's browser ran out of memory. Open the task to reload it."
+
+#: src/renderer/components/board/task-card-view.tsx
+msgid "The page in this terminal's browser crashed. Open the terminal to reload it."
+msgstr "The page in this terminal's browser crashed. Open the terminal to reload it."
+
+#: src/renderer/components/board/task-card-view.tsx
+msgid "The page in this terminal's browser ran out of memory. Open the terminal to reload it."
+msgstr "The page in this terminal's browser ran out of memory. Open the terminal to reload it."
 
 #: src/renderer/components/board/task-card-view.tsx
 msgid "The terminal could not start. Its window shows why."

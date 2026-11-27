@@ -349,14 +349,6 @@ msgstr "Tabulka"
 msgid "Task"
 msgstr "Úkol"
 
-#: src/renderer/components/monitor/MonitorCard.tsx
-msgid "The page in this terminal's browser crashed. Open the terminal to reload it."
-msgstr ""
-
-#: src/renderer/components/monitor/MonitorCard.tsx
-msgid "The page in this terminal's browser ran out of memory. Open the terminal to reload it."
-msgstr ""
-
 #: src/renderer/components/monitor/monitor-view-model.ts
 #, fuzzy
 msgid "Waiting for your approval {when}"

@@ -325,14 +325,6 @@ msgstr "Switch branch"
 msgid "Terminal name"
 msgstr "Terminal name"
 
-#: src/renderer/components/command-bar/CommandTerminalRail.tsx
-msgid "The page in this terminal's browser crashed. Open the terminal to reload it."
-msgstr "The page in this terminal's browser crashed. Open the terminal to reload it."
-
-#: src/renderer/components/command-bar/CommandTerminalRail.tsx
-msgid "The page in this terminal's browser ran out of memory. Open the terminal to reload it."
-msgstr "The page in this terminal's browser ran out of memory. Open the terminal to reload it."
-
 #: src/renderer/components/command-bar/CommandTerminalLayer.tsx
 msgid "The terminals are back in the panel."
 msgstr "The terminals are back in the panel."

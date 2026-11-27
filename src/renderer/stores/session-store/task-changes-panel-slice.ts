@@ -96,7 +96,7 @@ export interface TaskChangesPanelSlice {
    * (`BROWSER_CRASHED_SURFACES`, the whole map per change). The pane shows its
    * crashed cover from its own state; this is for the surfaces OUTSIDE the pane,
    * which turn red while the page is stopped: the Browser pill's badge and the
-   * card globes (task #1226, design D4 B). Main is the one writer because a page
+   * card globes (task #1226, browser decision 48). Main is the one writer because a page
    * can stop where no renderer of this window runs: an offscreen lane, or a pane
    * in a Browser pop-out. Never persisted.
    */
