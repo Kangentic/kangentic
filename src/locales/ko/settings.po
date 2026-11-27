@@ -3826,8 +3826,9 @@ msgid "What we don't collect"
 msgstr "수집하지 않는 항목"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "When a database write had to wait, a range for how long a background write held the database"
-msgstr ""
+msgstr "데이터베이스 쓰기가 기다려야 했을 때, 백그라운드 쓰기가 데이터베이스를 붙잡고 있던 시간의 범위"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -3870,12 +3871,14 @@ msgid "When Kangentic pauses agents that are waiting on you."
 msgstr "Kangentic이 응답 대기 중인 에이전트를 일시 중지하는 시점."
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "When the app holds many file handles, ranges for how many it held, of which kinds, and how long it had been running"
-msgstr ""
+msgstr "앱이 파일 핸들을 많이 보유할 때, 보유하던 핸들 수와 종류의 범위 및 실행 시간"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "When the computer runs low on memory, ranges for how much the app, its agents and other programs were using"
-msgstr ""
+msgstr "컴퓨터의 메모리가 부족할 때, 앱과 그 에이전트, 다른 프로그램이 사용하던 양의 범위"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
 #, fuzzy

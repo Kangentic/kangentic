@@ -3826,8 +3826,9 @@ msgid "What we don't collect"
 msgstr "Qué no recopilamos"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "When a database write had to wait, a range for how long a background write held the database"
-msgstr ""
+msgstr "Cuando una escritura en la base de datos tuvo que esperar, un rango de cuánto tiempo la retuvo una escritura en segundo plano"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -3870,12 +3871,14 @@ msgid "When Kangentic pauses agents that are waiting on you."
 msgstr "Cuándo Kangentic pausa los agentes que esperan una respuesta."
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "When the app holds many file handles, ranges for how many it held, of which kinds, and how long it had been running"
-msgstr ""
+msgstr "Cuando la aplicación tiene muchos identificadores de archivo abiertos, rangos de cuántos tenía, de qué tipos y cuánto tiempo llevaba en ejecución"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "When the computer runs low on memory, ranges for how much the app, its agents and other programs were using"
-msgstr ""
+msgstr "Cuando el equipo se queda sin memoria, rangos de cuánta usaban la aplicación, sus agentes y otros programas"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
 #, fuzzy
