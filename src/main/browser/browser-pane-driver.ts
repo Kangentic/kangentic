@@ -30,6 +30,8 @@ import { sinceWakeBucket } from './wake-clock';
 import { cpuSpeedLimitBucket } from './cpu-speed-limit';
 import { readDisplayServer } from './display-server';
 import { isRuntimeDefect } from '../../shared/handled-error-copy';
+import { browserCrashKind } from '../../shared/browser-crash';
+import { guestCrashReason, isGuestCrashed } from './guest-crash-state';
 
 /**
  * The single chokepoint every `kangentic_browser_*` MCP tool routes through to
@@ -213,6 +215,46 @@ const PANE_NOT_FOCUSED_DETAIL =
   + 'key is clicked first, in the same call. If you already passed one, focus left the pane after the '
   + 'click. Keys sent before this point in the call were delivered, so account for them before retrying.';
 
+/** The `page-crashed` refusal, in the words the pane's cover uses (shared/browser-crash.ts). */
+function pageCrashedDetail(handle: string, webContentsId: number): string {
+  const why = browserCrashKind(guestCrashReason(webContentsId)) === 'out-of-memory' ? 'it ran out of memory' : 'it crashed';
+  return `The page in Browser surface ${handle} stopped because ${why}. Call kangentic_browser_navigate with a URL to load it `
+    + 'again. The user can also press Reload in the pane.';
+}
+
+/**
+ * Start a crashed guest's page again, bounded by the navigation bound.
+ *
+ * `reload()` on a crashed WebContents runs the page in a new renderer process
+ * (Electron documents this beside `forcefullyCrashRenderer`). The guest keeps
+ * its id, so its registry handle, the pane's registration and its cookie jar
+ * all stay. Resolves true on the new page's `dom-ready`, false when it never
+ * comes, which the caller reports as `page-crashed`.
+ */
+export async function reviveCrashedGuest(webContents: WebContents): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    const onReady = (): void => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    const timer = setTimeout(() => {
+      webContents.removeListener('dom-ready', onReady);
+      resolve(false);
+    }, NAVIGATE_TIMEOUT_MS);
+    timer.unref?.();
+    webContents.once('dom-ready', onReady);
+    try {
+      webContents.reload();
+    } catch {
+      // report-ok: a reload refused by a guest being torn down is the same outcome as one that
+      // never loads, and the caller answers both with `page-crashed`.
+      clearTimeout(timer);
+      webContents.removeListener('dom-ready', onReady);
+      resolve(false);
+    }
+  });
+}
+
 /**
  * A page's `beforeunload` kept it open, so the load never ran. The dismiss is the
  * driver's own default answer, so the page is where it was and anything an agent
@@ -304,6 +346,31 @@ export async function withGuest<T>(
   }
 
   const { webContents } = live;
+
+  // A page whose renderer process is gone (out of memory, or a crash) answers
+  // no CDP command, so a drive used to attach and then wait out its timeout
+  // (task #1226, DESKTOP-5Z). Refuse at once, before any attach, with an error
+  // that says how to recover. The navigate tier is that recovery: it starts the
+  // page again first, then loads the URL, so the advice in the error works.
+  if (isGuestCrashed(webContents)) {
+    const revived = options.capability === 'navigate' && await reviveCrashedGuest(webContents);
+    if (!revived) {
+      logDrive({
+        capability: options.capability,
+        callerSessionId: options.selector.callerSessionId,
+        callerTaskId: options.selector.callerTaskId,
+        resolvedHandle: target.entry.sessionId,
+        resolvedTaskId: target.entry.taskId,
+        projectId: target.entry.projectId,
+        webContentsId: webContents.id,
+        queueDepthAtEntry: 0,
+        waitedMs: 0,
+        durationMs: 0,
+        outcome: 'page-crashed',
+      });
+      return { ok: false, error: { kind: 'page-crashed', detail: pageCrashedDetail(target.entry.sessionId, webContents.id) } };
+    }
+  }
 
   // Mark a lane as in use. A no-op for an ordinary pane, and the reason the
   // idle reclaim below can tell "nobody has touched this in an hour" from "an

@@ -57,7 +57,9 @@ import {
   waitForDialogInterception,
 } from '../../src/main/browser/cdp/cdp';
 import { markAgentControl } from '../../src/main/browser/passkey-guard';
-import { withGuest, validateNavigationUrl } from '../../src/main/browser/browser-pane-driver';
+import { withGuest, validateNavigationUrl, NAVIGATE_TIMEOUT_MS } from '../../src/main/browser/browser-pane-driver';
+import { trackGuestCrash } from '../../src/main/browser/guest-crash-state';
+import { EventEmitter } from 'node:events';
 import { KeyboardFocusNotInGuestError } from '../../src/main/browser/cdp/keyboard-focus';
 import { AmbiguousSelectorError } from '../../src/main/browser/cdp/ambiguous-selector';
 import { browserPaneRegistry } from '../../src/main/browser/browser-pane-registry';
@@ -670,5 +672,113 @@ describe('validateNavigationUrl', () => {
       ok: false,
       error: { kind: 'navigation-host-blocked' },
     });
+  });
+});
+
+/**
+ * A page whose renderer process is gone answers no CDP command, so a drive used
+ * to attach and wait out its timeout (task #1226, DESKTOP-5Z). `withGuest` now
+ * refuses at once with `page-crashed`, and the navigate tier, which the refusal
+ * tells the agent to use, starts the page again first.
+ */
+describe('withGuest - a crashed page', () => {
+  /** A guest whose page process can die and come back, with real event wiring. */
+  function crashableGuest(id: number, options: { reloadRevives: boolean }) {
+    const events = new EventEmitter();
+    const guest = {
+      id,
+      crashed: false,
+      reloads: 0,
+      isDestroyed: () => false,
+      isCrashed: () => guest.crashed,
+      reload: () => {
+        guest.reloads += 1;
+        if (!options.reloadRevives) return;
+        guest.crashed = false;
+        events.emit('dom-ready');
+      },
+      on: (name: string, listener: (...args: unknown[]) => void) => { events.on(name, listener); return guest; },
+      once: (name: string, listener: (...args: unknown[]) => void) => { events.once(name, listener); return guest; },
+      removeListener: (name: string, listener: (...args: unknown[]) => void) => { events.removeListener(name, listener); return guest; },
+      crash: (reason: string) => {
+        guest.crashed = true;
+        events.emit('render-process-gone', {}, { reason, exitCode: 1 });
+      },
+    };
+    trackGuestCrash(guest as never);
+    vi.mocked(webContents.fromId).mockImplementation((requestedId: number) =>
+      requestedId === id ? (guest as never) : (undefined as never));
+    return guest;
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    vi.mocked(attachDebugger).mockReturnValue(true);
+    vi.mocked(isDebuggerAttached).mockReturnValue(false);
+    resetGuestDriveQueuesForTests();
+    browserPaneRegistry.detachAll();
+    browserPaneRegistry.register({ handle: 'pane_c', ownerSessionId: 's', taskId: 't', projectId: 'p', webContentsId: 11, url: null });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('refuses a drive at once with page-crashed, naming the surface and why, and never attaches', async () => {
+    const guest = crashableGuest(11, { reloadRevives: true });
+    guest.crash('oom');
+    const body = vi.fn(async () => 'ran');
+
+    // No timer is advanced: a refusal that waited on anything would never settle.
+    const result = await withGuest({ selector: { projectId: 'p' }, capability: 'observe', config: config() }, body);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.kind).toBe('page-crashed');
+    expect(result.error.detail).toContain('pane_c');
+    expect(result.error.detail).toContain('ran out of memory');
+    expect(result.error.detail).toContain('kangentic_browser_navigate');
+    expect(body).not.toHaveBeenCalled();
+    expect(vi.mocked(attachDebugger)).not.toHaveBeenCalled();
+    expect(vi.mocked(waitForDialogInterception)).not.toHaveBeenCalled();
+    expect(guest.reloads).toBe(0);
+  });
+
+  it('says "crashed" for every reason that is not memory', async () => {
+    const guest = crashableGuest(11, { reloadRevives: true });
+    guest.crash('killed');
+    const result = await withGuest({ selector: { projectId: 'p' }, capability: 'interact', config: config() }, async () => 'ran');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.kind).toBe('page-crashed');
+    expect(result.error.detail).toContain('it crashed');
+  });
+
+  it('a navigate starts the page again, then runs its body on the live guest', async () => {
+    const guest = crashableGuest(11, { reloadRevives: true });
+    guest.crash('oom');
+    const result = await withGuest({ selector: { projectId: 'p' }, capability: 'navigate', config: config() }, async () => 'navigated');
+    expect(result).toEqual({ ok: true, data: 'navigated' });
+    expect(guest.reloads).toBe(1);
+    expect(vi.mocked(attachDebugger)).toHaveBeenCalledTimes(1);
+
+    // Revived: the next drive at any tier runs normally.
+    const after = await withGuest({ selector: { projectId: 'p' }, capability: 'observe', config: config() }, async () => 'observed');
+    expect(after).toEqual({ ok: true, data: 'observed' });
+  });
+
+  it('a navigate whose page never comes back answers page-crashed at the navigation bound', async () => {
+    const guest = crashableGuest(11, { reloadRevives: false });
+    guest.crash('crashed');
+    const body = vi.fn(async () => 'navigated');
+    const pending = withGuest({ selector: { projectId: 'p' }, capability: 'navigate', config: config() }, body);
+    await vi.advanceTimersByTimeAsync(NAVIGATE_TIMEOUT_MS);
+    const result = await pending;
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.kind).toBe('page-crashed');
+    expect(body).not.toHaveBeenCalled();
+    expect(guest.reloads).toBe(1);
   });
 });

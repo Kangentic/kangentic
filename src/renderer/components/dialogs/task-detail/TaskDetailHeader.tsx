@@ -2,6 +2,7 @@ import { useState, useRef, useMemo, useEffect, type ReactNode } from 'react';
 import { useLingui } from '@lingui/react/macro';
 import { plural } from '@lingui/core/macro';
 import { useCopyDisplayId } from './useCopyDisplayId';
+import type { BrowserCrashKind } from '../../../../shared/browser-crash';
 import { X, Trash2, Pencil, LoaderCircle, ArrowDown, FolderGit2, FolderGit, GitPullRequest, GitCompare, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, CircleStop, Clock, SquareChevronRight, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2, MessageSquare, AlignLeft, Search, Workflow as WorkflowIcon } from 'lucide-react';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
 import { ShortcutGlyph, SwimlaneIcon, shortcutIcon } from '../../../utils/swimlane-icons';
@@ -147,6 +148,8 @@ interface TaskDetailHeaderProps {
   onToggleBrowser: () => void;
   /** A Browser pane guest is alive for the task (showing, hidden, or parked). */
   browserAlive: boolean;
+  /** That guest's page stopped, and why: the badge turns red and the tip says so. */
+  browserCrash?: BrowserCrashKind;
   /** An agent is driving that guest right now. */
   browserDriving: boolean;
   /** The user's Close: discard the guest and free its memory (never the pill's hide). */
@@ -196,6 +199,7 @@ export function TaskDetailHeader({
   browserOpen,
   onToggleBrowser,
   browserAlive,
+  browserCrash,
   browserDriving,
   onCloseBrowser,
   canShowDescription = false,
@@ -465,7 +469,12 @@ export function TaskDetailHeader({
                 tip={browserOpen ? t`Hide browser` : t`Show browser`}
                 keys="taskDetail.toggleBrowser"
                 // Hiding is not closing: the page stays loaded, which the name does not say.
-                detail={browserOpen ? t`Kept alive until you close it` : browserAlive ? t`Page kept` : undefined}
+                // A stopped page says why, ahead of either (task #1226, design D4 B).
+                detail={browserCrash === 'out-of-memory'
+                  ? t`Page ran out of memory`
+                  : browserCrash === 'crashed'
+                    ? t`Page crashed`
+                    : browserOpen ? t`Kept alive until you close it` : browserAlive ? t`Page kept` : undefined}
                 ariaLabel={t`Toggle browser`}
                 testId="browser-toggle"
               />
@@ -473,9 +482,13 @@ export function TaskDetailHeader({
                   or parked). Green and pulsing because it is a process that is
                   running and costing memory until Close browser ends it. Play is the
                   inverse of that item's stop mark. Whether the agent is DRIVING the
-                  page is shown by the pane's accent border and "Agent typing here". */}
+                  page is shown by the pane's accent border and "Agent typing here".
+                  Red and still while its page has stopped, which a hidden or parked
+                  pane's cover cannot show. */}
               {browserAlive && (
-                <IconBadge kind="running" pulse driving={browserDriving} testId="browser-toggle-alive" />
+                browserCrash
+                  ? <IconBadge kind="problems" testId="browser-toggle-alive" />
+                  : <IconBadge kind="running" pulse driving={browserDriving} testId="browser-toggle-alive" />
               )}
             </div>
           )}

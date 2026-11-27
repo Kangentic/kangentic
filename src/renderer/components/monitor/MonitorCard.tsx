@@ -462,6 +462,9 @@ function MonitorFullCard({
       [row.sessionId],
     ),
   );
+  // The task's pane page stopped (task #1226), as the board card's globe reads it.
+  // A Command Terminal row's surface is keyed by its slot, not this id, so it reads none.
+  const browserCrash = useSessionStore((state) => state.browserCrashedTasks.get(row.taskId));
   // The board card's clamp, off the same setting and through the same helper,
   // rather than a row count this card decided for itself.
   const isCompact = cardDensity === 'compact';
@@ -511,7 +514,7 @@ function MonitorFullCard({
         )}
         {/* After #N and before the globe, as on the board card (#1160). */}
         {shownPriority !== 0 && <PriorityBadge priority={shownPriority} variant="inline" />}
-        {row.browserRunning && <BrowserAliveGlobe testId="monitor-card-browser-alive" />}
+        {row.browserRunning && <BrowserAliveGlobe testId="monitor-card-browser-alive" crash={browserCrash} />}
       </div>
 
       {!isCompact && row.prUrl && (

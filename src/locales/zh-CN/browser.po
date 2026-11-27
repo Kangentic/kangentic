@@ -125,6 +125,14 @@ msgstr "检查失败"
 msgid "Invalid URL: {target}"
 msgstr "无效的 URL：{target}"
 
+#: src/renderer/components/browser/BrowserCrashedState.tsx
+msgid "It crashed."
+msgstr ""
+
+#: src/renderer/components/browser/BrowserCrashedState.tsx
+msgid "It ran out of memory."
+msgstr ""
+
 #: src/renderer/components/browser/BrowserEmptyState.tsx
 msgid "Local dev server, staging, production, or any http(s) page. This task remembers where you were; other tasks keep their own."
 msgstr "本地开发服务器、预发布、生产环境或任意 http(s) 页面。此任务会记住你的浏览位置，其他任务各自保留自己的位置。"
@@ -190,6 +198,7 @@ msgstr "或按住 Ctrl 滚动鼠标滚轮"
 msgid "Quick picks"
 msgstr "快速选择"
 
+#: src/renderer/components/browser/BrowserCrashedState.tsx
 #: src/renderer/components/browser/BrowserPane.tsx
 msgctxt "Action"
 msgid "Reload"
@@ -260,6 +269,10 @@ msgstr "开始下一条标注。在备注中按 Enter 效果相同。"
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "The Kangentic browser opens it for this project."
 msgstr "Kangentic 浏览器会在此项目中打开它。"
+
+#: src/renderer/components/browser/BrowserCrashedState.tsx
+msgid "This page stopped"
+msgstr ""
 
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "This URL is the project default"

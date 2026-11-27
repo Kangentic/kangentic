@@ -81,6 +81,7 @@ import {
   toggleCommandTerminalBrowser,
   toggleCommandTerminalChanges,
   useCommandTerminalBrowserAlive,
+  useCommandTerminalBrowserCrash,
 } from './command-terminal-browser';
 import type { TerminalLinkBrowser } from '../../utils/terminal-links/link-targets';
 import { popOutLinkBrowser } from '../../utils/pop-out-link-browser';
@@ -239,6 +240,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
   const browserOwnerKey = browserProjectId ? commandTerminalBrowserOwner(browserProjectId, slot) : null;
   const browserOpen = useSessionStore((s) => browserOwnerKey !== null && s.browserOpenTasks.has(browserOwnerKey));
   const browserAlive = useCommandTerminalBrowserAlive(browserProjectId, slot);
+  const browserCrash = useCommandTerminalBrowserCrash(browserProjectId, slot);
   const browserPopOut = usePopOut('browser', { taskId: browserOwnerKey ?? '', projectId: browserProjectId ?? '' });
   const showBrowser = browserOpen && !browserPopOut.isOpen;
   // Whether this terminal's agent is driving its page right now (the pill's
@@ -906,12 +908,19 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
                 tip={browserOpen ? t`Hide browser` : t`Show browser`}
                 keys="commandTerminal.toggleBrowser"
                 // Hiding is not closing: the page stays loaded, which the name does not say.
-                detail={browserOpen ? t`Kept alive until you close it` : browserAlive ? t`Page kept` : undefined}
+                // A stopped page says why, ahead of either (task #1226).
+                detail={browserCrash === 'out-of-memory'
+                  ? t`Page ran out of memory`
+                  : browserCrash === 'crashed'
+                    ? t`Page crashed`
+                    : browserOpen ? t`Kept alive until you close it` : browserAlive ? t`Page kept` : undefined}
                 ariaLabel={t`Toggle browser`}
                 testId="command-bar-browser-toggle"
               />
               {browserAlive && (
-                <IconBadge kind="running" pulse driving={browserDriving} testId="command-bar-browser-toggle-alive" />
+                browserCrash
+                  ? <IconBadge kind="problems" testId="command-bar-browser-toggle-alive" />
+                  : <IconBadge kind="running" pulse driving={browserDriving} testId="command-bar-browser-toggle-alive" />
               )}
             </div>
           )}

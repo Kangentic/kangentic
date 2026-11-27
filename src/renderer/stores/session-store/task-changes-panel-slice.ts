@@ -2,6 +2,7 @@ import { type StateCreator } from 'zustand';
 import { useProjectStore } from '../project-store';
 import type { ConversationTabRequest, GitDiffScope, Task, TaskDetailViewState } from '../../../shared/types';
 import type { SessionStore } from './types';
+import type { BrowserCrashKind } from '../../../shared/browser-crash';
 import { sharedModuleState } from '../hmr-store-pin';
 import { reportRendererFailure } from '../../utils/renderer-failure';
 
@@ -89,6 +90,17 @@ export interface TaskChangesPanelSlice {
    * Never persisted.
    */
   browserGuestTasks: Map<string, number>;
+  /**
+   * Tasks whose live pane's page has stopped (its `<webview>` fired
+   * `render-process-gone`), keyed like `browserGuestTasks`, with why. Set by
+   * `BrowserPane` on the crash and cleared on the page's next `dom-ready` or when
+   * the guest goes away. The pane shows its crashed cover from its own state;
+   * this is for the surfaces OUTSIDE the pane, which turn red while a hidden or
+   * parked pane's page is stopped: the header's Browser button and the card
+   * globes (task #1226, design D4 B). An offscreen lane has no pane to report
+   * one, so it never appears here. Never persisted.
+   */
+  browserCrashedTasks: Map<string, BrowserCrashKind>;
   /**
    * Tasks whose one browser surface is currently OFFSCREEN, pushed from main.
    *
@@ -222,6 +234,10 @@ export interface TaskChangesPanelSlice {
    * guest for the same task cannot erase the newer one.
    */
   clearBrowserGuest: (taskId: string, webContentsId: number) => void;
+  /** The task's pane page stopped, and why. */
+  setBrowserCrashed: (taskId: string, kind: BrowserCrashKind) => void;
+  /** The task's pane page loaded again. */
+  clearBrowserCrashed: (taskId: string) => void;
   /**
    * Replace the offscreen-surface set from main's push (or the mount-time
    * read). Takes the WHOLE set, never a delta: main is the only authority, and
@@ -405,6 +421,7 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
   browserOpenTasks: new Set<string>(),
   browserHeldTasks: new Set<string>(),
   browserGuestTasks: new Map<string, number>(),
+  browserCrashedTasks: new Map<string, BrowserCrashKind>(),
   browserOffscreenTasks: new Set<string>(),
   browserUrlRefreshTokens: {},
   browserNavigateRequests: {},
@@ -490,7 +507,31 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
     if (current.get(taskId) !== webContentsId) return;
     const next = new Map(current);
     next.delete(taskId);
+    // A browser that is gone leaves no stopped-page mark behind it.
+    const crashed = get().browserCrashedTasks;
+    if (crashed.has(taskId)) {
+      const nextCrashed = new Map(crashed);
+      nextCrashed.delete(taskId);
+      set({ browserGuestTasks: next, browserCrashedTasks: nextCrashed });
+      return;
+    }
     set({ browserGuestTasks: next });
+  },
+
+  setBrowserCrashed: (taskId, kind) => {
+    const current = get().browserCrashedTasks;
+    if (current.get(taskId) === kind) return;
+    const next = new Map(current);
+    next.set(taskId, kind);
+    set({ browserCrashedTasks: next });
+  },
+
+  clearBrowserCrashed: (taskId) => {
+    const current = get().browserCrashedTasks;
+    if (!current.has(taskId)) return;
+    const next = new Map(current);
+    next.delete(taskId);
+    set({ browserCrashedTasks: next });
   },
 
   setBrowserOffscreenTasks: (taskIds) => {

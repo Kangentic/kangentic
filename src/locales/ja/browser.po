@@ -146,6 +146,14 @@ msgstr "検査に失敗しました"
 msgid "Invalid URL: {target}"
 msgstr "無効な URL: {target}"
 
+#: src/renderer/components/browser/BrowserCrashedState.tsx
+msgid "It crashed."
+msgstr ""
+
+#: src/renderer/components/browser/BrowserCrashedState.tsx
+msgid "It ran out of memory."
+msgstr ""
+
 #: src/renderer/components/browser/BrowserEmptyState.tsx
 #, fuzzy
 msgid "Local dev server, staging, production, or any http(s) page. This task remembers where you were; other tasks keep their own."
@@ -221,6 +229,7 @@ msgstr "または Ctrl+マウスホイール"
 msgid "Quick picks"
 msgstr "クイック選択"
 
+#: src/renderer/components/browser/BrowserCrashedState.tsx
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
 msgctxt "Action"
@@ -300,6 +309,10 @@ msgstr ""
 
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "The Kangentic browser opens it for this project."
+msgstr ""
+
+#: src/renderer/components/browser/BrowserCrashedState.tsx
+msgid "This page stopped"
 msgstr ""
 
 #: src/renderer/components/browser/BrowserPane.tsx

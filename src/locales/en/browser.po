@@ -125,6 +125,14 @@ msgstr "Inspect failed"
 msgid "Invalid URL: {target}"
 msgstr "Invalid URL: {target}"
 
+#: src/renderer/components/browser/BrowserCrashedState.tsx
+msgid "It crashed."
+msgstr "It crashed."
+
+#: src/renderer/components/browser/BrowserCrashedState.tsx
+msgid "It ran out of memory."
+msgstr "It ran out of memory."
+
 #: src/renderer/components/browser/BrowserEmptyState.tsx
 msgid "Local dev server, staging, production, or any http(s) page. This task remembers where you were; other tasks keep their own."
 msgstr "Local dev server, staging, production, or any http(s) page. This task remembers where you were; other tasks keep their own."
@@ -190,6 +198,7 @@ msgstr "Or Ctrl+scroll wheel"
 msgid "Quick picks"
 msgstr "Quick picks"
 
+#: src/renderer/components/browser/BrowserCrashedState.tsx
 #: src/renderer/components/browser/BrowserPane.tsx
 msgctxt "Action"
 msgid "Reload"
@@ -260,6 +269,10 @@ msgstr "Start the next annotation. Enter in a note does the same."
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "The Kangentic browser opens it for this project."
 msgstr "The Kangentic browser opens it for this project."
+
+#: src/renderer/components/browser/BrowserCrashedState.tsx
+msgid "This page stopped"
+msgstr "This page stopped"
 
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "This URL is the project default"

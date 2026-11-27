@@ -38,6 +38,7 @@ interface FakeWindow {
       on: (event: string, handler: (...args: unknown[]) => void) => void;
     };
     loadURL: (url: string) => Promise<void>;
+    on: (event: string, handler: (...args: unknown[]) => void) => void;
     once: (event: string, handler: () => void) => void;
     isDestroyed: () => boolean;
   };
@@ -76,6 +77,7 @@ vi.mock('electron', () => ({
             if (loadGate) await loadGate();
             if (loadShouldFail) throw new Error('ERR_CONNECTION_REFUSED');
           }),
+          on: vi.fn(),
           once: vi.fn(),
           isDestroyed: () => win.destroyed,
         },
@@ -292,6 +294,13 @@ describe('openLane', () => {
     await openLane(input());
     const options = created[0].options as { webPreferences: { offscreen: { deviceScaleFactor?: number } } };
     expect(options.webPreferences.offscreen.deviceScaleFactor).toBe(1.5);
+  });
+
+  it('tracks its page crashing, so a drive on a stopped lane says why', async () => {
+    // A lane is not a <webview>, so the tracker in web-contents-created never sees it.
+    await openLane(input());
+    const guest = created[0].window.webContents;
+    expect(vi.mocked(guest.on)).toHaveBeenCalledWith('render-process-gone', expect.any(Function));
   });
 
   it('throttles the frame rate so an unwatched animating page cannot burn CPU', async () => {

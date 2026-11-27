@@ -27,6 +27,7 @@ import { useActivityReasonTip } from './useActivityReasonTip';
 import { Tooltip } from '../Tooltip';
 import { AutomationsDisabledStrip } from './AutomationsDisabledStrip';
 import { canTaskRunAutomations } from '../../../shared/automation-manifest';
+import type { BrowserCrashKind } from '../../../shared/browser-crash';
 
 /**
  * What a task card shows, shared by the board's `TaskCard` and the Workflows
@@ -181,6 +182,8 @@ export interface TaskCardViewModel {
   activityReason: ActivityReason | undefined;
   displayState: SessionDisplayState;
   browserAlive: boolean;
+  /** That browser's page stopped, and why: the globe turns red. */
+  browserCrash: BrowserCrashKind | undefined;
   /** A running session waiting on the user (idle or permission). */
   isIdle: boolean;
   /** A running session whose agent is working. */
@@ -253,6 +256,8 @@ export function useTaskCardViewModel(task: Task): TaskCardViewModel {
   const browserAlive = useSessionStore(
     (s) => s.browserGuestTasks.has(task.id) || s.browserOffscreenTasks.has(task.id),
   );
+  // Its page stopped (task #1226): a hidden or parked pane's cover is out of sight.
+  const browserCrash = useSessionStore((s) => s.browserCrashedTasks.get(task.id));
 
   // Label display config. Wrap the `?? {}` / `?? []` fallbacks in useMemo so
   // they return a stable reference; otherwise a fresh empty object/array each
@@ -320,6 +325,7 @@ export function useTaskCardViewModel(task: Task): TaskCardViewModel {
       activityReason,
       displayState,
       browserAlive,
+      browserCrash,
       isIdle,
       isThinking,
       activityMark,
@@ -335,7 +341,7 @@ export function useTaskCardViewModel(task: Task): TaskCardViewModel {
       liveTelemetryUnsupported,
     }),
     [
-      sessionId, isHighlighted, isResuming, activityReason, displayState, browserAlive, isIdle, isThinking,
+      sessionId, isHighlighted, isResuming, activityReason, displayState, browserAlive, browserCrash, isIdle, isThinking,
       activityMark, activityMarkTone, shownTrail, trailMode, labelColors, shownLabels, shownPriority, archivedRelativeTime, cardDensity,
       showTaskNumbers, liveTelemetryUnsupported,
     ],
@@ -397,13 +403,28 @@ function DisplayIdBadge({ task, view, hidden }: { task: Task; view: TaskCardView
  * shown in the pane. Not a click target: the card's own click opens the task,
  * where the kebab's "Close browser" is. Shared with the Agent Monitor's card.
  */
-export function BrowserAliveGlobe({ testId, tip }: { testId: string; tip?: string }) {
+export function BrowserAliveGlobe({ testId, tip, crash, crashTip }: {
+  testId: string;
+  tip?: string;
+  /** The page stopped, and why: the globe turns red and its tip says so. */
+  crash?: BrowserCrashKind;
+  /** A host whose browser is not a task's (a Command Terminal) words the stopped tip itself. */
+  crashTip?: string;
+}) {
   const { t } = useLingui();
   // A Command Terminal's Running row passes its own tip: its Close browser is in
-  // the terminal's menu, not a task's.
+  // the terminal's menu, not a task's. A stopped page turns the globe red and
+  // says why ahead of the running tip (task #1226, design D4 B): a hidden or
+  // parked pane's cover is out of sight, and this may be the only place it shows.
+  const crashLabel = crash === undefined
+    ? undefined
+    : crashTip ?? (crash === 'out-of-memory'
+      ? t`The page in this task's browser ran out of memory. Open the task to reload it.`
+      : t`The page in this task's browser crashed. Open the task to reload it.`);
+  const label = crashLabel ?? tip ?? t`Browser running for the agent. Close it from the task menu to free memory.`;
   return (
-    <Tooltip label={tip ?? t`Browser running for the agent. Close it from the task menu to free memory.`}>
-      <span className="text-active shrink-0 flex" data-testid={testId}>
+    <Tooltip label={label}>
+      <span className={`${crash ? 'text-danger' : 'text-active'} shrink-0 flex`} data-testid={testId} data-crash-kind={crash}>
         <Globe size={12} aria-label={t`Browser running`} />
       </span>
     </Tooltip>
@@ -608,7 +629,7 @@ function TaskCardBodyContent({ task, view, density, hideDisplayId, idleFooter }:
         <DisplayIdBadge task={task} view={view} hidden={hideDisplayId} />
         {view.shownPriority !== 0 && <PriorityBadge priority={view.shownPriority} variant="inline" />}
         {/* Placement and treatment are documented on `BrowserAliveGlobe`. */}
-        {view.browserAlive && <BrowserAliveGlobe testId="task-card-browser-alive" />}
+        {view.browserAlive && <BrowserAliveGlobe testId="task-card-browser-alive" crash={view.browserCrash} />}
       </div>
 
       {/* The task's links: its pull request, then its artifacts (#1056). Compact

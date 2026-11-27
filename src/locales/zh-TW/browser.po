@@ -125,6 +125,14 @@ msgstr "檢查失敗"
 msgid "Invalid URL: {target}"
 msgstr "無效的 URL：{target}"
 
+#: src/renderer/components/browser/BrowserCrashedState.tsx
+msgid "It crashed."
+msgstr ""
+
+#: src/renderer/components/browser/BrowserCrashedState.tsx
+msgid "It ran out of memory."
+msgstr ""
+
 #: src/renderer/components/browser/BrowserEmptyState.tsx
 msgid "Local dev server, staging, production, or any http(s) page. This task remembers where you were; other tasks keep their own."
 msgstr "本機開發伺服器、預備環境、正式環境，或任何 http(s) 頁面。此任務會記住你上次瀏覽的位置，其他任務則各自保留。"
@@ -190,6 +198,7 @@ msgstr "或按 Ctrl+滾輪"
 msgid "Quick picks"
 msgstr "快速選擇"
 
+#: src/renderer/components/browser/BrowserCrashedState.tsx
 #: src/renderer/components/browser/BrowserPane.tsx
 msgctxt "Action"
 msgid "Reload"
@@ -260,6 +269,10 @@ msgstr "開始下一則標註。在備註中按 Enter 效果相同。"
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "The Kangentic browser opens it for this project."
 msgstr "Kangentic 瀏覽器會在此專案中開啟它。"
+
+#: src/renderer/components/browser/BrowserCrashedState.tsx
+msgid "This page stopped"
+msgstr ""
 
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "This URL is the project default"

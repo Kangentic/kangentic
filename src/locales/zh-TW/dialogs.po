@@ -2115,8 +2115,16 @@ msgid "Overview"
 msgstr "概觀"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Page crashed"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Page kept"
 msgstr "頁面已保留"
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Page ran out of memory"
+msgstr ""
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "Path"

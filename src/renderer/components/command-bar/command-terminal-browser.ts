@@ -24,6 +24,7 @@ import {
   parseCommandTerminalBrowserOwner,
 } from '../../../shared/browser-owner';
 import { findLiveCommandTerminalSession } from '../../../shared/session-owner';
+import type { BrowserCrashKind } from '../../../shared/browser-crash';
 import { DEFAULT_SPLIT_RATIO, clampSplitRatio } from '../../hooks/task-split-ratio';
 import { commandTerminalChangesEntityId } from '../../stores/session-store/task-changes-panel-slice';
 
@@ -175,6 +176,15 @@ export function useCommandTerminalBrowserAlive(projectId: string | null, slot: s
     ownerKey !== null && projectId !== null
     && state.openInstanceKeys[popOutInstanceKey('browser', { projectId, taskId: ownerKey })] === true);
   return inStore || poppedOut;
+}
+
+/**
+ * Whether that page has stopped (out of memory, or a crash), and why: its Globe
+ * pill's dot and its Running row's globe turn red, as a task's do (task #1226).
+ */
+export function useCommandTerminalBrowserCrash(projectId: string | null, slot: string): BrowserCrashKind | undefined {
+  const ownerKey = projectId ? commandTerminalBrowserOwner(projectId, slot) : null;
+  return useSessionStore((state) => (ownerKey !== null ? state.browserCrashedTasks.get(ownerKey) : undefined));
 }
 
 /**
