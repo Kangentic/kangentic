@@ -1010,7 +1010,8 @@ dot, `commandTerminal.toggleBrowser` (Mod+Shift+B), the terminal and the pane sp
 that drags from a quarter to three quarters (`useTaskSplitResize`), Browser and Changes on the same
 side and exclusive (opening one holds or closes the other), Show/Hide and Close browser in the kebab
 and the Running row's menu, the green `BrowserAliveGlobe` after a Running row's name and on a strip
-mark's corner, the Monitor row's globe, and pop out, to a window named for the terminal as a task's
+mark's corner (red, with its own tip, while the page has stopped, from main's `browser:crashedSurfaces`
+push), the Monitor row's globe, and pop out, to a window named for the terminal as a task's
 is for its task (`PopOutSurfaceRoot.tsx`). It is keyed by the slot's owner key,
 `command-terminal::<projectId>::<slot>` (`src/shared/browser-owner.ts`), in the same session-store
 sets a task uses. The key carries the project because the sets are flat and the pane outlives a
