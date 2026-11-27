@@ -525,9 +525,9 @@ function BrowserPaneActive({
   // page and say so (task #1226). The guest itself survives with the same id, so
   // its registration, handle and jar stay, and a reload runs the page in a new
   // process. The next successful `dom-ready` lifts the cover, whoever reloaded:
-  // the cover's button, the toolbar, F5, or an agent's navigate. The store entry
-  // is what turns the header button and the card globes red while the pane is
-  // hidden or parked (design D4 B).
+  // the cover's button, the toolbar, F5, or an agent's navigate. The red marks
+  // outside the pane (design D4 B) come from main's push, not from here, because
+  // a page can stop where no pane of this window runs.
   const [crashKind, setCrashKind] = useState<BrowserCrashKind | null>(null);
   useEffect(() => {
     const webview = webviewRef.current;
@@ -536,14 +536,9 @@ function BrowserPaneActive({
       // The `<webview>` event carries Electron's details object, not the
       // reason itself. Measured in /preview: `event.details` is
       // `{ reason, exitCode }` and `event.reason` is undefined.
-      const kind = browserCrashKind((event as Event & { details?: { reason?: string } }).details?.reason);
-      setCrashKind(kind);
-      useSessionStore.getState().setBrowserCrashed(registrationIdentityRef.current.taskId, kind);
+      setCrashKind(browserCrashKind((event as Event & { details?: { reason?: string } }).details?.reason));
     };
-    const onReady = () => {
-      setCrashKind(null);
-      useSessionStore.getState().clearBrowserCrashed(registrationIdentityRef.current.taskId);
-    };
+    const onReady = () => setCrashKind(null);
     webview.addEventListener('render-process-gone', onGone);
     webview.addEventListener('dom-ready', onReady);
     return () => {

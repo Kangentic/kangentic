@@ -3,9 +3,10 @@
  *
  * Before this, nothing in the renderer listened for the `<webview>`'s
  * `render-process-gone`: the page stopped and the pane said nothing. Now the
- * pane covers the page with "This page stopped" and why, a Reload, and the
- * header's Browser button and the board card's globe turn red while the pane is
- * out of sight. The next `dom-ready` lifts all of it.
+ * pane covers the page with "This page stopped" and why, and a Reload. The
+ * header's Browser button and the board card's globe turn red from main's
+ * stopped-page push, which the mock fires here, since main is its one writer.
+ * The next `dom-ready` lifts the cover, and main's next push lifts the marks.
  *
  * The UI tier's `<webview>` is a plain element, so the test gives it the methods
  * the pane calls and dispatches the guest's events itself, the way
@@ -81,6 +82,11 @@ async function guestEvent(name: 'render-process-gone' | 'dom-ready', reason?: st
   }, { eventName: name, crashReason: reason });
 }
 
+/** Fire main's stopped-page push: the whole map, as main sends it. */
+async function crashedSurfaces(surfaces: Record<string, 'out-of-memory' | 'crashed'>): Promise<void> {
+  await page.evaluate((map) => window.__mockBrowser?.emitCrashedSurfaces(map), surfaces);
+}
+
 test('a crashed page is covered, says why, reloads, and turns the marks outside the pane red', async () => {
   await test.step('open the pane on a live guest', async () => {
     await page.evaluate((taskId) => {
@@ -123,6 +129,9 @@ test('a crashed page is covered, says why, reloads, and turns the marks outside 
       return Boolean(hit?.closest('[data-testid="browser-pane-crashed"]'));
     });
     expect(barCoveredByCrash).toBe(true);
+    // The pane writes no mark outside itself: main's push is the one writer.
+    await expect(page.locator('[data-testid="browser-toggle-alive"]')).toHaveAttribute('data-badge', 'running');
+    await crashedSurfaces({ [TASK_ID]: 'out-of-memory' });
     await expect(page.locator('[data-testid="browser-toggle-alive"]')).toHaveAttribute('data-badge', 'problems');
   });
 
@@ -130,12 +139,14 @@ test('a crashed page is covered, says why, reloads, and turns the marks outside 
     await page.locator('[data-testid="browser-pane-crashed-reload"]').click();
     expect(await page.evaluate(() => (window as unknown as { __guestReloads: number }).__guestReloads)).toBe(1);
     await guestEvent('dom-ready');
+    await crashedSurfaces({});
     await expect(page.locator('[data-testid="browser-pane-crashed"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="browser-toggle-alive"]')).toHaveAttribute('data-badge', 'running');
   });
 
   await test.step('any other reason reads "It crashed."', async () => {
     await guestEvent('render-process-gone', 'killed');
+    await crashedSurfaces({ [TASK_ID]: 'crashed' });
     await expect(page.locator('[data-testid="browser-pane-crashed"]')).toContainText('It crashed.');
   });
 
@@ -155,6 +166,7 @@ test('a crashed page is covered, says why, reloads, and turns the marks outside 
 
   await test.step('the next load clears the card too', async () => {
     await guestEvent('dom-ready');
+    await crashedSurfaces({});
     const globe = page.locator('[data-testid="task-card-browser-alive"]');
     await expect(globe).not.toHaveAttribute('data-crash-kind', /.+/);
   });

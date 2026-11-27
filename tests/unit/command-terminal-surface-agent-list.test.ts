@@ -27,6 +27,7 @@ const sessionPushMocks = {
   onActivity: vi.fn(),
 };
 const loadBrowserOffscreenTasksMock = vi.fn();
+const loadBrowserCrashedTasksMock = vi.fn();
 
 (globalThis as Record<string, unknown>).window = {
   electronAPI: {
@@ -39,6 +40,7 @@ vi.mock('../../src/renderer/stores/session-store', () => ({
   useSessionStore: {
     getState: () => ({
       loadBrowserOffscreenTasks: loadBrowserOffscreenTasksMock,
+      loadBrowserCrashedTasks: loadBrowserCrashedTasksMock,
       sessions: [],
     }),
   },
@@ -62,6 +64,7 @@ describe('commandTerminalSurface bootstrap: agent list changed', () => {
     agentsListMock.mockResolvedValue([]);
     agentsOnListChangedMock.mockReturnValue(() => {});
     loadBrowserOffscreenTasksMock.mockResolvedValue(undefined);
+    loadBrowserCrashedTasksMock.mockResolvedValue(undefined);
     useConfigStore.setState({ agentList: [], agentListLoaded: false });
     controller = new AbortController();
   });

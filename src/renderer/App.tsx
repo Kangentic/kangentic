@@ -271,6 +271,14 @@ export function App() {
       useSessionStore.getState().setBrowserOffscreenTasks(taskIds);
     });
 
+    // Which owners' pages have stopped (task #1226): the Browser pill's badge
+    // and the card globes turn red from it. Only main sees a page that stops in
+    // a lane or a Browser pop-out, so it is read once and then live on the push.
+    void useSessionStore.getState().loadBrowserCrashedTasks();
+    const cleanupCrashedSurfaces = window.electronAPI.browser?.onCrashedSurfaces?.((surfaces) => {
+      useSessionStore.getState().setBrowserCrashedTasks(surfaces);
+    });
+
     // An agent session started whose MCP tools cannot connect. Main sends this
     // once per run; the body is the error the check hit, the same text the MCP
     // connection row shows, and Open settings lands on that row.
@@ -302,6 +310,7 @@ export function App() {
       cleanupAnnouncementsChanged?.();
       cleanupCrashNotice?.();
       cleanupOffscreenSurfaces?.();
+      cleanupCrashedSurfaces?.();
       cleanupMcpConnectionFailed?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only bootstrap: every callee is a stable Zustand action or an IPC listener registered exactly once
@@ -1641,6 +1650,8 @@ if (import.meta.hot) {
       // surface can sit unchanged across the whole session, so the push alone
       // would leave the card globe dark after a Fast Refresh.
       void useSessionStore.getState().loadBrowserOffscreenTasks();
+      // Stopped browser pages Pattern B: the same reason, for the red marks.
+      void useSessionStore.getState().loadBrowserCrashedTasks();
       // Announcements Pattern B: re-pull the active list and the archive from
       // main-process truth. loadActive also re-runs the open-dialog
       // reconciliation, which a history-opened dialog is exempt from.

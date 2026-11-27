@@ -56,10 +56,18 @@ export const commandTerminalSurface: SurfaceDescriptor<'command-terminal'> = {
       useSessionStore.getState().setBrowserOffscreenTasks(ownerKeys);
     });
     if (unsubscribeOffscreen) signal.addEventListener('abort', unsubscribeOffscreen);
+    // Which terminals' pages have stopped (task #1226): the Globe pill's badge and
+    // the Running row's globe turn red from it.
+    void useSessionStore.getState().loadBrowserCrashedTasks();
+    const unsubscribeCrashed = window.electronAPI.browser?.onCrashedSurfaces?.((surfaces) => {
+      useSessionStore.getState().setBrowserCrashedTasks(surfaces);
+    });
+    if (unsubscribeCrashed) signal.addEventListener('abort', unsubscribeCrashed);
   },
 
   hmrResync: () => {
     void useSessionStore.getState().loadBrowserOffscreenTasks();
+    void useSessionStore.getState().loadBrowserCrashedTasks();
     void useSessionStore.getState().syncSessions();
     void useConfigStore.getState().loadAgentList();
   },

@@ -236,6 +236,10 @@
   // the UI tier drives them through the emit/seed helpers below.
   let browserOffscreenSubscribers = [];
   let browserOffscreenSeed = [];
+  // Main's stopped-page map (task #1226), keyed by owner key with why. Main is
+  // its one writer, so the UI tier drives it through emitCrashedSurfaces below.
+  let browserCrashedSubscribers = [];
+  let browserCrashedSeed = {};
   // Each Command Terminal slot's saved Browser layout, keyed `<projectId>::<slot>`.
   let commandTerminalBrowserStates = {};
   let browserDownloadSubscribers = [];
@@ -8826,6 +8830,18 @@
       getOffscreenSurfaces: function () {
         return Promise.resolve(browserOffscreenSeed.slice());
       },
+      // Main -> renderer "these owners' pages have stopped" push. Driven via
+      // window.__mockBrowser.emitCrashedSurfaces({ [ownerKey]: 'out-of-memory' | 'crashed' }).
+      onCrashedSurfaces: function (callback) {
+        browserCrashedSubscribers.push(callback);
+        return function () {
+          const index = browserCrashedSubscribers.indexOf(callback);
+          if (index >= 0) browserCrashedSubscribers.splice(index, 1);
+        };
+      },
+      getCrashedSurfaces: function () {
+        return Promise.resolve(Object.assign({}, browserCrashedSeed));
+      },
       closeOffscreenSurface: function (taskId, projectId) {
         browserPaneCalls.push({ type: 'offscreen-close', taskId: taskId, projectId: projectId ?? null });
         const index = browserOffscreenSeed.indexOf(taskId);
@@ -9088,6 +9104,14 @@
      *  offscreen before this renderer existed (a reload, or an HMR update). */
     seedOffscreenSurfaces: function (taskIds) {
       browserOffscreenSeed = taskIds.slice();
+    },
+    /** Fire main's "these owners' pages have stopped" push. Pass the WHOLE map,
+     *  as main does: an empty object means none. */
+    emitCrashedSurfaces: function (surfaces) {
+      browserCrashedSeed = Object.assign({}, surfaces);
+      browserCrashedSubscribers.slice().forEach(function (callback) {
+        callback(Object.assign({}, surfaces));
+      });
     },
     /** Seed a Command Terminal slot's saved Browser layout, as a restart finds it. */
     seedCommandTerminalState: function (projectId, slot, state) {
