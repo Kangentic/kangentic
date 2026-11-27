@@ -311,4 +311,19 @@ describe('PushRegistrationStore with a corrupt file on disk', () => {
     expect(actualFs.existsSync(registrationsFile)).toBe(true);
     expect(lockedStore.registrationState('device-1')).toBe('registered');
   });
+
+  // The fix only reaches the phone if a corrupt file reads as "holds none": an
+  // `unknown` here leaves pushRegistered off the project list, and the phone
+  // never registers again.
+  it('says a corrupt file holds no registration, whether or not it could be set aside', () => {
+    const corruptContent = '{"device-1": {"expoPushToken": "Expo';
+    actualFs.writeFileSync(registrationsFile, corruptContent);
+    expect(new PushRegistrationStore().registrationState('device-1')).toBe('absent');
+
+    actualFs.writeFileSync(registrationsFile, corruptContent);
+    renameSyncSpy.mockImplementation(() => {
+      throw Object.assign(new Error('EBUSY'), { code: 'EBUSY', syscall: 'rename' });
+    });
+    expect(new PushRegistrationStore().registrationState('device-1')).toBe('absent');
+  });
 });
