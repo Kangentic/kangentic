@@ -150,6 +150,9 @@ test('the Agent Monitor card marks a task by its id and a Command Terminal by it
       { sessionId: 'sess-crash-ct', taskId: '${TERMINAL_TASK_ID}', taskTitle: 'Command Terminal 1', displayId: null,
         columnName: '', commandTerminalBranch: 'main', isCommandTerminal: true, ${rowBase} },
     ];
+    // Main's map before this window loaded (a reload, or a page that stopped while it was
+    // closed): with no subscriber yet this only seeds what the mount-time read returns.
+    window.__mockBrowser.emitCrashedSurfaces({ 'task-crash-a': 'crashed' });
   `);
   try {
     await page.locator('[data-testid="agent-monitor-button"]').click();
@@ -158,6 +161,11 @@ test('the Agent Monitor card marks a task by its id and a Command Terminal by it
     const terminalGlobe = page.locator('[data-session-id="sess-crash-ct"] [data-testid="monitor-card-browser-alive"]');
     await expect(taskGlobe).toBeVisible();
     await expect(terminalGlobe).toBeVisible();
+
+    await test.step('a page that stopped before the window loaded is red from the mount-time read, with no push', async () => {
+      await expect(taskGlobe).toHaveAttribute('data-crash-kind', 'crashed');
+      await expect(terminalGlobe).not.toHaveAttribute('data-crash-kind', /.+/);
+    });
 
     await test.step('a task row turns on its task id, with the task-worded tip', async () => {
       await crashedSurfaces(page, { 'task-crash-a': 'crashed' });
