@@ -18,8 +18,10 @@
  *   1. Kangentic's own Electron processes (main sends their pids).
  *   2. Under a live PTY: a PTY root the host holds and its real descendants,
  *      by parent link and creation time, so a reused pid joins no tree.
- *   3. Tagged with a task id, per tag, outside every live tree.
- *   4. Every other process of the caller's user in the caller's session.
+ *   3. Kangentic's other children: below one of its Electron processes but
+ *      under no live PTY (a headless agent CLI run, git, a probe).
+ *   4. Tagged with a task id, per tag, outside every live tree.
+ *   5. Every other process of the caller's user in the caller's session.
  * A process whose commit could not be read is counted as unmeasured only.
  */
 
@@ -51,6 +53,8 @@ export interface HostMemoryCensusResult {
   failed: boolean;
   kangentic: CensusSum;
   livePty: CensusSum;
+  /** Below Kangentic's Electron processes, under no live PTY. */
+  kangenticChildren: CensusSum;
   tagged: CensusTaggedSum[];
   otherSameUser: CensusSum;
   /** Same-user processes whose commit could not be read. */
@@ -68,7 +72,7 @@ function emptySum(): CensusSum {
 }
 
 export function emptyCensus(supported: boolean, failed: boolean): HostMemoryCensusResult {
-  return { supported, failed, kangentic: emptySum(), livePty: emptySum(), tagged: [], otherSameUser: emptySum(), unmeasuredCount: 0 };
+  return { supported, failed, kangentic: emptySum(), livePty: emptySum(), kangenticChildren: emptySum(), tagged: [], otherSameUser: emptySum(), unmeasuredCount: 0 };
 }
 
 function add(sum: CensusSum, bytes: number): void {
@@ -91,6 +95,15 @@ export function sumCensus(
     if (!rootProcess) continue;
     for (const scanned of subtreeOf(rootProcess, processes, input.electronPids)) underLivePty.add(scanned.pid);
   }
+  // What Kangentic's own processes started outside any live PTY. The walk
+  // never enters a live root, so a PTY's tree stays its own group.
+  const liveRootPids = new Set(input.liveRoots.map((root) => root.pid));
+  const belowKangentic = new Set<number>();
+  for (const electronPid of input.electronPids) {
+    const electronProcess = byPid.get(electronPid);
+    if (!electronProcess) continue;
+    for (const scanned of subtreeOf(electronProcess, processes, liveRootPids)) belowKangentic.add(scanned.pid);
+  }
   const taggedSums = new Map<string, CensusTaggedSum>();
   for (const scanned of processes) {
     // Never opened for its environment: another user's, another session's, or a system process.
@@ -104,6 +117,8 @@ export function sumCensus(
       add(result.kangentic, bytes);
     } else if (underLivePty.has(scanned.pid)) {
       add(result.livePty, bytes);
+    } else if (belowKangentic.has(scanned.pid)) {
+      add(result.kangenticChildren, bytes);
     } else if (scanned.tagValue) {
       let sum = taggedSums.get(scanned.tagValue);
       if (!sum) {

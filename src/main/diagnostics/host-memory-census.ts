@@ -86,6 +86,7 @@ export function bucketCensusCount(count: number): (typeof CENSUS_COUNT_BUCKETS)[
 export const CENSUS_GROUPS = [
   'kangentic',
   'live_pty',
+  'kangentic_children',
   'mid_board_beside_session',
   'mid_board_no_session',
   'terminal_task',
@@ -103,6 +104,7 @@ export function bucketCensus(result: HostMemoryCensusResult, classify: (taskId: 
   const sums: Record<CensusGroup, CensusSum> = {
     kangentic: result.kangentic,
     live_pty: result.livePty,
+    kangentic_children: result.kangenticChildren,
     mid_board_beside_session: { bytes: 0, count: 0 },
     mid_board_no_session: { bytes: 0, count: 0 },
     terminal_task: { bytes: 0, count: 0 },
@@ -126,6 +128,12 @@ export function bucketCensus(result: HostMemoryCensusResult, classify: (taskId: 
   }
   tags.unmeasured_count = bucketCensusCount(result.unmeasuredCount);
   return tags;
+}
+
+/** The census as one log line: `ok, kangentic 1-2 GB (1-4), live_pty ...`. Buckets only. */
+export function censusLine(tags: HostMemoryCensusTags): string {
+  const groups = CENSUS_GROUPS.map((group) => `${group} ${tags[`${group}_gb`]} GB (${tags[`${group}_count`]})`);
+  return [tags.census, ...groups, `unmeasured ${tags.unmeasured_count}`].join(', ');
 }
 
 export interface HostMemoryCensusDeps {
@@ -159,7 +167,10 @@ export function createHostMemoryCensus(deps: HostMemoryCensusDeps): HostMemoryCe
         const result = await send({ electronPids: deps.electronPids() }, deps.timeoutMs ?? HOST_MEMORY_CENSUS_TIMEOUT_MS);
         if (!result.supported) return;
         // A failed scan still reports, as `census: failed`, so a spell is never silent.
-        deps.report(bucketCensus(result, deps.classify));
+        const tags = bucketCensus(result, deps.classify);
+        // Buckets only, the same values the event carries, so a spell reads back from the log.
+        console.warn(`[host-memory] census ${censusLine(tags)}`);
+        deps.report(tags);
       } catch (error) {
         deps.failureReporter.report(error);
       } finally {

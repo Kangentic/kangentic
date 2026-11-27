@@ -14,6 +14,7 @@ import {
   bucketCensus,
   bucketCensusBytes,
   bucketCensusCount,
+  censusLine,
 } from '../../src/main/diagnostics/host-memory-census';
 import type { ScannedProcess, TaggedProcessReader } from '../../src/main/pty/process-tag/process-scan';
 
@@ -30,7 +31,8 @@ function row(pid: number, ppid: number, startedAtMs: number, extra: Partial<Scan
 
 /**
  * Main (10) and its pty host (11), a live PTY root (100) with an agent and a
- * dev server under it, a server the live task's agent detached (300), a
+ * dev server under it, a headless CLI run the host started outside any PTY
+ * (150, with a child), a server the live task's agent detached (300), a
  * leftover of a parked task from an earlier run (400, with a child), a Done
  * task's leftover (500), an id no project knows (600), the user's browser
  * (700), a process whose commit could not be read (800) and another user's
@@ -43,6 +45,8 @@ function processTable(): ScannedProcess[] {
     row(100, 11, 2_000, { tagValue: LIVE_TASK, commitBytes: 0.01 * GB }),
     row(101, 100, 2_100, { tagValue: LIVE_TASK, commitBytes: 1.2 * GB }),
     row(102, 101, 2_200, { tagValue: LIVE_TASK, commitBytes: 0.3 * GB }),
+    row(150, 11, 2_250, { commitBytes: 0.6 * GB }),
+    row(151, 150, 2_260, { commitBytes: 0.1 * GB }),
     row(300, 1, 2_300, { tagValue: LIVE_TASK, commitBytes: 0.4 * GB }),
     row(400, 4_242, 500, { tagValue: MID_BOARD_TASK, commitBytes: 1.1 * GB }),
     row(401, 400, 600, { tagValue: MID_BOARD_TASK, commitBytes: 2 * GB }),
@@ -70,6 +74,8 @@ describe('sumCensus', () => {
     expect(result.kangentic).toEqual({ bytes: 0.75 * GB, count: 2 });
     expect(result.livePty.count).toBe(3);
     expect(result.livePty.bytes).toBeCloseTo(1.51 * GB);
+    expect(result.kangenticChildren.count).toBe(2);
+    expect(result.kangenticChildren.bytes).toBeCloseTo(0.7 * GB);
     expect(result.otherSameUser).toEqual({ bytes: 6 * GB, count: 1 });
     expect(result.unmeasuredCount).toBe(1);
     const byTask = Object.fromEntries(result.tagged.map((tagged) => [tagged.taskId, tagged]));
@@ -106,6 +112,8 @@ describe('bucketCensus', () => {
       kangentic_count: '1-4',
       live_pty_gb: '1-2',
       live_pty_count: '1-4',
+      kangentic_children_gb: '0.5-1',
+      kangentic_children_count: '1-4',
       mid_board_beside_session_gb: '<0.5',
       mid_board_no_session_gb: '2-4',
       mid_board_no_session_count: '1-4',
@@ -126,12 +134,21 @@ describe('bucketCensus', () => {
     expect(sent).not.toMatch(/\d{3,}/);
   });
 
+  it('logs one line of the same buckets, which names every group and nothing more', () => {
+    const line = censusLine(bucketCensus(census(), standingOf));
+
+    expect(line).toMatch(/^ok, kangentic 0\.5-1 GB \(1-4\), live_pty 1-2 GB \(1-4\), kangentic_children 0\.5-1 GB \(1-4\), /);
+    for (const group of CENSUS_GROUPS) expect(line).toContain(`${group} `);
+    expect(line).not.toContain(MID_BOARD_TASK);
+  });
+
   it('says a failed census failed, with every group empty', () => {
     const failed: HostMemoryCensusResult = {
       supported: true,
       failed: true,
       kangentic: { bytes: 0, count: 0 },
       livePty: { bytes: 0, count: 0 },
+      kangenticChildren: { bytes: 0, count: 0 },
       tagged: [],
       otherSameUser: { bytes: 0, count: 0 },
       unmeasuredCount: 0,

@@ -1682,8 +1682,9 @@ in one Sentry org, one triage surface.
     10 GB of it). The host's task scan reads each same-user process's `PrivateUsage` on the
     `PROCESS_VM_READ` handle its environment read already opens, so it never reads another user's
     or another session's process. It sums them into groups: Kangentic's own Electron processes, the
-    processes under a live PTY, the processes carrying a task tag outside every live PTY tree, and
-    every other process of the user. Main sorts each tag against the open projects: a task with a
+    processes under a live PTY, Kangentic's other children (`kangentic_children`: below an Electron
+    process but under no live PTY, such as a headless agent CLI run or git), the processes carrying
+    a task tag outside every live PTY tree, and every other process of the user. Main sorts each tag against the open projects: a task with a
     live session (`mid_board_beside_session`, a second copy a resumed agent started or something it
     detached), a parked one (`mid_board_no_session`), an archived, To Do or Done one
     (`terminal_task`), or an id no open project knows (`unknown_tag`).
@@ -1695,7 +1696,8 @@ in one Sentry org, one triage surface.
     the next crash carries them, and `correctNativeCrashEvent` prunes it with `host_memory`. No pid,
     process name or task id leaves the computer. A census the host did not answer is reported once
     (`host_memory_census`, stage `census_request`), and a scan that failed in the host is relayed
-    under the host code `host_memory_census` and sent as `census: failed`. Settings > Privacy lists it.
+    under the host code `host_memory_census` and sent as `census: failed`. Each census also logs one
+    `[host-memory] census` line of the same buckets. Settings > Privacy lists it.
     It goes through the pty host transport `register-all.ts` hands over
     (`requestHostMemoryCensus`), not through the session manager's client, since a second client on
     the transport would take its events.
@@ -1765,9 +1767,10 @@ in one Sentry org, one triage surface.
   - A busy plan-exit move is retried once, 750 ms later and off the first attempt's stack
     (`PLAN_EXIT_BUSY_RETRY_MS` in `ipc/handlers/sessions.ts`), and reports only when the retry
     fails (`plan_exit_retry: failed`) or finds the first attempt's write had landed before a later
-    step failed (`landed`). The retry waits one macrotask before it reports, so a `write-hold`
-    message queued behind main's busy wait lands first, and the report goes out about 11 s after
-    the first wait began, by when a hold of DESKTOP-5V's length has usually committed.
+    step failed (`landed`). The retry waits one macrotask before it reports, which usually lets a
+    `write-hold` message queued behind main's busy wait land first, though nothing orders the two.
+    The report goes out about 11 s after the first wait began, by when a hold of DESKTOP-5V's
+    length has usually committed.
   - No count, path or message is sent. Settings > Privacy lists it under what is collected.
 - **A worker crash is logged after its stderr pipe ends.** Electron 44.5.0 drains a utility
   process's stderr after `exit`, so `UtilityRestartPolicy.recordCrash` holds the crash's log line
