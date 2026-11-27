@@ -125,6 +125,7 @@ import { getProjectRepos } from './helpers';
 import { KANGENTIC_HOSTED_RELAY_URL, resolveRelayUrl } from '../../shared/relay';
 import type { IpcContext } from './ipc-context';
 import { createRemoteHosting } from '../remote/remote-hosting';
+import { programUpdateSessionDeps } from './helpers/program-update-sessions';
 import type { McpHttpServerHandle } from '../agent/mcp-http-server';
 
 let context: IpcContext | null = null;
@@ -216,7 +217,9 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
     },
     // A project opened before its host connected kept its paused tasks resumable; resume them now.
     // It catches and reports its own failure (remote_projects), so it never rejects.
-    onHostFirstConnected: (hostId) => { void recoverRemoteProjectsOnHost(requireContext(), hostId); },
+    onHostFirstConnected: (hostId) => recoverRemoteProjectsOnHost(requireContext(), hostId),
+    // After an update of the app, a host's older program is replaced once its agents are between turns.
+    programUpdateSessions: programUpdateSessionDeps(requireContext),
   });
   // After startup, not before the window: a host that is down must never delay it.
   setImmediate(() => void remoteHosting.connectAll().catch((error: unknown) => {

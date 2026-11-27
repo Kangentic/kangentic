@@ -86,6 +86,12 @@ function runDaemon(): void {
       coalesceMs: COALESCE_MS,
     },
     log,
+    // The app's update asked this program to make way for its own version (`retireIfIdle`). The socket
+    // goes with the process, and the next relay starts the version it runs from.
+    retire: () => {
+      recordExit('retired');
+      process.exit(0);
+    },
   });
 
   // The start lock. Its name is open to every local user, so the connection stays on the path in the folder.

@@ -919,3 +919,67 @@ describe('connecting a host', () => {
     expect(reportHandledError).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * An update of a host's program that could not finish (task #1227) leaves the old program running, so what
+ * is lost is the update itself, for the rest of the run. It reports under its own source with its stage and
+ * how long it ran, through the real `createRemoteHosting`. A drop during the swap is a state and reports nothing.
+ */
+describe('the update of a host\'s program', () => {
+  beforeEach(() => {
+    vi.doMock('../../src/main/remote/install-identity', () => ({ readInstallId: () => 'install-id-for-tests' }));
+  });
+  afterEach(() => {
+    vi.doUnmock('../../src/main/remote/install-identity');
+  });
+
+  async function swapAnswering(stopAnswer: () => Promise<unknown>): Promise<void> {
+    const { createRemoteHosting } = await import('../../src/main/remote/remote-hosting');
+    const sessionManager = Object.assign(new EventEmitter(), {
+      setRemoteSessionRelay: () => undefined,
+      remoteHostRequest: async (request: { op: string; method?: string }) => {
+        if (request.method === 'programInfo') return { version: '0.62.0', startedAt: '', liveSessions: 0, installedVersions: [] };
+        if (request.method === 'snapshot') return { ownerEpoch: 1, daemonPid: 4000, daemonStartedAt: '', sessions: [] };
+        if (request.method === 'runCommand') return stopAnswer();
+        return undefined;
+      },
+      liveRemotePtys: () => [],
+    });
+    const hosting = createRemoteHosting({
+      sessionManager: sessionManager as never,
+      projects: () => ({ list: () => [], listIncludingHidden: () => [] }),
+      hostAsset: () => ({ version: '0.65.0', sha256: 'a'.repeat(64), arch: 'x64', filePath: path.join(scratch, 'asset.tar.gz') }),
+      sshPath: 'ssh',
+      programUpdateSessions: {
+        heldSessions: () => [],
+        isAtSafePoint: () => true,
+        hasStartInFlight: () => false,
+        hasFreshDraft: async () => false,
+        suspendTask: async () => 'not-live',
+        terminalRestartability: () => 'restart',
+        endTerminal: () => 'failed',
+        endUnusedTerminal: () => undefined,
+        resumeTasks: async () => undefined,
+      },
+      log: () => undefined,
+    });
+    teardown.push(() => hosting.relay.dispose());
+    sessionManager.emit('remote-link', { hostId: 'host-1', state: 'connected', detail: null });
+  }
+
+  it('reports a stop the host refused, under source remote_program_update and stage stop, with how long it ran', async () => {
+    await swapAnswering(async () => ({ code: 5, stdout: 'kangentic-stop:not-the-program\n', stderr: '/home/dev/Fix Acme billing', timedOut: false }));
+
+    await vi.waitFor(() => expect(reportHandledError).toHaveBeenCalled());
+    expect(onlyReportTags()).toMatchObject({ source: 'remote_program_update', stage: 'stop', error_name: 'ProgramUpdateStepError', ran_for: '<1s' });
+    expectNoUserText();
+  });
+
+  it.each(DROPS)('reports nothing for %s during the stop', async (_label, makeDrop) => {
+    await swapAnswering(async () => { throw makeDrop(); });
+
+    // The swap ran to its failure: the stop was asked and answered with the drop.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(reportHandledError).not.toHaveBeenCalled();
+  });
+});

@@ -907,3 +907,66 @@ describe('a request while the host is still connecting', () => {
     });
   });
 });
+
+/**
+ * A link joins whatever program already runs on the host, which an update of the app leaves older than the
+ * app (task #1227). A method newer than that program is refused here with a sentence, never sent: the old
+ * program would answer "unknown method".
+ */
+describe('a helper method the host program is too old for', () => {
+  const withVersion = (version: string | null) => {
+    const sent: RemoteHostRequest[] = [];
+    const made = makeService({
+      send: async (request) => {
+        sent.push(request);
+        if (request.op === 'helper' && request.method === 'programInfo') return { version, startedAt: '2026-11-27T00:00:00.000Z', liveSessions: 0, installedVersions: [] };
+        if (request.op === 'helper' && request.method === 'retireIfIdle') return { retired: true, liveSessions: 0 };
+        return { ok: true };
+      },
+    });
+    return { service: made.service, sent };
+  };
+
+  it('is refused for a program older than the method, and sent once the program is new enough', async () => {
+    const { service, sent } = withVersion('0.62.0');
+    await service.programInfo('host-a');
+    expect(service.supports('host-a', 'retireIfIdle')).toBe(false);
+    expect(service.supports('host-a', 'runCommand')).toBe(true);
+    await expect(service.retireIfIdle('host-a', 4000)).rejects.toThrow(/Lab box runs Kangentic's host program 0\.62\.0.*retireIfIdle needs 0\.65\.0/);
+    expect(sent.filter((request) => request.op === 'helper' && request.method === 'retireIfIdle')).toEqual([]);
+
+    const newer = withVersion('0.65.0');
+    await newer.service.programInfo('host-a');
+    await expect(newer.service.retireIfIdle('host-a', 4000)).resolves.toEqual({ retired: true, liveSessions: 0 });
+    expect(newer.sent.find((request) => request.op === 'helper' && request.method === 'retireIfIdle')).toMatchObject({ params: { daemonPid: 4000 } });
+  });
+
+  it('says the host has not reported its version when nothing has asked yet, and sends nothing', async () => {
+    const { service, sent } = withVersion('0.65.0');
+    const refusal = await service.retireIfIdle('host-a', 4000).catch((error: unknown) => error);
+    expect(refusal).toBeInstanceOf(Error);
+    const message = (refusal as Error).message;
+    expect(message).toMatch(/has not said which version.*retireIfIdle needs 0\.65\.0/);
+    expect(message).not.toMatch(/runs Kangentic's host program/);
+    expect(sent).toEqual([]);
+  });
+
+  it('counts a program not asked yet as the oldest the app talks to, and a development run as having every method', async () => {
+    const { service } = withVersion(null);
+    expect(service.supports('host-a', 'retireIfIdle')).toBe(false);
+    expect(service.supports('host-a', 'programInfo')).toBe(true);
+    await service.programInfo('host-a');
+    expect(service.supports('host-a', 'retireIfIdle')).toBe(true);
+  });
+
+  it('forgets the version when the link drops or the host is disconnected', async () => {
+    const { service } = withVersion('0.65.0');
+    await service.programInfo('host-a');
+    expect(service.programVersion('host-a')).toBe('0.65.0');
+    service.forgetProgram('host-a');
+    expect(service.programVersion('host-a')).toBeUndefined();
+    await service.programInfo('host-a');
+    await service.disconnect('host-a');
+    expect(service.supports('host-a', 'retireIfIdle')).toBe(false);
+  });
+});

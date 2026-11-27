@@ -78,6 +78,13 @@ export interface ResumeSuspendedOptions {
    * which is only right where no host exists to ask.
    */
   rejoinRemote?: { snapshot: RejoinDeps['snapshot'] };
+  /**
+   * Resume the `onlySessionIds` records even with "resume sessions on restart" off and in a column whose
+   * `auto_spawn` is off. Only for agents Kangentic itself stopped to bring straight back: an update of an
+   * SSH host's program (`remote/program-update.ts`) suspends running agents, and leaving one paused would
+   * stop work nobody asked to stop. To Do and Done still get no agent. Ignored without `onlySessionIds`.
+   */
+  resumeRegardless?: boolean;
 }
 
 /**
@@ -118,6 +125,7 @@ export async function resumeSuspendedSessions(
   options: ResumeSuspendedOptions = {},
 ): Promise<void> {
   const { onlySessionIds, onConversationExpired, boardDefaultBaseBranch, rejoinRemote } = options;
+  const resumeRegardless = options.resumeRegardless === true && onlySessionIds !== undefined;
   if (isShuttingDown()) return;
 
   const done = startStartupTimer('resumeSuspendedSessions', projectId, 'resumed');
@@ -381,7 +389,7 @@ export async function resumeSuspendedSessions(
     // and reach the spawn preamble as if it were a real column.
     const neverSpawnRole = resolvedLane != null && resolvedLane.role !== null
       && NEVER_AUTO_SPAWN_ROLES.has(resolvedLane.role);
-    if (resolvedLane && (!resolvedLane.auto_spawn || neverSpawnRole)) {
+    if (resolvedLane && ((!resolvedLane.auto_spawn && !resumeRegardless) || neverSpawnRole)) {
       if (record.status === 'exited') {
         // OS-killed session whose task sits in a non-auto-spawn column (To Do /
         // Done): preserve it as 'suspended' for future resume, mirroring the
@@ -440,7 +448,7 @@ export async function resumeSuspendedSessions(
     // For crashed (orphaned) or OS-killed (interrupted-exited) records we
     // atomically transition to 'suspended' so we don't re-process them on next
     // startup. If the CAS fails (concurrent retire), skip quietly.
-    if (!autoResumeSessionsOnRestart) {
+    if (!autoResumeSessionsOnRestart && !resumeRegardless) {
       keepResumable(record, task);
       skipped++;
       continue;

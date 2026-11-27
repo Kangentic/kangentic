@@ -139,6 +139,20 @@ export interface RemoteLaunchResolverDeps {
   hostName?(hostId: string): string | null;
   /** Whether the host was removed. Its projects are hidden and still remote: nothing may start for one. */
   isHostRemoved?(hostId: string): boolean;
+  /** Whether the program on the host is being replaced by the app's own version (`program-update.ts`). */
+  isHostUpdating?(hostId: string): boolean;
+}
+
+/**
+ * The program on the project's host is being replaced by this app's version after an update, which takes
+ * seconds once every agent there is between turns. A start in that window would land on the program that is
+ * about to exit, so it is refused, and a start a moment later lands on the new one.
+ */
+export class RemoteProgramUpdatingError extends UserConfigurationError {
+  constructor(hostName: string) {
+    super(`Kangentic is updating its program on ${hostName}. Start it again in a few seconds.`);
+    this.name = 'RemoteProgramUpdatingError';
+  }
 }
 
 export function createRemoteLaunchResolver(deps: RemoteLaunchResolverDeps): RemoteLaunchResolver {
@@ -147,6 +161,7 @@ export function createRemoteLaunchResolver(deps: RemoteLaunchResolverDeps): Remo
       const remote = projectPath ? deps.remoteOfProjectPath(projectPath) : null;
       if (!projectPath || !remote) return null;
       if (deps.isHostRemoved?.(remote.hostId)) throw new RemoteHostRemovedError(deps.hostName?.(remote.hostId) ?? 'The host');
+      if (deps.isHostUpdating?.(remote.hostId)) throw new RemoteProgramUpdatingError(deps.hostName?.(remote.hostId) ?? 'the host');
       if (!adapter.remoteCliName) throw new RemoteAgentUnsupportedError(adapter.name, adapter.displayName);
 
       const probe = await deps.probeAgent?.(remote.hostId, adapter.remoteCliName);

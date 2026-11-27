@@ -137,9 +137,15 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   then names the id `resolveResumableSessionId` returns. Both run on the agent's own files alone
   (`backgroundSessionOf`, `command-terminal-background-session.ts`), so an ordinary end or resume
   runs no CLI, and never on a background session a live terminal still holds. A move to another
-  account is an end and a start in the same slot, the one end main starts again on its own: it
+  account is an end and a start in the same slot, one of the two ends main starts again on its own: it
   waits for the old agent's exit, then resumes the conversation under the same tag and grid through
-  `startCommandTerminal`'s main-only third argument, which carries the account and any prompt.
+  `startCommandTerminal`'s main-only third argument, which carries the account and any prompt. The
+  other is an update of an SSH host's program (`remote/program-update.ts`), which ends an idle
+  terminal on that host and starts it again once the new program runs, on the same account with no
+  prompt. Both go through `endCommandTerminalForRestart`, which holds the slot and the conversation
+  between the end and the start. The update ends a terminal nobody typed into and does not start
+  it again, since it has no conversation to resume, and it waits on a used terminal whose
+  conversation it cannot resume, including one whose agent has not reported its id yet.
 - **A running terminal survives a restart: Stop is the only end for good.** A row with no end is
   the signal: a quit removes no registry row, and a crash or an OS kill leaves the same state, so
   nothing runs on the quit path. `command-terminal-restore.ts` brings it back in its slot with its

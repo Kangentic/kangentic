@@ -24,8 +24,8 @@ interface Rig {
   client: PtyHostClient;
 }
 
-function makeRig(baseEnv: NodeJS.ProcessEnv = { HOME: '/home/dev', SHELL: '/bin/zsh', PATH: '/usr/bin' }): Rig {
-  const helperRig = makeHelperRig(1, { homeDirectory: home, baseEnv });
+function makeRig(baseEnv: NodeJS.ProcessEnv = { HOME: '/home/dev', SHELL: '/bin/zsh', PATH: '/usr/bin' }, retire?: () => void): Rig {
+  const helperRig = makeHelperRig(2, { homeDirectory: home, baseEnv, ...(retire ? { retire } : {}) });
   const link = new RemoteLink({
     identity: { installId: 'install-a', bootId: 'boot-1', label: 'a test computer' },
     connect: async () => dialHelper(helperRig),
@@ -53,6 +53,66 @@ async function ask<T>(promise: Promise<T>): Promise<T> {
   await settle();
   return promise;
 }
+
+/**
+ * An update of the app replaces an older program on the host by asking it to leave (task #1227). It must
+ * never leave holding an agent's terminal, and no spawn may land between its check and its exit.
+ */
+describe('retireIfIdle', () => {
+  it('refuses while a terminal runs, and takes spawns again', async () => {
+    const retire = vi.fn();
+    const rig = makeRig(undefined, retire);
+    await settle();
+    await ask(rig.client.spawn(spawnParams('s1', 'task-1')));
+    expect(await ask(rig.link.requestHelper('retireIfIdle', { daemonPid: process.pid }))).toEqual({ retired: false, liveSessions: 1 });
+    await settle(500);
+    expect(retire).not.toHaveBeenCalled();
+    const second = await ask(rig.client.spawn(spawnParams('s2', 'task-2')));
+    expect(second.ok).toBe(true);
+  });
+
+  it('retires holding nothing, exits after its answer, and refuses every spawn from the ask on', async () => {
+    const retire = vi.fn();
+    const rig = makeRig(undefined, retire);
+    await settle();
+    expect(await ask(rig.link.requestHelper('retireIfIdle', { daemonPid: process.pid }))).toEqual({ retired: true, liveSessions: 0 });
+    const refused = await ask(rig.client.spawn(spawnParams('s1', 'task-1')).catch((error: unknown) => error));
+    expect(JSON.stringify(refused)).toContain('SPAWN_REFUSED_RETIRING');
+    expect(rig.helperRig.spawnPty).not.toHaveBeenCalled();
+    await settle(500);
+    expect(retire).toHaveBeenCalledTimes(1);
+  });
+
+  // A spawn still starting holds a terminal the ledger does not list yet. The fake PTY starts in the same tick, so
+  // the link cannot land an ask inside that window; the test calls the helper's own two methods back to back,
+  // the way two frames that arrive together would reach them.
+  it('counts a spawn still starting as held, and does not retire under it', async () => {
+    const retire = vi.fn();
+    const rig = makeRig(undefined, retire);
+    await settle();
+    const helper = rig.helperRig.helper as unknown as {
+      spawnSession(params: unknown): Promise<{ ok: boolean }>;
+      retireIfIdle(daemonPid: number): { retired: boolean; liveSessions: number };
+    };
+    const starting = helper.spawnSession({ ...spawnParams('s1', 'task-1'), ptyId: 1, sentAtMs: 0 });
+    expect(helper.retireIfIdle(process.pid)).toEqual({ retired: false, liveSessions: 1 });
+    expect((await starting).ok).toBe(true);
+    await settle(500);
+    expect(retire).not.toHaveBeenCalled();
+  });
+
+  // The link resends a frame its peer had not acknowledged to the program that answers next. On a real sshd the
+  // ask the old program took as it exited reached the new one, which retired too, refusing the resumed agents.
+  it('ignores an ask meant for another pid, as a resent one for the program before it is', async () => {
+    const retire = vi.fn();
+    const rig = makeRig(undefined, retire);
+    await settle();
+    expect(await ask(rig.link.requestHelper('retireIfIdle', { daemonPid: process.pid + 1 }))).toEqual({ retired: false, liveSessions: 0 });
+    await settle(500);
+    expect(retire).not.toHaveBeenCalled();
+    expect((await ask(rig.client.spawn(spawnParams('s1', 'task-1')))).ok).toBe(true);
+  });
+});
 
 describe('starting a PTY on the host', () => {
   it('runs the host\'s own login shell when the spawn asks for it', async () => {

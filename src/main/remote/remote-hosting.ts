@@ -35,8 +35,10 @@ import { createSpawnAgentProbe, probeAgentOnHost, type HostAgentProbe } from './
 import { invalidateHostAgentList } from '../agent/agent-list';
 import type { ProjectRemote } from '../../shared/types';
 import { isRuntimeDefect } from '../../shared/handled-error-copy';
-import { remoteHostReporter } from './remote-report';
+import { remoteHostReporter, remoteProgramUpdateReporter } from './remote-report';
 import { RemoteSessionRelay } from './remote-session-relay';
+import { createProgramUpdater, programUpdateReportTags, type ProgramUpdater } from './program-update';
+import type { ProgramUpdateSessionDeps } from '../ipc/helpers/program-update-sessions';
 
 export interface RemoteHosting {
   hosts: SshHostRepository;
@@ -58,6 +60,11 @@ export interface RemoteHosting {
   remoteOfProjectPath(projectPath: string): ProjectRemote | null;
   /** Whether an agent's CLI is installed on a host, asked of the host itself. */
   probeAgent(hostId: string, cliName: string): Promise<HostAgentProbe>;
+  /**
+   * Look again at whether the host's program needs replacing by this app's version (`program-update.ts`),
+   * after a project's cold open took back agents the first look found running and not yet held.
+   */
+  considerProgramUpdate(hostId: string): void;
 }
 
 export interface RemoteHostingDeps {
@@ -69,10 +76,21 @@ export interface RemoteHostingDeps {
   sshPath?: string;
   /** Told after a host's connection state changes, so the window can redraw. */
   onHostsChanged?: (hostId: string) => void;
-  /** A host's link came up for the first time this run: the projects opened before it can recover their paused tasks. */
-  onHostFirstConnected?: (hostId: string) => void;
+  /**
+   * A host's link came up for the first time this run: the projects opened before it can recover their paused
+   * tasks. The program update waits for what it returns, so it counts the agents recovery took back.
+   */
+  onHostFirstConnected?: (hostId: string) => void | Promise<void>;
+  /**
+   * This app's sessions as an update of a host's program needs them (`ipc/helpers/program-update-sessions.ts`).
+   * Without it no host's program is replaced.
+   */
+  programUpdateSessions?: ProgramUpdateSessionDeps;
   log?: (line: string) => void;
 }
+
+/** The session events after which a session may have reached, or left, the point a program update waits for. */
+const SAFE_POINT_EVENTS = ['activity', 'turn-ended', 'event', 'session-changed', 'session-removed'] as const;
 
 /** A program version on a host that nothing has installed or touched for this long is removed. */
 const PRUNE_AFTER_DAYS = 30;
@@ -153,7 +171,43 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
   const status = new HostStatusBook({ onChange: (hostId) => deps.onHostsChanged?.(hostId) });
   const firstConnected = new Set<string>();
   const startsHeld = new Set<string>();
+  /** Hosts whose program is being replaced: a start there would land on the program about to exit. */
+  const startsHeldForUpdate = new Set<string>();
   const spawnAgentProbe = createSpawnAgentProbe((hostId, request) => hostService.runCommand(hostId, request));
+  const programUpdateSessions = deps.programUpdateSessions;
+  const programUpdater: ProgramUpdater | null = programUpdateSessions ? createProgramUpdater({
+    ...programUpdateSessions,
+    appVersion: () => assetVersion(deps.hostAsset?.()),
+    programInfo: (hostId) => hostService.programInfo(hostId),
+    snapshot: (hostId) => hostService.snapshot(hostId),
+    runCommand: (hostId, request) => hostService.runCommand(hostId, request),
+    supports: (hostId, method) => hostService.supports(hostId, method),
+    retireIfIdle: (hostId, daemonPid) => hostService.retireIfIdle(hostId, daemonPid),
+    liveRemotePtys: (hostId) => deps.sessionManager.liveRemotePtys(hostId),
+    holdStarts: (hostId) => {
+      startsHeldForUpdate.add(hostId);
+      return () => { startsHeldForUpdate.delete(hostId); };
+    },
+    onSessionChange: (listener) => {
+      // Off the event's stack: the engine and the open-work ledger take the event in after it. One
+      // callback per burst: every session in the app emits these, local ones too.
+      let queued = false;
+      const handler = (): void => {
+        if (queued) return;
+        queued = true;
+        setImmediate(() => {
+          queued = false;
+          listener();
+        });
+      };
+      for (const eventName of SAFE_POINT_EVENTS) deps.sessionManager.on(eventName, handler);
+      return () => {
+        for (const eventName of SAFE_POINT_EVENTS) deps.sessionManager.off(eventName, handler);
+      };
+    },
+    stageReporter: { report: (error, stage, ranForMs) => { remoteProgramUpdateReporter.report(error, programUpdateReportTags(stage, ranForMs)); } },
+    log,
+  }) : null;
   // A link reports its own state; a drop is a state here, never the end of a session.
   deps.sessionManager.on('remote-link', (event: { hostId: string; state: 'connecting' | 'connected' | 'reconnecting' | 'stopped'; detail: string | null }) => {
     status.noteLink(event.hostId, event.state, event.detail);
@@ -161,12 +215,28 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
     if (event.state === 'connected') {
       invalidateHostAgentList(event.hostId);
       spawnAgentProbe.forgetHost(event.hostId);
+      // Which program answers decides which helper methods may be sent (`HELPER_METHOD_SINCE`).
+      hostService.programInfo(event.hostId).catch((error: unknown) => {
+        // report-ok: until it answers the host counts as the oldest program the app talks to, which only
+        // holds back methods newer than it; the next connection asks again.
+        log(`[remote] could not read the program version of ${event.hostId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    } else {
+      // The link may come back to another program.
+      hostService.forgetProgram(event.hostId);
     }
-    // Once per host per run, when its link first comes up: tidy the versions of the program a host kept.
+    programUpdater?.onLinkState(event.hostId, event.state);
+    // Once per host per run, when its link first comes up: tidy the versions of the program a host kept, and
+    // once its recovery has taken back the agents a quit left running, see whether the program needs replacing.
     if (event.state === 'connected' && !firstConnected.has(event.hostId)) {
-      firstConnected.add(event.hostId);
-      void pruneOldProgramVersions(event.hostId);
-      deps.onHostFirstConnected?.(event.hostId);
+      const hostId = event.hostId;
+      firstConnected.add(hostId);
+      void pruneOldProgramVersions(hostId);
+      void Promise.resolve(deps.onHostFirstConnected?.(hostId))
+        // report-ok: the recovery reports its own failure (`recoverRemoteProjectsOnHost`, `remote_projects`);
+        // the look still runs, and finds any agent it did not take back as a terminal nobody holds.
+        .catch(() => undefined)
+        .then(() => programUpdater?.consider(hostId));
     }
   });
 
@@ -202,6 +272,7 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
     probeAgent: (hostId, cliName) => spawnAgentProbe.probe(hostId, cliName),
     hostName: (hostId) => hosts.getById(hostId)?.name ?? null,
     isHostRemoved: (hostId) => startsHeld.has(hostId) || Boolean(hosts.getById(hostId)?.removed_at),
+    isHostUpdating: (hostId) => startsHeldForUpdate.has(hostId),
   }));
 
   // The reserved dev-server ports of remote projects reach this computer once a server listens on them
@@ -295,8 +366,11 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
     expectFirstConnect: (hostId) => { firstConnected.delete(hostId); },
     holdStarts: (hostId) => {
       startsHeld.add(hostId);
+      // A host being removed has no program to update: a watch on it ends, and an added-again host starts over.
+      programUpdater?.forgetHost(hostId);
       return () => { startsHeld.delete(hostId); };
     },
+    considerProgramUpdate: (hostId) => { void programUpdater?.consider(hostId); },
     remoteOfProjectPath,
     probeAgent: (hostId, cliName) => probeAgentOnHost((id, request) => hostService.runCommand(id, request), hostId, cliName),
     async connectAll() {

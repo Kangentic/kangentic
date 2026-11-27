@@ -123,7 +123,8 @@ terminal ends.
 last went away. The signal is a used `command_terminal_history` row with no `ended_at`. A quit
 removes no registry row, so a terminal open at a quit leaves its row open, a crash or an OS kill
 leaves the same state, and nothing runs on the synchronous quit path. The pass is gated on
-`agent.autoResumeSessionsOnRestart`, with no setting of its own, and runs for every project, so the
+`agent.autoResumeSessionsOnRestart`, with no setting of its own (an SSH host program update's restart in
+a slot, below, is not: it brings back a terminal it ended itself), and runs for every project, so the
 sidebar count and a phone see the terminals. The cost is real: up to four idle agents per project at
 about 1.15 GB of commit each, and no pause reaches them.
 
@@ -183,7 +184,7 @@ and the end settle do, and throws for a session that is not a Command Terminal.
 1. `kill()` the session (a young typed-into one gets its exit sequence and the 1500 ms grace; a Claude session on Windows or Linux is closed at once) and capture `awaitExit`, then detach the session files without deleting them (`detachPreservingFiles`) and `remove()` the row from `SessionManager`, which announces `session-removed`; the handler returns at once, so the window closes immediately
 2. Once the process has exited, delete the session directory from disk (best-effort). This is the only delete, so the agent's SessionEnd hook still has a directory to write into
 
-A move to another account (`restartCommandTerminalOn`) ends a terminal through the same call with `{ respawn: true }`, which marks the removal's snapshot `commandTerminalRespawn` and starts the slot's next terminal on the same conversation and tag. The leftover reaper then waits on the outcome (`respawnOutcome`): while the next start is in flight it checks again, once a terminal runs under the tag again it reaps nothing, and when the move gave up the end is an ordinary one and is reaped as any other.
+A move to another account (`restartCommandTerminalOn`) ends a terminal through the same call with `{ respawn: true }`, which marks the removal's snapshot `commandTerminalRespawn` and starts the slot's next terminal on the same conversation and tag. An update of an SSH host's program ends a used terminal on that host the same way (`endCommandTerminalForRestart`), holds its slot and conversation while the host's program is replaced, and starts it again in its slot on the same account once the new program runs; a terminal nobody typed into has nothing to resume and ends without a restart ([Updating the program](../../platforms/ssh-remote.md#updating-the-program)). The leftover reaper then waits on the outcome (`respawnOutcome`): while the next start is in flight it checks again, once a terminal runs under the tag again it reaps nothing, and when the restart gave up the end is an ordinary one and is reaped as any other.
 
 Transient sessions are counted by the `session_spawn` analytics event with `isTransient: true`
 (volume) and by `feature_used: command_terminal` (adoption); see [Usage analytics](../../telemetry/usage-analytics.md).

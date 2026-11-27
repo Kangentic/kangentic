@@ -247,7 +247,53 @@ export interface HelperRequestMap {
    * running version is always kept. Best effort: a version that cannot be removed is left.
    */
   pruneVersions: { params: { keep: string[]; olderThanDays: number }; result: { removed: string[] } };
+  /**
+   * Exit, but only while the program holds no terminal: an update of the app replacing an older program
+   * (`program-update.ts`). New spawns are refused from the ask on, the program checks again that it holds
+   * nothing, then answers `retired` and exits once the answer is sent. Holding any terminal, it answers
+   * `retired: false` with the count and takes spawns again. The next relay then starts the app's own version.
+   *
+   * `daemonPid` names the program the ask is for (the snapshot's). A link resends the frames a peer had not
+   * acknowledged to whichever program answers next, so an ask the old program took as it exited reaches the new
+   * one too, measured on a real `sshd`. Any other program answers `retired: false` and goes on.
+   */
+  retireIfIdle: { params: { daemonPid: number }; result: { retired: boolean; liveSessions: number } };
 }
+
+/**
+ * The oldest program the app still talks to: the first release with SSH hosts, and with `programInfo`, so
+ * every program it meets can say its version. `remote-helper-version-gate.test.ts` pins it.
+ */
+export const OLDEST_HOST_PROGRAM_VERSION = '0.58.0';
+
+/**
+ * The release each helper method first shipped in. A new link joins whatever program is already running
+ * on the host, which can be older than the app (an update the host has not swapped to yet), so a method
+ * newer than the program there is never sent: `RemoteHostService.supports` reads this. Typed over every
+ * method, so a new one does not compile without its entry.
+ */
+export const HELPER_METHOD_SINCE: Readonly<Record<HelperMethod, string>> = {
+  hostInfo: OLDEST_HOST_PROGRAM_VERSION,
+  rebind: OLDEST_HOST_PROGRAM_VERSION,
+  snapshot: OLDEST_HOST_PROGRAM_VERSION,
+  suspendAll: OLDEST_HOST_PROGRAM_VERSION,
+  writeFiles: OLDEST_HOST_PROGRAM_VERSION,
+  writeFileRaw: OLDEST_HOST_PROGRAM_VERSION,
+  jsonPatch: OLDEST_HOST_PROGRAM_VERSION,
+  watchHooks: OLDEST_HOST_PROGRAM_VERSION,
+  watchFiles: OLDEST_HOST_PROGRAM_VERSION,
+  unwatchFiles: OLDEST_HOST_PROGRAM_VERSION,
+  unwatchHooks: OLDEST_HOST_PROGRAM_VERSION,
+  removeFiles: OLDEST_HOST_PROGRAM_VERSION,
+  removeEmptyDirectories: OLDEST_HOST_PROGRAM_VERSION,
+  runCommand: OLDEST_HOST_PROGRAM_VERSION,
+  readFile: OLDEST_HOST_PROGRAM_VERSION,
+  pathPresence: OLDEST_HOST_PROGRAM_VERSION,
+  listeningPorts: OLDEST_HOST_PROGRAM_VERSION,
+  programInfo: OLDEST_HOST_PROGRAM_VERSION,
+  pruneVersions: OLDEST_HOST_PROGRAM_VERSION,
+  retireIfIdle: '0.65.0',
+};
 
 export interface HostProgramInfo {
   /** The version of the program this daemon is running, or null when it cannot tell (a development run). */

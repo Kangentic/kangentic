@@ -2383,6 +2383,7 @@ describe('recovering a host\'s projects once its link connects', () => {
         },
         hostService: { endSessionsLeftRunning: endLeftovers },
         expectFirstConnect: vi.fn(),
+        considerProgramUpdate: vi.fn(),
       };
       return { context, asContext, endLeftovers, hostRow };
     }
@@ -2475,6 +2476,7 @@ describe('recovering a host\'s projects once its link connects', () => {
         hosts: { getById: () => undefined },
         hostService: { endSessionsLeftRunning: endLeftovers },
         expectFirstConnect: vi.fn(),
+        considerProgramUpdate: vi.fn(),
       };
       return asContext;
     }
@@ -2504,6 +2506,76 @@ describe('recovering a host\'s projects once its link connects', () => {
 
       expect(vi.mocked(resumeSuspendedSessions)).toHaveBeenCalled();
       warned.mockRestore();
+    });
+  });
+
+  describe('a cold open asks the host program update to look again', () => {
+    let linkState: 'connected' | 'connecting';
+
+    afterEach(() => {
+      delete (SessionRepository.prototype as unknown as { getRunningRemote?: unknown }).getRunningRemote;
+    });
+
+    function coldOpenContext(projects: Project[], endLeftovers: ReturnType<typeof vi.fn>) {
+      const context = createMockContext();
+      context.projectRepo.list.mockReturnValue(projects);
+      (context.projectRepo as unknown as { listOnHost: () => Project[] }).listOnHost = () => projects.filter((project) => project.remote);
+      for (const project of projects) state.existingPaths.add(project.path);
+      (SessionRepository.prototype as unknown as { getRunningRemote: () => never[] }).getRunningRemote = () => [];
+      const considerProgramUpdate = vi.fn();
+      const asContext = asIpcContext(context);
+      (asContext as unknown as { remoteHosting: unknown }).remoteHosting = {
+        status: { get: () => ({ state: linkState }) },
+        hosts: { getById: () => undefined },
+        hostService: { endSessionsLeftRunning: endLeftovers },
+        expectFirstConnect: vi.fn(),
+        considerProgramUpdate,
+      };
+      return { asContext, considerProgramUpdate };
+    }
+
+    it('looks once for a connected host, and only after the unowned agents are ended', async () => {
+      linkState = 'connected';
+      const sweepGate = createDeferred();
+      const endLeftovers = vi.fn(async () => { await sweepGate.promise; return 0; });
+      const { asContext, considerProgramUpdate } = coldOpenContext([remoteOnLab], endLeftovers);
+
+      await activateAllProjects(asContext);
+      await vi.waitFor(() => { expect(endLeftovers).toHaveBeenCalledTimes(1); }, { timeout: 2000 });
+      // The sweep is still in flight: the update must not look beside an agent it would hold.
+      expect(considerProgramUpdate).not.toHaveBeenCalled();
+
+      sweepGate.resolve();
+      await vi.waitFor(() => { expect(considerProgramUpdate).toHaveBeenCalledTimes(1); }, { timeout: 2000 });
+      expect(considerProgramUpdate).toHaveBeenCalledWith('host-lab');
+    });
+
+    it('does not look when the link is no longer connected once the sweep has answered', async () => {
+      linkState = 'connected';
+      const endLeftovers = vi.fn(async () => { linkState = 'connecting'; return 0; });
+      const { asContext, considerProgramUpdate } = coldOpenContext([remoteOnLab], endLeftovers);
+
+      await activateAllProjects(asContext);
+      await vi.waitFor(() => { expect(endLeftovers).toHaveBeenCalledTimes(1); }, { timeout: 2000 });
+      // intentional fixed wait: no way to poll for non-occurrence, so give the sweep's continuation a budget
+      await flushSetImmediate();
+      await flushSetImmediate();
+
+      expect(considerProgramUpdate).not.toHaveBeenCalled();
+    });
+
+    it('does not look for a local project', async () => {
+      linkState = 'connected';
+      const endLeftovers = vi.fn(async () => 0);
+      const { asContext, considerProgramUpdate } = coldOpenContext([localProject], endLeftovers);
+
+      await activateAllProjects(asContext);
+      await flushSetImmediate();
+      await flushSetImmediate();
+
+      expect(vi.mocked(resumeSuspendedSessions)).toHaveBeenCalled();
+      expect(endLeftovers).not.toHaveBeenCalled();
+      expect(considerProgramUpdate).not.toHaveBeenCalled();
     });
   });
 

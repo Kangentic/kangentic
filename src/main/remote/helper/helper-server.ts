@@ -116,7 +116,17 @@ export interface HelperServerOptions {
   /** Timers and limits for the link's endpoint, which tests shorten. */
   endpoint?: Partial<ResumeEndpointOptions>;
   log?: (line: string) => void;
+  /**
+   * End this program once `retireIfIdle` found it holding nothing, after its answer is sent. The daemon
+   * records the exit and leaves; a test records the call. Absent: the answer is sent and nothing exits.
+   */
+  retire?: () => void;
+  /** This process's pid, as `snapshot` reports it and `retireIfIdle` checks it. Defaults to `process.pid`. */
+  processId?: number;
 }
+
+/** How long a retiring program waits after its answer before it exits, so the frame leaves the socket first. */
+const RETIRE_EXIT_DELAY_MS = 250;
 
 interface LedgerEntry {
   sessionId: string;
@@ -200,6 +210,8 @@ export class HelperServer {
   private ownerLabel = 'unknown';
   private ownerEpoch = 0;
   private port: FramedPort | null = null;
+  /** Set while a `retireIfIdle` is deciding, and for good once it retired: every spawn is refused. */
+  private retiring = false;
   /** Sends each session's hook files across the link (`hook-watcher.ts`). */
   private readonly hookWatcher = new HookWatcher({
     emit: (event) => this.endpoint.send({ t: 'event', event: { type: 'hookFile', ...event } } satisfies HelperToLinkMessage),
@@ -250,7 +262,7 @@ export class HelperServer {
       wirePtyId: this.coreToWire.get(entry.corePtyId) ?? null,
       inAltScreen: altScreen.get(entry.sessionId) ?? false,
     }));
-    return { ownerEpoch: this.ownerEpoch, daemonPid: process.pid, daemonStartedAt: this.startedAt, sessions };
+    return { ownerEpoch: this.ownerEpoch, daemonPid: this.options.processId ?? process.pid, daemonStartedAt: this.startedAt, sessions };
   }
 
   /** Drop the connection and let go of the core's port. PTYs keep running. */
@@ -419,7 +431,31 @@ export class HelperServer {
     listeningPorts: async () => ({ ports: await readListeningPorts(this.options.procDirectory) }),
     programInfo: () => this.programInfo(),
     pruneVersions: (params) => this.pruneVersions(params),
+    retireIfIdle: (params) => this.retireIfIdle(params.daemonPid),
   };
+
+  /**
+   * Leave, but only holding nothing, and only when the ask names this process. The refusal of spawns starts
+   * before the count, so a spawn arriving from any connection cannot land between the check and the exit. One
+   * still starting counts as held. An ask for another pid is a resent frame meant for the program before this
+   * one, and changes nothing.
+   */
+  private retireIfIdle(daemonPid: number): { retired: boolean; liveSessions: number } {
+    const liveSessions = this.liveSessionCount + [...this.pendingSpawns.values()].filter((pending) => !pending.ended).length;
+    if (daemonPid !== (this.options.processId ?? process.pid)) {
+      this.log(`ignored a retireIfIdle for pid ${daemonPid}`);
+      return { retired: false, liveSessions };
+    }
+    this.retiring = true;
+    if (liveSessions > 0) {
+      this.retiring = false;
+      return { retired: false, liveSessions };
+    }
+    this.log('retiring: the app asked, and no terminal is running');
+    const retire = this.options.retire;
+    if (retire) setTimeout(retire, RETIRE_EXIT_DELAY_MS).unref?.();
+    return { retired: true, liveSessions: 0 };
+  }
 
   private runRequest(method: string, params: unknown, raw: Buffer): Promise<unknown> | unknown {
     if (method === 'spawn') return this.spawnSession(params as PtyHostSpawnParams);
@@ -437,6 +473,13 @@ export class HelperServer {
   }
 
   private async spawnSession(params: PtyHostSpawnParams): Promise<PtyHostSpawnResult> {
+    if (this.retiring) {
+      return {
+        ok: false,
+        error: { message: 'refused: this program is exiting so the app can start its own version', code: 'SPAWN_REFUSED_RETIRING' },
+        previousScrollback: '',
+      };
+    }
     const live = params.taskId
       ? [...this.ledger.values()].find((entry) => entry.alive && entry.taskId === params.taskId && entry.sessionId !== params.sessionId)
       : undefined;
