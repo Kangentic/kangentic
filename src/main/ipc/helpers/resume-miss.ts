@@ -30,7 +30,9 @@ import { handlerStepReporter } from './handler-step-report';
  * judges itself. Never throws: a report must not cost the listener its retry.
  *
  * A session on a host is left unmarked. Only the host shows that a conversation had turns: the evidence here is a
- * copy that can be empty or stale, and read as "no turns" it would replay the prompt into one that ran.
+ * copy that can be empty or stale, and read as "no turns" it would replay the prompt into one that ran. It gets
+ * its one retry instead (`host_retry`), because the retry's resume check asks the host itself
+ * (`proveConversationGoneOnHost`) and starts fresh when the host proves the conversation gone.
  *
  * What it answers decides the retry (`agent-never-started` in `handlers/sessions.ts`):
  *
@@ -39,10 +41,14 @@ import { handlerStepReporter } from './handler-step-report';
  *   had turns or because of doubt (no adapter, no project path, no agent session id).
  *   On a resume, the retry would run the same `--resume` and get the same answer
  *   (DESKTOP-2M), so the task gets the notice instead. A fresh launch keeps its retry.
+ * - `host_retry`: a miss on an SSH host, kept unmarked, whose retry runs: its check asks
+ *   the host, so it is not the same `--resume` (DESKTOP-2M on a host, GitHub #970). A
+ *   lineage that never reported a transcript path gives the host nothing to search, so
+ *   its retry repeats the `--resume` once, then the notice shows.
  * - `not_a_miss`: no `conversation_missing`, a newer record that judges itself, or a
  *   read or write that threw. The listener decides as it always has.
  */
-export type ResumeMissOutcome = 'marked' | 'left_unmarked' | 'not_a_miss';
+export type ResumeMissOutcome = 'marked' | 'left_unmarked' | 'host_retry' | 'not_a_miss';
 
 export async function markResumeMiss(
   context: IpcContext,
@@ -60,8 +66,9 @@ export async function markResumeMiss(
       const latest = sessionRepo.getLatestForTask(taskId);
       if (latest?.id !== sessionId) return 'not_a_miss';
       // Any doubt is read as turns, which leaves the record to resume as before. A host's session is doubt:
-      // its turns are known only there.
-      if (!adapter || !projectPath || !latest.agent_session_id || hostOfRecord(latest)) return 'left_unmarked';
+      // its turns are known only there, so it is not marked, and its retry asks the host.
+      if (hostOfRecord(latest)) return 'host_retry';
+      if (!adapter || !projectPath || !latest.agent_session_id) return 'left_unmarked';
       const { lineage } = resolveResumeLineage({
         taskRecords: sessionRepo.listForTaskNewestFirst(taskId),
         retiringRecordId: sessionId,

@@ -303,7 +303,10 @@ process, a path tested against the wrong disk, an environment that overwrites th
   captures, with a Gemini slug that is not the folder's name and an id that is no plain name. An
   adapter that declares a transcript for a host must let its locator answer from the mirror: a locator that
   returns null for any host reads the copy as absent. `resume-conversation-guard-ssh.test.ts` pins `unknown`
-  whatever copy this computer holds, and `register-all-command-terminal-history.test.ts` the kept row.
+  whatever copy this computer holds, and that only Kangentic's launch marks or the host's own answer
+  (the real Claude proof behind a fake `runCommand`) move it; `claude-conversation-gone-host.test.ts`
+  runs the real script through the helper's command runner on POSIX. `register-all-command-terminal-history.test.ts`
+  pins the kept row.
   `tests/unit/remote-transcript-real-cli.test.ts` runs real CLIs end to end, only in the rig
   (`scripts/probe-ssh-rig/transcript-clis.sh`), because it needs them installed. `agent-clis.yml` runs
   that rig every night against each CLI's newest release, and on a pull request that touches the rig.

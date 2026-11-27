@@ -30,7 +30,7 @@ import { reportRejectedPromptTools } from './permission-rejection-transcript';
 import { CLAUDE_HISTORY_VIEW } from './history-view';
 import { declineExternalClaudeMdImports, ensureClaudeSpawnConfig, removeWorktreeEntry, sweepRemovedFolderEntries } from './trust-manager';
 import { ensureRemoteClaudeSpawnConfig } from './remote-trust';
-import { cliPathForTarget, parseWslCliPath, peekCliTarget, placeFromStored, resolveCliTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
+import { cliPathForTarget, parseWslCliPath, peekCliTarget, placeFromStored, resolveCliTarget, type CliPlace, type CliTarget, type SshCliPlace } from '../../shared/cli-target';
 import { resolveRunTranscriptPath, type RunTranscriptInput } from '../../shared/run-transcript-path';
 import { migrateClaudeProjectData } from './project-relocation';
 import { removeHooks as removeClaudeHooks } from './hook-manager';
@@ -52,7 +52,7 @@ import { discoverClaudeStaticCapabilities, rescanClaudeModels } from './capabili
 import { createSlashCommandVerifier } from './slash-command-verifier';
 import { claudeNamesMissingConversation, describeClaudeStartupFailure, identifyClaudeUserSetupFailure } from './startup-failure';
 import type { UserSetupMatch } from '../../../../shared/user-configuration-error';
-import { proveClaudeConversationGone } from './conversation-gone';
+import { proveClaudeConversationGone, proveClaudeConversationGoneOnHost } from './conversation-gone';
 import { claudeBackgroundSessionOf, claudeConfirmsBackgroundMove, resolveClaudeResumableSessionId, stopClaudeBackgroundSession } from './background-sessions';
 import { configuredModelFromClaudeCommand, buildModelCapabilityFields, humanizeClaudeModelId, toClaudeModelArgument } from './model-display-name';
 import { ClaudeSessionHistoryParser } from './session-history-parser';
@@ -686,6 +686,14 @@ export class ClaudeAdapter implements AgentAdapter {
     place?: CliPlace | null;
   }): Promise<boolean> {
     return proveClaudeConversationGone(params);
+  }
+
+  proveConversationGoneOnHost(params: {
+    agentSessionId: string;
+    reportedHostPaths: ReadonlyArray<string>;
+    place: SshCliPlace;
+  }): Promise<boolean> {
+    return proveClaudeConversationGoneOnHost(params);
   }
 
   /** `/bg` moves a task's conversation into a background session its terminal does not own: background-sessions.ts. */

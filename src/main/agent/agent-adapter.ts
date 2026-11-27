@@ -1,5 +1,5 @@
 import type { AnswerStreamEvent } from './shared/cli-answer';
-import type { CliPlace, CliTarget } from './shared/cli-target';
+import type { CliPlace, CliTarget, SshCliPlace } from './shared/cli-target';
 import type { RemoteFileDeclaration } from './shared/remote-files';
 import type { BackgroundCommandSupport } from '../../shared/background-command-spec';
 import type { AgentAccountSupport } from '../accounts/account-support';
@@ -1123,6 +1123,26 @@ export interface AgentAdapter {
     reportedPaths: ReadonlyArray<string>;
     cwd: string;
     place?: CliPlace | null;
+  }): Promise<boolean>;
+
+  /**
+   * Optional: `proveConversationGone` for a conversation on an SSH host, asked of
+   * the host itself through `place.files` (only the host proves a path absent,
+   * `.claude/rules/ssh-remote.md`). Its own method, not a branch of the one above,
+   * because an adapter that implements that one against this computer would read
+   * the mirror's missing copy as gone.
+   *
+   * `reportedHostPaths` are the transcript paths the agent reported, as the host
+   * wrote them (newest first). The guard never asks with none, so no adapter judges
+   * by a default location. Return true only on the host's own
+   * answer that the conversation's file is nowhere it could be, through existing
+   * helper calls only (a relay rejoins an older helper daemon with no version
+   * check). Anything else, a dropped link or a timeout included, is false.
+   */
+  proveConversationGoneOnHost?(params: {
+    agentSessionId: string;
+    reportedHostPaths: ReadonlyArray<string>;
+    place: SshCliPlace;
   }): Promise<boolean>;
 
   /**

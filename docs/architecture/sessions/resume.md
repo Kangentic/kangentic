@@ -282,7 +282,7 @@ session manager announces it (`'transcript-path'`) and `persistHookTranscriptPat
 - A hook that names another conversation is ignored. Every process started with the session's
   `--settings` fires SessionStart, and Claude Code's background daemon runs an empty spare.
 - A Command Terminal and a workflow's own agent have no row. A session on an SSH host keeps none
-  either: its hook payload is the host's word, and the check answers `unknown` for a host anyway.
+  either: its hook payload is the host's word, and the check reads no file here for a host (below).
 - An early agent's hook fires while it is hidden, before its record exists. That record takes the
   path at insert: `commitSessionRecord` asks `SessionManager.getAgentReportedTranscriptPath`.
 - Only an adapter whose `parseSessionStart` reports a `transcriptPath` takes part, which is Claude.
@@ -328,10 +328,13 @@ session manager announces it (`'transcript-path'`) and `persistHookTranscriptPat
   holds, after the reconcile follows a background session, so the row rule alone could mark one.
   Both tests are Kangentic's own facts, so the ground stays inside the #255 rule. The typed-line
   test needs the start report beside it because a shell whose clear the handoff test does not know
-  never shows its line run (`AgentOutputTracker`). A session on an SSH host is never marked. Its
-  output crosses the link late, so a terminal silent here may hold a CLI that already ran on the
-  host, and only the host proves a conversation absent. Its resume's own miss still marks it
-  (`markResumeMiss`). It is a separate column from `launch_failed_at`
+  never shows its line run (`AgentOutputTracker`). A session on an SSH host is never marked at its
+  end or at a quit. Its output crosses the link late, so a terminal silent here may hold a CLI that
+  already ran on the host, and only the host proves a conversation absent. Its insert mark still
+  holds: a remote spawn is a bare login shell, and the agent line is typed only after it starts, so
+  a queued or failed remote start never ran the CLI. Its resume's own miss is not marked either:
+  `markResumeMiss` answers `host_retry`, which leaves the record unmarked and keeps its one retry,
+  because that retry's check asks the host. It is a separate column from `launch_failed_at`
   because a person moving a task on before its agent booted is no failed launch: it holds no idle
   pause and changes no held-message commit.
 
@@ -385,6 +388,19 @@ session manager announces it (`'transcript-path'`) and `persistHookTranscriptPat
   run against an expired chat.
 - **`unknown`** is everything else, and resumes exactly as before. Mocked CLIs write no status and
   no row path, so they land here structurally, which is what keeps the E2E resume specs passing.
+
+A conversation on an SSH host is judged by Kangentic's own marks and the host, never by this
+computer's disk. With no turn on any record, a mark decides first: `launch_failed_at` on the
+retiring record, or `agent_never_ran_at` on the minting record, which owes its prompt. Otherwise the
+host is asked through the adapter's optional `proveConversationGoneOnHost`. Claude's runs one fixed
+`sh` script through the spawn place's `files.runCommand`, an existing helper call every helper
+daemon answers. It takes the projects folder from a transcript path the agent reported, and the
+guard does not ask when none was reported. Claude's default folder is never searched, because the
+helper's command runner may skip the rc file that sets the agent's `CLAUDE_CONFIG_DIR`. The script answers `KG:absent` only when every project folder was readable and none holds
+`<id>.jsonl`. When the host says gone, the verdict is `never-started` with `promptOwed` (no turns)
+or `expired` (turns). Anything else is `unknown`: a present or unreadable file, a failed ask, a
+timeout, or a place with no helper, as a place read back from a record has none. The mirror copy on
+this computer decides nothing (GitHub #970, Sentry DESKTOP-2M on a host).
 
 This is deliberately narrower than the `canResumeSession` transcript-presence guard reverted in
 #255 (see docs/integrations/agents/session-history.md), whose computed paths and false misses silently lost

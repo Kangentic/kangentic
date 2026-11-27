@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { AgentAdapter } from '../agent/agent-adapter';
 import { fileStateOf } from '../agent/shared/confirmed-missing';
-import { hostPathForTarget, isSameCliPlace, placeOfRecord, type CliPlace } from '../agent/shared/cli-target';
+import { hostPathForTarget, isSameCliPlace, placeOfRecord, type CliPlace, type SshCliPlace } from '../agent/shared/cli-target';
 import { isSamePath } from '../../shared/paths';
 import type { ResumeEvidenceSummary, SessionRecord, SessionUsage } from '../../shared/types';
 import { sessionOutputPaths } from './session-paths';
@@ -183,7 +183,7 @@ export async function assessResumeConversationWithEvidence(params: ResumeConvers
   const { adapter, agentSessionId, records, cwd, projectPath, place: spawnPlace } = params;
   if (!projectPath) return { verdict: 'unknown', evidence: null };
 
-  const { hadTurns, firstAgentReport, firstAgentReportSource, reportedPaths, newestPlace } = readLineageEvidence({ adapter, agentSessionId, records, projectPath });
+  const { hadTurns, firstAgentReport, firstAgentReportSource, reportedPaths, reportedHostPaths, newestPlace } = readLineageEvidence({ adapter, agentSessionId, records, projectPath });
   const checkedTranscript = firstAgentReport?.transcriptPath || reportedPaths[0] || null;
   const summaryWith = (transcript: ResumeEvidenceSummary['transcript']): ResumeEvidenceSummary => ({
     turns: hadTurns ? 'yes' : 'no',
@@ -201,13 +201,24 @@ export async function assessResumeConversationWithEvidence(params: ResumeConvers
     return { verdict: hadTurns ? 'expired' : 'never-started', evidence: summaryWith('unknown') };
   }
 
+  // Kangentic's own launch marks, with no turn on any record. Neither reads a file, so they decide on a
+  // host too: a remote spawn is a bare login shell and the agent line is typed only after it starts,
+  // so a queued or failed remote start never ran the CLI (Sentry DESKTOP-2M on a host).
+  const neverStartedMark = hadTurns ? null : neverStartedByMarkOf(records, agentSessionId);
+
   // A conversation on a remote host (#913) is proven gone only by the host. Its transcript path is a
   // path on the host, so a test of this computer's disk would find nothing and read as proof, and the
-  // resume would be replaced by a fresh conversation. Absence of evidence is never evidence, so
-  // anything involving a host is `unknown` here and the resume goes ahead. Whether the CLI ran on the
-  // same host (the identity check above) does not depend on any file and still decides.
+  // resume would be replaced by a fresh conversation. Absence of evidence is never evidence, so this
+  // computer's copy decides nothing here: only a mark above, or the host's own look through the
+  // spawn's helper (`askHostWhetherConversationGone`), moves the verdict off `unknown`. Whether the CLI
+  // ran on the same host (the identity check above) does not depend on any file and still decides.
   if (spawnPlace?.kind === 'ssh' || newestPlace?.kind === 'ssh') {
-    return { verdict: 'unknown', evidence: summaryWith('unknown') };
+    const evidence = summaryWith('unknown');
+    if (neverStartedMark) return { verdict: 'never-started', evidence, ...neverStartedMark };
+    if (spawnPlace?.kind === 'ssh' && await askHostWhetherConversationGone(adapter, { agentSessionId, reportedHostPaths, place: spawnPlace })) {
+      return hadTurns ? { verdict: 'expired', evidence } : { verdict: 'never-started', evidence, promptOwed: true };
+    }
+    return { verdict: 'unknown', evidence };
   }
 
   // The transcript the CLI would look for: the agent's own report first, else
@@ -220,14 +231,7 @@ export async function assessResumeConversationWithEvidence(params: ResumeConvers
   const proofArgs = { agentSessionId, reportedPaths, cwd, place: newestPlace ?? null };
 
   if (!hadTurns) {
-    if (records.find(Boolean)?.launch_failed_at) return withEvidence('never-started');
-    // The launch that minted this id ended with its CLI never run, by
-    // Kangentic's own observation (Sentry DESKTOP-2M). No CLI ever ran
-    // `--session-id` with it, so no conversation exists under it, and no later
-    // `--resume` of it could have made one.
-    if (mintingRecordOf(records, agentSessionId)?.agent_never_ran_at) {
-      return { ...withEvidence('never-started'), promptOwed: true };
-    }
+    if (neverStartedMark) return { ...withEvidence('never-started'), ...neverStartedMark };
     // The agent's own report says nothing ever happened, and the transcript it
     // named is not on disk. `missing` is ENOENT and nothing else (`fileStateOf`).
     if (firstAgentReport && firstAgentReport.transcriptPath && transcript === 'missing') {
@@ -245,6 +249,46 @@ export async function assessResumeConversationWithEvidence(params: ResumeConvers
 
   if (reportedPaths.length === 0) return withEvidence('unknown');
   return withEvidence(await proveConversationGone(adapter, proofArgs) ? 'expired' : 'unknown');
+}
+
+/**
+ * A `never-started` Kangentic's own launch marks decide, for a lineage with no turns: the retiring
+ * record's launch check mark (`launch_failed_at`), or the minting record's `agent_never_ran_at`, which
+ * owes its prompt. Null when neither is set.
+ */
+function neverStartedByMarkOf(
+  records: ReadonlyArray<ResumeLineageRecord | null | undefined>,
+  agentSessionId: string,
+): { promptOwed?: true } | null {
+  if (records.find(Boolean)?.launch_failed_at) return {};
+  // The launch that minted this id ended with its CLI never run, by
+  // Kangentic's own observation (Sentry DESKTOP-2M). No CLI ever ran
+  // `--session-id` with it, so no conversation exists under it, and no later
+  // `--resume` of it could have made one.
+  if (mintingRecordOf(records, agentSessionId)?.agent_never_ran_at) return { promptOwed: true };
+  return null;
+}
+
+/**
+ * The host's own proof that a conversation is gone, through the spawn's helper. False when the adapter
+ * has none, the place carries no helper (a place read back from a record), it fails, or no path was
+ * reported to take the projects folder from: as on this computer, a conversation is never judged by a
+ * default location.
+ */
+async function askHostWhetherConversationGone(
+  adapter: AgentAdapter,
+  args: { agentSessionId: string; reportedHostPaths: ReadonlyArray<string>; place: SshCliPlace },
+): Promise<boolean> {
+  if (!adapter.proveConversationGoneOnHost || !args.place.files) return false;
+  if (args.reportedHostPaths.length === 0) return false;
+  try {
+    return await adapter.proveConversationGoneOnHost(args);
+  } catch (error) {
+    // report-ok: a failed host look is no proof, so the resume goes ahead as it always did (`unknown`).
+    // The Claude proof catches its own host failures; this guards an adapter that throws.
+    console.warn(`[SESSION_LIFECYCLE] Host conversation-gone probe failed for ${args.agentSessionId.slice(0, 8)}: ${error instanceof Error ? error.name : 'unknown'}`);
+    return false;
+  }
 }
 
 /** The adapter's proof that a conversation is gone. False when it has none, or when it fails. */
@@ -309,6 +353,11 @@ interface LineageEvidence {
   /** Which of the agent's two reports `firstAgentReport` came from. */
   firstAgentReportSource: Exclude<ResumeEvidenceSummary['agentReport'], 'none'> | null;
   reportedPaths: string[];
+  /**
+   * The same paths as an SSH host's CLI wrote them, before any mapping, from records that ran on a
+   * host: the host's own look takes its projects folder from one (`proveConversationGoneOnHost`).
+   */
+  reportedHostPaths: string[];
   /** Where the newest record's CLI ran, for the agent's own locator. */
   newestPlace: CliPlace | null | undefined;
 }
@@ -331,6 +380,10 @@ function readLineageEvidence(params: {
   const addReportedPath = (candidate: string | null | undefined): void => {
     if (candidate && !reportedPaths.includes(candidate)) reportedPaths.push(candidate);
   };
+  const reportedHostPaths: string[] = [];
+  const addReportedHostPath = (candidate: string | null | undefined, place: CliPlace | null): void => {
+    if (place?.kind === 'ssh' && candidate && !reportedHostPaths.includes(candidate)) reportedHostPaths.push(candidate);
+  };
   let newestPlace: CliPlace | null | undefined;
 
   for (const record of records) {
@@ -342,6 +395,7 @@ function readLineageEvidence(params: {
     // path is written on the first status tick, before any metrics capture.
     if (rowHadTurns(record)) hadTurns = true;
     addReportedPath(reportedPathOnHost(record.transcript_path, place));
+    addReportedHostPath(record.transcript_path, place);
     if (!parseStatus) continue;
     try {
       const sessionDir = path.join(projectPath, '.kangentic', 'sessions', record.id);
@@ -355,6 +409,7 @@ function readLineageEvidence(params: {
       const evidence = { ...reported, transcriptPath: reportedPathOnHost(reported.transcriptPath, place) ?? '' };
       if (evidence.hadTurns) hadTurns = true;
       addReportedPath(evidence.transcriptPath);
+      addReportedHostPath(reported.transcriptPath, place);
       if (!firstAgentReport) {
         firstAgentReport = evidence;
         firstAgentReportSource = statusReport ? 'status' : 'session_start';
@@ -363,7 +418,7 @@ function readLineageEvidence(params: {
       console.warn(`[SESSION_LIFECYCLE] Resume conversation probe failed for record ${record.id.slice(0, 8)}:`, error);
     }
   }
-  return { hadTurns, firstAgentReport, firstAgentReportSource, reportedPaths, newestPlace };
+  return { hadTurns, firstAgentReport, firstAgentReportSource, reportedPaths, reportedHostPaths, newestPlace };
 }
 
 /**

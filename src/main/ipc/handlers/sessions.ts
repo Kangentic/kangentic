@@ -940,7 +940,9 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
   // unless the CLI said it is not and its lineage had no turns (`markResumeMiss`).
   // A resume the CLI said is not there, which `markResumeMiss` left unmarked (its
   // lineage had turns), gets no retry: the same `--resume` would get the same
-  // answer. It goes straight to the notice.
+  // answer. It goes straight to the notice. One on an SSH host is left unmarked
+  // too, but keeps its retry (`host_retry`): that retry's resume check asks the
+  // host, which starts it fresh when the conversation is gone there.
   //
   // The retry is Kangentic's own, so a person's gesture beats it. The decision
   // needs the output read and the retry takes the task lock itself, so it cannot
