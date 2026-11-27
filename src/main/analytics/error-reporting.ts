@@ -241,6 +241,24 @@ export function reportDescriptorTableHigh(tags: DescriptorTableTags): void {
 }
 
 /**
+ * The one report a low-memory spell sends on Windows: who held the commit
+ * charge as it started (Sentry DESKTOP-5C, 5D, 5E, 5F, 5P;
+ * `src/main/diagnostics/host-memory-census.ts`). A fixed `info` message grouped
+ * by its own fingerprint, tagged with buckets only, never a pid, a name or a
+ * task id. The same buckets go on the ambient scope as `host_memory_census`,
+ * so the next crash carries them too.
+ */
+export function reportHostMemoryCensus(tags: Record<string, string>): void {
+  if (!active) return;
+  reportHandledMessage('Host memory census at low commit', tags, ['host-memory-census']);
+  try {
+    Sentry.setContext('host_memory_census', { ...tags });
+  } catch {
+    // report-ok: the context rides later events only; the census event above already went out
+  }
+}
+
+/**
  * Attach the latest host memory sample (Sentry DESKTOP-16) to the persisted
  * Sentry scope, so whatever event fires next - including a native crash,
  * which has no other route into `contexts` - carries it. Deliberately not a

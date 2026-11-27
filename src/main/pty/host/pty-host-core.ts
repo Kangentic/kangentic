@@ -74,6 +74,7 @@ import {
   type TaskProbeResult,
 } from '../process-tag/tagged-reap';
 import type { TaggedProcessReader } from '../process-tag/process-scan';
+import { emptyCensus, type CensusLiveRoot, type HostMemoryCensusRequest, type HostMemoryCensusResult } from '../process-tag/memory-census';
 import {
   toPtyHostError,
   type HostExecRequest,
@@ -914,6 +915,8 @@ export class PtyHostCore {
         return this.checkReportedProcesses((params as PtyHostRequestMap['checkReportedProcesses']['params']).identities) as Promise<PtyHostRequestMap[M]['result']>;
       case 'probeTaskProcesses':
         return this.probeTaskProcesses(params as TaskProbeRequest) as Promise<PtyHostRequestMap[M]['result']>;
+      case 'censusHostMemory':
+        return this.censusHostMemory(params as HostMemoryCensusRequest) as Promise<PtyHostRequestMap[M]['result']>;
       case 'awaitAgentExit':
         return this.awaitAgentExit((params as PtyHostRequestMap['awaitAgentExit']['params']).taskIds) as Promise<PtyHostRequestMap[M]['result']>;
       case 'spawnRaw':
@@ -1141,6 +1144,17 @@ export class PtyHostCore {
   }
 
   /**
+   * One read-only census of who holds the commit charge, at the start of a
+   * low-memory spell (`process-tag/memory-census.ts`). A host with no reader
+   * answers `failed`.
+   */
+  censusHostMemory(request: HostMemoryCensusRequest): Promise<HostMemoryCensusResult> {
+    const reaper = this.ensureTaggedReaper();
+    if (!reaper) return Promise.resolve(emptyCensus(process.platform === 'win32', true));
+    return reaper.census(request);
+  }
+
+  /**
    * Wait for what these tasks' exited shells left running to exit by itself,
    * before main's reap of them (`exited-root-wait.ts`). Answers at once when
    * nothing of theirs was killed or exited lately, in the in-process core, and
@@ -1282,6 +1296,7 @@ export class PtyHostCore {
       this.taggedReaper = new TaggedReaper({
         reader,
         liveRootPids: () => this.liveRootPids(),
+        liveRoots: () => this.liveRoots(),
         onBatchStart: (kind) => this.deps.onBatchStarted?.(QUEUED_METHOD_OF[kind]),
         handledErrors: this.handledErrors,
       });
@@ -1299,6 +1314,18 @@ export class PtyHostCore {
       if (raw.pty.pid > 0) pids.push(raw.pty.pid);
     }
     return pids;
+  }
+
+  /** The same roots as `liveRootPids`, each with its session's task (null for a raw PTY). */
+  private liveRoots(): CensusLiveRoot[] {
+    const roots: CensusLiveRoot[] = [];
+    for (const entry of this.ptys.values()) {
+      if (!entry.exited && entry.pty.pid > 0) roots.push({ pid: entry.pty.pid, taskId: entry.taskId });
+    }
+    for (const raw of this.rawPtys.values()) {
+      if (raw.pty.pid > 0) roots.push({ pid: raw.pty.pid, taskId: null });
+    }
+    return roots;
   }
 
   /** End the process table's fallback PowerShell child, if one runs. */

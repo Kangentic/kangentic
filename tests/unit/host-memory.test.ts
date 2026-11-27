@@ -231,6 +231,36 @@ describe('sampleHostMemory', () => {
     expect(result.commitRemainingBytes).toBe(444_000 * 1024);
   });
 
+  // Sentry DESKTOP-5P: a sample must tell Kangentic's own commit from the
+  // machine's. Electron reports privateBytes in KB, and only on Windows.
+  it('sums Kangentic\'s own commit from every Electron process on win32, in bytes, and carries the live session count', () => {
+    stubPlatform('win32');
+    stubMemoryInfo({ total: 111_000, free: 222_000, swapTotal: 333_000, swapFree: 444_000 });
+
+    const result = sampleHostMemory({
+      appMetrics: () => [{ memory: { privateBytes: 400_000 } }, { memory: { privateBytes: 100_000 } }, { memory: {} }],
+      liveSessionCount: () => 6,
+    });
+
+    expect(result.appCommitBytes).toBe(500_000 * 1024);
+    expect(result.liveSessionCount).toBe(6);
+  });
+
+  it('has no own commit off win32, and no field when the reads are missing or throw', () => {
+    stubPlatform('linux');
+    stubMemoryInfo({ total: 111_000, free: 222_000, swapTotal: 333_000, swapFree: 444_000 });
+    expect(sampleHostMemory({ appMetrics: () => [{ memory: { privateBytes: 400_000 } }] }).appCommitBytes).toBeNull();
+
+    stubPlatform('win32');
+    const unread = sampleHostMemory({
+      appMetrics: () => { throw new Error('metrics gone'); },
+      liveSessionCount: () => { throw new Error('no context yet'); },
+    });
+    expect(unread.appCommitBytes).toBeNull();
+    expect(unread.liveSessionCount).toBeNull();
+    expect(sampleHostMemory().liveSessionCount).toBeNull();
+  });
+
   it('reports null commit fields on a platform with no verified commit reading, even when swapTotal/swapFree are present', () => {
     stubPlatform('linux');
     stubMemoryInfo({ total: 111_000, free: 222_000, swapTotal: 333_000, swapFree: 444_000 });

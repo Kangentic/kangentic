@@ -52,7 +52,8 @@ import { beginBoot, disposeBootSettle, noteWindowLoaded, trackBootWork } from '.
 import { isBenignStreamWriteError } from './diagnostics/benign-stream-error';
 const windowConfigManager = new ConfigManager();
 import { initAnalytics, trackEvent, sanitizeErrorMessage, shouldEmitHeartbeat, setAnalyticsClientId, HEARTBEAT_INTERVAL_MS } from './analytics/analytics';
-import { initErrorReporting, isErrorReportingActive, reportDescriptorTableHigh, reportHandledError, setErrorReportingUser, setHostMemoryContext } from './analytics/error-reporting';
+import { initErrorReporting, isErrorReportingActive, reportDescriptorTableHigh, reportHandledError, reportHostMemoryCensus, setErrorReportingUser, setHostMemoryContext } from './analytics/error-reporting';
+import { classifyTaskAcrossOpenProjects, createHostMemoryCensus, registeredHostMemoryCensusRequester, reportHostMemoryCensusFailure } from './diagnostics/host-memory-census';
 import { crashNoticeHolder } from './analytics/crash-notice';
 import { initUsageAnalytics, trackUpdateOutcome } from './analytics/usage';
 import { initRunUptimeTracking, checkpointRunUptime, recordRunExit, previousRunLaunchProps, previousRunLastAliveAt, previousRunLogLine, peekPreviousRun, RUN_UPTIME_CHECKPOINT_INTERVAL_MS } from './analytics/run-uptime';
@@ -2213,7 +2214,22 @@ app.whenReady().then(async () => {
   // run-uptime timers already rely on. The sampler itself is synchronous and
   // side-effect-free (`process.getSystemMemoryInfo()`), so arming it this early
   // is harmless even though nothing reads a sample until the first tick.
+  // At the start of each low spell on Windows, one census of who holds the
+  // commit charge, sent once as buckets (`host-memory-census.ts`, Sentry
+  // DESKTOP-5C/5P). Through the pty host transport `register-all.ts` hands over,
+  // not the session manager.
+  const hostMemoryCensus = createHostMemoryCensus({
+    platform: process.platform,
+    requester: registeredHostMemoryCensusRequester,
+    electronPids: () => app.getAppMetrics().map((entry) => entry.pid),
+    classify: classifyTaskAcrossOpenProjects,
+    report: reportHostMemoryCensus,
+    failureReporter: { report: reportHostMemoryCensusFailure },
+  });
   stopHostMemorySampler = startHostMemorySampler({
+    appMetrics: () => app.getAppMetrics(),
+    liveSessionCount: () => getOptionalIpcContext()?.sessionManager.getSessionCounts().active ?? null,
+    onSpellStart: () => { void hostMemoryCensus.onSpellStart(); },
     onSample: (sample) => {
       setHostMemoryContext(sample);
       // Stops a connected client held off. Nothing to do, and no work, unless

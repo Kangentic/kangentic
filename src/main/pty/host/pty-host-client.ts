@@ -37,6 +37,7 @@ import {
 import type { RemoteHostRequest, RemoteSessionRoute } from '../../remote/protocol/messages';
 import type { ScrollbackInvokeResult } from '../../../shared/pty-port-protocol';
 import type { StopProcessRequest, StopProcessResult, TaggedReapRequest, TaggedReapResult, TaskProbeRequest, TaskProbeResult } from '../process-tag/tagged-reap';
+import type { HostMemoryCensusRequest, HostMemoryCensusResult } from '../process-tag/memory-census';
 import type { AgentExitWaitResult } from './exited-root-wait';
 import { SPAWN_REQUEST_TIMEOUT_MS } from './root-pid-gate';
 import { sessionManagerReporter } from '../session-manager-report';
@@ -385,6 +386,19 @@ export class RemoteCliProcess extends EventEmitter implements CliChildProcess {
   }
 }
 
+/**
+ * The low-memory census request over a transport, so main can send it from the
+ * sampler without a handle on the session manager's own client: a second
+ * `PtyHostClient` on the same transport would take its event listener.
+ */
+export function requestHostMemoryCensus(
+  transport: Pick<PtyHostTransport, 'request'>,
+  request: HostMemoryCensusRequest,
+  timeoutMs: number,
+): Promise<HostMemoryCensusResult> {
+  return transport.request('censusHostMemory', request, { timeoutMs });
+}
+
 /** Typed access to the host, and the exit routing for each PTY. */
 export class PtyHostClient {
   private nextPtyId = 1;
@@ -705,6 +719,11 @@ export class PtyHostClient {
   /** What these tasks have running, signalling nothing (see `process-tag/task-tree-probe.ts`). */
   probeTaskProcesses(request: TaskProbeRequest, timeoutMs: number): Promise<TaskProbeResult> {
     return this.transport.request('probeTaskProcesses', request, { timeoutMs });
+  }
+
+  /** The low-memory census (`process-tag/memory-census.ts`). Main sends it through `requestHostMemoryCensus`, since this client is the session manager's own. */
+  censusHostMemory(request: HostMemoryCensusRequest, timeoutMs: number): Promise<HostMemoryCensusResult> {
+    return requestHostMemoryCensus(this.transport, request, timeoutMs);
   }
 
   /** Wait for what these tasks' exited shells left running to exit (see `exited-root-wait.ts`). */

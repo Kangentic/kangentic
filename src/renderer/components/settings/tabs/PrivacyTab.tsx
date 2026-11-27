@@ -30,6 +30,7 @@ export function PrivacyTab() {
             <li><Trans>For a handled error, its type, a fixed failure code and, for an interface crash, the names of the components it was in (never the error&apos;s own text)</Trans></li>
             <li><Trans>When the app holds many file handles, ranges for how many it held, of which kinds, and how long it had been running</Trans></li>
             <li><Trans>When a database write had to wait, a range for how long a background write held the database</Trans></li>
+            <li><Trans>When the computer runs low on memory, ranges for how much the app, its agents and other programs were using</Trans></li>
             <li><Trans>For a failed automation, its trigger and, for a pasted message, fixed codes for what the paste saw and a size range for the output after it (never the output)</Trans></li>
             <li><Trans>With an error, the app&apos;s state as fixed ranges: time running, time since the computer woke, which window it came from, whether the window was showing or focused, and whether the processor was slowed</Trans></li>
             <li><Trans>A random id for each mobile relay connection attempt, which the relay&apos;s own log also keeps for about a week</Trans></li>

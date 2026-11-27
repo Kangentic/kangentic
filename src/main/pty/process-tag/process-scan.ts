@@ -77,6 +77,19 @@ export interface ScannedProcess {
    *   is no evidence that its parent is shared.
    */
   role?: 'visible-app' | 'multiplexer' | 'console-host';
+  /**
+   * Windows only, and only for a scan that asked (`ProcessScanOptions.readCommit`):
+   * the process's commit charge (`PrivateUsage`), in bytes. Read on the handle
+   * the environment read already opens, so only for a process in the caller's
+   * session owned by the caller's user. Null for such a process whose handle or
+   * read failed; absent for every process never opened that way.
+   */
+  commitBytes?: number | null;
+}
+
+export interface ProcessScanOptions {
+  /** Also read each same-user process's commit charge (Windows; the low-memory census). */
+  readCommit?: boolean;
 }
 
 export interface ProcessScan {
@@ -193,7 +206,8 @@ export interface TaggedProcessReader {
    * Absent where there is nothing to load (Linux reads `/proc`).
    */
   ready?(): Promise<void>;
-  scan(): Promise<ProcessScan>;
+  /** A reader with no commit read (Linux, macOS) ignores `options`. */
+  scan(options?: ProcessScanOptions): Promise<ProcessScan>;
   /**
    * Kill `target` if it is still the process the scan saw. Returns true when a
    * signal or terminate was issued. Never throws.

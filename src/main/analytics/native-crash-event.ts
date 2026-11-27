@@ -742,6 +742,8 @@ export function correctNativeCrashEvent(
         // persisted scope can describe the UPLOADING run's memory rather than
         // the crashed run's. Prune it under the same condition.
         delete event.contexts?.host_memory;
+        // The low-memory census rides the same persisted scope, with the same hazard.
+        delete event.contexts?.host_memory_census;
         scopeCorrected = true;
       }
     }

@@ -68,6 +68,46 @@ export interface SampleHostMemoryOptions {
   memoryPressureLevel?: number | null;
   /** The cached macOS free percentage, read the same way. */
   memoryFreePercent?: number | null;
+  /** `app.getAppMetrics()`, for Kangentic's own commit on Windows. */
+  appMetrics?: () => ReadonlyArray<{ memory: { privateBytes?: number } }>;
+  /** The running agent session count. */
+  liveSessionCount?: () => number | null;
+}
+
+/**
+ * Kangentic's own commit on Windows: the sum of every Electron process's
+ * `privateBytes`, which Electron reports in KB (`commit-ceiling.ts`) and only
+ * on Windows. Null off Windows, when nothing is reported, or when the read throws.
+ */
+export function appCommitBytesOf(
+  platform: NodeJS.Platform,
+  appMetrics: (() => ReadonlyArray<{ memory: { privateBytes?: number } }>) | undefined,
+): number | null {
+  if (platform !== 'win32' || !appMetrics) return null;
+  try {
+    let kilobytes = 0;
+    let seen = false;
+    for (const entry of appMetrics()) {
+      const privateKilobytes = entry.memory.privateBytes;
+      if (typeof privateKilobytes !== 'number') continue;
+      kilobytes += privateKilobytes;
+      seen = true;
+    }
+    return seen ? kilobytes * BYTES_PER_KB : null;
+  } catch {
+    // report-ok: an extra field on a diagnostics sample; null says it was not read
+    return null;
+  }
+}
+
+function liveSessionCountOf(read: (() => number | null) | undefined): number | null {
+  if (!read) return null;
+  try {
+    return read();
+  } catch {
+    // report-ok: an extra field on a diagnostics sample; null says it was not read
+    return null;
+  }
 }
 
 /** Only Windows' swapTotal/swapFree have been verified to mean commit
@@ -93,6 +133,8 @@ export function sampleHostMemory(options: SampleHostMemoryOptions = {}): HostMem
     swapFreeBytes: isLinux && info.swapFree != null ? info.swapFree * BYTES_PER_KB : null,
     memoryPressureLevel: process.platform === 'darwin' ? options.memoryPressureLevel ?? null : null,
     memoryFreePercent: process.platform === 'darwin' ? options.memoryFreePercent ?? null : null,
+    appCommitBytes: appCommitBytesOf(process.platform, options.appMetrics),
+    liveSessionCount: liveSessionCountOf(options.liveSessionCount),
   };
 }
 
@@ -390,6 +432,15 @@ export interface HostMemorySamplerOptions {
    *  event fires next carries the freshest sample, and for the workflow's
    *  memory gate. */
   onSample?: (sample: HostMemorySample) => void;
+  /**
+   * Called once when a low-memory spell starts, after its log line and
+   * before `onSample`: the attach point for the commit census
+   * (`host-memory-census.ts`). Not called again until the spell has ended.
+   */
+  onSpellStart?: (sample: HostMemorySample) => void;
+  /** Read on every tick into the sample (`appCommitBytes`, `liveSessionCount`). */
+  appMetrics?: SampleHostMemoryOptions['appMetrics'];
+  liveSessionCount?: SampleHostMemoryOptions['liveSessionCount'];
   intervalMs?: number;
 }
 
@@ -417,11 +468,15 @@ export function startHostMemorySampler(options: HostMemorySamplerOptions): () =>
       const sample = sampleHostMemory({
         memoryPressureLevel: pressureLevel?.current(Date.now(), intervalMs * 2) ?? null,
         memoryFreePercent: freePercent?.current(Date.now(), intervalMs * 2) ?? null,
+        appMetrics: options.appMetrics,
+        liveSessionCount: options.liveSessionCount,
       });
       lastSample = sample;
+      const inSpellBefore = spellState.spell !== null;
       const spellLine = trackLowMemorySpell(memoryHeadroom(sampleAsRead(sample)), spellState, Date.now());
       // A warning, so it reaches the log without Persist Console Logs on.
       if (spellLine !== null) console.warn(`[host-memory] ${spellLine}`);
+      if (!inSpellBefore && spellState.spell !== null) options.onSpellStart?.(sample);
       options.onSample?.(sample);
     } catch (error) {
       console.error('[host-memory] Sampling tick failed:', error);

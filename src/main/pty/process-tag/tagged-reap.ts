@@ -73,6 +73,7 @@ import {
   type TaskTreeProbeInput,
 } from './task-tree-probe';
 import type { HostHandledErrors } from '../host/host-handled-error';
+import { emptyCensus, sumCensus, type CensusLiveRoot, type HostMemoryCensusRequest, type HostMemoryCensusResult } from './memory-census';
 
 /** How long the first pass's targets get to exit before the second scan. */
 export const REAP_GRACE_MS = 1000;
@@ -240,6 +241,10 @@ export interface TaggedReaperDeps {
   reader: TaggedProcessReader;
   /** The PTY roots the host still holds; see `reap-plan.ts`. Read per scan. */
   liveRootPids: () => number[];
+  /** The same roots with the task each belongs to, for the low-memory census. Defaults to `liveRootPids` with no task. */
+  liveRoots?: () => CensusLiveRoot[];
+  /** Defaults to the host's platform. The census reads commit on Windows only. */
+  platform?: NodeJS.Platform;
   wait?: (ms: number) => Promise<void>;
   /** Defaults to the host platform's: case-insensitive on Windows and macOS. */
   caseInsensitivePaths?: boolean;
@@ -461,6 +466,26 @@ export async function probeTaskTrees(request: TaskProbeRequest, deps: TaggedReap
     deps.handledErrors?.report('task_tree_probe', error);
     console.warn('[STOP-SCRIPT] probe failed:', messageOf(error));
     return { entries: [], failed: true };
+  }
+}
+
+/**
+ * One read-only census of the commit charge (`memory-census.ts`), at the start
+ * of a low-memory spell. Scans with `readCommit`, signals nothing, and answers
+ * `supported: false` off Windows. A failed scan answers `failed`, never empty
+ * sums. Exported for tests.
+ */
+export async function censusHostMemory(request: HostMemoryCensusRequest, deps: TaggedReaperDeps): Promise<HostMemoryCensusResult> {
+  if ((deps.platform ?? process.platform) !== 'win32') return emptyCensus(false, false);
+  try {
+    await deps.reader.ready?.();
+    const scan = requireProcesses(await deps.reader.scan({ readCommit: true }));
+    const liveRoots = deps.liveRoots?.() ?? deps.liveRootPids().map((pid) => ({ pid, taskId: null }));
+    return sumCensus(scan.processes, { electronPids: new Set([...request.electronPids, process.pid]), liveRoots });
+  } catch (error) {
+    deps.handledErrors?.report('host_memory_census', error);
+    console.warn('[host-memory] census failed:', messageOf(error));
+    return emptyCensus(true, true);
   }
 }
 
@@ -850,6 +875,11 @@ export class TaggedReaper {
    */
   probe(request: TaskProbeRequest): Promise<TaskProbeResult> {
     return probeTaskTrees(request, this.deps);
+  }
+
+  /** The low-memory census. Outside both queues, like `probe`: it reads and kills nothing. */
+  census(request: HostMemoryCensusRequest): Promise<HostMemoryCensusResult> {
+    return censusHostMemory(request, this.deps);
   }
 
   /** A failure to tell main (a closed port at quit) must not strand a waiter: a reap never throws. */

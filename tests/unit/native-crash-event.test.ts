@@ -522,6 +522,7 @@ describe('correctNativeCrashEvent: the uploading run is not the crashed run', ()
         physicalFreeBytes: 5_005_045_760,
         physicalAvailableBytes: null,
       },
+      host_memory_census: { census: 'ok', other_same_user_gb: '16-32' },
     };
 
     const decision = correctNativeCrashEvent(event, identity, WINDOWS_CONTEXT);
@@ -537,6 +538,8 @@ describe('correctNativeCrashEvent: the uploading run is not the crashed run', ()
     // same way app_memory/free_memory are, since it describes the machine at
     // upload time, not at the crashed run's time.
     expect(decision.event.contexts?.host_memory).toBeUndefined();
+    // The low-memory census rides the same persisted scope (Sentry DESKTOP-5P).
+    expect(decision.event.contexts?.host_memory_census).toBeUndefined();
     // The fields that describe the machine rather than the run survive.
     expect(decision.event.contexts?.app?.app_arch).toBe('x64');
     expect(decision.event.contexts?.native_crash).toMatchObject({
