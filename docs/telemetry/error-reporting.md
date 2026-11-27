@@ -1668,7 +1668,7 @@ in one Sentry org, one triage surface.
   Electron process's `privateBytes`, which Electron reports in KB), and on every platform
   `liveSessionCount`, the running agent sessions, so a reading tells Kangentic's share of the
   commit from the rest of the machine's (Sentry DESKTOP-5P).
-- **A low spell leaves two log lines and, on Windows, one census.** Memory reads low below the smaller of 2 GB
+- **A low spell leaves two log lines and, on Windows, a census with a log line of its own.** Memory reads low below the smaller of 2 GB
   and 5% of the limit, and recovers at twice that (`updateLowMemoryLatch`). `trackLowMemorySpell`
   logs one `console.warn` tagged `[host-memory]` when a spell starts and one when it ends, with its
   duration, its lowest headroom and the limit at both ends, so a spell can be read back when

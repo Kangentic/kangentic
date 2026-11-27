@@ -146,7 +146,6 @@ export interface HostMemoryCensusDeps {
   report: (tags: HostMemoryCensusTags) => void;
   /** Where a census that could not be sent or answered is reported. */
   failureReporter: { report(error: unknown): void };
-  timeoutMs?: number;
 }
 
 export interface HostMemoryCensus {
@@ -164,7 +163,7 @@ export function createHostMemoryCensus(deps: HostMemoryCensusDeps): HostMemoryCe
       if (!send) return;
       running = true;
       try {
-        const result = await send({ electronPids: deps.electronPids() }, deps.timeoutMs ?? HOST_MEMORY_CENSUS_TIMEOUT_MS);
+        const result = await send({ electronPids: deps.electronPids() }, HOST_MEMORY_CENSUS_TIMEOUT_MS);
         if (!result.supported) return;
         // A failed scan still reports, as `census: failed`, so a spell is never silent.
         const tags = bucketCensus(result, deps.classify);
@@ -180,13 +179,13 @@ export function createHostMemoryCensus(deps: HostMemoryCensusDeps): HostMemoryCe
   };
 }
 
+const hostMemoryCensusReporter = createChokepointReporter('host_memory_census');
+
 /**
  * A census that could not be sent or answered: a host that timed out or
  * exited, or a defect here. The host's own scan failure arrives separately, as
  * its `host_memory_census` code.
  */
-const hostMemoryCensusReporter = createChokepointReporter('host_memory_census');
-
 export function reportHostMemoryCensusFailure(error: unknown): void {
   hostMemoryCensusReporter.report(error, { tags: { stage: 'census_request' } });
 }

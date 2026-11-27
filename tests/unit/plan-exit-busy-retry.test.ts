@@ -193,6 +193,7 @@ describe('plan-exit auto-move that finds the database busy', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
     capturedSessionEventHandlers.clear();
+    taskRow.id = 'task-1';
     taskRow.swimlane_id = PLANNING_LANE_ID;
     taskRow.session_id = 'sess-1';
     openDatabase.value = {};
@@ -248,6 +249,47 @@ describe('plan-exit auto-move that finds the database busy', () => {
 
     expect(handleTaskMove).toHaveBeenCalledTimes(1);
     expect(reportHandledError).not.toHaveBeenCalled();
+  });
+
+  it('does not retry or report when the task sits in the plan column but now holds a different session', async () => {
+    vi.mocked(handleTaskMove).mockRejectedValueOnce(busyError());
+
+    await firePlanExit('sess-1');
+    // Still in the plan column, but a newer session owns the task now.
+    taskRow.session_id = 'sess-2';
+    await vi.runAllTimersAsync();
+
+    expect(handleTaskMove).toHaveBeenCalledTimes(1);
+    expect(reportHandledError).not.toHaveBeenCalled();
+  });
+
+  it('does not retry or report when the task row is gone before the retry', async () => {
+    vi.mocked(handleTaskMove).mockRejectedValueOnce(busyError());
+
+    await firePlanExit('sess-1');
+    // getById now finds nothing: the task was deleted in the gap.
+    taskRow.id = 'task-deleted';
+    await vi.runAllTimersAsync();
+
+    expect(handleTaskMove).toHaveBeenCalledTimes(1);
+    expect(reportHandledError).not.toHaveBeenCalled();
+  });
+
+  it('reports a busy database at once, and schedules no retry, when it hit before any move was resolved', async () => {
+    vi.mocked(getProjectRepos).mockReturnValue({
+      tasks: { getBySessionId: vi.fn(() => { throw busyError(); }) },
+      swimlanes: { getById: vi.fn(), list: vi.fn(() => lanes) },
+    } as never);
+
+    await firePlanExit('sess-1');
+
+    const reports = planExitReports();
+    expect(reports).toHaveLength(1);
+    expect(reports[0].tags).toMatchObject({ stage: 'plan_exit_move', errno: 'SQLITE_BUSY' });
+    expect(reports[0].tags.plan_exit_retry).toBeUndefined();
+    await vi.runAllTimersAsync();
+    expect(handleTaskMove).not.toHaveBeenCalled();
+    expect(planExitReports()).toHaveLength(1);
   });
 
   it('does not retry or report when the session that left plan mode is gone', async () => {

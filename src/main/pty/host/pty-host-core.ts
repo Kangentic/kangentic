@@ -1306,17 +1306,10 @@ export class PtyHostCore {
 
   /** Every PTY this host still holds, session and raw, by root pid. */
   private liveRootPids(): number[] {
-    const pids: number[] = [];
-    for (const entry of this.ptys.values()) {
-      if (!entry.exited && entry.pty.pid > 0) pids.push(entry.pty.pid);
-    }
-    for (const raw of this.rawPtys.values()) {
-      if (raw.pty.pid > 0) pids.push(raw.pty.pid);
-    }
-    return pids;
+    return this.liveRoots().map((root) => root.pid);
   }
 
-  /** The same roots as `liveRootPids`, each with its session's task (null for a raw PTY). */
+  /** Every PTY this host still holds, each with its session's task (null for a raw PTY). */
   private liveRoots(): CensusLiveRoot[] {
     const roots: CensusLiveRoot[] = [];
     for (const entry of this.ptys.values()) {

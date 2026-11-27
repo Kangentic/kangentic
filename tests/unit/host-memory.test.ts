@@ -592,6 +592,26 @@ describe('startHostMemorySampler', () => {
     consoleErrorSpy.mockRestore();
   });
 
+  it('hands its app metrics and live session count to every sample onSample sees', () => {
+    vi.useFakeTimers();
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    stubMemoryInfo({ total: 1000, free: 1000, swapTotal: 1000, swapFree: 1000 });
+    const onSample = vi.fn();
+
+    const dispose = startHostMemorySampler({
+      onSample,
+      appMetrics: () => [{ memory: { privateBytes: 300 } }, { memory: { privateBytes: 200 } }],
+      liveSessionCount: () => 4,
+      intervalMs: 1000,
+    });
+    vi.advanceTimersByTime(1000);
+
+    expect(onSample).toHaveBeenCalledTimes(1);
+    expect(onSample.mock.calls[0][0]).toMatchObject({ appCommitBytes: 500 * 1024, liveSessionCount: 4 });
+
+    dispose();
+  });
+
   it('logs one warning when a low spell starts and one when it ends', () => {
     vi.useFakeTimers();
     Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
