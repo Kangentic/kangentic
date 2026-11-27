@@ -565,6 +565,7 @@ describe('session id not captured', () => {
       settled_by: 'removed',
       session_status: 'running',
       agent_ran_for_s: 'not_run',
+      agent_life_s: 'not_run',
       fs_scan: 'none',
       id_store: 'present',
       login: 'unknown',
