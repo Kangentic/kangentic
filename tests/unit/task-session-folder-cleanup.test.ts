@@ -8,8 +8,9 @@
  * every earlier session's stayed.
  *
  * Real SQLite, real folders, the real handlers and the real teardown, and real git
- * in the To Do pass. The database lookup by project id, the reap, the task windows
- * and the session manager are stand-ins.
+ * in the To Do pass. The database lookup by project id, the reap, the task windows,
+ * the session manager and the churn read's git diff are stand-ins. The To Do pass
+ * also waits for a churn read still running in a worktree before it removes it.
  *
  * Tier: Unit. Nothing Electron-specific is involved.
  */
@@ -45,6 +46,25 @@ vi.mock('../../src/main/git/removed-worktrees', async (importOriginal) => ({
   scheduleRemovedWorktreeDeletion: vi.fn(),
 }));
 
+// A churn read that stays pending until the case settles it, as one still running in a
+// worktree when the pass reaches it. Only the To Do pass's churn case starts one.
+const churnReads = vi.hoisted(() => [] as Array<{ directory: string; settle: () => void }>);
+vi.mock('../../src/main/git/diff-service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/git/diff-service')>()),
+  DiffService: class {
+    constructor(private readonly directory: string) {}
+    getChurnSummary(): Promise<{ linesAdded: number; linesRemoved: number; filesChanged: number }> {
+      return new Promise((resolve) => {
+        churnReads.push({ directory: this.directory, settle: () => resolve({ linesAdded: 4, linesRemoved: 1, filesChanged: 1 }) });
+      });
+    }
+  },
+}));
+vi.mock('../../src/main/git/git-read-queue', () => ({
+  GitReadPriority: { USER: 0, BACKGROUND: 1 },
+  viaGitRead: <Result,>(operation: () => Promise<Result>): Promise<Result> => operation(),
+}));
+
 // Runs the real link clearing, after a hook a case sets to claim the path as a creation would.
 const linkClearing = vi.hoisted(() => ({ before: null as null | ((worktreePath: string) => void) }));
 vi.mock('../../src/main/git/worktree-links', async (importOriginal) => {
@@ -69,6 +89,7 @@ import { TaskRepository } from '../../src/main/db/repositories/task-repository';
 import { handleDeleteTask, handleMoveTaskToProject } from '../../src/main/agent/commands/task-commands';
 import { buildCommandContextForProject } from '../../src/main/agent/mcp-project-context';
 import { cleanupStaleResourcesAsync } from '../../src/main/transition-engine/resource-cleanup';
+import { captureGitChurn } from '../../src/main/ipc/handlers/git-stats-capture';
 import type { CommandContext, CommandResponse } from '../../src/main/agent/commands/types';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { Task } from '../../src/shared/types';
@@ -167,6 +188,8 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  // Settle first: the in-flight read map is module state, and a read left pending would hold the next case.
+  for (const read of churnReads.splice(0)) read.settle();
   linkClearing.before = null;
   vi.restoreAllMocks();
   databases.clear();
@@ -415,6 +438,43 @@ describe('the cold-open To Do pass', () => {
 
     sessionExits();
     await pass;
+    expect(fs.existsSync(worktreePath)).toBe(false);
+  });
+
+  // The exit of the session the pass ends fires a churn capture into the worktree
+  // (Sentry DESKTOP-5R, 5Y, 5S). A removal that does not wait for it runs the read
+  // against a folder that is going, so a cold open that resets a To Do task drops
+  // that task's last churn from the Stats tiles. Real `captureGitChurn` and real
+  // `waitForChurnRead`; only the read itself is a stand-in.
+  it('keeps the worktree of a task it resets until the churn read in it settles', async () => {
+    const { task } = staleTodoTask();
+    const worktreePath = leftoverWorktreeOf(task);
+    // A worktree's own `.git` file, or the capture reads nothing (its folder lost its `.git`).
+    // Its git dir exists with no link record, so the link clearing reads it as no links.
+    const worktreeGitDir = path.join(workspace, 'worktree-git-dirs', 'leftover');
+    fs.mkdirSync(worktreeGitDir, { recursive: true });
+    fs.writeFileSync(path.join(worktreePath, '.git'), `gitdir: ${worktreeGitDir}\n`);
+    board.tasks.update({ id: task.id, worktree_path: worktreePath });
+    const capturedTask = board.tasks.getById(task.id);
+    if (!capturedTask) throw new Error('the task is gone');
+    captureGitChurn(capturedTask, board.sessions, { setTaskGitStats: vi.fn() } as never, 'paused-session', board.projectPath, 'main');
+    expect(churnReads.map((read) => read.directory)).toEqual([worktreePath]);
+    const linksCleared: string[] = [];
+    linkClearing.before = (clearedPath) => { linksCleared.push(clearedPath); };
+
+    const pass = runPass();
+    try {
+      // The rows go in the same synchronous run as the worktree loop's first step, so
+      // once they are gone the pass is parked on the read or has already cleared links.
+      await vi.waitFor(() => expect(board.sessions.listAllSessionIds()).toEqual([]));
+      expect(linksCleared).toEqual([]);
+      expect(fs.existsSync(worktreePath)).toBe(true);
+    } finally {
+      // Before the database closes, whether or not the pass waited.
+      churnReads[0].settle();
+      await pass;
+    }
+    expect(linksCleared).toEqual([worktreePath]);
     expect(fs.existsSync(worktreePath)).toBe(false);
   });
 
