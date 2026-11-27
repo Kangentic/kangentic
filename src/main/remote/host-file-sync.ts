@@ -26,7 +26,7 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { isUnderLocalRoot, localPathToHost, type SshCliPlace } from '../agent/shared/cli-target';
 import { isPlainRelativePath, type RemoteFileDeclaration } from '../agent/shared/remote-files';
-import type { HostFileWrite } from './protocol/messages';
+import { isHostNotADirectoryError, type HostFileWrite } from './protocol/messages';
 import { remoteHostReporter } from './remote-report';
 import { RefusalError } from '../../shared/refusal';
 
@@ -270,7 +270,14 @@ export class HostFileSync {
     const excludeFile = `${rootHost}/.git/info/exclude`;
     try {
       // Only where the folder is a git checkout; creating `.git` in a plain folder would make it look like one.
-      const [infoFolder] = await files.pathPresence([`${rootHost}/.git/info`]);
+      // A `.git` that is a file (a worktree, a submodule) has no info folder: the helper's look fails with ENOTDIR.
+      const infoFolder = await files.pathPresence([`${rootHost}/.git/info`]).then(
+        ([answer]) => answer,
+        (error: unknown) => {
+          if (isHostNotADirectoryError(error)) return 'absent' as const;
+          throw error;
+        },
+      );
       if (infoFolder !== 'present') return;
       // Every session of the project writes this one file, so a write that lost to another reads again.
       for (let attempt = 0; attempt < EXCLUDE_WRITE_ATTEMPTS; attempt += 1) {
