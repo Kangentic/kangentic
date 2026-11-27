@@ -721,11 +721,6 @@ export class PtyHostClient {
     return this.transport.request('probeTaskProcesses', request, { timeoutMs });
   }
 
-  /** The low-memory census (`process-tag/memory-census.ts`). Main sends it through `requestHostMemoryCensus`, since this client is the session manager's own. */
-  censusHostMemory(request: HostMemoryCensusRequest, timeoutMs: number): Promise<HostMemoryCensusResult> {
-    return requestHostMemoryCensus(this.transport, request, timeoutMs);
-  }
-
   /** Wait for what these tasks' exited shells left running to exit (see `exited-root-wait.ts`). */
   awaitAgentExit(taskIds: string[], timeoutMs: number): Promise<AgentExitWaitResult> {
     return this.transport.request('awaitAgentExit', { taskIds }, { timeoutMs });

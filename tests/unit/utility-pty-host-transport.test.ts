@@ -1108,6 +1108,54 @@ describe('UtilityPtyHostTransport', () => {
 
       expect(transport.hostHeldWithin(30_000)).toBe('unknown');
     });
+
+    // The restarted host's tail counts from zero again. A count kept as a
+    // running maximum would sit at the old host's 3 and never see this line.
+    it('reads a line the restarted host writes, though the old host had written more', async () => {
+      const { transport } = makeTransport();
+      transport.start();
+      latestChild().emit('message', { type: 'ready' });
+      const oldTail = stderrTails[stderrTails.length - 1];
+      oldTail.text = [WATCHDOG_LINE, WATCHDOG_LINE, WATCHDOG_LINE].join('\n');
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(transport.hostHeldWithin(30_000)).toBe('yes');
+
+      latestChild().emit('exit', 1);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(forks).toHaveLength(2);
+      latestChild().emit('message', { type: 'ready' });
+      const newTail = stderrTails[stderrTails.length - 1];
+      expect(newTail).not.toBe(oldTail);
+
+      // A tick over the new, empty tail, then one line, then the next tick.
+      await vi.advanceTimersByTimeAsync(5_000);
+      newTail.text = WATCHDOG_LINE;
+      await vi.advanceTimersByTimeAsync(5_000);
+      const noticedAt = Date.now();
+
+      // Read a window after the old host's line so only the new line can answer yes.
+      expect(transport.hostHeldWithin(8_000, noticedAt)).toBe('yes');
+    });
+
+    it('is unknown once the host has been given up on for the in-process core', async () => {
+      const { transport } = makeTransport();
+      const fallback: PtyHostTransport = {
+        post: vi.fn(),
+        request: vi.fn(async () => 'pong') as unknown as PtyHostTransport['request'],
+        setEventListener: vi.fn(),
+        attachRendererPort: vi.fn(),
+        hostPid: null,
+        shutdown: vi.fn(),
+      };
+      transport.setFallbackFactory(() => fallback);
+      transport.start();
+      for (let crash = 0; crash < 5; crash++) {
+        latestChild().emit('exit', 1);
+        await vi.advanceTimersByTimeAsync(16_000);
+      }
+
+      expect(transport.hostHeldWithin(30_000)).toBe('unknown');
+    });
   });
 
   // A caller tells a slow host from a lost one by type, never by message: the

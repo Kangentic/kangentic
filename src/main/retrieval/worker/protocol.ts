@@ -113,6 +113,11 @@ export interface WriteHoldMessage {
   heldMs: number;
 }
 
+/** The message the worker posts for a committed hold of `heldMs`, or null for one too short to post. */
+export function writeHoldMessageFor(heldMs: number): WriteHoldMessage | null {
+  return heldMs >= LONG_WRITE_HOLD_MS ? { type: 'write-hold', heldMs: Math.round(heldMs) } : null;
+}
+
 /** A line the worker logged. Its stdout goes nowhere and its stderr is kept
  *  for crash reports, so its console reaches main's log this way. */
 export interface LogMessage {

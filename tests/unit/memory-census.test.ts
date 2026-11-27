@@ -171,6 +171,14 @@ describe('bucketCensus', () => {
 });
 
 describe('censusHostMemory in the host', () => {
+  // censusHostMemory adds this test worker's real pid to the Electron pids. The
+  // fixture pids are shifted far above any real pid so a worker can never collide
+  // with one and pull a fixture row into the kangentic group.
+  const PID_SHIFT = 100_000_000;
+  function shiftedTable(): ScannedProcess[] {
+    return processTable().map((processRow) => ({ ...processRow, pid: processRow.pid + PID_SHIFT, ppid: processRow.ppid + PID_SHIFT }));
+  }
+
   function readerOver(processes: ScannedProcess[], seen: Array<{ readCommit?: boolean } | undefined>): TaggedProcessReader {
     return {
       scan: async (options) => {
@@ -184,10 +192,10 @@ describe('censusHostMemory in the host', () => {
 
   it('scans with readCommit on Windows and sums the table', async () => {
     const seen: Array<{ readCommit?: boolean } | undefined> = [];
-    const result = await censusHostMemory({ electronPids: [10, 11] }, {
-      reader: readerOver(processTable(), seen),
-      liveRootPids: () => [100],
-      liveRoots: () => [{ pid: 100, taskId: LIVE_TASK }],
+    const result = await censusHostMemory({ electronPids: [10 + PID_SHIFT, 11 + PID_SHIFT] }, {
+      reader: readerOver(shiftedTable(), seen),
+      liveRootPids: () => [100 + PID_SHIFT],
+      liveRoots: () => [{ pid: 100 + PID_SHIFT, taskId: LIVE_TASK }],
       platform: 'win32',
     });
 
@@ -195,6 +203,7 @@ describe('censusHostMemory in the host', () => {
     expect(result.supported).toBe(true);
     expect(result.failed).toBe(false);
     expect(result.otherSameUser.bytes).toBe(6 * GB);
+    expect(result.kangentic.count).toBe(2);
   });
 
   it('answers unsupported off Windows without scanning', async () => {

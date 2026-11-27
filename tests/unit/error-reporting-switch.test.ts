@@ -133,15 +133,6 @@ describe('resolveErrorReportingEnabled', () => {
   });
 });
 
-/**
- * `active` (the opt-out promise gate) is module-scoped with no exported
- * reset helper, unlike usage.ts's resetUsageAnalyticsForTests(). Isolating
- * it between cases needs vi.resetModules() + a dynamic re-import per case,
- * the same pattern tests/unit/announcements-init-guard.test.ts uses for its
- * own module-scoped state. The hoisted `mocks.sentryMock` fn instances are
- * stable across resets (same object reference returned by the mock
- * factory), so call history is inspected via those, cleared per test below.
- */
 /** Runs `body` with process.platform reading `platform`, for the one call whose behavior is per platform. */
 function onPlatform<T>(platform: NodeJS.Platform, body: () => T): T {
   const original = Object.getOwnPropertyDescriptor(process, 'platform');
@@ -162,6 +153,15 @@ function expectDescriptorKindsContext(context: Record<string, string>): void {
   expect(['fresh', 'cached', 'unavailable']).toContain(context.source);
 }
 
+/**
+ * `active` (the opt-out promise gate) is module-scoped with no exported
+ * reset helper, unlike usage.ts's resetUsageAnalyticsForTests(). Isolating
+ * it between cases needs vi.resetModules() + a dynamic re-import per case,
+ * the same pattern tests/unit/announcements-init-guard.test.ts uses for its
+ * own module-scoped state. The hoisted `mocks.sentryMock` fn instances are
+ * stable across resets (same object reference returned by the mock
+ * factory), so call history is inspected via those, cleared per test below.
+ */
 async function importFreshErrorReporting() {
   vi.resetModules();
   return import('../../src/main/analytics/error-reporting');

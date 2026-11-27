@@ -10,6 +10,7 @@ import os from 'node:os';
 import {
   TaggedReaper,
   leftoverLogLine,
+  probeTaskTrees,
   reapTaggedOnce,
   stopProcessTree,
   REAP_GRACE_MS,
@@ -22,6 +23,7 @@ import {
   type KillStrength,
   type LocalConnectionRead,
   type ProcessScan,
+  type ProcessScanOptions,
   type ScannedProcess,
   type TaggedProcessReader,
   type ToolRun,
@@ -1392,5 +1394,46 @@ describe('leftoverLogLine: the local log names what the reap left running, and w
     expect(leftoverLogLine(entry({ outcome: 'failed', reason: null, because: null }))).toBe('could not stop cmd (pid 63776) of task 7a1f2c3d in the project');
     expect(leftoverLogLine(entry({ reason: null, because: null }))).toBe('left cmd (pid 63776) of task 7a1f2c3d in the project running: stopping is off');
     expect(leftoverLogLine(entry({ outcome: 'stopped', reason: null, because: null }))).toBeNull();
+  });
+});
+
+// Only the low-memory census reads each process's commit charge. Every other scan
+// would pay for an OpenProcess per row on Windows for a number it never uses.
+describe('which scans ask for the commit charge', () => {
+  class RecordingReader extends FakeReader {
+    scanOptions: Array<ProcessScanOptions | undefined> = [];
+
+    async scan(options?: ProcessScanOptions): Promise<ProcessScan> {
+      this.scanOptions.push(options);
+      return super.scan();
+    }
+  }
+
+  function readCommitOf(options: ProcessScanOptions | undefined): boolean {
+    return options?.readCommit === true;
+  }
+
+  it('the reap scans without readCommit, in each of its passes', async () => {
+    const reader = new RecordingReader([[tagged(2001, TASK)], [tagged(2001, TASK)], []]);
+    await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader));
+    expect(reader.scanOptions.length).toBeGreaterThanOrEqual(2);
+    expect(reader.scanOptions.map(readCommitOf)).not.toContain(true);
+  });
+
+  it('a Stop of one process scans without readCommit', async () => {
+    const reader = new RecordingReader([[tagged(2001, TASK)], []]);
+    await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader));
+    expect(reader.scanOptions.length).toBeGreaterThanOrEqual(1);
+    expect(reader.scanOptions.map(readCommitOf)).not.toContain(true);
+  });
+
+  it('the task probe scans without readCommit', async () => {
+    const reader = new RecordingReader([[tagged(2001, TASK, 'start-2001', WORKTREE)]]);
+    await probeTaskTrees(
+      { tasks: [{ taskId: TASK, directories: [PROJECT], worktreePath: WORKTREE }], mainPid: MAIN_PID, readConnections: false },
+      deps(reader),
+    );
+    expect(reader.scanOptions.length).toBe(1);
+    expect(reader.scanOptions.map(readCommitOf)).not.toContain(true);
   });
 });

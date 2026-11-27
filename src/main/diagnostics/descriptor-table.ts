@@ -122,23 +122,23 @@ export function bucketDescriptorReading(reading: DescriptorReading): DescriptorB
  * instances and memfds along with files, so a leak in any of them climbs the
  * same number on Linux and never shows on Windows, where the CRT table holds
  * files only. The breakdown says which. The `Record` makes a kind added to the
- * shared type a compile error here until it is listed.
+ * shared type a compile error here until it is listed, and its key order is the
+ * order a report lists the kinds in.
  */
-const DESCRIPTOR_KIND_ORDER: Record<DescriptorKind, number> = {
-  socket: 0,
-  pipe: 1,
-  eventfd: 2,
-  epoll: 3,
-  inotify: 4,
-  anon_other: 5,
-  memfd_shm: 6,
-  file: 7,
-  char_device: 8,
-  other: 9,
+const DESCRIPTOR_KIND_SET: Record<DescriptorKind, true> = {
+  socket: true,
+  pipe: true,
+  eventfd: true,
+  epoll: true,
+  inotify: true,
+  anon_other: true,
+  memfd_shm: true,
+  file: true,
+  char_device: true,
+  other: true,
 };
 
-export const DESCRIPTOR_KINDS = (Object.keys(DESCRIPTOR_KIND_ORDER) as DescriptorKind[])
-  .sort((first, second) => DESCRIPTOR_KIND_ORDER[first] - DESCRIPTOR_KIND_ORDER[second]);
+export const DESCRIPTOR_KINDS = Object.keys(DESCRIPTOR_KIND_SET) as DescriptorKind[];
 
 export type DescriptorKindCounts = Record<DescriptorKind, number>;
 
@@ -201,8 +201,8 @@ function classifyDescriptorStat(stat: DescriptorStat): DescriptorKind {
 /**
  * Counts main's descriptors by kind: Linux reads each `/proc/self/fd` link,
  * macOS `fstat`s each descriptor `/dev/fd` lists. A descriptor that closes
- * between the listing and its read is skipped. The listing's own directory
- * descriptor is counted, one in thousands. Null on Windows, and when the
+ * between the listing and its read is skipped, and so is the listing's own
+ * directory descriptor, which the read closed before it returned. Null on Windows, and when the
  * listing itself fails, which it does once the table is full: reading a
  * directory takes a descriptor.
  */
@@ -378,8 +378,9 @@ export function resetDescriptorKindsCache(): void {
  * `kinds_at` uptime bucket it was read at, and `source`. A fresh read is
  * `fresh`. One that fails, as it does once the table is full, falls back to
  * the breakdown the probe kept while the table was high (`cached`), else every
- * kind reads `unknown` (`unavailable`). Buckets only: no count, path or link
- * text leaves. Null on Windows, which has no listing to read.
+ * kind reads `unknown` (`unavailable`). A fresh read also replaces the kept
+ * breakdown, as `refreshDescriptorKinds` does. Buckets only: no count, path or
+ * link text leaves. Null on Windows, which has no listing to read.
  */
 export function getDescriptorKindsContext(
   read: () => DescriptorKindCounts | null = readDescriptorKinds,

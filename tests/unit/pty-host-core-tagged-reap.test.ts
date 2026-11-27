@@ -365,3 +365,71 @@ describe('PtyHostCore awaitAgentExit request', () => {
     expect(answer).toEqual({ found: [], stillRunning: [], waitedMs: 0 });
   });
 });
+
+describe('PtyHostCore censusHostMemory', () => {
+  const GB = 1024 ** 3;
+  // Far above any real pid, so the host's own pid (which the census adds to Kangentic's) never lands on a row.
+  const SESSION_ROOT_PID = 700_000_042;
+  const RAW_ROOT_PID = 700_000_043;
+  const EXITED_ROOT_PID = 700_000_044;
+  const DETACHED_PID = 700_000_050;
+
+  function coreWith(reader: TaggedProcessReader | null, ptys: nodePty.IPty[]): PtyHostCore {
+    const queue = [...ptys];
+    return new PtyHostCore({
+      emit: () => {},
+      resolveAgent: () => undefined,
+      transcriptSinkFor: () => null,
+      coalesceMs: 0,
+      spawnPty: (() => queue.shift()) as unknown as typeof nodePty.spawn,
+      createTaggedProcessReader: () => reader,
+    });
+  }
+
+  it('answers a failed census, supported only on Windows, when the host has no reader', async () => {
+    const core = coreWith(null, []);
+
+    const result = await core.censusHostMemory({ electronPids: [] });
+
+    expect(result).toEqual({
+      supported: process.platform === 'win32',
+      failed: true,
+      kangentic: { bytes: 0, count: 0 },
+      livePty: { bytes: 0, count: 0 },
+      kangenticChildren: { bytes: 0, count: 0 },
+      tagged: [],
+      otherSameUser: { bytes: 0, count: 0 },
+      unmeasuredCount: 0,
+    });
+  });
+
+  // The census scans only on Windows, so the roots the core hands it are read there.
+  it.runIf(process.platform === 'win32')('hands the census every live PTY, session and raw, and none that exited', async () => {
+    const commitRow = (pid: number, ppid: number, tagValue: string | null): ScannedProcess => ({ ...row(pid, ppid, tagValue), commitBytes: GB });
+    const reader = new TableReader([
+      commitRow(SESSION_ROOT_PID, 1, TASK),
+      commitRow(RAW_ROOT_PID, 1, null),
+      // Exited: no longer a live root, so its leftover row is just another process of the user.
+      commitRow(EXITED_ROOT_PID, 1, null),
+      // Detached from every tree, tagged for the task whose session is live.
+      commitRow(DETACHED_PID, 1, TASK),
+    ]);
+    const sessionPty = fakePty(SESSION_ROOT_PID);
+    const rawPty = fakePty(RAW_ROOT_PID);
+    const exitedPty = fakePty(EXITED_ROOT_PID);
+    const core = coreWith(reader, [sessionPty.pty, rawPty.pty, exitedPty.pty]);
+    expect(core.spawn({ ...spawnParams(), ptyId: 1, sessionId: 'session-live', taskId: TASK })).toMatchObject({ ok: true, pid: SESSION_ROOT_PID });
+    expect(core.spawnRaw(rawSpawnParams())).toEqual({ ok: true, pid: RAW_ROOT_PID });
+    expect(core.spawn({ ...spawnParams(), ptyId: 3, sessionId: 'session-gone' })).toMatchObject({ ok: true, pid: EXITED_ROOT_PID });
+    exitedPty.exit(0);
+
+    const result = await core.censusHostMemory({ electronPids: [] });
+
+    expect(result).toMatchObject({ supported: true, failed: false });
+    // The session's and the raw PTY's roots are live; the exited one is not.
+    expect(result.livePty).toEqual({ bytes: 2 * GB, count: 2 });
+    expect(result.otherSameUser).toEqual({ bytes: GB, count: 1 });
+    // The raw PTY carries no task, the session's does: the detached process sits beside a live session.
+    expect(result.tagged).toEqual([{ taskId: TASK, hasLiveSession: true, bytes: GB, count: 1 }]);
+  }, 10_000);
+});
