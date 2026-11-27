@@ -772,6 +772,33 @@ describe('the program version a link reads, and the program update it wires', ()
     expect(helperCalls('snapshot')).toBe(1);
   });
 
+  // A cold open asks for this once it has taken back agents the first look found running and held by nobody
+  // (`project-open-lifecycle.test.ts` pins the ask, with this method mocked). Without it the host keeps its older
+  // program for the rest of the run. Red-green: make `considerProgramUpdate` a no-op and the second look never comes.
+  it('looks again when a cold open asks, after the first look found a terminal this app did not hold yet', async () => {
+    const { sessionManager, hosting, helperCalls } = hostingOnProgram({ version: '0.9.0', liveSessions: 1 });
+    const leftRunning = { sessionId: 'left-running', taskId: 'task-1', projectId: 'project-1', pid: 200, alive: true, exitCode: null, wirePtyId: null, inAltScreen: false };
+    sessionManager.remoteHostRequest.mockImplementation(async (request: unknown) => {
+      const helper = request as { op: string; method?: string };
+      if (helper.method === 'programInfo') return { version: '0.9.0', startedAt: '', liveSessions: 1, installedVersions: [] };
+      if (helper.method === 'snapshot') return { ownerEpoch: 1, daemonPid: 100, daemonStartedAt: '', sessions: [leftRunning] };
+      return undefined;
+    });
+
+    sessionManager.emit('remote-link', { hostId: 'host-1', state: 'connected', detail: null });
+    await vi.advanceTimersByTimeAsync(10);
+    expect(helperCalls('snapshot')).toBe(1);
+    // Nothing looks again on its own.
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(helperCalls('snapshot')).toBe(1);
+
+    // The cold open took the agent back: this app now holds its PTY.
+    sessionManager.liveRemotePtys.mockReturnValue([{ sessionId: 'left-running', ptyId: 1 }] as never);
+    hosting.considerProgramUpdate('host-1');
+    await vi.advanceTimersByTimeAsync(10);
+    expect(helperCalls('snapshot')).toBe(2);
+  });
+
   describe('while an agent keeps a host from being updated', () => {
     /** A watched host: older program, one live terminal, its one session busy until `safe.value` is set. */
     async function watchedHost() {
