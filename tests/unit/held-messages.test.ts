@@ -35,6 +35,7 @@ const {
   deliverOpeningRemainder,
   flushHeldIfLive,
   formatHeldMessages,
+  hasHeldDeliveryPending,
   holdTaskMessage,
   registerHeldMessageFlush,
   resetHeldMessagesForTests,
@@ -1055,5 +1056,73 @@ describe('holdTaskMessage checks before it writes', () => {
     } finally {
       consoleError.mockRestore();
     }
+  });
+});
+
+describe('hasHeldDeliveryPending (what the host program update waits on)', () => {
+  beforeEach(() => {
+    seedTask();
+    seedSession('session-next');
+    holdTaskMessage(makeContext().context, { projectId: PROJECT_ID, taskId: TASK_ID, message: 'first' });
+  });
+
+  it('is false when nothing is on its way, even though a message is still held', () => {
+    expect(hasHeldDeliveryPending('session-next', TASK_ID)).toBe(false);
+    expect(hasHeldDeliveryPending('session-next', null)).toBe(false);
+  });
+
+  it('is true for the task while a delivery has claimed its rows, and false once it settles', () => {
+    const { context } = makeContext();
+    const claim = claimHeldMessages(context, PROJECT_ID, TASK_ID);
+    if (!claim) throw new Error('nothing claimed');
+
+    expect(hasHeldDeliveryPending('any-session', TASK_ID)).toBe(true);
+    // The claim belongs to the task: another task, or no task, is not held up by it.
+    expect(hasHeldDeliveryPending('any-session', 'another-task')).toBe(false);
+    expect(hasHeldDeliveryPending('any-session', null)).toBe(false);
+
+    claim.commit('session-next');
+    expect(hasHeldDeliveryPending('any-session', TASK_ID)).toBe(false);
+  });
+
+  it('is true for a session whose queued start carries a message, with no task given', () => {
+    const { context, sessionManager } = makeContext({ id: 'session-next', status: 'queued', writable: false });
+    const unsubscribe = registerHeldMessageFlush(context);
+    const claim = claimHeldMessages(context, PROJECT_ID, TASK_ID);
+    if (!claim) throw new Error('nothing claimed');
+
+    commitWhenSessionRuns(context, claim, 'session-next');
+    expect(hasHeldDeliveryPending('session-next', null)).toBe(true);
+    expect(hasHeldDeliveryPending('another-session', null)).toBe(false);
+
+    sessionManager.emit('session-changed', 'session-next', { status: 'running', taskId: TASK_ID, projectId: PROJECT_ID });
+    expect(hasHeldDeliveryPending('session-next', null)).toBe(false);
+    unsubscribe();
+  });
+
+  it('is true for a session whose message rides a launch the agent has not shown started, with no task given', () => {
+    const stub = makeContext({ id: 'session-next', status: 'running', writable: false });
+    stub.setStartPending(true);
+    const unsubscribe = registerHeldMessageFlush(stub.context);
+    const claim = claimHeldMessages(stub.context, PROJECT_ID, TASK_ID);
+    if (!claim) throw new Error('nothing claimed');
+
+    commitWhenSessionRuns(stub.context, claim, 'session-next');
+    expect(hasHeldDeliveryPending('session-next', null)).toBe(true);
+    expect(hasHeldDeliveryPending('another-session', null)).toBe(false);
+
+    stub.setStartPending(false);
+    stub.sessionManager.emit('agent-ran', 'session-next');
+    expect(hasHeldDeliveryPending('session-next', null)).toBe(false);
+    unsubscribe();
+  });
+
+  it('is true for a session holding its task\'s messages until the agent ends a turn, with no task given', () => {
+    deferHeldUntilTurnEnd('session-next');
+    expect(hasHeldDeliveryPending('session-next', null)).toBe(true);
+    expect(hasHeldDeliveryPending('another-session', null)).toBe(false);
+
+    resetHeldMessagesForTests();
+    expect(hasHeldDeliveryPending('session-next', null)).toBe(false);
   });
 });

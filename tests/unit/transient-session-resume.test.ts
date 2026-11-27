@@ -460,6 +460,107 @@ describe('startCommandTerminal: resuming an earlier conversation', () => {
         expect(context.commandTerminalHistory.claimResume('proj-1', 'conversation-a')).toBe(true);
       });
     });
+
+    // What an end may lose: a used terminal with no conversation id yet, or none the agent can resume,
+    // is never ended. Red-green: answering 'unused' for a missing agentSessionId fails the second case.
+    describe('commandTerminalRestartability', () => {
+      it.each([
+        ['nobody typed into it', 'unused', (running: ReturnType<typeof movingContext>['running']) => { running.hasUserInput = false; }],
+        ['it is used but its agent has not reported the conversation id yet', 'unresumable', (running: ReturnType<typeof movingContext>['running']) => { Object.assign(running, { agentSessionId: null }); }],
+        ['it is not running', 'unresumable', (running: ReturnType<typeof movingContext>['running']) => { running.status = 'exited'; }],
+        ['it has no slot to come back to', 'unresumable', (running: ReturnType<typeof movingContext>['running']) => { Object.assign(running, { commandTerminalSlot: undefined }); }],
+        ['everything holds', 'restart', () => undefined],
+      ])('answers for a terminal when %s', async (_name, expected, adjust) => {
+        const { commandTerminalRestartability } = await import('../../src/main/ipc/handlers/transient-sessions');
+        const { context, running } = movingContext();
+        adjust(running);
+        expect(commandTerminalRestartability(context as never, 'old-session')).toBe(expected);
+      });
+
+      it('is unresumable when its agent cannot resume by id, or the conversation has no history row', async () => {
+        const { commandTerminalRestartability } = await import('../../src/main/ipc/handlers/transient-sessions');
+        const first = movingContext();
+        Object.assign(first.context.sessionManager, { getSessionAgentName: vi.fn(() => 'aider') });
+        expect(commandTerminalRestartability(first.context as never, 'old-session')).toBe('unresumable');
+
+        const second = movingContext();
+        second.context.commandTerminalHistory.find.mockReturnValue(null);
+        expect(commandTerminalRestartability(second.context as never, 'old-session')).toBe('unresumable');
+      });
+
+      it('is unresumable for a session that does not exist', async () => {
+        const { commandTerminalRestartability } = await import('../../src/main/ipc/handlers/transient-sessions');
+        const { context } = movingContext();
+        expect(commandTerminalRestartability(context as never, 'no-such-session')).toBe('unresumable');
+      });
+    });
+
+    describe('endCommandTerminalForRestart', () => {
+      it('defers, never fails, a used terminal whose conversation id is still to come, and ends nothing', async () => {
+        const { endCommandTerminalForRestart } = await import('../../src/main/ipc/handlers/transient-sessions');
+        const { context, order, running } = movingContext();
+        Object.assign(running, { agentSessionId: null });
+        expect(endCommandTerminalForRestart(context as never, 'old-session', () => true)).toBe('deferred');
+        expect(order).toEqual([]);
+        expect(context.sessionManager.endCommandTerminal).not.toHaveBeenCalled();
+      });
+
+      async function endForRestart() {
+        const { endCommandTerminalForRestart, isCommandTerminalSlotStarting } = await import('../../src/main/ipc/handlers/transient-sessions');
+        const fixture = movingContext();
+        const ended = endCommandTerminalForRestart(fixture.context as never, 'old-session', () => true);
+        if (typeof ended === 'string') throw new Error(`expected an ended terminal, got ${ended}`);
+        return { ...fixture, ended, isCommandTerminalSlotStarting };
+      }
+
+      function givenUpCount(context: ReturnType<typeof movingContext>['context']): number {
+        return context.commandTerminalHistory.settleResume.mock.calls.filter((call) => (call as unknown[])[2] === null).length;
+      }
+
+      it('gives the slot and the conversation back once however often giveUp is called, and starts nothing after', async () => {
+        const { context, ended, isCommandTerminalSlotStarting } = await endForRestart();
+        expect(isCommandTerminalSlotStarting('proj-1', 'slot-2')).toBe(true);
+
+        ended.giveUp();
+        ended.giveUp();
+
+        expect(isCommandTerminalSlotStarting('proj-1', 'slot-2')).toBe(false);
+        expect(givenUpCount(context)).toBe(1);
+        expect(context.commandTerminalHistory.settleResume).toHaveBeenCalledWith('proj-1', 'conversation-a', null);
+
+        exitAgent();
+        expect(await ended.startAgain({})).toBeNull();
+        expect(context.sessionManager.spawn).not.toHaveBeenCalled();
+        expect(givenUpCount(context)).toBe(1);
+      });
+
+      // Red-green: dropping `if (settled) return null;` after `await exited` starts a terminal.
+      it('starts no terminal when giveUp lands while startAgain waits on the old agent', async () => {
+        const { context, ended, order } = await endForRestart();
+        const starting = ended.startAgain({});
+        ended.giveUp();
+        exitAgent();
+
+        expect(await starting).toBeNull();
+        expect(order).toEqual(['ended', 'exited']);
+        expect(context.sessionManager.spawn).not.toHaveBeenCalled();
+        expect(givenUpCount(context)).toBe(1);
+      });
+
+      it('starts the conversation again on no account and with no prompt when it is given neither', async () => {
+        const { context, ended } = await endForRestart();
+        exitAgent();
+
+        const started = await ended.startAgain({});
+
+        expect(started).toMatchObject({ sessionId: 'new-session' });
+        // No account named: the spawn asks the account service for none, and the start is a recovery, not a move.
+        expect(resolveForSpawn.mock.calls.at(-1)?.[1]).toBeUndefined();
+        expect(context.sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ startPath: 'startup_recovery' }));
+        expect(adapters.get('claude')!.buildCommand).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'conversation-a', resume: true }));
+        expect(adapters.get('claude')!.buildCommand).toHaveBeenCalledWith(expect.not.objectContaining({ prompt: expect.anything() }));
+      });
+    });
   });
 
   it("resumes a row a user named as a user's name, so a suggestion never replaces it", async () => {
