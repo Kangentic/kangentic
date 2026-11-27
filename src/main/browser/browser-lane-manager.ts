@@ -7,6 +7,7 @@ import { applyBrowserUserAgent } from './browser-user-agent';
 import { installEmbeddedBrowserSessionPolicy } from './guest-session-policy';
 import { markBrowserGuestWebContents } from '../analytics/renderer-classification';
 import { armGuest, markAgentControl } from './passkey-guard';
+import { trackGuestCrash } from './guest-crash-state';
 
 /**
  * Browser LANES: the OFFSCREEN form of a task's one browser surface.
@@ -365,6 +366,9 @@ export async function openLane(input: OpenLaneInput): Promise<OpenLaneResult> {
   // still the user's page when the SDK asks after the lane has closed
   // (analytics/renderer-classification.ts).
   markBrowserGuestWebContents(guest.id);
+  // Same reason as the pane's guest: a drive on a crashed lane is refused with
+  // `page-crashed`, and this supplies the words for why.
+  trackGuestCrash(guest);
   guest.setFrameRate(LANE_FRAME_RATE);
   // A lane is not a `<webview>`, so the guest hook in `web-contents-created`
   // never sees it, and it can open before any pane has set this task's jar in

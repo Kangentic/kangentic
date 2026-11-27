@@ -479,6 +479,14 @@ msgid "The folder this agent starts in is gone."
 msgstr "该智能体的启动文件夹已不在。"
 
 #: src/renderer/components/board/task-card-view.tsx
+msgid "The page in this task's browser crashed. Open the task to reload it."
+msgstr ""
+
+#: src/renderer/components/board/task-card-view.tsx
+msgid "The page in this task's browser ran out of memory. Open the task to reload it."
+msgstr ""
+
+#: src/renderer/components/board/task-card-view.tsx
 msgid "The terminal could not start. Its window shows why."
 msgstr "终端无法启动。窗口中会显示原因。"
 

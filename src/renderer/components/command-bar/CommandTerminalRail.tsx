@@ -66,6 +66,7 @@ import { useCommandTerminalRail } from './useCommandTerminalRail';
 import { useCommandTerminalRename } from './useCommandTerminalRename';
 import { useEarlierSearch } from './useEarlierSearch';
 import { useRailTerminalMenuActions, type RailCommandTerminal } from './useRailTerminalMenuActions';
+import { useCommandTerminalBrowserCrash } from './command-terminal-browser';
 import type { EarlierMatch } from './earlier-search';
 import type { CommandTerminalHistoryEntry } from '../../../shared/types';
 
@@ -171,6 +172,8 @@ function RunningRow({ projectId, terminal, front, onBringToFront, onStop }: Runn
     onRename: rename.startEditing,
     renameDisabledReason: rename.disabledReason,
   });
+  // The page in its browser stopped (task #1226): the globe turns red.
+  const browserCrash = useCommandTerminalBrowserCrash(projectId, terminal.slot);
 
   return (
     <div
@@ -228,6 +231,10 @@ function RunningRow({ projectId, terminal, front, onBringToFront, onStop }: Runn
         <BrowserAliveGlobe
           testId="command-terminal-running-browser"
           tip={t`Browser running for the agent. Close it from the terminal's menu to free memory.`}
+          crash={browserCrash}
+          crashTip={browserCrash === 'out-of-memory'
+            ? t`The page in this terminal's browser ran out of memory. Open the terminal to reload it.`
+            : t`The page in this terminal's browser crashed. Open the terminal to reload it.`}
         />
       )}
       {menuPosition && (

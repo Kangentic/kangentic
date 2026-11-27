@@ -146,6 +146,14 @@ msgstr "검사 실패"
 msgid "Invalid URL: {target}"
 msgstr "잘못된 URL: {target}"
 
+#: src/renderer/components/browser/BrowserCrashedState.tsx
+msgid "It crashed."
+msgstr ""
+
+#: src/renderer/components/browser/BrowserCrashedState.tsx
+msgid "It ran out of memory."
+msgstr ""
+
 #: src/renderer/components/browser/BrowserEmptyState.tsx
 #, fuzzy
 msgid "Local dev server, staging, production, or any http(s) page. This task remembers where you were; other tasks keep their own."
@@ -221,6 +229,7 @@ msgstr "또는 Ctrl+마우스 휠"
 msgid "Quick picks"
 msgstr "빠른 선택"
 
+#: src/renderer/components/browser/BrowserCrashedState.tsx
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
 msgctxt "Action"
@@ -300,6 +309,10 @@ msgstr ""
 
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "The Kangentic browser opens it for this project."
+msgstr ""
+
+#: src/renderer/components/browser/BrowserCrashedState.tsx
+msgid "This page stopped"
 msgstr ""
 
 #: src/renderer/components/browser/BrowserPane.tsx

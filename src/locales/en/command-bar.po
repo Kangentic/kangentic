@@ -209,8 +209,16 @@ msgid "Open project folder"
 msgstr "Open project folder"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Page crashed"
+msgstr "Page crashed"
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 msgid "Page kept"
 msgstr "Page kept"
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Page ran out of memory"
+msgstr "Page ran out of memory"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 msgid "Rail width"
@@ -316,6 +324,14 @@ msgstr "Switch branch"
 #: src/renderer/components/command-bar/CommandTerminalNameField.tsx
 msgid "Terminal name"
 msgstr "Terminal name"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "The page in this terminal's browser crashed. Open the terminal to reload it."
+msgstr "The page in this terminal's browser crashed. Open the terminal to reload it."
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "The page in this terminal's browser ran out of memory. Open the terminal to reload it."
+msgstr "The page in this terminal's browser ran out of memory. Open the terminal to reload it."
 
 #: src/renderer/components/command-bar/CommandTerminalLayer.tsx
 msgid "The terminals are back in the panel."

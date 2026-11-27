@@ -2510,9 +2510,17 @@ msgid "Overview"
 msgstr "Panoramica"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Page crashed"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
 msgid "Page kept"
 msgstr "Pagina mantenuta"
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Page ran out of memory"
+msgstr ""
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "Path"

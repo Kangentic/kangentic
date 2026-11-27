@@ -227,8 +227,16 @@ msgid "Open project folder"
 msgstr "開啟專案資料夾"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Page crashed"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 msgid "Page kept"
 msgstr "頁面已保留"
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Page ran out of memory"
+msgstr ""
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
@@ -343,6 +351,14 @@ msgstr "切換分支"
 #, fuzzy
 msgid "Terminal name"
 msgstr "終端機名稱"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "The page in this terminal's browser crashed. Open the terminal to reload it."
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "The page in this terminal's browser ran out of memory. Open the terminal to reload it."
+msgstr ""
 
 #: src/renderer/components/command-bar/CommandTerminalLayer.tsx
 msgid "The terminals are back in the panel."

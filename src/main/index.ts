@@ -91,6 +91,7 @@ import { noteWake } from './browser/wake-clock';
 import { noteCpuSpeedLimit } from './browser/cpu-speed-limit';
 import { destroyAllLanes } from './browser/browser-lane-manager';
 import { markBrowserGuestWebContents } from './analytics/renderer-classification';
+import { trackGuestCrash } from './browser/guest-crash-state';
 import { sweepOrphanedBrowserPartitions } from './browser/browser-partition-cleanup';
 import { loadReactDevTools } from './devtools';
 import { syncShutdownCleanup, startHardShutdownFailsafe } from './shutdown';
@@ -701,6 +702,8 @@ app.on('web-contents-created', (_event, contents) => {
   // A crash in this guest is the user's page, not our UI, even if the guest is
   // destroyed by the time the SDK asks (renderer-classification.ts).
   markBrowserGuestWebContents(contents.id);
+  // Why the page stopped, for the `page-crashed` refusal a drive gets (guest-crash-state.ts).
+  trackGuestCrash(contents);
 
   // Drop the `Electron/` token from the guest's user agent, which some web
   // application firewalls reject as a bot (decision 41). This runs at guest

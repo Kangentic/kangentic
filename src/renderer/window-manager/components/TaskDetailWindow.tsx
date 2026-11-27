@@ -244,6 +244,8 @@ export function TaskDetailWindow({
   const browserAlive = useSessionStore(
     (s) => s.browserGuestTasks.has(task.id) || s.browserOffscreenTasks.has(task.id),
   );
+  // That browser's page stopped: the pill's dot turns red (task #1226).
+  const browserCrash = useSessionStore((s) => s.browserCrashedTasks.get(task.id));
   // The edit form used to replace the body outright, which unmounted a live
   // Browser pane and destroyed its guest: the page's `sessionStorage` and
   // in-memory state went, and an agent driving it lost its place, once on
@@ -959,6 +961,7 @@ export function TaskDetailWindow({
       browserOpen={browserOpen}
       onToggleBrowser={handleToggleBrowser}
       browserAlive={browserAlive}
+      browserCrash={browserCrash}
       browserDriving={browserDriving}
       onCloseBrowser={handleCloseBrowser}
       canShowDescription={canShowDescription}

@@ -9,6 +9,8 @@ sources:
   - resource: src/main/browser/cdp/ambiguous-selector.ts
   - resource: src/main/browser/cdp/guest-capture-hold.ts
   - resource: src/main/browser/guest-drive-queue.ts
+  - resource: src/main/browser/guest-crash-state.ts
+  - resource: src/shared/browser-crash.ts
   - resource: src/main/browser/dev-server-error.ts
   - resource: src/main/agent/mcp-http/browser-capture-file.ts
 ---
@@ -23,7 +25,9 @@ Every **driving** tool below takes the same optional target pair. They are liste
 | `sessionId` | string | No | Browser surface handle (`pane_…` / `lane_…`) from `open_pane` / `list_panes`. Names one tab for its lifetime; a gone tab returns `surface-gone` naming the replacement. Must be in your own project. |
 | `taskId` | string | No | Task whose Browser surface to target (visible pane first, then a lane). An alternative to `sessionId`, likewise same-project. |
 
-Omitting both resolves your own task's surface (a caller with no task falls back to the single pane open in the project). Alongside the per-tool errors listed below, any driving tool can return the shared refusals raised while resolving and attaching to a pane: `no-pane-open`, `surface-gone` (the handle named a tab that no longer exists; the detail names the task's current surface), `multiple-panes` (more than one surface shares the best rank and neither argument was given; the error carries the candidates), `foreign-project`, `pane-destroyed`, `cdp-attach-failed`, `pane-busy`, and `driver-error`.
+Omitting both resolves your own task's surface (a caller with no task falls back to the single pane open in the project). Alongside the per-tool errors listed below, any driving tool can return the shared refusals raised while resolving and attaching to a pane: `no-pane-open`, `surface-gone` (the handle named a tab that no longer exists; the detail names the task's current surface), `multiple-panes` (more than one surface shares the best rank and neither argument was given; the error carries the candidates), `foreign-project`, `pane-destroyed`, `page-crashed`, `cdp-attach-failed`, `pane-busy`, and `driver-error`.
+
+`page-crashed` means the page's renderer process is gone, so the page answers nothing. It comes back at once, before anything attaches, and its detail names the surface and why: "it ran out of memory" (Electron's `oom` and `memory-eviction`) or "it crashed" (every other reason). `kangentic_browser_navigate` is the way back: on a crashed page it starts the page again first, then loads the URL. `kangentic_browser_open_pane` with a `url` does the same. The user can also press Reload on the pane's cover. A restart that never reaches `dom-ready` within the 20s navigation bound answers `page-crashed` too. The guest keeps its id throughout, so the surface's handle does not change.
 
 ## Drive serialization and capability refusals
 

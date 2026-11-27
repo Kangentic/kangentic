@@ -7,6 +7,8 @@ import { closeBrowserForTask } from './close-browser';
 import { useDrawingOverlay } from './useDrawingOverlay';
 import { compositeCapture } from './captureComposite';
 import { BrowserEmptyState } from './BrowserEmptyState';
+import { BrowserCrashedState } from './BrowserCrashedState';
+import { browserCrashKind, type BrowserCrashKind } from '../../../shared/browser-crash';
 import { useBrowserUrl } from './useBrowserUrl';
 import { INSPECT_CANCEL_SCRIPT, INSPECT_SCRIPT } from './inspectScript';
 import { useBrowserAnnotations } from './annotations/useBrowserAnnotations';
@@ -518,6 +520,38 @@ function BrowserPaneActive({
     if (registeredWebContentsId == null) return;
     void window.electronAPI.browser.setPaneVisibility(registeredWebContentsId, visibility);
   }, [visibility]);
+
+  // The page's renderer process is gone (out of memory, or a crash): cover the
+  // page and say so (task #1226). The guest itself survives with the same id, so
+  // its registration, handle and jar stay, and a reload runs the page in a new
+  // process. The next successful `dom-ready` lifts the cover, whoever reloaded:
+  // the cover's button, the toolbar, F5, or an agent's navigate. The store entry
+  // is what turns the header button and the card globes red while the pane is
+  // hidden or parked (design D4 B).
+  const [crashKind, setCrashKind] = useState<BrowserCrashKind | null>(null);
+  useEffect(() => {
+    const webview = webviewRef.current;
+    if (!webview) return;
+    const onGone = (event: Event) => {
+      // The `<webview>` event carries Electron's details object, not the
+      // reason itself. Measured in /preview: `event.details` is
+      // `{ reason, exitCode }` and `event.reason` is undefined.
+      const kind = browserCrashKind((event as Event & { details?: { reason?: string } }).details?.reason);
+      setCrashKind(kind);
+      useSessionStore.getState().setBrowserCrashed(registrationIdentityRef.current.taskId, kind);
+    };
+    const onReady = () => {
+      setCrashKind(null);
+      useSessionStore.getState().clearBrowserCrashed(registrationIdentityRef.current.taskId);
+    };
+    webview.addEventListener('render-process-gone', onGone);
+    webview.addEventListener('dom-ready', onReady);
+    return () => {
+      webview.removeEventListener('render-process-gone', onGone);
+      webview.removeEventListener('dom-ready', onReady);
+    };
+  }, []);
+  const reloadPage = useCallback(() => webviewRef.current?.reload(), []);
 
   // The user's Close: discard this guest and free its memory. Distinct from
   // the Browser pill, which only hides. See close-browser.ts for the sequence.
@@ -1418,7 +1452,9 @@ function BrowserPaneActive({
             // draw mode: a `<webview>` is a guest process that does not
             // reliably honour CSS stacking, so a scrim on top of it is not
             // enough on its own and the guest's own event capture has to go.
-            pointerEvents: drawMode || driveBlocking ? 'none' : 'auto',
+            // A stopped page is under its cover, and a guest's capture would
+            // otherwise reach past it the same way.
+            pointerEvents: drawMode || driveBlocking || crashKind !== null ? 'none' : 'auto',
           }}
           data-testid="browser-webview"
         />
@@ -1462,6 +1498,9 @@ function BrowserPaneActive({
             <LoaderCircle size={20} className="animate-spin text-fg-muted" />
           </div>
         )}
+        {/* The page stopped. After the webview, so no sibling index above the
+            guest moves; it stacks over the annotation bar. */}
+        {crashKind !== null && <BrowserCrashedState kind={crashKind} onReload={reloadPage} />}
         {/* An agent is driving this page, said on the page rather than in the
             toolbar.
          *

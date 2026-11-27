@@ -2510,9 +2510,17 @@ msgid "Overview"
 msgstr "개요"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Page crashed"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
 msgid "Page kept"
 msgstr "페이지 유지됨"
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Page ran out of memory"
+msgstr ""
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "Path"

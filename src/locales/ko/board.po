@@ -573,6 +573,14 @@ msgid "The folder this agent starts in is gone."
 msgstr ""
 
 #: src/renderer/components/board/task-card-view.tsx
+msgid "The page in this task's browser crashed. Open the task to reload it."
+msgstr ""
+
+#: src/renderer/components/board/task-card-view.tsx
+msgid "The page in this task's browser ran out of memory. Open the task to reload it."
+msgstr ""
+
+#: src/renderer/components/board/task-card-view.tsx
 msgid "The terminal could not start. Its window shows why."
 msgstr ""
 
