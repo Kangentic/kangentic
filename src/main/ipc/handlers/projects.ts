@@ -670,9 +670,15 @@ async function runColdOpenPasses(
   try {
     runStartupCleanup(context, project, standing, repositories);
     if (recovers) {
-      await resumeSuspendedSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, boardProfiles(), recoveryOptions(context, project.path));
+      await resumeProjectSessions(context, project, recoveryOptions(context, project.path));
       // Agents a quit left on this project's host that nothing owns (see `endUnownedHostSessions`).
-      if (project.remote) void endUnownedHostSessions(context, project.remote.hostId, { onlyIfConnected: true });
+      if (project.remote) {
+        const hostId = project.remote.hostId;
+        // Then the program update looks again: a first look before this open found its agents running and not yet held.
+        void endUnownedHostSessions(context, hostId, { onlyIfConnected: true }).then(() => {
+          if (context.remoteHosting?.status.get(hostId)?.state === 'connected') context.remoteHosting.considerProgramUpdate(hostId);
+        });
+      }
     }
   } catch (error) {
     if (stopOnFailure) throw error;
@@ -732,7 +738,7 @@ async function recoverRemoteProjectsOnHostPasses(context: IpcContext, hostId: st
         const standing = await verifyOwnershipAtOpen(project, repositories);
         if (standing.kind === 'foreign') return;
         const boardProfiles = (): ReturnType<IpcContext['boardConfigManager']['getBoardProfiles']> => context.boardConfigManager.getBoardProfiles(project.path);
-        await resumeSuspendedSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, boardProfiles(), recoveryOptions(context, project.path));
+        await resumeProjectSessions(context, project, recoveryOptions(context, project.path));
         await autoSpawnTasks(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, boardProfiles(), { startFirstAgent: firstAgentStarter(context, project.id) });
       });
     } catch (error) {
@@ -1148,6 +1154,52 @@ export async function recoverSessionsAfterPtyHostLoss(
       await restoreLostCommandTerminals(context, projectId, lostTerminals);
     }
   }
+}
+
+/**
+ * Bring back the task agents an update of an SSH host's program suspended (`remote/program-update.ts`),
+ * and only those, through the startup recovery path as a restart does (`--resume`). Kangentic stopped them
+ * itself, so they resume whatever "resume sessions on restart" and the column's auto-spawn say
+ * (`resumeRegardless`). Rejects when a project's pass throws, so the caller can report its stage; the
+ * projects after it are still tried.
+ */
+export async function resumeSessionsAfterProgramUpdate(
+  context: IpcContext,
+  sessionIdsByProject: ReadonlyMap<string, ReadonlySet<string>>,
+): Promise<void> {
+  let firstFailure: unknown = null;
+  for (const [projectId, sessionIds] of sessionIdsByProject) {
+    if (isShuttingDown()) return;
+    const project = context.projectRepo.getById(projectId);
+    if (!project) continue;
+    try {
+      await runWithProjectLogContext(project.name, async () => {
+        await resumeProjectSessions(context, project, { ...recoveryOptions(context, project.path, sessionIds), resumeRegardless: true });
+      });
+    } catch (error) {
+      // report-ok: thrown after the loop, so the other projects still resume, and the updater reports it
+      // under its `resume` stage.
+      console.error(`[remote] resuming the agents of project ${project.id.slice(0, 8)} after the host program's update failed:`, error);
+      firstFailure ??= error;
+    }
+  }
+  if (firstFailure !== null) throw firstFailure;
+}
+
+/** Startup recovery for one project, with this context's managers and the project's own defaults and boards. */
+function resumeProjectSessions(context: IpcContext, project: Project, options: ResumeSuspendedOptions): Promise<void> {
+  return resumeSuspendedSessions(
+    project.id,
+    project.path,
+    context.sessionManager,
+    context.configManager,
+    project.default_agent,
+    context.mcpServerHandle,
+    project.default_model,
+    project.default_effort,
+    context.boardConfigManager.getBoardProfiles(project.path),
+    options,
+  );
 }
 
 async function recoverTasksAfterPtyHostLoss(

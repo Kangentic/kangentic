@@ -11,7 +11,9 @@
 import type { SpawnRemote, SshHost } from '../../shared/types';
 import { installHost, type HostAsset, type InstalledHost } from './link/host-installer';
 import { createSshRunner, type SshRunner } from './link/ssh-run';
-import type { HelperMethod, HelperRequestMap, HelperSessionRecord, HostFileSearch, HostFileWrite, HostInfo, RemoteHostConnection, RemoteHostRequest, RemoteSessionRoute } from './protocol/messages';
+import { HELPER_METHOD_SINCE, OLDEST_HOST_PROGRAM_VERSION } from './protocol/messages';
+import type { HelperMethod, HelperRequestMap, HelperSessionRecord, HostFileSearch, HostFileWrite, HostInfo, HostProgramInfo, RemoteHostConnection, RemoteHostRequest, RemoteSessionRoute } from './protocol/messages';
+import { compareVersions } from '../../shared/announcements';
 import { assertSafeDestination } from './ssh-client';
 import { HOST_NOT_CONNECTED_SENTENCE, HOST_UNREACHABLE_ERROR_NAME, HostUnreachableError } from './link/host-unreachable-error';
 import { noteHostRequestWait } from './link/host-request-unanswered-error';
@@ -90,6 +92,27 @@ export class HostProgramMissingError extends Error {
   }
 }
 
+/**
+ * A request for a helper method the program running on the host is too old to answer. Never sent: the
+ * old program would answer "unknown method". It is a refusal, not a defect, and lasts until the app swaps
+ * the program for its own version (`program-update.ts`).
+ */
+export class HostProgramTooOldError extends RefusalError {
+  /** `hostVersion` null: the host has not said which program it runs since its link came up. */
+  constructor(hostName: string, method: HelperMethod, hostVersion: string | null) {
+    super(hostVersion === null
+      ? `${hostName} has not said which version of Kangentic's host program it runs yet (${method} needs ${HELPER_METHOD_SINCE[method]}). Try again in a few seconds.`
+      : `${hostName} runs Kangentic's host program ${hostVersion}, which cannot do this (${method} needs ${HELPER_METHOD_SINCE[method]}).`);
+    this.name = 'HostProgramTooOldError';
+  }
+}
+
+/**
+ * What the app knows of the program a host runs, read at each connection: its version, or null for a
+ * development run of this source, which has every method.
+ */
+type ProgramVersion = { version: string | null };
+
 export class RemoteHostService {
   private readonly infoByHost = new Map<string, HostInfo>();
   private readonly connected = new Set<string>();
@@ -100,8 +123,33 @@ export class RemoteHostService {
   private readonly queuedReconnects = new Map<string, Promise<void>>();
   /** Why a host's last connect failed, in its own words, until a connect succeeds or it is disconnected. */
   private readonly lastConnectFailure = new Map<string, string>();
+  /** The program each host runs, as its own `programInfo` last said. Absent: not asked since the link came up. */
+  private readonly programByHost = new Map<string, ProgramVersion>();
 
   constructor(private readonly deps: RemoteHostServiceDeps) {}
+
+  /**
+   * Whether the program on the host answers `method`. A development run (no version) answers all of them.
+   * A program not asked yet counts as the oldest the app talks to, so nothing newer is sent on a guess.
+   */
+  supports(hostId: string, method: HelperMethod): boolean {
+    // Every program the app talks to has the floor's methods, whatever version it reports.
+    if (compareVersions(HELPER_METHOD_SINCE[method], OLDEST_HOST_PROGRAM_VERSION) <= 0) return true;
+    const known = this.programByHost.get(hostId);
+    if (known && known.version === null) return true;
+    const version = known?.version ?? OLDEST_HOST_PROGRAM_VERSION;
+    return compareVersions(version, HELPER_METHOD_SINCE[method]) >= 0;
+  }
+
+  /** The version the host's program last reported, null for a development run, undefined when not asked yet. */
+  programVersion(hostId: string): string | null | undefined {
+    return this.programByHost.get(hostId)?.version;
+  }
+
+  /** Forget what the program on a host is, because the link dropped and may come back to another. */
+  forgetProgram(hostId: string): void {
+    this.programByHost.delete(hostId);
+  }
 
   isConnected(hostId: string): boolean {
     return this.connected.has(hostId);
@@ -199,6 +247,7 @@ export class RemoteHostService {
     this.connected.delete(hostId);
     this.infoByHost.delete(hostId);
     this.lastConnectFailure.delete(hostId);
+    this.programByHost.delete(hostId);
     await this.deps.send({ op: 'removeHost', hostId });
   }
 
@@ -298,9 +347,22 @@ export class RemoteHostService {
     return this.helper(hostId, 'snapshot', {});
   }
 
-  /** Which program version the host runs, for how long, with how many terminals, and which versions it holds. */
-  programInfo(hostId: string): Promise<HelperRequestMap['programInfo']['result']> {
-    return this.helper(hostId, 'programInfo', {});
+  /**
+   * Which program version the host runs, for how long, with how many terminals, and which versions it holds.
+   * Every answer also becomes what `supports` reads for this host.
+   */
+  async programInfo(hostId: string): Promise<HostProgramInfo> {
+    const info = await this.helper(hostId, 'programInfo', {});
+    this.programByHost.set(hostId, { version: info.version });
+    return info;
+  }
+
+  /**
+   * Ask the program whose pid the snapshot named to exit while it holds nothing (`retireIfIdle`). Only for a
+   * program `supports` says has it.
+   */
+  retireIfIdle(hostId: string, daemonPid: number): Promise<HelperRequestMap['retireIfIdle']['result']> {
+    return this.helper(hostId, 'retireIfIdle', { daemonPid });
   }
 
   /**
@@ -348,11 +410,20 @@ export class RemoteHostService {
     return await this.sendHelper({ op: 'helper', hostId, method, params }) as HelperRequestMap[M]['result'];
   }
 
+  /** A method the host's program is too old for is refused here, with a sentence, and never sent. */
+  private assertSupported(hostId: string, method: HelperMethod): void {
+    if (this.supports(hostId, method)) return;
+    // Not asked yet: say so, rather than name the floor as if the host had reported it.
+    const version = this.programByHost.get(hostId)?.version ?? null;
+    throw new HostProgramTooOldError(this.hostName(hostId), method, version);
+  }
+
   /**
    * Every request to a host's helper passes here. It waits for a connect still under way, and turns the
    * router's "This host is not connected." into a sentence that names the host and why its last connect failed.
    */
   private async sendHelper(request: HelperRequest): Promise<unknown> {
+    this.assertSupported(request.hostId, request.method);
     await this.whenReady(request.hostId);
     const sentAt = Date.now();
     try {

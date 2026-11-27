@@ -19,7 +19,7 @@ import {
 import { EventType, type Session, type SessionEvent, type SessionUsage } from '../../../shared/types';
 import { isCommandTerminalSession, isWorkflowAgentSession } from '../../../shared/session-owner';
 import { AccountContinuation, CONTINUE_PROMPT } from '../../accounts/account-continuation';
-import { requiresUserInteraction } from '../../../shared/activity-state';
+import { quickSafePoint, type QuickSafePoint } from '../../pty/agent-safe-point';
 import { carryRecapAcross, forgetRecapSession, pauseRecapTurnWait } from '../../automations/turn-end/recap-turns';
 import { AccountLoginRunner } from '../../accounts/account-login';
 import { AccountLoginWatch } from '../../accounts/account-login-watch';
@@ -425,25 +425,10 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
    * (working, and maybe between two tools), or null (not now). `safePoint` turns `mid-turn` into
    * `between-tools` only once the transcript holds the last call's results.
    */
-  type QuickSafePoint = 'idle' | 'mid-turn' | null;
-  /**
-   * The checks that need no transcript read: no tool in flight and no prompt or question open, no
-   * background shell or subagent alive (each dies with the restart; a service the agent marked is
-   * not one), and nothing typed into its input box.
-   */
-  const quickSafePoint = (sessionId: string): QuickSafePoint => {
-    if (sessionManager.automatedKeysBlocker(sessionId) !== null) return null;
-    const openWork = sessionManager.getOpenWork(sessionId);
-    if (openWork.backgroundShells.length > 0 || openWork.backgroundSubagents.length > 0) return null;
-    // The ledger lists a background subagent only once its parent's turn ended; the engine counts it from its start.
-    if ((sessionManager.getActivityStatsSnapshot(sessionId)?.subagentDepth ?? 0) > 0) return null;
-    if ((sessionManager.getPendingDraft(sessionId) ?? '').trim() !== '') return null;
-    // A permission prompt is refused above, so a session needing the user here is one whose turn is over.
-    return requiresUserInteraction(sessionManager.getActivityCache()[sessionId]) ? 'idle' : 'mid-turn';
-  };
+  const quickSafePointOf = (sessionId: string): QuickSafePoint => quickSafePoint(sessionManager, sessionId);
   /** Whether the session still stands where it was found: the same kind of point, and between two tools, the same last call. */
   const stillAt = (sessionId: string, point: Exclude<SafePoint, null>, toolUseId: string | undefined): boolean => {
-    const quick = quickSafePoint(sessionId);
+    const quick = quickSafePointOf(sessionId);
     if (point === 'idle') return quick === 'idle';
     return quick === 'mid-turn' && toolUseId !== undefined && lastToolEnd.get(sessionId) === toolUseId;
   };
@@ -454,7 +439,7 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
    * for task #1200). An agent that cannot say moves at its turn end.
    */
   const safePoint = async (sessionId: string): Promise<SafePoint> => {
-    const quick = quickSafePoint(sessionId);
+    const quick = quickSafePointOf(sessionId);
     if (quick !== 'mid-turn') return quick;
     const toolUseId = lastToolEnd.get(sessionId);
     if (toolUseId !== undefined && resultsWrittenFor.get(sessionId) === toolUseId) return 'between-tools';

@@ -79,6 +79,7 @@ sources:
   - resource: src/main/workflows/workflow-report.ts
   - resource: src/main/db/db-report.ts
   - resource: src/main/remote/remote-report.ts
+  - resource: src/main/remote/program-update.ts
   - resource: src/main/remote/link/host-request-unanswered-error.ts
   - resource: src/main/mobile-bridge/mobile-bridge-report.ts
   - resource: src/main/retrieval/retrieval-client.ts
@@ -730,6 +731,15 @@ in one Sentry org, one triage surface.
     decision reads. Nothing under `remote/helper/**` reports, since it runs on the host and its
     reply carries the failure, and `remote/link/**` and `remote/protocol/**` run in the pty host
     and relay a code.
+  - `remote_program_update` (tag `stage`, detail tag `ran_for`, `remote/program-update.ts`): an
+    update of a host's program after an update of the app that could not finish, so the old
+    program keeps running until the next run tries again. `hold` (the host could not be asked
+    again under the hold), `suspend` (a terminal still ran after the agents were stopped),
+    `stop` (the old program refused the stop, did not exit, or answered after it), `reconnect`
+    (the link did not come back, or came back to another version) and `resume` (an agent could
+    not be brought back). The error is `ProgramUpdateStepError`, whose fixed message stays in
+    the log. A drop during the swap is an expected class and reports nothing, and a host removed
+    during it reports nothing either.
   - `mobile_bridge` (tag `stage`, `src/main/mobile-bridge/mobile-bridge-report.ts`): what the
     phone bridge does outside a verb's own handler, which `mobile_verb` never sees because the
     router reports a handler's throw and nothing else. After a verb answered OK:

@@ -198,6 +198,16 @@ const launchRides = new Map<string, HeldClaim>();
 /** Sessions holding their task's messages until the agent ends a turn. */
 const deferredToTurnEnd = new Set<string>();
 
+/**
+ * Whether a held message is on its way to this session's agent: claimed for a delivery in flight, riding its
+ * launch, or waiting for its turn to end. Something that stops the agent on its own (`program-update.ts`)
+ * waits while this is true, or the message lands in an agent that is exiting.
+ */
+export function hasHeldDeliveryPending(sessionId: string, taskId: string | null): boolean {
+  if (pendingRides.has(sessionId) || launchRides.has(sessionId) || deferredToTurnEnd.has(sessionId)) return true;
+  return taskId !== null && (claimedRowIds.get(taskId)?.size ?? 0) > 0;
+}
+
 /** How long the flush waits after a session first runs, for a recap mark to land. */
 const HELD_FLUSH_SETTLE_MS = 1_000;
 

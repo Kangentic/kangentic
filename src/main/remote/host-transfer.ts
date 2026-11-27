@@ -4,8 +4,9 @@
  *
  * The helper has no binary file job. `readFile` decodes text and answers in one frame, and `writeFileRaw` decodes
  * too. So this runs `sh` scripts through `runCommand`, as `HostGit` does, rather than adding a helper method: a new
- * link rejoins whatever program is already running on the host with no version check, and `runCommand` is there on
- * every one of them. One script reads or writes one chunk as base64, small enough that a request or a reply stays
+ * link rejoins whatever program is already running on the host, which can be older than the app, and `runCommand`
+ * is there on every one of them. A new method would need its `HELPER_METHOD_SINCE` entry and these scripts as an
+ * older program's fallback anyway. One script reads or writes one chunk as base64, small enough that a request or a reply stays
  * inside a frame's 256 KiB, and every value is an argument, never shell text.
  *
  * `runCommand` does not hold its arguments beneath the user's home the way the helper's file jobs do, so the

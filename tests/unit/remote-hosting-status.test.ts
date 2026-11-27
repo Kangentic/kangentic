@@ -38,7 +38,7 @@ vi.mock('../../src/main/db/repositories/ssh-host-repository', () => ({
 
 import { createRemoteHosting } from '../../src/main/remote/remote-hosting';
 import { RemoteHostService } from '../../src/main/remote/remote-host-service';
-import { RemoteAgentUnsupportedError, RemoteHostRemovedError, resolveRemoteLaunch, setRemoteLaunchResolver } from '../../src/main/remote/remote-launch';
+import { RemoteAgentUnsupportedError, RemoteHostRemovedError, RemoteProgramUpdatingError, resolveRemoteLaunch, setRemoteLaunchResolver } from '../../src/main/remote/remote-launch';
 import { remoteGitRunnerFor, setRemoteGitResolver } from '../../src/main/git/remote-git';
 import { listAgentsOnHost, resetAgentListForTests } from '../../src/main/agent/agent-list';
 import * as path from 'node:path';
@@ -368,6 +368,48 @@ describe('refusing starts while a host is being removed', () => {
     await expect(resolveRemoteLaunch({ projectPath, cwd: projectPath, adapter: adapterWithoutRemoteCli }))
       .rejects.toBeInstanceOf(RemoteAgentUnsupportedError);
   });
+
+  /**
+   * The program update holds starts on its own (task #1227), and a start in that window lands on the program
+   * about to exit. Its refusal says so, not that the host was removed, and the hold leaves the removal state
+   * and the connect retries alone.
+   */
+  it("refuses a start while the host's program is being replaced, with its own sentence", async () => {
+    const sessionManager = makeSessionManager();
+    sessionManager.remoteHostRequest.mockImplementation(async (request: unknown) => {
+      const helper = request as { op: string; method?: string };
+      if (helper.method === 'programInfo') return { version: '0.9.0', startedAt: '', liveSessions: 0, installedVersions: [] };
+      if (helper.method === 'snapshot') return { ownerEpoch: 1, daemonPid: 100, daemonStartedAt: '', sessions: [] };
+      // The stop never answers, so the swap stays under its hold.
+      if (helper.method === 'runCommand') return new Promise(() => undefined);
+      return undefined;
+    });
+    const hosting = createRemoteHosting({
+      sessionManager: sessionManager as never,
+      projects: () => projectsOf([{ id: 'project-remote', path: projectPath, remote: { hostId: 'host-1', path: '/home/dev/app' } }]),
+      hostAsset: () => ({ version: '1.0.0', sha256: 'a'.repeat(64), arch: 'x64', filePath: '/asset.tar.gz' }),
+      programUpdateSessions: {
+        heldSessions: () => [],
+        isAtSafePoint: () => true,
+        hasStartInFlight: () => false,
+        hasFreshDraft: async () => false,
+        suspendTask: async () => 'not-live',
+        terminalRestartability: () => 'restart',
+        endTerminal: () => 'failed',
+        endUnusedTerminal: () => undefined,
+        resumeTasks: async () => undefined,
+      },
+      log: () => undefined,
+    });
+
+    sessionManager.emit('remote-link', { hostId: 'host-1', state: 'connected', detail: null });
+    await vi.advanceTimersByTimeAsync(10);
+
+    const held = resolveRemoteLaunch({ projectPath, cwd: projectPath, adapter: adapterWithoutRemoteCli });
+    await expect(held).rejects.toBeInstanceOf(RemoteProgramUpdatingError);
+    await expect(held).rejects.toThrow('updating its program on Lab');
+    expect(hosting.status.get('host-1')?.state).toBe('connected');
+  });
 });
 
 describe('a host\'s link coming back', () => {
@@ -581,6 +623,50 @@ describe('tidying old program versions on a host', () => {
     expect(prunes()).toEqual([]);
   });
 
+  /**
+   * The program update (task #1227) counts the agents this app holds on the host, so it must look only once
+   * recovery has taken back the ones a quit left running: before that, they read as terminals nobody holds.
+   */
+  it('looks at replacing an older program only once the first connection\'s recovery has finished', async () => {
+    const sessionManager = makeSessionManager();
+    sessionManager.remoteHostRequest.mockImplementation(async (request: unknown) => {
+      const helper = request as { op: string; method?: string };
+      // Older than the asset's 1.0.0, and below the floor too: the floor's methods still go to it.
+      if (helper.method === 'programInfo') return { version: '0.9.0', startedAt: '', liveSessions: 1, installedVersions: [] };
+      if (helper.method === 'snapshot') return { ownerEpoch: 1, daemonPid: 100, daemonStartedAt: '', sessions: [] };
+      return undefined;
+    });
+    let finishRecovery: () => void = () => undefined;
+    const recovery = new Promise<void>((resolve) => { finishRecovery = resolve; });
+    createRemoteHosting({
+      sessionManager: sessionManager as never,
+      projects: () => projectsOf([]),
+      hostAsset: () => asset,
+      onHostFirstConnected: () => recovery,
+      programUpdateSessions: {
+        heldSessions: () => [],
+        isAtSafePoint: () => false,
+        hasStartInFlight: () => false,
+        hasFreshDraft: async () => false,
+        suspendTask: async () => 'not-live',
+        terminalRestartability: () => 'restart',
+        endTerminal: () => 'failed',
+        endUnusedTerminal: () => undefined,
+        resumeTasks: async () => undefined,
+      },
+      log: () => undefined,
+    });
+    const snapshots = (): number => sessionManager.remoteHostRequest.mock.calls
+      .filter((call) => (call[0] as { method?: string }).method === 'snapshot').length;
+
+    sessionManager.emit('remote-link', { hostId: 'host-1', state: 'connected', detail: null });
+    await vi.advanceTimersByTimeAsync(10);
+    expect(snapshots()).toBe(0);
+    finishRecovery();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(snapshots()).toBe(1);
+  });
+
   it('records the failure and goes on when the host cannot be asked', async () => {
     const sessionManager = makeSessionManager();
     sessionManager.remoteHostRequest.mockRejectedValue(new Error('the link dropped'));
@@ -595,5 +681,151 @@ describe('tidying old program versions on a host', () => {
     await vi.advanceTimersByTimeAsync(10);
     expect(lines.some((line) => line.includes('could not tidy old program versions') && line.includes('the link dropped'))).toBe(true);
     expect(hosting.status.get('host-1')?.state).toBe('connected');
+  });
+});
+
+describe('the program version a link reads, and the program update it wires', () => {
+  const asset = { version: '1.0.0', sha256: 'a'.repeat(64), arch: 'x64' as const, filePath: '/asset.tar.gz' };
+
+  /** A host whose program answers `version`, with `liveSessions` terminals, over a fake session manager. */
+  function hostingOnProgram(options: {
+    version: string;
+    liveSessions?: number;
+    programInfoFails?: boolean;
+    onHostFirstConnected?: (hostId: string) => Promise<void>;
+    watched?: { isSafe: () => boolean; startInFlight?: () => boolean };
+  }) {
+    const sessionManager = makeSessionManager();
+    sessionManager.remoteHostRequest.mockImplementation(async (request: unknown) => {
+      const helper = request as { op: string; method?: string };
+      if (helper.method === 'programInfo') {
+        if (options.programInfoFails) throw new Error('the link dropped');
+        return { version: options.version, startedAt: '', liveSessions: options.liveSessions ?? 0, installedVersions: [] };
+      }
+      if (helper.method === 'snapshot') return { ownerEpoch: 1, daemonPid: 100, daemonStartedAt: '', sessions: [] };
+      return undefined;
+    });
+    const lines: string[] = [];
+    const startInFlight = vi.fn(() => options.watched?.startInFlight?.() ?? false);
+    const hosting = createRemoteHosting({
+      sessionManager: sessionManager as never,
+      projects: () => projectsOf([]),
+      hostAsset: () => asset,
+      onHostFirstConnected: options.onHostFirstConnected,
+      programUpdateSessions: {
+        heldSessions: () => (options.watched ? [{ sessionId: 'session-1', taskId: 'task-1', projectId: 'project-1', kind: 'task' as const }] : []),
+        isAtSafePoint: () => options.watched?.isSafe() ?? true,
+        hasStartInFlight: startInFlight,
+        hasFreshDraft: async () => false,
+        suspendTask: async () => 'not-live',
+        terminalRestartability: () => 'restart',
+        endTerminal: () => 'failed',
+        endUnusedTerminal: () => undefined,
+        resumeTasks: async () => undefined,
+      },
+      log: (line) => lines.push(line),
+    });
+    const helperCalls = (method: string): number => sessionManager.remoteHostRequest.mock.calls
+      .filter((call) => (call[0] as { method?: string }).method === method).length;
+    return { sessionManager, hosting, lines, startInFlight, helperCalls };
+  }
+
+  it('reads the program version when the link connects, so a method that program has is sent, and forgets it when the link leaves', async () => {
+    const { sessionManager, hosting, helperCalls } = hostingOnProgram({ version: '0.65.0' });
+    // Not asked yet: counted as the oldest program, so nothing newer is sent on a guess.
+    expect(hosting.hostService.supports('host-1', 'retireIfIdle')).toBe(false);
+
+    sessionManager.emit('remote-link', { hostId: 'host-1', state: 'connected', detail: null });
+    await vi.advanceTimersByTimeAsync(10);
+    expect(helperCalls('programInfo')).toBeGreaterThanOrEqual(1);
+    expect(hosting.hostService.supports('host-1', 'retireIfIdle')).toBe(true);
+
+    // The link may come back to another program.
+    sessionManager.emit('remote-link', { hostId: 'host-1', state: 'reconnecting', detail: 'Connection reset' });
+    expect(hosting.hostService.supports('host-1', 'retireIfIdle')).toBe(false);
+  });
+
+  it('logs a program version it could not read and goes on, leaving the newer methods unsent', async () => {
+    const { sessionManager, hosting, lines } = hostingOnProgram({ version: '0.65.0', programInfoFails: true });
+
+    sessionManager.emit('remote-link', { hostId: 'host-1', state: 'connected', detail: null });
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(lines.some((line) => line.includes('could not read the program version') && line.includes('the link dropped'))).toBe(true);
+    expect(hosting.status.get('host-1')?.state).toBe('connected');
+    expect(hosting.hostService.supports('host-1', 'retireIfIdle')).toBe(false);
+  });
+
+  it('still looks at the program when the first connection\'s recovery fails, and leaves nothing unhandled', async () => {
+    const { sessionManager, helperCalls } = hostingOnProgram({
+      version: '0.9.0',
+      // A live terminal keeps the look at one snapshot: with none, an older program is swapped at once.
+      liveSessions: 1,
+      onHostFirstConnected: () => Promise.reject(new Error('recovery failed')),
+    });
+
+    sessionManager.emit('remote-link', { hostId: 'host-1', state: 'connected', detail: null });
+    await vi.advanceTimersByTimeAsync(10);
+
+    // The look asks the host's snapshot once it has found the program older. A rejection that cut the chain
+    // short would leave it at 0 and surface as an unhandled rejection, which fails this run.
+    expect(helperCalls('snapshot')).toBe(1);
+  });
+
+  describe('while an agent keeps a host from being updated', () => {
+    /** A watched host: older program, one live terminal, its one session busy until `safe.value` is set. */
+    async function watchedHost() {
+      const safe = { value: false };
+      const rig = hostingOnProgram({ version: '0.9.0', liveSessions: 1, watched: { isSafe: () => safe.value } });
+      rig.sessionManager.emit('remote-link', { hostId: 'host-1', state: 'connected', detail: null });
+      await vi.advanceTimersByTimeAsync(10);
+      // The look found it older and watches it: one snapshot, no swap.
+      expect(rig.helperCalls('snapshot')).toBe(1);
+      return { ...rig, safe };
+    }
+
+    it('rechecks once per burst of session events, and not on the event\'s own stack', async () => {
+      const { sessionManager, startInFlight } = await watchedHost();
+      startInFlight.mockClear();
+
+      for (let event = 0; event < 20; event += 1) sessionManager.emit(event % 2 === 0 ? 'activity' : 'turn-ended', 'session-1');
+      // Off the event's stack: microtasks alone do not reach the recheck.
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(startInFlight).not.toHaveBeenCalled();
+
+      // A second burst before the first one's turn runs joins it.
+      sessionManager.emit('session-changed', 'session-1');
+      await vi.advanceTimersByTimeAsync(10);
+      expect(startInFlight).toHaveBeenCalledTimes(1);
+
+      // And once it ran, the next burst is heard again.
+      sessionManager.emit('session-removed', 'session-1');
+      await vi.advanceTimersByTimeAsync(10);
+      expect(startInFlight).toHaveBeenCalledTimes(2);
+    });
+
+    it('updates the program once the agents are idle for the settle (control for the removal below)', async () => {
+      const { sessionManager, safe, helperCalls } = await watchedHost();
+
+      safe.value = true;
+      sessionManager.emit('turn-ended', 'session-1');
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      // The swap asks the program again under its hold: a second snapshot.
+      expect(helperCalls('snapshot')).toBe(2);
+    });
+
+    it('stops watching a host whose removal holds starts, so no swap runs once its agents go idle', async () => {
+      const { sessionManager, hosting, safe, helperCalls } = await watchedHost();
+
+      hosting.holdStarts('host-1');
+      safe.value = true;
+      sessionManager.emit('turn-ended', 'session-1');
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(helperCalls('snapshot')).toBe(1);
+    });
   });
 });

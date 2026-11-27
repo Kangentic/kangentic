@@ -104,6 +104,20 @@ process, a path tested against the wrong disk, an environment that overwrites th
   here, and the shutdown marks no remote record suspended: it stays `running` with its task still
   pointing at it. The link lets go and sends nothing (the old `suspendAll` plan is gone). Never seal
   a remote PTY at a quit: the host keeps the seal and the rejoined agent would take no keystrokes.
+  The one exception is the update swap below, which stops a host's agents on purpose.
+- **An app update replaces a host's older program, and never cuts a turn short.** `program-update.ts`
+  runs after a host's first-connect recovery (never beside it: an agent not taken back yet reads as
+  a terminal nobody holds), only for a program older than the app's asset, never a newer, equal or
+  null one, and never while the host's snapshot has a live terminal this app holds no PTY for. A
+  busy host waits until every task agent and Command Terminal is at its safe point
+  (`quickSafePoint` plus held, pasted and typed messages, turn-end groups, starts in flight and
+  workflow recovery) for the settle, asks every session again before stopping any, and holds
+  starts with its own refusal (`RemoteProgramUpdatingError`, never the removal's). It stops only
+  through `pauseTaskSession` as the system's and `endCommandTerminalForRestart`, never a new kill
+  path, and stops the daemon only once the host's `liveSessions` and main's `liveRemotePtys` are
+  both empty, asked again just before the stop. It resumes only the records it suspended
+  (`onlySessionIds` with `resumeRegardless`), releases the hold first, and on any failure leaves the
+  old program and resumes them, or keeps them for the next `connected` when the link is down.
 - **Startup never reads a running remote record as a crash.** `resumeSuspendedSessions` step 0 asks the
   host (`rejoin-sessions.ts`, only when the host is connected) for each `running` record whose
   `cli_target` names one, and the answer is one of three: rejoined (`SessionManager.adoptRemoteSession`,
@@ -210,8 +224,18 @@ process, a path tested against the wrong disk, an environment that overwrites th
   or to receive, refused token, server off, server failed, timed out. The id is read at the top of the
   object wherever it sits, because the MCP TypeScript SDK writes it last, and a request's length is its
   bytes. A new failure path ends in one of these, never in a wait with no bound.
+- **A helper method is sent only to a program that has it.** A relay joins whatever program is
+  running, which can be older than the app until a busy host swaps, or for good on a host shared by
+  computers on different versions. `HELPER_METHOD_SINCE` names the release each method shipped in,
+  `RemoteHostService` reads the program's version at each connection, and `supports` gates every
+  request: a method newer than the program is refused with `HostProgramTooOldError`, never sent. A
+  new method gets its entry (`tsc` fails without one) and a `runCommand` fallback or a refusal for
+  an older program. The floor, `OLDEST_HOST_PROGRAM_VERSION`, is pinned by a test. The link resends
+  a frame its peer had not acknowledged to whichever program answers next, which every program swap
+  does, so a method that changes the host must be safe to arrive at a different program: name the
+  one it is for, as `retireIfIdle`'s `daemonPid` and the stop script's pid check do.
 - **Bytes cross through `remote/host-transfer.ts`, over `runCommand`.** The helper's file jobs decode
-  text, and a new helper method has no handler on a daemon a relay rejoins with no version check.
+  text, and `runCommand` is on every program the app talks to.
   Its scripts hold a path beneath the home and refuse a symlink themselves, because `runCommand`
   does not check its arguments. A write refuses a path with a `.` or `..` in it, then checks the
   deepest folder that exists before any is made.
@@ -346,6 +370,24 @@ process, a path tested against the wrong disk, an environment that overwrites th
   and another host each ask again, and that a spawn is refused with the host and CLI named on
   `missing` and goes on for `unknown`. `tests/ui/add-remote-project.spec.ts` pins the Agent tab for a
   remote project (the host's version, a read-only path, and "Not checked" in place of "Not found").
+- **Tests (program update):** `tests/unit/remote-program-update.test.ts` drives the swap against a fake
+  host: an empty program at once, never a newer, equal or null one, never with an unheld terminal, the
+  wait on a busy host and its reset, every session asked before any stops, the rollback under a task
+  lock, the hold before the suspend and its release before the resume, a Command Terminal restarted
+  after the tasks, a workflow agent holding it, and a failure at each stage leaving the agents back. On
+  Linux it runs the stop, list and wait scripts on a real `sh` against stand-in processes.
+  `program-update-sessions.test.ts` pins every safe-point input and the system pause;
+  `remote-hosting-status.test.ts` that the look waits for the first-connect recovery and that a held
+  start gets its own refusal; `remote-helper-version-gate.test.ts` the floor;
+  `remote-host-service.test.ts` the gate; `remote-helper-host-ops.test.ts` `retireIfIdle` on the real
+  helper; `resume-suspended-placeholder.test.ts` `resumeRegardless`.
+- **Rig (update, by hand):** `node scripts/ssh-link-rig.mjs --client update --work <dir>` runs an old
+  program with a live agent, connects the real updater with a newer asset on a real `sshd`, and checks
+  the swap, the agent back on the new program, and the old version still on disk. Needs Docker.
+  `--versions 0.65.0,0.65.1` takes the `retireIfIdle` path instead of the pid, `--old-asset` starts
+  from a released archive, and `--claude-binary <claude>` adds a real Claude Code against the exit
+  probe's Messages stand-in, with no account. The measurements are in
+  [docs/platforms/ssh-remote.md](../../docs/platforms/ssh-remote.md#updating-the-program).
 - **Tests (resume on connect):** `tests/unit/project-open-lifecycle.test.ts` pins that a host's first
   connection recovers its opened remote projects (resume and first spawn, no sweep) and leaves
   others alone; `tests/unit/remote-hosting-status.test.ts` that the hook fires once per host per run.

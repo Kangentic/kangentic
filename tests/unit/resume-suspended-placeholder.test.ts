@@ -1073,6 +1073,48 @@ describe('resumeSuspendedSessions: a limited column\'s tasks resume in the order
   });
 });
 
+/**
+ * An update of an SSH host's program suspends running agents to bring them straight back (task #1227). Left
+ * to the settings, an agent in a column with auto-spawn off, or with "resume sessions on restart" off, would
+ * stay paused when nobody asked to stop it.
+ *
+ * Red-green: drop `resumeRegardless` from either gate in resume-suspended.ts and the first case goes red.
+ */
+describe('resumeSuspendedSessions: the agents a host program update stopped come back', () => {
+  const runScoped = async (sessionManager: ReturnType<typeof makeSessionManager>, options: { onlySessionIds?: ReadonlySet<string>; resumeRegardless?: boolean }) => {
+    await resumeSuspendedSessions('proj-1', '/project', sessionManager as never, makeConfigManager(false) as never, null, null, null, null, [], options);
+  };
+
+  it('resumes them with auto-resume off and in a column whose auto-spawn is off', async () => {
+    sessionRepoGetResumable.mockReturnValue([makeRecord()]);
+    const sessionManager = makeSessionManager();
+
+    await runScoped(sessionManager, { onlySessionIds: new Set(['record-1']), resumeRegardless: true });
+
+    expect(prepareAgentSpawnMock).toHaveBeenCalledTimes(1);
+    expectNoPlaceholderBeforePreparation(sessionManager);
+  });
+
+  it('still starts no agent in Done', async () => {
+    sessionRepoGetResumable.mockReturnValue([makeRecord()]);
+    swimlaneRepoList.mockReturnValue([makeLane({ role: 'done', name: 'Done' })]);
+
+    await runScoped(makeSessionManager(), { onlySessionIds: new Set(['record-1']), resumeRegardless: true });
+
+    expect(prepareAgentSpawnMock).not.toHaveBeenCalled();
+  });
+
+  it('control: without a scope the settings still hold, so no other pass can borrow it', async () => {
+    sessionRepoGetResumable.mockReturnValue([makeRecord()]);
+    const sessionManager = makeSessionManager();
+
+    await runScoped(sessionManager, { resumeRegardless: true });
+
+    expect(prepareAgentSpawnMock).not.toHaveBeenCalled();
+    expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('resumeSuspendedSessions: a held pause stays paused across a restart', () => {
   // A column that starts agents, with auto-resume on: the one place a
   // suspended record is resumed by itself. A held pause must not be.

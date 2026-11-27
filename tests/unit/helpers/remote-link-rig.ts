@@ -80,6 +80,8 @@ export interface HelperRigOptions {
   procDirectory?: string;
   /** The helper's own version folder, for a test of the program's version and its pruning. */
   programDirectory?: string;
+  /** Called where the daemon would exit after `retireIfIdle`. */
+  retire?: () => void;
 }
 
 /** A helper whose node-pty hands out the queued fakes in order. */
@@ -104,6 +106,7 @@ export function makeHelperRig(fakeCount = 1, options: HelperRigOptions = {}): He
       spawnPty: spawnPty as unknown as typeof nodePty.spawn,
     },
     endpoint: options.endpoint,
+    ...(options.retire ? { retire: options.retire } : {}),
   });
   return { helper, fakes, spawnPty, linkStreams: [] };
 }

@@ -26,7 +26,7 @@ import { resolveBrowserAutomationConfig } from '../../browser/browser-automation
 import { canResumeConversationById } from '../../agent/shared/workflow-agent-capability';
 import { resolveFreshAgentSessionId } from '../../agent/shared/fresh-agent-session-id';
 import { heldByLiveSession, settleCommandTerminalResume } from '../helpers/command-terminal-background-session';
-import { DEFAULT_AGENT, type LaunchStartPath } from '../../../shared/types';
+import { DEFAULT_AGENT, type LaunchStartPath, type Session } from '../../../shared/types';
 import { appendCallerSession } from '../../agent/mcp-http/caller-url';
 import { markCommandTerminalRespawn, forgetCommandTerminalRespawn } from '../helpers/command-terminal-browser';
 import type {
@@ -574,20 +574,8 @@ export async function startCommandTerminal(
  * Restart a running Command Terminal in its own slot on `accountId`, resuming
  * its conversation (task #1200): the account order moved, or Switch to named the
  * account. `prompt` is what a terminal caught mid-turn is told; an idle one
- * resumes with none. `stillSafe` is asked once more just before the stop.
- *
- * The terminal keeps its slot, name, grid, process tag and Browser pane: the end
- * is marked a respawn, so the window stays and pairs with the slot's next
- * terminal, and the leftover reaper and the background-session stop leave what
- * its agent left running alone once the new terminal runs under the same tag
- * (a move that gives up is reaped as any end is). The
- * start waits for the old agent to exit, so two agents never hold one
- * conversation, and holds the slot meanwhile, so a phone's start cannot take it.
- * Everything that can refuse is checked before the end: a terminal whose agent
- * cannot resume a conversation by id, or whose conversation has no history row,
- * stays where it is (`failed`), and one nobody has used yet waits (`deferred`):
- * its row is deleted when it ends, so there would be nothing to resume, and its
- * first turn gives it one.
+ * resumes with none. `stillSafe` is asked once more just before the stop. The
+ * end, and everything that refuses it, is `endCommandTerminalForRestart`.
  */
 export async function restartCommandTerminalOn(
   context: IpcContext,
@@ -596,18 +584,78 @@ export async function restartCommandTerminalOn(
   prompt: string | undefined,
   stillSafe: () => boolean,
 ): Promise<RestartOutcome> {
+  const ended = endCommandTerminalForRestart(context, sessionId, stillSafe);
+  if (typeof ended === 'string') return ended;
+  const started = await ended.startAgain({ accountId, prompt });
+  return started !== null && started.accountId === accountId ? 'moved' : 'failed';
+}
+
+/**
+ * A Command Terminal a restart ended, holding its slot and its conversation until it starts again. A move to
+ * another account starts it at once; an update of a host's program (`program-update.ts`) starts it once the
+ * host runs the new program. `giveUp` hands the slot and the conversation back for a restart that will not
+ * come, and is a no-op once `startAgain` took them.
+ */
+export interface EndedCommandTerminalRestart {
+  /** The account it ran on, for a restart that keeps it. */
+  readonly accountId: string | null;
+  /** Wait for the old agent, then start in the same slot, resuming the conversation. Null when it did not come back. */
+  startAgain(options: { accountId?: string; prompt?: string }): Promise<{ sessionId: string; accountId: string | null } | null>;
+  giveUp(): void;
+}
+
+/**
+ * Whether a running Command Terminal can end and start again in its slot with its conversation, asked without
+ * ending anything. `restart`: it can. `unused`: nobody has typed into it, so it has no conversation to bring
+ * back, and its end loses nothing. `unresumable`: it was used, but its agent's conversation id is not captured
+ * yet, its agent cannot resume a conversation by id, or the conversation has no history row, so an end would
+ * lose it. A session that is not a running Command Terminal is `unresumable` too: nothing may end it here.
+ */
+export function commandTerminalRestartability(context: IpcContext, sessionId: string): 'restart' | 'unused' | 'unresumable' {
+  const session = context.sessionManager.getSession(sessionId);
+  if (!session || !isCommandTerminalSession(session) || session.status !== 'running') return 'unresumable';
+  if (session.hasUserInput !== true) return 'unused';
+  // Typed into, with the agent's id still to come (an adapter that reports it late): a conversation exists.
+  if (!session.agentSessionId) return 'unresumable';
+  if (!canRestartInSlot(context, session)) return 'unresumable';
+  return context.commandTerminalHistory?.find(session.projectId, session.agentSessionId) ? 'restart' : 'unresumable';
+}
+
+/** It has a slot to come back to and an agent that resumes a conversation by id. */
+function canRestartInSlot(context: IpcContext, session: Session): boolean {
+  const agentName = context.sessionManager.getSessionAgentName(session.id);
+  const adapter = agentName ? agentRegistry.get(agentName) : undefined;
+  return Boolean(session.commandTerminalSlot && adapter && canResumeConversationById(adapter));
+}
+
+/**
+ * The end half of a restart in a slot (a move to another account, or an update of a host's program), returning
+ * the ended terminal to start again. The terminal keeps its slot, name, grid, process tag and Browser pane: the
+ * end is marked a respawn, so the window stays and pairs with the slot's next terminal, and the leftover reaper
+ * and the background-session stop leave what its agent left running alone once the new terminal runs under the
+ * same tag (a restart that gives up is reaped as any end is). The start waits for the old agent to exit, so two
+ * agents never hold one conversation, and the slot is held meanwhile, so a phone's start cannot take it.
+ *
+ * Everything that can refuse is checked before the end: `failed` for a terminal whose agent cannot resume a
+ * conversation by id, or whose conversation has no history row, and `deferred` for one nobody has used yet
+ * (its row is deleted when it ends, and its first turn gives it one), one whose conversation id is still to
+ * come, or one that `stillSafe` no longer passes. Synchronous, so the end, the claim and the reservation land
+ * in one tick.
+ */
+export function endCommandTerminalForRestart(
+  context: IpcContext,
+  sessionId: string,
+  stillSafe: () => boolean,
+): EndedCommandTerminalRestart | 'failed' | 'deferred' {
   const session = context.sessionManager.getSession(sessionId);
   if (!session || !isCommandTerminalSession(session) || session.status !== 'running') return 'failed';
+  if (!canRestartInSlot(context, session)) return 'failed';
+  // Nothing has reached it yet, or its conversation's id is still to come: wait for its first turn.
+  if (session.hasUserInput !== true || !session.agentSessionId) return 'deferred';
   const slot = session.commandTerminalSlot;
   const agentSessionId = session.agentSessionId;
-  const agentName = context.sessionManager.getSessionAgentName(sessionId);
-  const adapter = agentName ? agentRegistry.get(agentName) : undefined;
-  if (!slot || !adapter || !canResumeConversationById(adapter)) return 'failed';
-  // Nothing has reached it yet: its history row goes with its end, and its first turn gives it a
-  // conversation to move.
-  if (session.hasUserInput !== true || !agentSessionId) return 'deferred';
   const history = context.commandTerminalHistory;
-  if (!history?.find(session.projectId, agentSessionId)) return 'failed';
+  if (commandTerminalRestartability(context, sessionId) !== 'restart' || !slot || !history) return 'failed';
   if (!stillSafe()) return 'deferred';
   // The grid the desktop last gave it, so the new agent composes at the window's size.
   const grid = context.sessionManager.getLastDesktopDimensions(sessionId) ?? context.sessionManager.getDimensions(sessionId);
@@ -621,7 +669,7 @@ export async function restartCommandTerminalOn(
   // Taken in the same tick as the end: the end recorded the conversation as ended, and an Earlier
   // click or a phone's resume must not take it while the old agent exits.
   if (!history.claimResume(session.projectId, agentSessionId)) {
-    console.warn(`[COMMAND_TERMINAL] ${agentSessionId.slice(0, 8)} could not be claimed to move it to another account; it stays in Earlier`);
+    console.warn(`[COMMAND_TERMINAL] ${agentSessionId.slice(0, 8)} could not be claimed to restart it in its slot; it stays in Earlier`);
     return 'failed';
   }
   // Held from the end to the start, so no other start takes the slot while the old agent exits.
@@ -633,47 +681,69 @@ export async function restartCommandTerminalOn(
     // already in flight holds the last place); the conversation goes back to Earlier.
     history.settleResume(session.projectId, agentSessionId, null);
     const reason = error instanceof CommandTerminalStartError ? error.code : 'unknown';
-    console.warn(`[COMMAND_TERMINAL] ${agentSessionId.slice(0, 8)} lost its slot while moving to another account: ${reason}`);
+    console.warn(`[COMMAND_TERMINAL] ${agentSessionId.slice(0, 8)} lost its slot while restarting: ${reason}`);
     return 'failed';
   }
-  // Every way the move gives up after the end: the slot and the conversation go back. Both are
+  // Every way the restart gives up after the end: the slot and the conversation go back. Both are
   // no-ops once a start took them over.
-  const giveUp = (): 'failed' => {
+  let settled = false;
+  const giveUp = (): void => {
+    if (settled) return;
+    settled = true;
+    movingCommandTerminals.delete(sessionId);
     reservation.release();
     history.settleResume(session.projectId, agentSessionId, null);
-    return 'failed';
   };
   const move = { stopped: false };
   movingCommandTerminals.set(sessionId, move);
-  try {
-    await exited;
-    // The user pressed Stop on the window while the old agent exited: no terminal comes back.
-    if (move.stopped) return giveUp();
-    const result = await startCommandTerminal(
-      context,
-      { projectId: session.projectId, slot, resumeAgentSessionId: agentSessionId },
-      { processTag: session.taskId, grid, accountId, prompt, reservation },
-    );
-    if (move.stopped) {
-      context.sessionManager.endCommandTerminal(result.session.id);
-      return 'failed';
+  const startAgain = async (options: { accountId?: string; prompt?: string }): Promise<{ sessionId: string; accountId: string | null } | null> => {
+    if (settled) return null;
+    try {
+      await exited;
+      // Given up while the old agent exited: the slot and the conversation are already back.
+      if (settled) return null;
+      // The user pressed Stop on the window while the old agent exited: no terminal comes back.
+      if (move.stopped) {
+        giveUp();
+        return null;
+      }
+      settled = true;
+      const result = await startCommandTerminal(
+        context,
+        { projectId: session.projectId, slot, resumeAgentSessionId: agentSessionId },
+        { processTag: session.taskId, grid, reservation, ...(options.accountId ? { accountId: options.accountId } : {}), ...(options.prompt ? { prompt: options.prompt } : {}) },
+      );
+      if (move.stopped) {
+        context.sessionManager.endCommandTerminal(result.session.id);
+        return null;
+      }
+      return { sessionId: result.session.id, accountId: result.session.accountId ?? null };
+    } catch (error) {
+      // report-ok: startCommandTerminal reported anything unexpected before it threw; a refusal is an
+      // answer. The conversation stays in Earlier.
+      const reason = error instanceof CommandTerminalStartError ? error.code : (error instanceof Error ? error.name : 'unknown');
+      console.warn(`[COMMAND_TERMINAL] ${agentSessionId.slice(0, 8)} did not start again: ${reason}`);
+      // A start that ran released the reservation and settled the claim itself, and a second release or
+      // settle is a no-op; a throw before it leaves both held, so give them back either way.
+      settled = false;
+      giveUp();
+      return null;
+    } finally {
+      movingCommandTerminals.delete(sessionId);
     }
-    return result.session.accountId === accountId ? 'moved' : 'failed';
-  } catch (error) {
-    // report-ok: startCommandTerminal reported anything unexpected before it threw; a refusal is an
-    // answer. The conversation stays in Earlier.
-    const reason = error instanceof CommandTerminalStartError ? error.code : (error instanceof Error ? error.name : 'unknown');
-    console.warn(`[COMMAND_TERMINAL] ${agentSessionId.slice(0, 8)} did not start again on another account: ${reason}`);
-    return giveUp();
-  } finally {
-    movingCommandTerminals.delete(sessionId);
-  }
+  };
+  return {
+    accountId: session.accountId ?? null,
+    startAgain,
+    giveUp,
+  };
 }
 
 /**
- * Command Terminals a move to another account has ended and is starting again, by the ended
- * session's id. A Stop the window sends in that gap names the ended id, which `endCommandTerminal`
- * no longer finds, so it lands here instead and the move starts nothing.
+ * Command Terminals a restart in their slot (a move to another account, an update of a host's program)
+ * has ended and is to start again, by the ended session's id. A Stop the window sends in that gap names
+ * the ended id, which `endCommandTerminal` no longer finds, so it lands here instead and the restart
+ * starts nothing.
  */
 const movingCommandTerminals = new Map<string, { stopped: boolean }>();
 

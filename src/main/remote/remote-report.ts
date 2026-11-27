@@ -9,6 +9,10 @@
  * - `remoteHostReporter` (`remote_host`): everything about a host itself and its projects: a
  *   worktree path that cannot be mapped, taking a running agent back at startup, revealing a
  *   restored host's projects, putting a host's own files back.
+ * - `remoteProgramUpdateReporter` (`remote_program_update`): an update of the program on a host after
+ *   an update of the app (`program-update.ts`) that could not finish. The old program keeps running and
+ *   its agents are resumed, so what is lost is the update, until the next run tries again. Its `stage`
+ *   says which step stopped it: `hold`, `suspend`, `stop`, `reconnect` or `resume`.
  *
  * A drop is a state, never a failure (`.claude/rules/ssh-remote.md`), and the reporters hold to it
  * with no work at the call site: a host out of reach is `HostUnreachableError`, a request the host
@@ -29,3 +33,4 @@ import { createChokepointReporter, type ChokepointReporter } from '../analytics/
 
 export const remoteRelayReporter: ChokepointReporter = createChokepointReporter('remote_session_relay');
 export const remoteHostReporter: ChokepointReporter = createChokepointReporter('remote_host');
+export const remoteProgramUpdateReporter: ChokepointReporter = createChokepointReporter('remote_program_update');

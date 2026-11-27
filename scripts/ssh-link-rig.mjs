@@ -6,6 +6,7 @@
 //   node scripts/ssh-link-rig.mjs --work <empty scratch dir> [--drops 20] [--port 2252] [--keep]
 //   node scripts/ssh-link-rig.mjs --client removal --work <empty scratch dir> [--port 2252] [--keep]
 //   node scripts/ssh-link-rig.mjs --client mcp --work <empty scratch dir> [--port 2252] [--keep]
+//   node scripts/ssh-link-rig.mjs --client update --work <empty scratch dir> [--versions 0.0.1,0.0.2] [--port 2252] [--keep]
 //
 // `--image <name>` runs the host in another Docker image than `kangentic-ssh-rig` (an older glibc, see the Dockerfile).
 // `--jump` puts the host behind a second container that is the only way in, reached with `ssh -J` (ProxyJump).
@@ -14,6 +15,15 @@
 // editing its sign-in do on a real host. `--client mcp` runs ssh-mcp-rig.client.ts: what an agent's Kangentic
 // tool calls do while the link drops and the app is away, with the real bridge script run by the host's sh.
 // `--client quit` runs ssh-quit-rig.client.ts: an agent left running by a quit, taken back by a new boot.
+// `--client update` runs ssh-update-rig.client.ts: an app update replacing an older program on the host, with an
+// agent stopped between turns and resumed on the new one (#1227). It packs the same bundle under two versions,
+// `--versions <old>,<new>`: below 0.65.0 the old program is stopped by its pid, from 0.65.0 by `retireIfIdle`.
+// `--old-asset <tarball>` installs a released host archive as the old side instead (its version is the first of
+// `--versions`), so the old daemon runs the code that version shipped, as a real upgrade meets it.
+// `--claude-binary <claude>` adds a phase with a real Claude Code (a Linux x64 build, checked against its
+// release manifest by whoever downloaded it) on the old program, against the exit probe's local stand-in for the
+// Messages API (scripts/probe-ssh-rig/stub-anthropic-api.py), so no account is used: it must come back on the new
+// program through `--resume` with its conversation whole.
 //
 // It builds the host bundle and the rig client with esbuild, stages them with node-pty's Linux prebuild and a
 // pinned Node onto a fresh rig container, then runs the client. The client starts a PTY that prints a counter
@@ -54,7 +64,7 @@ const nullConfig = process.platform === 'win32' ? 'NUL' : '/dev/null';
 const forwardSlash = (value) => value.replaceAll('\\', '/');
 
 function parseArguments(argumentList) {
-  const parsed = { work: null, drops: 20, port: 2252, keep: false, client: 'link', image: 'kangentic-ssh-rig', jump: false };
+  const parsed = { work: null, drops: 20, port: 2252, keep: false, client: 'link', image: 'kangentic-ssh-rig', jump: false, versions: ['0.0.1', '0.0.2'] };
   for (let index = 0; index < argumentList.length; index += 1) {
     const argument = argumentList[index];
     if (argument === '--work') parsed.work = argumentList[(index += 1)];
@@ -64,6 +74,9 @@ function parseArguments(argumentList) {
     else if (argument === '--client') parsed.client = argumentList[(index += 1)];
     else if (argument === '--image') parsed.image = argumentList[(index += 1)];
     else if (argument === '--jump') parsed.jump = true;
+    else if (argument === '--versions') parsed.versions = argumentList[(index += 1)].split(',');
+    else if (argument === '--old-asset') parsed.oldAsset = path.resolve(argumentList[(index += 1)]);
+    else if (argument === '--claude-binary') parsed.claudeBinary = path.resolve(argumentList[(index += 1)]);
     else throw new Error(`Unknown argument: ${argument}`);
   }
   if (!parsed.work) throw new Error('--work is required. See the header comment.');
@@ -176,7 +189,12 @@ async function buildBundles() {
   const clientDirectory = path.join(repoRoot, '.kangentic', 'rig');
   fs.mkdirSync(clientDirectory, { recursive: true });
   const clientPath = path.join(clientDirectory, 'ssh-link-rig-client.js');
-  const clientSource = { removal: 'scripts/ssh-removal-rig.client.ts', mcp: 'scripts/ssh-mcp-rig.client.ts', quit: 'scripts/ssh-quit-rig.client.ts' }[options.client] ?? 'scripts/ssh-link-rig.client.ts';
+  const clientSource = {
+    removal: 'scripts/ssh-removal-rig.client.ts',
+    mcp: 'scripts/ssh-mcp-rig.client.ts',
+    quit: 'scripts/ssh-quit-rig.client.ts',
+    update: 'scripts/ssh-update-rig.client.ts',
+  }[options.client] ?? 'scripts/ssh-link-rig.client.ts';
   await esbuild.build({ ...common, plugins: [emptySentrySdk], entryPoints: [path.join(repoRoot, clientSource)], outfile: clientPath });
 
   const nodePtySource = fs.realpathSync(path.join(repoRoot, 'node_modules/node-pty'));
@@ -241,7 +259,7 @@ async function startRig(keyPath) {
  * prebuild in one tarball. Built here without Node's npm, headers or docs, and without its symlinks (an NTFS
  * checkout cannot make them). The installer sets the execute bits, so the archive need not carry them.
  */
-async function buildAsset(stage, nodeTarball) {
+async function buildAsset(stage, nodeTarball, version = '0.0.0-rig') {
   const assetRoot = path.join(workDirectory, 'asset-root');
   fs.rmSync(assetRoot, { recursive: true, force: true });
   fs.mkdirSync(path.join(assetRoot, 'node'), { recursive: true });
@@ -249,13 +267,35 @@ async function buildAsset(stage, nodeTarball) {
   const extracted = await execute(tarPath, ['-xJf', nodeTarball, '-C', path.join(assetRoot, 'node'), '--strip-components=1', ...excludes], { timeout: 300_000 });
   if (extracted.code !== 0) throw new Error(`could not unpack the Node tarball: ${extracted.stderr}`);
   fs.cpSync(stage, path.join(assetRoot, 'app'), { recursive: true });
-  const filePath = path.join(workDirectory, 'kangentic-host-rig-linux-x64.tar.gz');
+  const filePath = path.join(workDirectory, `kangentic-host-${version}-linux-x64.tar.gz`);
   fs.rmSync(filePath, { force: true });
   const packed = await execute(tarPath, ['-czf', filePath, '-C', assetRoot, '.'], { timeout: 300_000 });
   if (packed.code !== 0) throw new Error(`could not pack the host asset: ${packed.stderr}`);
   const sha256 = createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
   say(`built the host asset: ${(fs.statSync(filePath).size / 1e6).toFixed(1)} MB, sha256 ${sha256.slice(0, 12)}`);
-  return { version: '0.0.0-rig', sha256, arch: 'x64', filePath };
+  return { version, sha256, arch: 'x64', filePath };
+}
+
+/**
+ * A real Claude on the host for the update client: the binary, the Messages stand-in serving on a port it writes
+ * to a file, onboarding done and the working folder trusted, as a user's own setup would have them.
+ */
+async function stageClaude(container) {
+  const home = '/home/dev';
+  const rigFolder = `${home}/claude-rig`;
+  const workFolder = `${home}/claude-work`;
+  await docker('exec', container, 'mkdir', '-p', `${home}/bin`, rigFolder, workFolder);
+  await docker('cp', options.claudeBinary, `${container}:${home}/bin/claude`);
+  await docker('cp', path.join(repoRoot, 'scripts/probe-ssh-rig/stub-anthropic-api.py'), `${container}:${rigFolder}/stub-anthropic-api.py`);
+  await docker('cp', path.join(repoRoot, 'scripts/probe-claude-exit-paths-linux.py'), `${container}:${rigFolder}/probe.py`);
+  const claudeState = { hasCompletedOnboarding: true, numStartups: 1, projects: { [workFolder]: { hasTrustDialogAccepted: true } } };
+  const written = await execute('docker', ['exec', '-i', container, 'sh', '-c', `cat > ${home}/.claude.json`], { input: JSON.stringify(claudeState) });
+  if (written.code !== 0) throw new Error(`could not write the host's ~/.claude.json: ${written.stderr}`);
+  await docker('exec', container, 'chown', '-R', 'dev:dev', `${home}/bin`, rigFolder, workFolder, `${home}/.claude.json`);
+  await docker('exec', container, 'chmod', '755', `${home}/bin/claude`);
+  await docker('exec', '-d', '-u', 'dev', container, 'python3', '-I', `${rigFolder}/stub-anthropic-api.py`, `${rigFolder}/port`, `${rigFolder}/probe.py`);
+  say('staged a real Claude and the Messages stand-in on the host');
+  return { binary: `${home}/bin/claude`, portFile: `${rigFolder}/port`, cwd: workFolder };
 }
 
 async function main() {
@@ -267,6 +307,19 @@ async function main() {
   fs.rmSync(knownHosts, { force: true });
   try {
     const asset = await buildAsset(stage, nodeTarball);
+    // The update client installs the same bundle under an older version and the app's, so the host can run the old one.
+    const releasedAsset = (filePath) => ({
+      version: options.versions[0],
+      sha256: createHash('sha256').update(fs.readFileSync(filePath)).digest('hex'),
+      arch: 'x64',
+      filePath,
+    });
+    const assets = options.client === 'update'
+      ? {
+        old: options.oldAsset ? releasedAsset(options.oldAsset) : await buildAsset(stage, nodeTarball, options.versions[0]),
+        current: await buildAsset(stage, nodeTarball, options.versions[1]),
+      }
+      : undefined;
     await startRig(keyPath);
     // Straight to the container's published port, or through a jump host to a target that has none. OpenSSH
     // applies a command-line option to the destination only, never to a jump host, so a jump goes by a config
@@ -291,6 +344,8 @@ async function main() {
         '-T', connection.destination,
       ],
       asset,
+      ...(assets ? { assets } : {}),
+      ...(options.client === 'update' && options.claudeBinary ? { claude: await stageClaude(options.jump ? TARGET_CONTAINER : CONTAINER) } : {}),
       drops: options.drops,
       // What the removal client needs on top: the same connection with no key or destination in it.
       sshKeygenPath,
