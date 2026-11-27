@@ -51,6 +51,7 @@ import {
   type SshSetupDeps,
 } from './ssh-setup';
 import { RefusalError } from '../../shared/refusal';
+import { isHostNotADirectoryError } from './protocol/messages';
 
 const MAX_HOST_NAME_LENGTH = 60;
 const SIGN_IN_PROOF_TIMEOUT_MS = 30_000;
@@ -526,7 +527,17 @@ export class SshHostAdmin {
     if (!isInsideHome(resolved, info.home)) {
       throw new RefusalError(`${resolved} is outside the home folder on the host (${info.home}). Kangentic works only in folders inside it.`);
     }
-    const [folder, git] = await this.deps.hosting.hostService.pathPresence(hostId, [resolved, `${resolved}/.git`]);
+    let presence: Array<'present' | 'absent'>;
+    try {
+      presence = await this.deps.hosting.hostService.pathPresence(hostId, [resolved, `${resolved}/.git`]);
+    } catch (error) {
+      // The helper reads only ENOENT as absent. ENOTDIR means the path, or a folder in it, is a file on the
+      // host (DESKTOP-5J). That is the user's answer to fix, so it is a refusal, and it carries no cause:
+      // ENOTDIR says all there is to say.
+      if (isHostNotADirectoryError(error)) throw new RefusalError(`${resolved} is not a folder on that host.`);
+      throw error;
+    }
+    const [folder, git] = presence;
     return { exists: folder === 'present', path: resolved, isGitRepo: git === 'present' };
   }
 
@@ -589,7 +600,15 @@ export class SshHostAdmin {
   private async excludeKangenticFolder(hostId: string, projectFolder: string): Promise<void> {
     const service = this.deps.hosting.hostService;
     const excludeFile = `${projectFolder}/.git/info/exclude`;
-    const [infoFolder] = await service.pathPresence(hostId, [`${projectFolder}/.git/info`]);
+    let infoFolder: 'present' | 'absent';
+    try {
+      [infoFolder] = await service.pathPresence(hostId, [`${projectFolder}/.git/info`]);
+    } catch (error) {
+      // A `.git` that is a file (a worktree or a submodule) makes the helper's look at `.git/info` fail with
+      // ENOTDIR, since it reads only ENOENT as absent (DESKTOP-5J). That is the same answer: no info folder.
+      if (isHostNotADirectoryError(error)) return;
+      throw error;
+    }
     // A `.git` that is a file (a worktree or a submodule) has no info folder here: leave it alone.
     if (infoFolder !== 'present') return;
     const current = await service.readFile(hostId, excludeFile);

@@ -37,6 +37,8 @@ import type { Project, SshHost } from '../../src/shared/types';
 import { RefusalError } from '../../src/shared/refusal';
 import { isExpectedFailure } from '../../src/main/analytics/handled-report';
 import { HostUnreachableError } from '../../src/main/remote/link/link-hub';
+import { isHostNotADirectoryError } from '../../src/main/remote/protocol/messages';
+import { fromPtyHostError, toPtyHostError } from '../../src/main/pty/host/protocol';
 import type { RunProgram, SshSetupDeps } from '../../src/main/remote/ssh-setup';
 
 const KEY_BLOB = Buffer.from('a real looking public key blob, long enough to hash').toString('base64');
@@ -1401,6 +1403,61 @@ describe('preparing a remote project', () => {
     rig.hostService.pathPresence.mockResolvedValue(['absent', 'absent']);
 
     await expect(rig.admin.prepareRemoteProject(input)).rejects.toThrow('/home/dev/api does not exist on that host');
+
+    expect(fs.readdirSync(shellRoot)).toEqual([]);
+  });
+
+  it('adds a git worktree or submodule folder, whose .git is a file, and leaves its git alone (DESKTOP-5J)', async () => {
+    const rig = rigWithHostAndGit();
+    // The probe sees the folder and its `.git`; the look at `.git/info` fails with ENOTDIR, as the helper
+    // sends it for a `.git` that is a file.
+    rig.hostService.pathPresence
+      .mockResolvedValueOnce(['present', 'present'])
+      .mockRejectedValueOnce(Object.assign(new Error('ENOTDIR: not a directory, access'), { code: 'ENOTDIR' }));
+
+    const prepared = await rig.admin.prepareRemoteProject(input);
+
+    expect(path.dirname(prepared.path)).toBe(shellRoot);
+    expect(fs.statSync(prepared.path).isDirectory()).toBe(true);
+    expect(prepared.remote).toEqual({ hostId: 'h1', path: '/home/dev/api' });
+    expect(rig.hostService.writeFiles).not.toHaveBeenCalled();
+  });
+
+  it('refuses a path that is a file on the host as not a folder, and makes no shell folder', async () => {
+    const rig = rigWithHostAndGit();
+    rig.hostService.pathPresence.mockRejectedValueOnce(Object.assign(new Error('ENOTDIR: not a directory, access'), { code: 'ENOTDIR' }));
+
+    await expect(rig.admin.prepareRemoteProject(input)).rejects.toThrow('/home/dev/api is not a folder on that host.');
+
+    expect(fs.readdirSync(shellRoot)).toEqual([]);
+  });
+
+  it('passes any other failure of the folder look up unchanged, never as a refusal', async () => {
+    const rig = rigWithHostAndGit();
+    const denied = Object.assign(new Error('EACCES: permission denied, access'), { code: 'EACCES' });
+    rig.hostService.pathPresence.mockRejectedValueOnce(denied);
+
+    const failure = await rig.admin.prepareRemoteProject(input).then(() => null, (error: unknown) => error);
+
+    expect(failure).toBe(denied);
+    expect(failure).not.toBeInstanceOf(RefusalError);
+    expect(fs.readdirSync(shellRoot)).toEqual([]);
+  });
+
+  it('keeps the ENOTDIR code through the transport between the helper and the pty host, so the refusal still applies', () => {
+    const sent = Object.assign(new Error('ENOTDIR: not a directory, access'), { code: 'ENOTDIR' });
+
+    expect(isHostNotADirectoryError(fromPtyHostError(toPtyHostError(sent)))).toBe(true);
+    expect(isHostNotADirectoryError(fromPtyHostError(toPtyHostError(Object.assign(new Error('EACCES'), { code: 'EACCES' }))))).toBe(false);
+  });
+
+  it('still fails, and removes its shell folder, when the .git/info look fails for any other reason', async () => {
+    const rig = rigWithHostAndGit();
+    rig.hostService.pathPresence
+      .mockResolvedValueOnce(['present', 'present'])
+      .mockRejectedValueOnce(Object.assign(new Error('EACCES: permission denied, access'), { code: 'EACCES' }));
+
+    await expect(rig.admin.prepareRemoteProject(input)).rejects.toThrow('EACCES');
 
     expect(fs.readdirSync(shellRoot)).toEqual([]);
   });

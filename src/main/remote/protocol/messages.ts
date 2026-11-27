@@ -155,6 +155,15 @@ export function isHostCommandNotStarted(error: string): boolean {
 }
 
 /**
+ * Whether a `pathPresence` ask failed because a folder in one of its paths is a file on the host (ENOTDIR). The
+ * helper reads only ENOENT as absent, so `<folder>/.git/info` under a `.git` that is a file (a worktree, a
+ * submodule) rejects. Read by the error's `code`, which survives both hops back to main.
+ */
+export function isHostNotADirectoryError(error: unknown): boolean {
+  return error instanceof Error && (error as NodeJS.ErrnoException).code === 'ENOTDIR';
+}
+
+/**
  * What main cannot know of a host and must not guess: where the user's files are and which shell a
  * login shell spawn lands in. The shell decides how a typed command is quoted and cleared.
  */
