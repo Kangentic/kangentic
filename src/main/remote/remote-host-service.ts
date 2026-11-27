@@ -14,6 +14,7 @@ import { createSshRunner, type SshRunner } from './link/ssh-run';
 import type { HelperMethod, HelperRequestMap, HelperSessionRecord, HostFileSearch, HostFileWrite, HostInfo, RemoteHostConnection, RemoteHostRequest, RemoteSessionRoute } from './protocol/messages';
 import { assertSafeDestination } from './ssh-client';
 import { HOST_NOT_CONNECTED_SENTENCE, HOST_UNREACHABLE_ERROR_NAME, HostUnreachableError } from './link/host-unreachable-error';
+import { noteHostRequestWait } from './link/host-request-unanswered-error';
 import { RefusalError } from '../../shared/refusal';
 
 export { assertSafeDestination, InvalidSshDestinationError } from './ssh-client';
@@ -353,11 +354,15 @@ export class RemoteHostService {
    */
   private async sendHelper(request: HelperRequest): Promise<unknown> {
     await this.whenReady(request.hostId);
+    const sentAt = Date.now();
     try {
       return await this.deps.send(request);
     } catch (error) {
       // By name: the router's refusal crosses the pty host's transport as a plain Error.
       if (error instanceof Error && error.name === HOST_UNREACHABLE_ERROR_NAME) throw this.notConnectedError(request.hostId, error);
+      // The copy that crossed the wire names neither the call nor the wait, so a launch report of a
+      // request the host never answered can say both (Sentry DESKTOP-4N).
+      noteHostRequestWait(error, { method: request.method, waitedMs: Date.now() - sentAt });
       throw error;
     }
   }

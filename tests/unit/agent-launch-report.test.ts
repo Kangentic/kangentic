@@ -32,6 +32,7 @@ import {
   logLaunchStep,
   preflightTagsOf,
   noteSessionIdCaptureWindowPassed,
+  placeTagOf,
   reportLaunchFailure,
   reportLaunchRecovered,
   reportPreflightFailure,
@@ -53,6 +54,8 @@ import os from 'node:os';
 import path from 'node:path';
 import conptyCaptures from '../fixtures/conpty-cmd-failures.json';
 import type { ManagedSession } from '../../src/main/pty/session-registry';
+import { HostRequestUnansweredError, noteHostRequestWait } from '../../src/main/remote/link/host-request-unanswered-error';
+import { fromPtyHostError, toPtyHostError } from '../../src/main/pty/host/protocol';
 import { SESSION_ID_CAPTURE_SOURCES } from '../../src/main/pty/lifecycle/session-id-manager';
 import type { AgentParser, SessionIdHookLoadEvidence, SessionIdLoginEvidence, SessionIdStoreEvidence, StoredCliTarget } from '../../src/shared/types';
 
@@ -146,6 +149,25 @@ describe('cliVersionTag', () => {
     ['a-very-private-branch-name'],
   ])('reads %j as unknown', (raw) => {
     expect(cliVersionTag(raw)).toBe('unknown');
+  });
+});
+
+describe('placeTagOf', () => {
+  const sshTarget = { kind: 'ssh', hostId: 'host-1', home: '/home/dev', shellName: 'bash', localHome: '' } as StoredCliTarget;
+  const wslTarget = { kind: 'wsl', distro: 'Ubuntu' } as StoredCliTarget;
+
+  it.each<[string, Partial<ManagedSession>, string]>([
+    ['a host id alone', { hostId: 'host-1' }, 'ssh'],
+    ['an ssh CLI target with no host id', { hostId: null, cliTarget: sshTarget }, 'ssh'],
+    ['a wsl CLI target under a native shell', { cliTarget: wslTarget, shell: 'pwsh' }, 'wsl'],
+    ['a wsl shell spec with no CLI target', { shell: 'wsl -d Ubuntu' }, 'wsl'],
+    ['none of them', { shell: '/bin/zsh' }, 'local'],
+  ])('reads %s as %s', (_label, overrides, place) => {
+    expect(placeTagOf(session(overrides))).toBe(place);
+  });
+
+  it('puts the place on an ssh session\'s launch tags', () => {
+    expect(launchTagsOf(session({ hostId: 'host-1' }), NOW)).toMatchObject({ place: 'ssh' });
   });
 });
 
@@ -831,6 +853,7 @@ describe('the session id capture reports', () => {
       settled_by: 'removed',
       session_status: 'running',
       agent_ran_for_s: 'not_run',
+      agent_life_s: 'not_run',
       fs_scan: 'empty',
       id_store: 'present',
       login: 'unknown',
@@ -1413,6 +1436,7 @@ describe('the session id capture reports', () => {
         settled_by: 'ceiling',
         session_status: 'exited',
         agent_ran_for_s: '15-30',
+        agent_life_s: '15-30',
         fs_scan: 'empty',
         id_store: 'absent',
         login: 'signed_in',
@@ -1422,6 +1446,7 @@ describe('the session id capture reports', () => {
         exit_by: 'pty',
         output_class: 'other',
         other_from: 'unknown',
+        place: 'local',
         launcher: 'none',
         command_head: 'unknown',
         command_head_since_detection: 'unknown',
@@ -1644,6 +1669,96 @@ describe('the session id capture reports', () => {
     ])('keeps the capture report for a session that %s', async (_label, overrides) => {
       await settleAtCeiling({ agentRanAt: STARTED_AT_MS + 6_000, exitedAt: STARTED_AT_MS + 122_000, ...overrides });
       expect(sentNames()).toEqual(['AgentSessionIdNotCapturedError']);
+    });
+
+    // Sentry DESKTOP-36 on 0.64.0: a Codex dead at start whose shell the sweep retired
+    // measured past the minute, because the shell's repaints kept its last output moving.
+    describe('a death at start the minute missed (Sentry DESKTOP-36)', () => {
+      const sweptLate = {
+        agentRanAt: STARTED_AT_MS + 5_000,
+        lastOutputAt: STARTED_AT_MS + 95_000,
+        exitedAt: STARTED_AT_MS + 125_000,
+        intentionalExit: true,
+        overrideExitCode: 0,
+      } satisfies Partial<ManagedSession>;
+      const cmdCannotFindThePath = 'Microsoft Windows [Version 10.0.26200]\r\nThe system cannot find the path specified.\r\n';
+
+      it('sends output that names a failure to the launch report, and no capture report', async () => {
+        await settleAtCeiling(sweptLate, { readOutput: async () => cmdCannotFindThePath });
+
+        expect(sentNames()).toEqual(['AgentLaunchAgentExitedError']);
+        expect(reportHandledError.mock.calls[0][1]).toMatchObject({ cause: 'no_conversation', output_class: 'no_such_file', exit_by: 'sweep', agent_life_s: '60-300' });
+      });
+
+      it('keeps the capture report for output that names nothing, now with what it printed and how it ended', async () => {
+        await settleAtCeiling(sweptLate, { readOutput: async () => 'something Codex printed before it left\r\n' });
+
+        expect(sentNames()).toEqual(['AgentSessionIdNotCapturedError']);
+        expect(reportHandledError.mock.calls[0][1]).toMatchObject({
+          source: 'agent_session_id',
+          output_class: 'other',
+          other_from: 'unknown',
+          exit_by: 'sweep',
+          exit_code: expect.any(String),
+          agent_life_s: '60-300',
+          agent_ran_for_s: '60-300',
+        });
+      });
+
+      it('still reads the output of an agent whose capture report is spent', async () => {
+        await settleAtCeiling({ id: 'session-2-long-id' }, { store: 'present' });
+        expect(sentNames()).toEqual(['AgentSessionIdNotCapturedError']);
+        const readOutput = vi.fn(async () => cmdCannotFindThePath);
+
+        await settleAtCeiling(sweptLate, { readOutput });
+
+        expect(readOutput).toHaveBeenCalledTimes(1);
+        expect(sentNames()).toEqual(['AgentSessionIdNotCapturedError', 'AgentLaunchAgentExitedError']);
+      });
+
+      // A store that holds a conversation means the agent did make one, so even output that
+      // names a failure is no death at start with nothing to capture.
+      it('keeps the capture report, with the identified class, when the agent\'s store holds a conversation', async () => {
+        await settleAtCeiling(sweptLate, { store: 'present', readOutput: async () => cmdCannotFindThePath });
+
+        expect(sentNames()).toEqual(['AgentSessionIdNotCapturedError']);
+        expect(reportHandledError.mock.calls[0][1]).toMatchObject({
+          source: 'agent_session_id',
+          id_store: 'present',
+          output_class: 'no_such_file',
+          exit_by: 'sweep',
+        });
+      });
+
+      it('files the capture report as unreadable when the read of its output fails', async () => {
+        await settleAtCeiling(sweptLate, { readOutput: async () => { throw new Error('host gone'); } });
+
+        expect(sentNames()).toEqual(['AgentSessionIdNotCapturedError']);
+        expect(reportHandledError.mock.calls[0][1]).toMatchObject({ output_class: 'unreadable' });
+        expect(reportHandledError.mock.calls[0][1]).not.toHaveProperty('other_from');
+      });
+
+      it('files the capture report as not_read when there is no reader for its output', async () => {
+        await settleAtCeiling(sweptLate, { readOutput: null });
+
+        expect(sentNames()).toEqual(['AgentSessionIdNotCapturedError']);
+        expect(reportHandledError.mock.calls[0][1]).toMatchObject({ output_class: 'not_read' });
+        expect(reportHandledError.mock.calls[0][1]).not.toHaveProperty('other_from');
+      });
+    });
+
+    // The agent ran and no end was recorded: the tag says whether its session is still up.
+    it.each<[string, Partial<ManagedSession>, string]>([
+      ['running', { status: 'running' }, 'running'],
+      ['not running', { status: 'exited' }, 'unknown'],
+    ])('reads agent_life_s as %s when the agent ran and no exit was recorded', async (_label, overrides, expected) => {
+      await settleAtCeiling(
+        { agentRanAt: STARTED_AT_MS + 5_000, exitedAt: undefined, ...overrides },
+        { sessionStatus: overrides.status },
+      );
+
+      expect(sentNames()).toEqual(['AgentSessionIdNotCapturedError']);
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({ agent_life_s: expected });
     });
 
     // Measured on Codex 0.171.0 (task #1182): a project config it refused ended it
@@ -2141,6 +2256,57 @@ describe('reportPreflightFailure', () => {
     reportHandledError.mockImplementationOnce(() => { throw new Error('sentry is down'); });
 
     expect(() => reportPreflightFailure({ ...base, error: new Error('git failed') })).not.toThrow();
+  });
+
+  describe('a host request nobody answered (Sentry DESKTOP-4N)', () => {
+    // What main holds: the link's rejection, flattened by the pty host's transport and rebuilt.
+    const overTheWire = (error: Error): Error => fromPtyHostError(toPtyHostError(error));
+
+    it('files nothing for a request the link was stopped under, bare or wrapped, and still counts it', () => {
+      const stopped = overTheWire(new HostRequestUnansweredError('the link stopped', 'link_stopped'));
+      reportPreflightFailure({ ...base, cause: 'worktree_other', error: stopped });
+      reportPreflightFailure({ ...base, cause: 'worktree_other', error: new Error('could not make the worktree', { cause: overTheWire(new HostRequestUnansweredError('the link stopped', 'link_stopped')) }) });
+
+      expect(reportHandledError).not.toHaveBeenCalled();
+      expect(trackEvent).toHaveBeenCalledWith('spawn_failed', { agent: 'claude', reason: 'worktree_other' });
+    });
+
+    it('still files a request whose wait ran out, with the helper call and how long main waited', () => {
+      const unanswered = overTheWire(new HostRequestUnansweredError('the host did not answer runCommand within 250 s', 'no_answer'));
+      noteHostRequestWait(unanswered, { method: 'runCommand', waitedMs: 250_000 });
+      reportPreflightFailure({ ...base, cause: 'worktree_other', error: unanswered });
+
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({
+        cause: 'worktree_other',
+        error_type: 'HostRequestUnansweredError',
+        errno: 'HOST_NO_ANSWER',
+        host_method: 'runCommand',
+        ran_for: '60-300',
+      });
+    });
+
+    it('sends how long main waited but no host_method for a method name that is not a plain word', () => {
+      const unanswered = overTheWire(new HostRequestUnansweredError('the host did not answer', 'no_answer'));
+      noteHostRequestWait(unanswered, { method: 'bad method;1', waitedMs: 1_000 });
+      reportPreflightFailure({ ...base, cause: 'worktree_other', error: unanswered });
+
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+      const eventTags = reportHandledError.mock.calls[0][1];
+      expect(eventTags).toMatchObject({ errno: 'HOST_NO_ANSWER', ran_for: '1-5' });
+      expect(eventTags).not.toHaveProperty('host_method');
+      expect(JSON.stringify(eventTags)).not.toContain('bad method');
+    });
+
+    it('reads the call and the wait off a wrapper\'s cause, and sends no host text', () => {
+      const unanswered = overTheWire(new HostRequestUnansweredError('the host did not answer runCommand within 250 s', 'no_answer'));
+      noteHostRequestWait(unanswered, { method: 'runCommand', waitedMs: 400_000 });
+      reportPreflightFailure({ ...base, cause: 'worktree_other', error: new Error('lab-box: could not make the worktree', { cause: unanswered }) });
+
+      const eventTags = reportHandledError.mock.calls[0][1];
+      expect(eventTags).toMatchObject({ host_method: 'runCommand', ran_for: '>300' });
+      expect(JSON.stringify(eventTags)).not.toContain('lab-box');
+    });
   });
 });
 

@@ -187,6 +187,58 @@ describe('handleSpawnFailure', () => {
     }
   });
 
+  it('diagnoses a host spawn without this computer\'s disk and names the host call that failed (DESKTOP-5T)', () => {
+    vi.mocked(recordSpawnFailure).mockClear();
+    vi.mocked(diagnoseSpawnFailure).mockClear();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { context } = makeContext();
+    try {
+      const attempt: SpawnAttempt = {
+        ...makeAttempt({ remote: { hostId: 'host-a', cwd: '/home/dev/api', shellName: 'bash' }, agentName: 'claude', startPath: 'resume' }),
+        shellExe: '$LOGIN_SHELL',
+        remoteStep: 'register',
+      };
+      handleSpawnFailure(new Error('ENOENT: no such file or directory, mkdir'), attempt, context);
+
+      expect(diagnoseSpawnFailure).toHaveBeenCalledWith(expect.objectContaining({ remote: true }));
+      expect(recordSpawnFailure).toHaveBeenCalledWith(expect.objectContaining({
+        remoteStep: 'register',
+        launchTags: expect.objectContaining({ place: 'ssh', start_path: 'resume' }),
+      }));
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it('tags a local spawn with its place and no host step', () => {
+    vi.mocked(recordSpawnFailure).mockClear();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { context } = makeContext();
+    try {
+      handleSpawnFailure(new Error('File not found: '), makeAttempt(), context);
+
+      const [recorded] = vi.mocked(recordSpawnFailure).mock.calls[0];
+      expect(recorded.launchTags).toMatchObject({ place: 'local' });
+      expect(recorded.remoteStep).toBeUndefined();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it('tags a spawn on the default WSL shell as WSL, from the shell it resolved', async () => {
+    vi.mocked(recordSpawnFailure).mockClear();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { context } = makeContext();
+    try {
+      // The input names no shell: the configured default resolved to a WSL distro.
+      handleSpawnFailure(new Error('File not found: '), { ...makeAttempt(), shell: 'wsl -d Ubuntu', shellExe: 'wsl.exe' }, context);
+
+      expect(vi.mocked(recordSpawnFailure).mock.calls[0][0].launchTags).toMatchObject({ place: 'wsl' });
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   it('seeds the ring with the carried scrollback alone when the diagnosis has no hint to add', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { context } = makeContext();

@@ -187,7 +187,9 @@ itself the signal that the defaults are right.
 `source` discriminates the failure path: `uncaughtException`, `unhandledRejection`,
 `render-process-gone` (extras: `reason`, `exitCode`), `error_boundary` (extras: `boundary`,
 `panel`), `updater`, `pty_spawn` (extras: `shell`, a name from a fixed list and never a path,
-`cwdExists`, `shellExists`, `errno`, `platform`, `arch`; a spawn an SSH host's link refused sends
+`cwdExists`, `shellExists`, `errno`, `platform`, `arch`; for a spawn on an SSH host `shell` is
+`host_login` and `cwdExists` and `shellExists` are `unknown`, since this computer's disk says
+nothing about the host; a spawn an SSH host's link refused sends
 the fixed message `A remote host link refused the spawn`, because its text names the host), `pty_spawn_cwd_missing` (extra: `platform`),
 `worktree_removal` (a worktree the task's leftover reap had left a process in could not be removed,
 or a Done move's removal on Windows failed `EBUSY` on the folder itself with no holder any probe

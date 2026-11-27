@@ -15,6 +15,7 @@ import {
   sshArgsFor,
   type RemoteHostServiceDeps,
 } from '../../src/main/remote/remote-host-service';
+import { hostRequestWaitOf } from '../../src/main/remote/link/host-request-unanswered-error';
 import { HOST_NOT_CONNECTED_SENTENCE, HostUnreachableError } from '../../src/main/remote/link/host-unreachable-error';
 import type { SshHost } from '../../src/shared/types';
 import type { RemoteHostRequest } from '../../src/main/remote/protocol/messages';
@@ -472,6 +473,21 @@ describe('asking a host', () => {
     const { service } = makeService({ send: vi.fn(async () => { throw new Error('the link is down'); }) });
 
     await expect(service.pathPresence('host-a', ['/home/dev/api'])).rejects.toThrow('the link is down');
+  });
+
+  it('names the helper call and the wait on a request the host never answered, for the launch report (Sentry DESKTOP-4N)', async () => {
+    const unanswered = Object.assign(new Error('the host did not answer runCommand within 250 s'), { name: 'HostRequestUnansweredError', code: 'HOST_NO_ANSWER' });
+    const { service } = makeService({ send: vi.fn(async () => { throw unanswered; }) });
+
+    const rejected = await service.runCommand('host-a', { file: 'sh', args: [], timeoutMs: 240_000 }).then(() => null, (error: unknown) => error);
+
+    expect(rejected).toBe(unanswered);
+    expect(hostRequestWaitOf(rejected)).toMatchObject({ method: 'runCommand' });
+    // Any other failure is passed on as it was.
+    const other = new Error('the link is down');
+    const { service: plain } = makeService({ send: vi.fn(async () => { throw other; }) });
+    await expect(plain.pathPresence('host-a', ['/home/dev/api'])).rejects.toBe(other);
+    expect(hostRequestWaitOf(other)).toBeNull();
   });
 
   it('never turns a failed read of the host\'s ports into "nothing is listening"', async () => {

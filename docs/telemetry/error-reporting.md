@@ -715,7 +715,9 @@ in one Sentry org, one triage surface.
     a request the host never answered rejects with `HostRequestUnansweredError`
     (`remote/link/host-request-unanswered-error.ts`) and an unreachable host with
     `HostUnreachableError`, both expected classes, so a report fires only for a helper's failed
-    answer and for Kangentic's own errors. Before the first class existed, a dropped link
+    answer and for Kangentic's own errors. The first's `code` says which of its two outcomes it
+    was: `HOST_LINK_STOPPED` (the link was stopped with the request out) or `HOST_NO_ANSWER` (its
+    wait ran out). Before the first class existed, a dropped link
     rejected its pending requests with a plain `Error`, and any reporter here would have filed
     every drop. `connect_install` reports what only Kangentic can fix: a host program that is
     missing or fails its checksum (`HostProgramMissingError`, `HostProgramMismatchError`), an
@@ -1025,7 +1027,11 @@ in one Sentry org, one triage surface.
     `session_status` and `agent_ran_for_s`: a seconds bucket from the first sign the agent ran to
     the session's end, `not_run` when it never showed it ran, `running` when the session is still
     up at the ceiling, and `unknown` when the ceiling finds it no longer running with no exit
-    recorded. A removed session whose agent ran always gets a bucket. An agent that
+    recorded. A removed session whose agent ran always gets a bucket. It also sends
+    `agent_life_s`: a seconds bucket from the first sign the agent ran to when it ended by
+    `agentEndedAt`, which for a shell the sweep retired is its last output, with `not_run`,
+    `running` and `unknown` as for `agent_ran_for_s`. When its output was read (below), it adds
+    `output_class`, `other_from`, `exit_code` and `exit_by`. An agent that
     exited seconds after it started had no conversation to capture, and one still running had one
     the capture missed (the DESKTOP-36 recurrence on 0.60.0 could not say which). The end is the
     PTY's exit, or the removal when that came first, so the bucket is an upper bound on the
@@ -1060,7 +1066,16 @@ in one Sentry org, one triage surface.
     `cleanup_worktree` action's or a user's stop). The agent-absence sweep's retirement still
     counts: it ends a shell whose agent had already exited, and marks it with `overrideExitCode`
     0. Its agent ran and ended under 60 s later, counted in milliseconds; no prompt was seen;
-    and its store is not `present`. Such a run had no conversation to capture.
+    and its store is not `present`. Such a run had no conversation to capture. The minute is not
+    the gate for reading the output. The output is read for every never-captured session that
+    settled at the ceiling with its PTY exited on its own and no prompt seen, whatever the clock
+    says. The sweep retires a shell only after two looks a minute apart, and a shell's repaints
+    keep its last output moving, so a Codex dead seconds in measured past the minute (DESKTOP-36).
+    If that output names a failure (an identified class, `isIdentifiedFailureClass`) and the
+    store is not `present`, it goes to the launch report as `agent_exited` / `no_conversation`,
+    as an agent under the minute does. Output that names nothing keeps the 60 s rule. An agent
+    whose capture report is already spent still has its output read. The under-a-minute case
+    still claims its launch report before the read answers.
     A terminal nobody used sends nothing either. A never-captured session started with no opening
     prompt (`opening_prompt` `none`), that no prompt reached (`prompt_seen` `no`), and whose store
     reads `absent`, had no conversation, so there was no id to capture. This is DESKTOP-36's
@@ -1264,7 +1279,8 @@ in one Sentry org, one triage surface.
   otherwise emit only a sanitized count - updater structural failures (`source: updater`,
   fingerprinted `['updater', name, code]` when the error has a code, else grouped by stack), PTY
   spawn failures (`source: pty_spawn`), an agent history view Kangentic did not recognize
-  (`source: history_view`, tag `agent`, fingerprinted `['history-view', agent]`), a failed read of
+  (`source: history_view`, tags `agent`, `agent_cli_version` (the vetted `cliVersionTag`) and
+  `place` (`local`, `wsl`, `ssh`), fingerprinted `['history-view', agent]`), a failed read of
   the global database (`source: global_db_read`, tag `operation`), a Kangentic utility worker that has crashed past its restart cap
   (`source: utility_process`, with `service`, `exitCode`, `crashCount`, and `cause`, fingerprinted
   `['utility-process-latched', service, cause]`, its stderr tail run through `redactEventText`; an embed
@@ -1374,10 +1390,10 @@ in one Sentry org, one triage surface.
   | `stage` | Fires when | Error name |
   |---|---|---|
   | `preflight` | A worktree, checkout, session folder or adapter step failed before any PTY, or a Command Terminal, workflow agent or startup recovery start threw | `AgentLaunchPreflightError` |
-  | `pty_spawn` | The shell did not spawn. Its `source` stays `pty_spawn` | `PtyOutputNotConnectedError`, or the plain `Error` every earlier issue was grouped on |
+  | `pty_spawn` | The shell did not spawn, or a spawn on an SSH host failed at its registration or its PTY spawn there (`remote_step`). Its `source` stays `pty_spawn` | `PtyOutputNotConnectedError`, or the plain `Error` every earlier issue was grouped on |
   | `shell_exit` | The shell exited on its own with no sign the agent ran | `AgentLaunchShellExitError` |
   | `never_started` | The sweep, or a timer where the sweep cannot judge, found no agent and no sign one ran; or a launch on an SSH host whose adapter reports its start and whose output named its cause | `AgentLaunchNeverStartedError` |
-  | `agent_exited` | A CLI named its own startup failure (`describeStartupFailure`), or a never-captured session's agent ran, then ended on its own under a minute later with no prompt, no session store and no deliberate kill (cause `no_conversation`, sent from the `agent_session_id` report with its tags, the launch tags below, `output_class`, `other_from`, `exit_code` and `exit_by`). For a shell the agent-absence sweep retired, the agent's end is the shell's last output, since the sweep can kill it minutes later. A session whose launch already reported sends no capture report | `AgentLaunchAgentExitedError` |
+  | `agent_exited` | A CLI named its own startup failure (`describeStartupFailure`), or a never-captured session's agent ran, then ended on its own under a minute later, or later with output that names a failure, with no prompt, no session store and no deliberate kill (cause `no_conversation`, sent from the `agent_session_id` report with its tags, the launch tags below, `output_class`, `other_from`, `exit_code` and `exit_by`). For a shell the agent-absence sweep retired, the agent's end is the shell's last output, since the sweep can kill it minutes later. A session whose launch already reported sends no capture report | `AgentLaunchAgentExitedError` |
   | `abandoned` | A person, or a quit an update or the OS began, ended a launch that had shown nothing for 15 s | `AgentLaunchAbandonedError` |
   | `pty_port` | A renderer that stays open never got its terminal port | `PtyPortDeliveryError` |
 
@@ -1387,7 +1403,9 @@ in one Sentry org, one triage surface.
   sending from those lines. A retry that worked sends one `AgentLaunchRecoveredError`, tagged
   `retry: recovered`, so a recovered failure still shows.
 
-  An event carries `stage`, `cause`, `platform`, `agent`, `agent_cli_version`, `start_path` (`board`,
+  An event carries `stage`, `cause`, `platform`, `agent`, `agent_cli_version`, `place` (`local`,
+  `wsl`, `ssh`: where the agent ran, which a host session's report once showed only by what it
+  lacked), `start_path` (`board`,
   `resume`, `command_terminal`, `workflow`, `phone`, `startup_recovery`, `retry`, `open`, `phone_open`), `shell`, `attempt`,
   `launcher` (`none`, `present`, `missing`), `command_head` (`present`, `missing`, or `unknown`
   for no recorded path, a bare command name or a WSL shell: whether the CLI path the command builder
@@ -1432,10 +1450,19 @@ in one Sentry org, one triage surface.
   `reportPreflightFailure` counts it as `spawn_failed` and sends nothing, on every path, and spends
   no key (Sentry DESKTOP-3Z spent the run's one OpenCode resume key on one). A remote start its
   host's link refused (`isRemoteLinkRefusal`: a `HostUnreachableError` or `UnsupportedOnHostError`,
-  bare or as the `cause` of a wrapper) goes the same way at `preflight`, and at `pty_spawn`
-  `recordSpawnFailure` keeps its `app_error` count and files nothing. That is the host's state, and
-  the router's sentence named the host's id. Sentry DESKTOP-4N was one, sent renamed as
-  `AgentLaunchPreflightError (worktree_other)`. It is not every `isExpectedFailure` class:
+  or a `HostRequestUnansweredError` whose `code` is `HOST_LINK_STOPPED`, bare or as the `cause` of a
+  wrapper) goes the same way at `preflight`, and at `pty_spawn` `recordSpawnFailure` keeps its
+  `app_error` count and files nothing. That is the host's state, and the router's sentence named the
+  host's id. A stopped link is a Remove, a quit or a reconnect with the request out, and it is
+  matched by name and code, never the message. Sentry DESKTOP-4N's earlier events were a
+  `HostUnreachableError`, sent renamed as `AgentLaunchPreflightError (worktree_other)`. A request whose wait ran out (`HOST_NO_ANSWER`) is
+  still filed, since a host too slow for its wait is ours to look at. It adds `host_method` (the
+  helper method, a fixed word `RemoteHostService.sendHelper` stamps on main's side), `ran_for` (a
+  seconds bucket from the launch buckets, which reach `60-300` and `>300`), and
+  `errno: HOST_NO_ANSWER` from the code. DESKTOP-4N's newest 0.64.0 event was a `HostRequestUnansweredError`
+  at `worktree_other`, and its breadcrumbs show the host timing out other requests in the minutes
+  before it, so it was most likely that wait, which still files. The remote worktree create already
+  waits 240 s (`CREATE_TIMEOUT_MS`), so no wait changed. It is not every `isExpectedFailure` class:
   `AgentCwdMissingError` is one, and a gone folder is reported here on purpose. A preflight failure
   once shutdown has begun sends nothing, counts no `spawn_failed` and writes one local
   `[AGENT-LAUNCH] ... shutdown=yes` line, whatever the error: the spawn
@@ -1608,7 +1635,13 @@ in one Sentry org, one triage surface.
   An attempt of about 5000 ms is node-pty's connect timeout, and a fast failure is the conout
   worker's own error. A stall past 5 s on a timeout is a lead, not a measured cause: it fits the
   timeout firing while the host's loop was held with the worker's ready message still unread. A
-  short stall on a timeout points at the worker instead.
+  short stall on a timeout points at the worker instead. A local spawn sends `place: local` or
+  `wsl`. A spawn on an SSH host does not check this computer's disk (`diagnoseSpawnFailure` with
+  `remote`): it sends `shell: host_login`, `shellExists` and `cwdExists` as `unknown`,
+  `place: ssh`, and `remote_step`, either `register` (the session's registration with the host,
+  which makes its hook and status folders there) or `spawn` (the host's PTY spawn). Sentry
+  DESKTOP-5T sent `shell=other`, `shellExists=false` and `cwdExists=true` for a host spawn, which
+  described the placeholder file name and the empty local stand-in folder.
 - **Host memory pressure carries a `host_memory` context on every event** (`setHostMemoryContext`,
   `src/main/diagnostics/host-memory.ts`; DESKTOP-16 was a renderer OOM where the crashing process
   held 179 MB while the host had 2.15 MB of Windows commit remaining out of an 89.8 GB limit - a

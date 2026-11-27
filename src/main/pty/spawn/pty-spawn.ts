@@ -321,10 +321,24 @@ export interface SpawnFailureDiagnostic {
   scrollbackSuffix: string;
   /** Best-effort errno/code for analytics. */
   errno: string;
-  /** Whether the originally-requested cwd exists (not the resolved effective cwd). */
-  cwdExists: boolean;
-  /** Whether the shell executable path exists on disk. */
-  shellExists: boolean;
+  /**
+   * Whether the originally-requested cwd exists (not the resolved effective cwd). Null for a spawn on an SSH
+   * host: the folder is there, and this computer's empty stand-in says nothing about it (DESKTOP-5T).
+   */
+  cwdExists: boolean | null;
+  /** Whether the shell executable path exists on disk. Null for a host spawn, whose file is a placeholder. */
+  shellExists: boolean | null;
+}
+
+/**
+ * The call a spawn on an SSH host failed in: the session's registration with the host (its hook and
+ * status folders, made there) or the host's PTY spawn itself.
+ */
+export type RemoteSpawnStep = 'register' | 'spawn';
+
+/** How a fact the report could not check reads in a tag. */
+function existsTag(exists: boolean | null): string {
+  return exists === null ? 'unknown' : String(exists);
 }
 
 /**
@@ -348,14 +362,19 @@ export function diagnoseSpawnFailure(params: {
   shellExe: string;
   effectiveCwd: string;
   originalCwd: string;
+  /**
+   * The spawn ran on an SSH host. Its shell is the host-login placeholder and its cwd here is the empty
+   * stand-in, so this computer's disk is not asked about either (only the host proves a path absent).
+   */
+  remote?: boolean;
 }): SpawnFailureDiagnostic {
   const errorMessage = params.err instanceof Error ? params.err.message : String(params.err);
   const errnoCode = (params.err as NodeJS.ErrnoException).code || '';
   const errnoNumber = (params.err as NodeJS.ErrnoException).errno ?? '';
   const errno = errnoCode || String(errnoNumber);
 
-  const cwdExists = fs.existsSync(params.originalCwd);
-  const shellExists = fs.existsSync(params.shellExe);
+  const cwdExists = params.remote === true ? null : fs.existsSync(params.originalCwd);
+  const shellExists = params.remote === true ? null : fs.existsSync(params.shellExe);
   let kind: SpawnFailureKind = 'other';
   if (errnoCode === PTY_OUTPUT_NOT_CONNECTED_CODE) kind = 'output-not-connected';
   else if (errorMessage.includes('posix_spawnp')) kind = 'posix-spawnp';
@@ -379,8 +398,11 @@ export function recordSpawnFailure(params: {
   launchTags: LaunchTags;
   /** The link refused a remote spawn (`isRemoteLinkRefusal`): counted, never filed, and it spends no key. */
   remoteLinkRefusal?: boolean;
+  /** Set for a spawn on an SSH host: the call that failed there. */
+  remoteStep?: RemoteSpawnStep;
 }): void {
-  const shell = shellLabelOf(params.shellExe);
+  // A host spawn's file is the host-login placeholder, which the shell list would read as `other`.
+  const shell = params.remoteStep ? 'host_login' : shellLabelOf(params.shellExe);
   trackEvent('app_error', {
     source: 'pty_spawn',
     // A link refusal's text names the host and can carry ssh's own words (a user, an address), which
@@ -390,8 +412,8 @@ export function recordSpawnFailure(params: {
       : sanitizeErrorMessage(params.diagnostic.errorMessage),
     // The label, never the setting: a configured shell's path names a home folder.
     shell,
-    cwdExists: String(params.diagnostic.cwdExists),
-    shellExists: String(params.diagnostic.shellExists),
+    cwdExists: existsTag(params.diagnostic.cwdExists),
+    shellExists: existsTag(params.diagnostic.shellExists),
     errno: params.diagnostic.errno,
     platform: process.platform,
     arch: process.arch,
@@ -414,8 +436,9 @@ export function recordSpawnFailure(params: {
       ...params.launchTags,
       shell,
       errno: params.diagnostic.errno || 'none',
-      shellExists: String(params.diagnostic.shellExists),
-      cwdExists: String(params.diagnostic.cwdExists),
+      shellExists: existsTag(params.diagnostic.shellExists),
+      cwdExists: existsTag(params.diagnostic.cwdExists),
+      ...(params.remoteStep ? { remote_step: params.remoteStep } : {}),
     },
   });
   if (!tags) return;

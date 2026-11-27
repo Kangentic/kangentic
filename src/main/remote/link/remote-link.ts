@@ -187,7 +187,7 @@ export class RemoteLink implements PtyHostTransport {
     this.stopped = true;
     this.endRetryWait();
     this.endpoint.detach('the link stopped');
-    this.failPending(new HostRequestUnansweredError('the link stopped'));
+    this.failPending(new HostRequestUnansweredError('the link stopped', 'link_stopped'));
     this.setState('stopped', null);
   }
 
@@ -451,7 +451,7 @@ export class RemoteLink implements PtyHostTransport {
       const id = this.nextRequestId++;
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new HostRequestUnansweredError(`the host did not answer ${method} within ${Math.round(timeoutMs / 1000)} s`));
+        reject(new HostRequestUnansweredError(`the host did not answer ${method} within ${Math.round(timeoutMs / 1000)} s`, 'no_answer'));
       }, timeoutMs);
       this.pending.set(id, { method, resolve, reject, timer });
       this.endpoint.send({ t: 'request', id, method, params } satisfies LinkToHelperMessage, raw);
