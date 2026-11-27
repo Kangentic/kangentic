@@ -19,6 +19,7 @@ import { turnStartedByOwner } from '../automations/turn-end/owner-turn';
 import { runAutomationAgain } from '../ipc/helpers/automation-run-again';
 import { readTaskReport } from '../ipc/helpers/task-report';
 import { readTaskChanges } from '../ipc/handlers/git-diff';
+import { waitForChurnRead } from '../ipc/handlers/git-stats-capture';
 import { applyTaskSettingsToLiveSession } from '../ipc/handlers/task-runtime-override';
 import { withTaskLock } from '../ipc/task-lifecycle-lock';
 import { WorktreeManager, prepareWorktreeForRemoval } from '../git/worktree-manager';
@@ -258,6 +259,10 @@ export function buildCommandContextForProject(
         await removeSessionFolders({ projectPath, sessionIds, sessionManager: ipcContext.sessionManager });
         // Best-effort worktree + branch cleanup
         if (!worktreePath) return;
+        // The agent's exit fired a churn capture into this worktree. Let it
+        // finish before the folder goes, as the UI delete does, so the task
+        // keeps its last capture.
+        await waitForChurnRead(worktreePath);
         // Outside the queue, as the UI delete does (`deleteTaskWorktree`): it
         // waits for a creation still setting this path up, which a removal
         // inside the queue would refuse, leaving the worktree and branch behind.

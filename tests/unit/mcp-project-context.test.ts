@@ -59,6 +59,14 @@ vi.mock('../../src/main/automations/turn-end/owner-turn', () => ({
   turnStartedByOwner: turnStartedByOwnerSpy,
 }));
 
+// The MCP delete waits for the churn read fired into the worktree before it removes it.
+// The wait's own behavior is pinned elsewhere; here it is a spy whose call order is read.
+const waitForChurnReadSpy = vi.hoisted(() => vi.fn((_gitDirectory: string) => Promise.resolve()));
+vi.mock('../../src/main/ipc/handlers/git-stats-capture', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/ipc/handlers/git-stats-capture')>()),
+  waitForChurnRead: waitForChurnReadSpy,
+}));
+
 vi.mock('../../src/main/git/worktree-manager', () => ({
   prepareWorktreeForRemoval: vi.fn(() => Promise.resolve()),
   WorktreeManager: vi.fn().mockImplementation(() => ({
@@ -1861,6 +1869,70 @@ describe('buildCommandContextForProject - onTaskDeleted worktree teardown orderi
       'withLock:enter',
       'removeWorktree',
       'withLock:exit',
+    ]);
+  });
+
+  // A churn read fired just before the delete (the agent's exit, or a Done move) is still
+  // reading the worktree. Removing the worktree under it loses the task's last capture, so
+  // the delete waits for it: after the reap, before the worktree is prepared for removal.
+  it('waits for the churn read in the worktree after the reap and before preparing the worktree for removal', async () => {
+    const timeline: string[] = [];
+    const worktreePath = '/projects/example/.kangentic/worktrees/task-7';
+    vi.mocked(reapTaskLeftovers).mockImplementationOnce(async () => {
+      timeline.push('reapTaskLeftovers');
+      return { tasksLeftRunningInWorktree: new Set<string>() };
+    });
+    waitForChurnReadSpy.mockImplementationOnce(async (gitDirectory: string) => {
+      timeline.push(`waitForChurnRead:${gitDirectory}`);
+    });
+    vi.mocked(prepareWorktreeForRemoval).mockImplementationOnce(async () => {
+      timeline.push('prepareWorktreeForRemoval');
+    });
+    // A plain function expression, as above: `new` on an arrow function throws.
+    vi.mocked(WorktreeManager).mockImplementationOnce(function mockWorktreeManager() {
+      return {
+        withLock: vi.fn(async (operation: () => Promise<unknown>) => operation()),
+        removeWorktree: vi.fn(async () => {
+          timeline.push('removeWorktree');
+          return true;
+        }),
+        pruneWorktrees: vi.fn(async () => {}),
+        removeBranch: vi.fn(async () => {}),
+      };
+    } as unknown as typeof WorktreeManager);
+
+    const project = makeProject({ id: DEFAULT_ID, path: PROJECT_PATH });
+    const ipcContext = {
+      projectRepo: { getById: vi.fn(() => project), list: vi.fn(() => [project]) },
+      mainWindow: { isDestroyed: () => false, webContents: { send: vi.fn() } },
+      boardConfigManager: { writeBackForProject: vi.fn() },
+      boardEvents: { emitBoardChanged: vi.fn() },
+      configManager: { getEffectiveConfig: vi.fn(() => ({ git: { autoCleanup: false } })) },
+      sessionManager: {
+        kill: vi.fn(),
+        awaitExit: vi.fn(() => Promise.resolve()),
+        remove: vi.fn(),
+        removeByTaskId: vi.fn(() => Promise.resolve()),
+      },
+    } as unknown as IpcContext;
+
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID)!;
+    context.onTaskDeleted({
+      id: 'task-7',
+      title: 'Task Seven',
+      session_id: null,
+      worktree_path: worktreePath,
+      branch_name: null,
+    } as never, []);
+
+    await vi.waitFor(() => {
+      expect(timeline).toContain('removeWorktree');
+    });
+    expect(timeline).toEqual([
+      'reapTaskLeftovers',
+      `waitForChurnRead:${worktreePath}`,
+      'prepareWorktreeForRemoval',
+      'removeWorktree',
     ]);
   });
 
