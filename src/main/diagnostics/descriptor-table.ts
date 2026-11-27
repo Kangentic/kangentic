@@ -20,17 +20,22 @@
  * On macOS and Linux the same number also counts sockets and pipes, since there
  * every one of those is a descriptor.
  *
+ * On those two, a report also says what kind each held descriptor is
+ * (`readDescriptorKinds`, Sentry DESKTOP-5W): a Linux install's table passed
+ * 2048 after a day with nothing to say whether sockets, pipes or files grew.
+ *
  * Nothing here reports by itself. `index.ts` wires the one report a run sends
  * when the table crosses `DEFAULT_HIGH_MARK`, and `error-reporting.ts` adds the
- * readings to any EMFILE report main sends (`getDescriptorTableContext`). Every
- * value that leaves is a bucket, never a raw count.
+ * readings to any EMFILE report main sends (`getDescriptorTableContext`,
+ * `getDescriptorKindsContext`). Every value that leaves is a bucket, never a
+ * raw count.
  */
 
 import fs from 'node:fs';
 import os from 'node:os';
-import type { DescriptorReading } from '../../shared/types';
+import type { DescriptorKind, DescriptorReading } from '../../shared/types';
 
-export type { DescriptorReading };
+export type { DescriptorKind, DescriptorReading };
 
 /** Every value a descriptor count tag can take. */
 export const DESCRIPTOR_BUCKETS = [
@@ -111,6 +116,120 @@ export function bucketDescriptorReading(reading: DescriptorReading): DescriptorB
   return '8192+';
 }
 
+/**
+ * Every kind a descriptor is counted as, on macOS and Linux (Sentry DESKTOP-5W).
+ * There the probe's number counts sockets, pipes, eventfds, epoll and inotify
+ * instances and memfds along with files, so a leak in any of them climbs the
+ * same number on Linux and never shows on Windows, where the CRT table holds
+ * files only. The breakdown says which. The `Record` makes a kind added to the
+ * shared type a compile error here until it is listed.
+ */
+const DESCRIPTOR_KIND_ORDER: Record<DescriptorKind, number> = {
+  socket: 0,
+  pipe: 1,
+  eventfd: 2,
+  epoll: 3,
+  inotify: 4,
+  anon_other: 5,
+  memfd_shm: 6,
+  file: 7,
+  char_device: 8,
+  other: 9,
+};
+
+export const DESCRIPTOR_KINDS = (Object.keys(DESCRIPTOR_KIND_ORDER) as DescriptorKind[])
+  .sort((first, second) => DESCRIPTOR_KIND_ORDER[first] - DESCRIPTOR_KIND_ORDER[second]);
+
+export type DescriptorKindCounts = Record<DescriptorKind, number>;
+
+/** What `fstat` says about a descriptor, as far as the macOS breakdown reads it. */
+export interface DescriptorStat {
+  isSocket(): boolean;
+  isFIFO(): boolean;
+  isCharacterDevice(): boolean;
+  isFile(): boolean;
+}
+
+export interface DescriptorKindDeps {
+  platform: NodeJS.Platform;
+  listDirectory: (directoryPath: string) => string[];
+  readLink: (linkPath: string) => string;
+  statDescriptor: (descriptor: number) => DescriptorStat;
+}
+
+const REAL_KIND_DEPS: DescriptorKindDeps = {
+  get platform() { return process.platform; },
+  listDirectory: (directoryPath) => fs.readdirSync(directoryPath),
+  readLink: (linkPath) => fs.readlinkSync(linkPath),
+  statDescriptor: (descriptor) => fs.fstatSync(descriptor),
+};
+
+function emptyKindCounts(): DescriptorKindCounts {
+  const counts = {} as DescriptorKindCounts;
+  for (const kind of DESCRIPTOR_KINDS) counts[kind] = 0;
+  return counts;
+}
+
+/**
+ * The kind of one Linux descriptor from its `/proc/self/fd` link text, which is
+ * a path for a file or device and a `type:[inode]` form for everything else.
+ * The text is read here and dropped: only the kind leaves.
+ */
+export function classifyDescriptorLink(target: string): DescriptorKind {
+  if (target.startsWith('socket:')) return 'socket';
+  if (target.startsWith('pipe:')) return 'pipe';
+  if (target.startsWith('anon_inode:')) {
+    if (target === 'anon_inode:[eventfd]') return 'eventfd';
+    if (target === 'anon_inode:[eventpoll]') return 'epoll';
+    if (target === 'anon_inode:inotify') return 'inotify';
+    return 'anon_other';
+  }
+  if (target.startsWith('/memfd:') || target.startsWith('/dev/shm/')) return 'memfd_shm';
+  if (target.startsWith('/dev/')) return 'char_device';
+  if (target.startsWith('/')) return 'file';
+  return 'other';
+}
+
+function classifyDescriptorStat(stat: DescriptorStat): DescriptorKind {
+  if (stat.isSocket()) return 'socket';
+  if (stat.isFIFO()) return 'pipe';
+  if (stat.isCharacterDevice()) return 'char_device';
+  if (stat.isFile()) return 'file';
+  return 'other';
+}
+
+/**
+ * Counts main's descriptors by kind: Linux reads each `/proc/self/fd` link,
+ * macOS `fstat`s each descriptor `/dev/fd` lists. A descriptor that closes
+ * between the listing and its read is skipped. The listing's own directory
+ * descriptor is counted, one in thousands. Null on Windows, and when the
+ * listing itself fails, which it does once the table is full: reading a
+ * directory takes a descriptor.
+ */
+export function readDescriptorKinds(deps: DescriptorKindDeps = REAL_KIND_DEPS): DescriptorKindCounts | null {
+  if (deps.platform !== 'linux' && deps.platform !== 'darwin') return null;
+  const directory = deps.platform === 'linux' ? '/proc/self/fd' : '/dev/fd';
+  let entries: string[];
+  try {
+    entries = deps.listDirectory(directory);
+  } catch {
+    // report-ok: an unreadable listing is the answer (null); at EMFILE it is expected, and the caller falls back to the cached breakdown
+    return null;
+  }
+  const counts = emptyKindCounts();
+  for (const entry of entries) {
+    try {
+      const kind = deps.platform === 'linux'
+        ? classifyDescriptorLink(deps.readLink(`${directory}/${entry}`))
+        : classifyDescriptorStat(deps.statDescriptor(Number(entry)));
+      counts[kind] += 1;
+    } catch {
+      // report-ok: the descriptor closed between the listing and this read; it is no longer held, so it is not counted
+    }
+  }
+  return counts;
+}
+
 const MINUTE_SECONDS = 60;
 const HOUR_SECONDS = 60 * MINUTE_SECONDS;
 const DAY_SECONDS = 24 * HOUR_SECONDS;
@@ -171,6 +290,13 @@ export interface DescriptorTableProbeOptions {
   read: () => DescriptorReading;
   uptimeSeconds: () => number;
   highMark?: number;
+  /**
+   * Called on every reading at or above `highMark`, before `onHigh`, to keep
+   * the by-kind breakdown current while the table is high, for a report that
+   * comes once the table is too full to read it (`refreshDescriptorKinds`).
+   * Never on a reading below the mark.
+   */
+  readKinds?: () => void;
   /** Called once per probe, the first time a reading reaches `highMark` or the table is full. */
   onHigh?: (tags: DescriptorTableTags) => void;
 }
@@ -193,6 +319,7 @@ export function createDescriptorTableProbe(options: DescriptorTableProbeOptions)
       const reading = options.read();
       latest = reading;
       if (rankOf(reading) > rankOf(peak)) peak = reading;
+      if (rankOf(reading) >= highMark) options.readKinds?.();
       if (!heardHigh && rankOf(reading) >= highMark) {
         heardHigh = true;
         options.onHigh?.(tags());
@@ -221,6 +348,53 @@ export function getDescriptorTableContext(read: () => DescriptorReading = readLo
   return { ...probeTags, at_report: bucketDescriptorReading(read()) };
 }
 
+/** The last breakdown that could be read, bucketed, and when. */
+let cachedKinds: { kinds: Record<string, DescriptorBucket>; uptime: UptimeBucket } | null = null;
+
+function bucketKinds(counts: DescriptorKindCounts): Record<string, DescriptorBucket> {
+  const kinds: Record<string, DescriptorBucket> = {};
+  for (const kind of DESCRIPTOR_KINDS) kinds[`kind_${kind}`] = bucketDescriptorReading(counts[kind]);
+  return kinds;
+}
+
+/** Reads the breakdown and keeps it, bucketed, for a report the table is too full to read it for. */
+export function refreshDescriptorKinds(
+  read: () => DescriptorKindCounts | null = readDescriptorKinds,
+  uptimeSeconds: number = process.uptime(),
+): DescriptorKindCounts | null {
+  const counts = read();
+  if (counts) cachedKinds = { kinds: bucketKinds(counts), uptime: bucketUptime(uptimeSeconds) };
+  return counts;
+}
+
+/** Test-only: forget the kept breakdown. */
+export function resetDescriptorKindsCache(): void {
+  cachedKinds = null;
+}
+
+/**
+ * The `descriptor_kinds` context the high report and an EMFILE report carry on
+ * macOS and Linux (Sentry DESKTOP-5W): one `kind_<kind>` bucket per kind, the
+ * `kinds_at` uptime bucket it was read at, and `source`. A fresh read is
+ * `fresh`. One that fails, as it does once the table is full, falls back to
+ * the breakdown the probe kept while the table was high (`cached`), else every
+ * kind reads `unknown` (`unavailable`). Buckets only: no count, path or link
+ * text leaves. Null on Windows, which has no listing to read.
+ */
+export function getDescriptorKindsContext(
+  read: () => DescriptorKindCounts | null = readDescriptorKinds,
+  platform: NodeJS.Platform = process.platform,
+): Record<string, string> | null {
+  if (platform !== 'linux' && platform !== 'darwin') return null;
+  const uptimeSeconds = process.uptime();
+  const counts = refreshDescriptorKinds(read, uptimeSeconds);
+  if (counts) return { ...bucketKinds(counts), kinds_at: bucketUptime(uptimeSeconds), source: 'fresh' };
+  if (cachedKinds) return { ...cachedKinds.kinds, kinds_at: cachedKinds.uptime, source: 'cached' };
+  const unknown: Record<string, string> = {};
+  for (const kind of DESCRIPTOR_KINDS) unknown[`kind_${kind}`] = 'unknown';
+  return { ...unknown, kinds_at: bucketUptime(uptimeSeconds), source: 'unavailable' };
+}
+
 export interface DescriptorTableProbeStartOptions {
   /** The one report a run sends when the table crosses the high mark. */
   onHigh: (tags: DescriptorTableTags) => void;
@@ -238,6 +412,7 @@ export function startDescriptorTableProbe(options: DescriptorTableProbeStartOpti
   const probe = createDescriptorTableProbe({
     read: () => readLowestFreeDescriptor(),
     uptimeSeconds: () => process.uptime(),
+    readKinds: () => { refreshDescriptorKinds(); },
     onHigh: (tags) => {
       console.warn(`[descriptor-table] Main holds ${tags.descriptor_latest} file descriptors after ${tags.uptime} (pty host in main: ${tags.pty_host_in_main}).`);
       options.onHigh(tags);

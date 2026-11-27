@@ -1,6 +1,6 @@
 import { app } from 'electron';
 import type { ProcessMetrics } from '../../shared/types';
-import { getDescriptorTableReading, readLowestFreeDescriptor } from './descriptor-table';
+import { getDescriptorTableReading, readDescriptorKinds, readLowestFreeDescriptor } from './descriptor-table';
 
 /**
  * Snapshot of per-process resource usage. Wraps `app.getAppMetrics()` and
@@ -40,6 +40,8 @@ export function getProcessMetrics(): ProcessMetrics {
         now: readLowestFreeDescriptor(),
         latest: probeReading?.latest ?? null,
         peak: probeReading?.peak ?? null,
+        // Raw counts are fine here: this snapshot stays on this computer (MCP).
+        kinds: readDescriptorKinds(),
       },
     },
     processes: metrics.map((entry) => ({

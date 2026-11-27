@@ -64,6 +64,20 @@ describe('getProcessMetrics', () => {
     expect(descriptorTable.peak).toBeNull();
   });
 
+  // Sentry DESKTOP-5W: an agent reading this on a Linux rig sees which kind of
+  // descriptor grows. Windows has no listing.
+  it('counts main\'s descriptors by kind on Linux and macOS, and reads none on Windows', () => {
+    const { kinds } = getProcessMetrics().main.descriptorTable;
+    if (process.platform === 'win32') {
+      expect(kinds).toBeNull();
+      return;
+    }
+    expect(kinds).not.toBeNull();
+    const total = Object.values(kinds ?? {}).reduce((sum, count) => sum + count, 0);
+    // stdin, stdout and stderr at least.
+    expect(total).toBeGreaterThanOrEqual(3);
+  });
+
   it('carries the probe latest reading and peak once the probe has started', () => {
     const stop = startDescriptorTableProbe({ onHigh: () => undefined });
     try {

@@ -12335,6 +12335,25 @@ export interface CrashRecord {
 export type DescriptorReading = number | 'full' | null;
 
 /**
+ * What one of main's descriptors is, on macOS and Linux, where the table holds
+ * sockets, pipes and kernel objects as well as files (Sentry DESKTOP-5W,
+ * `readDescriptorKinds` in `src/main/diagnostics/descriptor-table.ts`).
+ * `eventfd`, `epoll`, `inotify` and `anon_other` are Linux anonymous inodes;
+ * `memfd_shm` is a memfd or a `/dev/shm` file. Windows has no listing.
+ */
+export type DescriptorKind =
+  | 'socket'
+  | 'pipe'
+  | 'eventfd'
+  | 'epoll'
+  | 'inotify'
+  | 'anon_other'
+  | 'memfd_shm'
+  | 'file'
+  | 'char_device'
+  | 'other';
+
+/**
  * Per-process resource usage snapshot. Returned by
  * `kangentic_get_process_metrics`. Wraps `app.getMetrics()` and adds platform
  * + uptime context.
@@ -12360,11 +12379,14 @@ export interface ProcessMetrics {
      *  many it holds (`src/main/diagnostics/descriptor-table.ts`, Sentry
      *  DESKTOP-59): `now`, read for this snapshot, and the probe's latest
      *  reading and the run's peak, which are null before its first reading.
-     *  `'full'` means the open found no free slot; null is unknown. */
+     *  `'full'` means the open found no free slot; null is unknown. `kinds`
+     *  counts the descriptors main holds now by kind, on macOS and Linux; it
+     *  is null on Windows and when the listing could not be read. */
     descriptorTable: {
       now: DescriptorReading;
       latest: DescriptorReading;
       peak: DescriptorReading;
+      kinds: Record<DescriptorKind, number> | null;
     };
   };
   processes: {

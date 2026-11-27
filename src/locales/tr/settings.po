@@ -3870,9 +3870,8 @@ msgid "When Kangentic pauses agents that are waiting on you."
 msgstr "Kangentic'in sizi bekleyen ajanları ne zaman duraklatacağı."
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
-#, fuzzy
-msgid "When the app holds many file handles, a range for how many it held and how long it had been running"
-msgstr "Uygulama çok sayıda dosya tanıtıcısı tuttuğunda, kaç tane tuttuğuna ve ne kadar süredir çalıştığına dair bir aralık"
+msgid "When the app holds many file handles, ranges for how many it held, of which kinds, and how long it had been running"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
 #, fuzzy
