@@ -3271,8 +3271,9 @@ msgid "What we don't collect"
 msgstr "我們不收集的內容"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "When a database write had to wait, a range for how long a background write held the database"
-msgstr ""
+msgstr "資料庫寫入需要等待時，背景寫入佔用資料庫時間的範圍"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "When a plan finishes and the task auto-moves"
@@ -3308,12 +3309,14 @@ msgid "When Kangentic pauses agents that are waiting on you."
 msgstr "Kangentic 何時暫停正在等候你的代理。"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "When the app holds many file handles, ranges for how many it held, of which kinds, and how long it had been running"
-msgstr ""
+msgstr "應用程式持有大量檔案控制代碼時，其持有數量與種類的範圍及已執行時間"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "When the computer runs low on memory, ranges for how much the app, its agents and other programs were using"
-msgstr ""
+msgstr "電腦記憶體不足時，應用程式、其代理程式與其他程式各自使用記憶體的範圍"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
 msgid "Where new work starts, and how current it stays."
