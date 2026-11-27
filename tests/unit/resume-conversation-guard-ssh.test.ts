@@ -12,14 +12,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { assessResumeConversation, type ResumeLineageRecord } from '../../src/main/transition-engine/resume-conversation-guard';
+import {
+  assessResumeConversation,
+  assessResumeConversationWithEvidence,
+  type ResumeConversationAssessment,
+  type ResumeLineageRecord,
+} from '../../src/main/transition-engine/resume-conversation-guard';
+import { proveClaudeConversationGoneOnHost } from '../../src/main/agent/adapters/claude/conversation-gone';
+import type { HostCommandRequest, HostCommandResult } from '../../src/main/remote/protocol/messages';
 import { AiderAdapter } from '../../src/main/agent/adapters/aider';
 import { ClaudeStatusParser } from '../../src/main/agent/adapters/claude/status-parser';
 import { CodexAdapter } from '../../src/main/agent/adapters/codex';
 import { CopilotAdapter } from '../../src/main/agent/adapters/copilot/copilot-adapter';
 import { DroidAdapter } from '../../src/main/agent/adapters/droid';
 import { GeminiAdapter } from '../../src/main/agent/adapters/gemini';
-import { serializeCliTarget, type SshCliPlace } from '../../src/main/agent/shared/cli-target';
+import { serializeCliTarget, type SshCliPlace, type SshPlaceFiles } from '../../src/main/agent/shared/cli-target';
 import type { AgentAdapter } from '../../src/main/agent/agent-adapter';
 
 const RECORD_ID = '6fc5d715-77ca-47d6-9c50-8f27ad05e4a7';
@@ -210,6 +217,150 @@ describe('a conversation that ran on a host', () => {
     });
 
     expect(verdict).toBe('expired');
+  });
+
+  // Sentry DESKTOP-2M on 0.64.0: a resume on a host answered "No conversation found", and every later
+  // Resume ran the same `--resume`. The marks and the host's own look are what can end that.
+  describe('decided by Kangentic\'s own launch marks, which read no file', () => {
+    const noTurns = { total_input_tokens: 0, total_output_tokens: 0, total_cost_usd: 0 };
+
+    it('starts fresh when the retiring record\'s launch check marked it and no record shows a turn', async () => {
+      const assessment = await assessResumeConversationWithEvidence({
+        adapter: adapterWithProof(vi.fn().mockResolvedValue(false)),
+        agentSessionId: AGENT_SESSION_ID,
+        records: [recordOn('host-a', { ...noTurns, launch_failed_at: '2026-11-27T10:00:00.000Z' })],
+        cwd: projectPath,
+        projectPath,
+        place: sshPlace('host-a'),
+      });
+
+      expect(assessment.verdict).toBe('never-started');
+    });
+
+    it('starts fresh, owing its prompt, when the record that minted the id never ran its CLI', async () => {
+      const assessment = await assessResumeConversationWithEvidence({
+        adapter: adapterWithProof(vi.fn().mockResolvedValue(false)),
+        agentSessionId: AGENT_SESSION_ID,
+        records: [recordOn('host-a', { ...noTurns, agent_session_id: AGENT_SESSION_ID, agent_never_ran_at: '2026-11-27T10:00:00.000Z' })],
+        cwd: projectPath,
+        projectPath,
+        place: sshPlace('host-a'),
+      });
+
+      expect(assessment).toMatchObject({ verdict: 'never-started', promptOwed: true });
+    });
+
+    it('keeps resuming a lineage with turns, whatever a mark says', async () => {
+      const verdict = await assessResumeConversation({
+        adapter: adapterWithProof(vi.fn().mockResolvedValue(false)),
+        agentSessionId: AGENT_SESSION_ID,
+        records: [recordOn('host-a', { launch_failed_at: '2026-11-27T10:00:00.000Z' })],
+        cwd: projectPath,
+        projectPath,
+        place: sshPlace('host-a'),
+      });
+
+      expect(verdict).toBe('unknown');
+    });
+  });
+
+  describe('decided by the host\'s own look, through the spawn\'s helper', () => {
+    const noTurns = { total_input_tokens: 0, total_output_tokens: 0, total_cost_usd: 0 };
+    const answered = (stdout: string, extra: Partial<HostCommandResult> = {}): HostCommandResult => ({ code: 0, stdout, stderr: '', timedOut: false, ...extra });
+
+    /** The real Claude proof, so the script's answer is read as it is in the app. */
+    function claudeOnHost(): AgentAdapter {
+      return {
+        runtime: { statusFile: { parseStatus: ClaudeStatusParser.parseStatus } },
+        proveConversationGoneOnHost: proveClaudeConversationGoneOnHost,
+      } as unknown as AgentAdapter;
+    }
+
+    function placeWithHost(runCommand: (request: HostCommandRequest) => Promise<HostCommandResult>): SshCliPlace {
+      return { ...sshPlace('host-a'), files: { runCommand } as unknown as SshPlaceFiles };
+    }
+
+    async function assessOnHost(runCommand: (request: HostCommandRequest) => Promise<HostCommandResult>, overrides: Partial<ResumeLineageRecord> = {}): Promise<ResumeConversationAssessment> {
+      return assessResumeConversationWithEvidence({
+        adapter: claudeOnHost(),
+        agentSessionId: AGENT_SESSION_ID,
+        records: [recordOn('host-a', overrides)],
+        cwd: projectPath,
+        projectPath,
+        place: placeWithHost(runCommand),
+      });
+    }
+
+    it('starts fresh, owing its prompt, when the host finds the file nowhere and no record shows a turn', async () => {
+      const runCommand = vi.fn(async () => answered('KG:absent\n'));
+
+      expect(await assessOnHost(runCommand, noTurns)).toMatchObject({ verdict: 'never-started', promptOwed: true });
+      // The projects folder comes from the path the agent reported, and the id is an argument.
+      const [request] = runCommand.mock.calls[0] as unknown as [HostCommandRequest];
+      expect(request.file).toBe('sh');
+      expect(request.args.slice(2)).toEqual(['kangentic-claude-conversation', '/home/dev/.claude/projects', AGENT_SESSION_ID]);
+    });
+
+    it('calls a conversation with turns expired when the host finds its file nowhere', async () => {
+      expect((await assessOnHost(async () => answered('KG:absent\n'))).verdict).toBe('expired');
+    });
+
+    it('never judges a conversation by the default folder when no path was reported, with turns or without', async () => {
+      const runCommand = vi.fn(async () => answered('KG:absent\n'));
+
+      expect((await assessOnHost(runCommand, { transcript_path: null })).verdict).toBe('unknown');
+      // No turns on the copy here proves nothing on a host, and the agent's folder may not be the default.
+      expect((await assessOnHost(runCommand, { ...noTurns, transcript_path: null })).verdict).toBe('unknown');
+      expect(runCommand).not.toHaveBeenCalled();
+    });
+
+    it.each<[string, () => Promise<HostCommandResult>]>([
+      ['finds the file', async () => answered('KG:present\n')],
+      ['cannot read its folders', async () => answered('KG:unknown\n')],
+      ['cannot be asked', async () => { throw Object.assign(new Error('the link stopped'), { name: 'HostRequestUnansweredError' }); }],
+      ['runs out of time', async () => answered('', { code: null, timedOut: true })],
+      ['cannot start the script', async () => answered('', { code: null, error: 'spawn sh ENOENT' })],
+      ['exits with an error', async () => answered('KG:absent\n', { code: 2 })],
+    ])('keeps resuming when the host %s', async (_label, runCommand) => {
+      expect((await assessOnHost(runCommand, noTurns)).verdict).toBe('unknown');
+    });
+
+    // The Claude proof catches its own failures, so only an adapter that throws reaches the guard's own catch.
+    it.each<[string, () => Promise<boolean>]>([
+      ['throws at once', () => { throw new Error('the probe blew up'); }],
+      ['returns a promise that rejects', () => Promise.reject(new Error('the probe rejected'))],
+    ])('keeps resuming when the adapter\'s host proof %s', async (_label, probe) => {
+      const proveConversationGoneOnHost = vi.fn(probe);
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      const assessment = await assessResumeConversationWithEvidence({
+        adapter: {
+          runtime: { statusFile: { parseStatus: ClaudeStatusParser.parseStatus } },
+          proveConversationGoneOnHost,
+        } as unknown as AgentAdapter,
+        agentSessionId: AGENT_SESSION_ID,
+        records: [recordOn('host-a', noTurns)],
+        cwd: projectPath,
+        projectPath,
+        place: placeWithHost(async () => answered('KG:absent\n')),
+      });
+
+      expect(proveConversationGoneOnHost).toHaveBeenCalledTimes(1);
+      expect(assessment.verdict).toBe('unknown');
+    });
+
+    it('keeps resuming when the place has no helper to ask, as a place read back from a record has none', async () => {
+      const verdict = await assessResumeConversation({
+        adapter: claudeOnHost(),
+        agentSessionId: AGENT_SESSION_ID,
+        records: [recordOn('host-a', noTurns)],
+        cwd: projectPath,
+        projectPath,
+        place: sshPlace('host-a'),
+      });
+
+      expect(verdict).toBe('unknown');
+    });
   });
 
   it('cannot be resumed on this computer either', async () => {

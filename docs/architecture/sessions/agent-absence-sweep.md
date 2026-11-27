@@ -422,14 +422,17 @@ returns, through the same candidate check.
 **Known gaps.** A host launch from an adapter that reports its start, whose output names no cause,
 is reported at the ceiling and left running. An adapter with no start signal is neither judged nor
 reported there. A host agent that exits after it ran keeps a `running` row, since only the sweep notices
-that. A host resume that found no conversation is not marked (`markResumeMiss` leaves a host
-record unmarked: only the host shows whether the conversation had turns), so the next Resume runs
-the same `--resume` and pauses again with the notice. The host's own pty core can list its
-processes (`listProcesses`, `ps`), but nothing routes that request to a host
-(`REQUEST_ROUTES.listProcesses` is `core`), the handle drops the host's pid at spawn, and the
-watcher keys every session on a local root pid. A per-host listing with the link-down hold is what
-would let the two-observation rule judge a host session, and a check of the transcript on the host
-before a resume is what would stop the repeat.
+that. The host's own pty core can list its processes (`listProcesses`, `ps`), but nothing routes
+that request to a host (`REQUEST_ROUTES.listProcesses` is `core`), the handle drops the host's pid
+at spawn, and the watcher keys every session on a local root pid. A per-host listing with the
+link-down hold is what would let the two-observation rule judge a host session.
+
+A host resume that found no conversation is not marked: only the host shows whether the
+conversation had turns. `markResumeMiss` answers `host_retry` and the record keeps its one retry,
+because that retry's resume check asks the host (`proveConversationGoneOnHost`,
+[Resume](resume.md)) and starts fresh when the host proves the conversation gone. A lineage that
+never reported a transcript path gives the host no folder to search, so its retry runs the same
+`--resume` once more and then shows the notice.
 
 ## Cadence and what a retirement does
 
@@ -483,8 +486,14 @@ the row does not count. Seen late is the catch: a launch with no sign it ran is 
 120 s start ceiling, so the minute is counted to the shell's last output (`lastOutputAt`, its prompt
 as the agent ended), not to the kill. A last output from before the agent ran tells nothing about
 its end, so the exit time stands then. Codex 0.171.0 dead 6 s in under PowerShell was killed 116 s
-after it ran (task #1182). A session whose launch already reported a failure sends no capture
-report when its outcome is "never" and no id store holds an id. See
+after it ran (task #1182). The minute can still miss one: the sweep retires a shell only after two
+looks a minute apart, and a shell's repaints keep its last output moving, so a Codex dead seconds in
+measured past it (Sentry DESKTOP-36). So the output is read for every never-captured session that
+settled at the ceiling with its PTY exited on its own and no prompt seen, whatever the clock says.
+Output that names a failure (`isIdentifiedFailureClass`), with no store `present`, goes to the same
+`no_conversation` report. Output that names nothing keeps the minute. A session whose launch
+already reported a failure sends no capture report when its outcome is "never" and no id store
+holds an id. See
 [Error reporting](../../telemetry/error-reporting.md).
 
 **Which agents can report this.** Only Claude and Droid declare `reportsAgentStart`. The flag is
@@ -587,7 +596,7 @@ not parked.
 so that cause skips straight to the notice. Neither can it shorten a line, so `line_too_long`, a
 shell's refusal of the typed line, skips it too, and the notice shows the shell's own sentence. A
 resume the CLI said found no conversation, which `markResumeMiss` left unmarked, skips it as well
-(see "A failed resume is not marked" below). A cause nobody identified retries, since it may be ours.
+(see "A failed resume is not marked" below), except on an SSH host (`host_retry`). A cause nobody identified retries, since it may be ours.
 The answer waits for the report's read of the output (`launchOutputRead`). The evidence is read
 after the pause, because a late hook can land while the session goes down, so no prompt runs twice
 and no second paid turn starts. The notice waits for that outcome. A retry is never retried, so a second failure stays paused and raises it.
@@ -648,7 +657,8 @@ Three things keep this safe:
   stays unmarked and resumes as before. It gets no retry: the retry would run the same `--resume`
   and get the same answer, so `markResumeMiss` answers `left_unmarked` and the listener goes straight
   to the notice (Sentry DESKTOP-2M). Doubt answers the same way: no adapter, no project path, or no
-  agent session id on the record.
+  agent session id on the record. A record on an SSH host is doubt too, but it answers `host_retry`
+  and keeps its retry, because that retry's check asks the host.
 - **It runs after the pause,** because the report's read of the output is still pending when the
   pause is accepted. It awaits that read itself, since `mayRetryLaunch` returns ahead of it on a
   session that is already a retry, and it takes the task lock.

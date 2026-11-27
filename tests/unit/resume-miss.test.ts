@@ -178,11 +178,11 @@ describe('markResumeMiss', () => {
     expect(failedAt('resume-1')).toBeNull();
   });
 
-  it('leaves a record on a host unmarked: the copy here cannot show that a conversation had no turns', async () => {
+  it('leaves a record on a host unmarked, and lets its one retry run, whose check asks the host (GitHub #970)', async () => {
     const hostTarget = JSON.stringify({ kind: 'ssh', hostId: 'host-a', home: '/home/dev', shellName: 'bash', localHome: '', roots: [] });
     database.prepare('UPDATE sessions SET cli_target = ? WHERE id = ?').run(hostTarget, 'resume-1');
 
-    await mark(fakeContext('conversation_missing'));
+    await expect(markResumeMiss(fakeContext('conversation_missing'), { sessionId: 'resume-1', taskId: TASK_ID, projectId: PROJECT_ID })).resolves.toBe('host_retry');
 
     expect(failedAt('resume-1')).toBeNull();
   });
