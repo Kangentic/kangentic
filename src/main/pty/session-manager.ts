@@ -5408,9 +5408,16 @@ export class SessionManager extends EventEmitter {
   openHistoryView(sessionId: string): Promise<HistoryViewOpenResult> {
     const session = this.registry.get(sessionId);
     if (!session || session.status !== 'running' || session.pty === null) return Promise.resolve('not-running');
-    const agentName = session.agentName ?? null;
+    // Read now: the row can be replaced while the host waits on the agent.
+    const reportFacts = {
+      agentName: session.agentName,
+      agentCliVersion: session.agentCliVersion,
+      hostId: session.hostId,
+      cliTarget: session.cliTarget,
+      shell: session.shell,
+    };
     return this.host.openHistoryView(sessionId).then((result) => {
-      if (result === 'unrecognized-view') reportUnrecognizedHistoryView(agentName);
+      if (result === 'unrecognized-view') reportUnrecognizedHistoryView(reportFacts);
       return result;
     });
   }

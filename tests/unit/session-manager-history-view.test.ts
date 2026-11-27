@@ -81,17 +81,17 @@ describe('SessionManager.openHistoryView', () => {
     },
   );
 
-  it('reports an unrecognized view once, with the agent\'s name, and still passes the answer through', async () => {
-    const { manager } = managerWith({ status: 'running', pty: {}, agentName: 'claude' }, 'unrecognized-view');
+  it('reports an unrecognized view once, with the agent, its version and its host, and still passes the answer through', async () => {
+    const { manager } = managerWith({ status: 'running', pty: {}, agentName: 'claude', agentCliVersion: '2.1.330', hostId: 'host-a' }, 'unrecognized-view');
     await expect(manager.openHistoryView('session-1')).resolves.toBe('unrecognized-view');
     expect(reportUnrecognizedHistoryView).toHaveBeenCalledTimes(1);
-    expect(reportUnrecognizedHistoryView).toHaveBeenCalledWith('claude');
+    expect(reportUnrecognizedHistoryView).toHaveBeenCalledWith(expect.objectContaining({ agentName: 'claude', agentCliVersion: '2.1.330', hostId: 'host-a' }));
   });
 
-  it('reports a null agent name for a session with none', async () => {
+  it('reports a session with no agent name, leaving the name for the report to fill', async () => {
     const { manager } = managerWith({ status: 'running', pty: {} }, 'unrecognized-view');
     await manager.openHistoryView('session-1');
-    expect(reportUnrecognizedHistoryView).toHaveBeenCalledWith(null);
+    expect(reportUnrecognizedHistoryView).toHaveBeenCalledWith(expect.objectContaining({ agentName: undefined }));
   });
 });
 
