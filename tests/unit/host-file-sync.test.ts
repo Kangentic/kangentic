@@ -222,6 +222,43 @@ describe('pushing what the adapter changed', () => {
 
     expect([...host.files.keys()].some((key) => key.includes('.git'))).toBe(false);
   });
+
+  // A `.git` that is a file (a worktree, a submodule) makes the helper's look at `.git/info` fail with ENOTDIR (DESKTOP-5J).
+  async function pushWithInfoLookRejecting(code: string): Promise<{ warnings: string[] }> {
+    host.directories.add('/home/dev/app/.git/info');
+    const sync = await HostFileSync.pull({ home: [], project: [CURSOR_MCP] }, projectFolder, place);
+    await fs.mkdir(path.join(projectFolder, '.cursor'), { recursive: true });
+    await fs.writeFile(path.join(projectFolder, '.cursor', 'mcp.json'), '{}');
+    const realPresence = host.api.pathPresence;
+    host.api.pathPresence = async (paths) => {
+      if (paths.includes('/home/dev/app/.git/info')) throw Object.assign(new Error(`${code}: lookup failed`), { code });
+      return realPresence(paths);
+    };
+    const warnings: string[] = [];
+    vi.spyOn(console, 'warn').mockImplementation((message: unknown) => { warnings.push(String(message)); });
+    try {
+      await sync.push();
+    } finally {
+      vi.restoreAllMocks();
+    }
+    return { warnings };
+  }
+
+  it('reads an ENOTDIR from the .git/info look as no info folder: no exclude file written, no failure logged', async () => {
+    const { warnings } = await pushWithInfoLookRejecting('ENOTDIR');
+
+    expect(host.files.has('/home/dev/app/.git/info/exclude')).toBe(false);
+    expect(host.files.get('/home/dev/app/.cursor/mcp.json')).toBe('{}');
+    expect(warnings.filter((message) => message.includes('git exclude'))).toEqual([]);
+  });
+
+  it('does not read any other failure of the .git/info look as absent: it is logged as a failed exclude and the session goes on', async () => {
+    const { warnings } = await pushWithInfoLookRejecting('EACCES');
+
+    expect(host.files.has('/home/dev/app/.git/info/exclude')).toBe(false);
+    expect(host.files.get('/home/dev/app/.cursor/mcp.json')).toBe('{}');
+    expect(warnings.some((message) => message.includes('could not add the new files to the host\'s git exclude') && message.includes('EACCES'))).toBe(true);
+  });
 });
 
 describe('removing a file the adapter removed', () => {
