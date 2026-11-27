@@ -289,6 +289,27 @@ describe('which programs are swapped', () => {
     expect(rig.calls).toContain('stop:4000:0.62.0');
   });
 
+  // The look and the swap are a settle apart, and another computer on the same host can start a terminal in it.
+  // Red-green: drop the `everyLiveSessionIsHeld` check in `swap` and the agent is suspended, then reported at suspend.
+  it('stops nothing when a terminal this app does not hold appears between the look and the swap, and looks again later', async () => {
+    const rig = makeRig();
+    const session = rig.addSession('a');
+    await rig.updater.consider(HOST);
+    // Watching, with the settle armed: the unheld terminal starts inside it.
+    rig.unheldLive = 1;
+    await until(() => rig.calls.includes('release'));
+    expect(rig.calls).toEqual(['hold', 'release']);
+    expect(rig.reports).toEqual([]);
+    expect(session.alive).toBe(true);
+
+    // Not failed: once nothing unheld runs, the next look swaps.
+    rig.unheldLive = 0;
+    rig.calls.length = 0;
+    await rig.updater.consider(HOST);
+    await until(() => rig.calls.includes('resume'));
+    expect(rig.calls).toContain('stop:4000:0.62.0');
+  });
+
   it("stops a program that has retireIfIdle through it, not by its pid", async () => {
     const rig = makeRig();
     rig.retireSupported = true;
@@ -512,6 +533,34 @@ describe('a swap that cannot finish leaves the old program and the agents back',
     expect(rig.reports).toEqual(['hold']);
     expect(rig.calls).toEqual(['hold', 'release']);
     expect(rig.sessions[0].alive).toBe(true);
+  });
+
+  // The pid and the version come from the host and become the stop script's arguments. The script refuses a bad
+  // one too, but only on the host; these never leave this computer. Red-green: drop either check in `stopProgram`
+  // and the fake host records a `stop:` call and the swap succeeds.
+  it.each([
+    ['a daemon pid that can name no program', (rig: FakeRig) => { rig.daemonPid = 1; }],
+    ['a version that names no program folder', (rig: FakeRig) => { rig.version = '0.62.0/../../x'; }],
+  ])('fails at stop without sending the stop for %s', async (_label, adjust) => {
+    const rig = makeRig();
+    adjust(rig);
+    const versionBefore = rig.version;
+    await rig.updater.consider(HOST);
+    await until(() => rig.reports.length === 1);
+    expect(rig.reports).toEqual(['stop']);
+    expect(rig.calls).toEqual(['hold', 'release']);
+    expect(rig.version).toBe(versionBefore);
+  });
+
+  // `remote-hosting.ts` chains the look under `void`, so a throw out of it would be an unhandled rejection.
+  // Red-green: remove the try/catch in `consider` and the promise rejects.
+  it('never rejects when its own check throws, and reports it at hold', async () => {
+    const rig = makeRig();
+    rig.addSession('a');
+    rig.isAtSafePointOf = () => { throw new Error('safe point read failed'); };
+    await expect(rig.updater.consider(HOST)).resolves.toBeUndefined();
+    expect(rig.reports).toEqual(['hold']);
+    expect(rig.calls).toEqual([]);
   });
 
   it('reports resume when the agents cannot be brought back', async () => {
