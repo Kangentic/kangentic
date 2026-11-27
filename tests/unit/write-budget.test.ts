@@ -16,6 +16,7 @@ import {
   BUSY_COMMIT_GAP_MS,
   BUSY_LOCK_DUTY,
   IDLE_LOCK_DUTY,
+  installWriteBudget,
   recordWriteHold,
   type WriteBudgetClock,
 } from '../../src/main/retrieval/write-budget';
@@ -199,6 +200,22 @@ describe('the transaction hold observer', () => {
         expect(entry.held).toBeGreaterThanOrEqual(0);
         expect(entry.inTransaction).toBe(false);
       }
+    } finally {
+      db.close();
+    }
+  });
+
+  // The worker posts its long holds to main through this (Sentry DESKTOP-5V),
+  // and the budget must still be charged for every one.
+  it('hands each committed hold to the installed budget\'s listener as well', () => {
+    const db = openTestDatabase();
+    try {
+      db.exec('CREATE TABLE rows (id INTEGER PRIMARY KEY)');
+      const heard: number[] = [];
+      installWriteBudget((heldMs) => heard.push(heldMs));
+      writeTransaction(db, () => { db.prepare('INSERT INTO rows DEFAULT VALUES').run(); })();
+      expect(heard).toHaveLength(1);
+      expect(heard[0]).toBeGreaterThanOrEqual(0);
     } finally {
       db.close();
     }

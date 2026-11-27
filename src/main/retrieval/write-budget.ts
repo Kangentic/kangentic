@@ -125,7 +125,13 @@ export function awaitWriteTurn(db: Database.Database, clock: WriteBudgetClock = 
   return turn;
 }
 
-/** Report every worker write transaction's hold to the budget. The worker calls this once. */
-export function installWriteBudget(): void {
-  setWriteHoldObserver((db, heldMs) => recordWriteHold(db, heldMs));
+/**
+ * Report every worker write transaction's hold to the budget, and to
+ * `onHold` after it. The worker calls this once.
+ */
+export function installWriteBudget(onHold?: (heldMs: number) => void): void {
+  setWriteHoldObserver((db, heldMs) => {
+    recordWriteHold(db, heldMs);
+    onHold?.(heldMs);
+  });
 }

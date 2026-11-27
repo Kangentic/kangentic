@@ -100,6 +100,19 @@ export interface SlowSpanMessage {
   ms: number;
 }
 
+/** The shortest write hold the worker posts to main. A shorter one cannot
+ *  explain a write on main that waited out its 5 s busy timeout. */
+export const LONG_WRITE_HOLD_MS = 1_000;
+
+/** A write transaction of the worker's that held the database's lock at
+ *  least `LONG_WRITE_HOLD_MS`, posted when it committed, in production too.
+ *  Main keeps the recent ones for a `SQLITE_BUSY` report's `sqlite_busy`
+ *  context (`src/main/diagnostics/sqlite-busy-holders.ts`, Sentry DESKTOP-5V). */
+export interface WriteHoldMessage {
+  type: 'write-hold';
+  heldMs: number;
+}
+
 /** A line the worker logged. Its stdout goes nowhere and its stderr is kept
  *  for crash reports, so its console reaches main's log this way. */
 export interface LogMessage {
@@ -108,7 +121,7 @@ export interface LogMessage {
   text: string;
 }
 
-export type FromWorkerMessage = ReadyMessage | ReplyMessage | EventMessage | SlowSpanMessage | LogMessage | HandledErrorMessage;
+export type FromWorkerMessage = ReadyMessage | ReplyMessage | EventMessage | SlowSpanMessage | LogMessage | HandledErrorMessage | WriteHoldMessage;
 
 /** The class and errno of a thrown value, for the wire. Names that are not class names are left out. */
 export function errorShapeOf(error: unknown): { errorName?: string; errorCode?: string } {

@@ -14,6 +14,8 @@ import { ProjectRepository } from '../db/repositories/project-repository';
 import { ProjectGroupRepository } from '../db/repositories/project-group-repository';
 import { SessionManager } from '../pty/session-manager';
 import { UtilityPtyHostTransport } from '../pty/host/utility-pty-host-transport';
+import { setSqliteBusyContextSource } from '../analytics/error-reporting';
+import { buildSqliteBusyContext, SQLITE_BUSY_LOOKBACK_MS } from '../diagnostics/sqlite-busy-holders';
 import { PTY_HOST_STALL_AT_QUIT_FILE_NAME } from '../pty/host/pty-host-report';
 import { setOffMainExecutor } from '../utility-process/off-main-exec';
 import { setOffMainPtySpawner } from '../utility-process/off-main-pty';
@@ -164,6 +166,10 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   });
   const sessionManager = new SessionManager({ ptyHostTransport });
   ptyHostTransport.start();
+  // A `SQLITE_BUSY` report names who else may have held the lock: the
+  // retrieval worker's longest recent write hold, and whether the pty host's
+  // own watchdog saw its loop held (Sentry DESKTOP-5V).
+  setSqliteBusyContextSource(() => buildSqliteBusyContext(ptyHostTransport.hostHeldWithin(SQLITE_BUSY_LOOKBACK_MS)));
   // What each agent CLI answered on an earlier launch, so listing the agents
   // starts no CLI nobody is using (agent-probe-store.ts). Main is the only
   // process that turns it on.

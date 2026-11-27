@@ -197,6 +197,9 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
   private heartbeatInFlight = false;
   /** The beat whose ping has not settled yet, for a quit that ends its stall. */
   private currentBeat: HeartbeatBeat | null = null;
+  /** `watchdogLinesSeen` when last read, and when a new line was last noticed (`hostHeldWithin`). */
+  private watchdogLinesNoted = 0;
+  private hostHoldNotedAt: number | null = null;
   /** The late beat waiting out its settle, for a quit that lands inside it. */
   private settlingStall: SettlingStall | null = null;
   private shuttingDown = false;
@@ -542,6 +545,7 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
   private startHeartbeat(): void {
     this.stopHeartbeat();
     this.heartbeatTimer = setInterval(() => {
+      this.noteHostHolds(Date.now());
       if (this.heartbeatInFlight) return;
       this.heartbeatInFlight = true;
       const beat: HeartbeatBeat = {
@@ -688,6 +692,29 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
   private mainHeldNotHost(beat: HeartbeatBeat): boolean {
     if (beat.timerLateMs <= HEARTBEAT_LATE_TIMER_MS) return false;
     return (beat.stderrTail?.watchdogLinesSeen() ?? 0) <= beat.watchdogLinesSeenBefore;
+  }
+
+  /**
+   * Whether the host's own event-loop watchdog wrote a line within `windowMs`:
+   * its loop was held, by its own evidence. A `SQLITE_BUSY` report names it
+   * (`sqlite-busy-holders.ts`), since the host's transcript writer is one of the
+   * connections that can hold a project database's lock. Not the ping: main is
+   * the thread blocked in the busy wait, so its pings read late either way.
+   * Noticed on each heartbeat tick and on each call, so the time is when main
+   * saw the line, at most one tick after the host wrote it. `unknown` with no
+   * host stderr to read, the in-process fallback's included.
+   */
+  hostHeldWithin(windowMs: number, now: number = Date.now()): 'yes' | 'no' | 'unknown' {
+    if (this.fallback || !this.childStderr) return 'unknown';
+    this.noteHostHolds(now);
+    return this.hostHoldNotedAt !== null && now - this.hostHoldNotedAt <= windowMs ? 'yes' : 'no';
+  }
+
+  private noteHostHolds(now: number): void {
+    const seen = this.childStderr?.watchdogLinesSeen() ?? 0;
+    if (seen > this.watchdogLinesNoted) this.hostHoldNotedAt = now;
+    // A restarted host starts a new tail, whose count starts again from zero.
+    this.watchdogLinesNoted = seen;
   }
 
   /** The methods of the requests waiting on the host, the heartbeat's own ping left out. */
