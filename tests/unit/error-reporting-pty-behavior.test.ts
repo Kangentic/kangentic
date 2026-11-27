@@ -1681,7 +1681,7 @@ describe('a forwarded dev-server port', () => {
     const { HostRequestUnansweredError } = await import('../../src/main/remote/link/host-request-unanswered-error');
 
     const { events, logLines } = await startForwarder(async () => {
-      throw new HostRequestUnansweredError('the host did not answer listeningPorts within 30 s');
+      throw new HostRequestUnansweredError('the host did not answer listeningPorts within 30 s', 'no_answer');
     });
 
     await vi.waitFor(() => expect(logLines.some((line) => line.startsWith('could not list the ports'))).toBe(true), WAIT);

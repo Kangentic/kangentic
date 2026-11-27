@@ -2755,7 +2755,19 @@ describe('performSpawn - a session on a remote host (#913)', () => {
       expect(context.host.spawn).not.toHaveBeenCalled();
       expect(handleSpawnFailure).toHaveBeenCalledTimes(1);
       expect(vi.mocked(handleSpawnFailure).mock.calls[0][0].message).toBe('Connection refused');
+      // The report names the host call that failed (DESKTOP-5T).
+      expect(vi.mocked(handleSpawnFailure).mock.calls[0][1].remoteStep).toBe('register');
       expect(context.remoteSessions!.release).toHaveBeenCalledTimes(1);
+    });
+
+    it('names the host\'s PTY spawn as the failed call when the registration went through', async () => {
+      const context = makeContext();
+      vi.mocked(context.host.spawn).mockResolvedValue({ ok: false, error: new Error('no shell'), previousScrollback: '' });
+      vi.mocked(handleSpawnFailure).mockClear();
+
+      await performSpawn(remoteInput(), context);
+
+      expect(vi.mocked(handleSpawnFailure).mock.calls[0][1].remoteStep).toBe('spawn');
     });
 
     it('throws the host\'s error for a rejoin whose registration failed, leaving no running row and the rejoined PTY alive', async () => {

@@ -2,8 +2,8 @@ import type { Session, SpawnSessionInput } from '../../../shared/types';
 import type { SessionRegistry, ManagedSession } from '../session-registry';
 import type { PtyHostClient } from '../host/pty-host-client';
 import { toSession } from '../session-registry';
-import { diagnoseSpawnFailure, recordSpawnFailure } from './pty-spawn';
-import { isRemoteLinkRefusal, preflightTagsOf } from '../agent-launch-report';
+import { diagnoseSpawnFailure, recordSpawnFailure, type RemoteSpawnStep } from './pty-spawn';
+import { isRemoteLinkRefusal, placeTagOf, preflightTagsOf, type LaunchPlace } from '../agent-launch-report';
 
 /**
  * Snapshot of the inputs that went into a spawn attempt - everything
@@ -18,6 +18,17 @@ export interface SpawnAttempt {
   effectiveCwd: string;
   /** Scrollback carried over from the previous session (or empty). */
   previousScrollback: string;
+  /** For a spawn on an SSH host, the call that failed there (DESKTOP-5T). Absent for a local spawn. */
+  remoteStep?: RemoteSpawnStep;
+}
+
+/**
+ * Where the spawn was to run: the failed session never had a row. `shell` is the resolved one,
+ * since an input that takes the default shell names none and a default WSL shell is still WSL.
+ */
+function placeOfAttempt(input: SpawnSessionInput, shell: string, remote: boolean): LaunchPlace {
+  if (remote) return 'ssh';
+  return placeTagOf({ hostId: null, cliTarget: input.cliTarget ?? null, shell });
 }
 
 export interface SpawnFailureContext {
@@ -57,14 +68,19 @@ export function handleSpawnFailure(
   context: SpawnFailureContext,
 ): Session {
   const { id, input, shell, shellExe, effectiveCwd, previousScrollback } = attempt;
+  const remote = input.remote !== undefined;
+  // A remote attempt always names its step; one built without it reads as the PTY spawn.
+  const remoteStep = remote ? (attempt.remoteStep ?? 'spawn') : undefined;
 
   const diagnostic = diagnoseSpawnFailure({
     err,
     shellExe,
     effectiveCwd,
     originalCwd: input.cwd,
+    remote,
   });
-  console.error(`[PTY] spawn failed session=${id.slice(0, 8)} task=${input.taskId.slice(0, 8)} shell=${shellExe} error=${diagnostic.errorMessage} errno=${diagnostic.errno} cwdExists=${diagnostic.cwdExists} shellExists=${diagnostic.shellExists}`);
+  const existence = remote ? `remote_step=${remoteStep}` : `cwdExists=${diagnostic.cwdExists} shellExists=${diagnostic.shellExists}`;
+  console.error(`[PTY] spawn failed session=${id.slice(0, 8)} task=${input.taskId.slice(0, 8)} shell=${shellExe} error=${diagnostic.errorMessage} errno=${diagnostic.errno} ${existence}`);
   recordSpawnFailure({
     diagnostic,
     shellExe,
@@ -72,8 +88,10 @@ export function handleSpawnFailure(
       agent: input.agentName,
       agentCliVersion: input.agentCliVersion,
       startPath: input.startPath,
+      place: placeOfAttempt(input, shell, remote),
     }),
     remoteLinkRefusal: isRemoteLinkRefusal(err),
+    ...(remoteStep ? { remoteStep } : {}),
   });
 
   // Print the raw error in the terminal, whatever its shape.

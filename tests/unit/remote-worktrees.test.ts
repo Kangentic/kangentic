@@ -78,6 +78,8 @@ describe('making a worktree on the host', () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({ file: 'sh', cwd: HOST_REPO });
+    // A large checkout's create runs long, so the request names a wait that covers it (Sentry DESKTOP-4N).
+    expect(calls[0].timeoutMs).toBe(240_000);
     expect(calls[0].args.slice(0, 1)).toEqual(['-c']);
     expect(calls[0].args.slice(2)).toEqual(['kangentic-worktree', HOST_REPO, '/home/dev/api/.kangentic/worktrees/7', 'fix-login-bug-abcdef12', '0', 'main', 'master']);
     const localPath = path.join(shellFolder, '.kangentic', 'worktrees', '7');

@@ -56,6 +56,7 @@ import { parseWslShellSpec } from './process-tag/task-process-tag';
 import { AgentBatchShimUnresolvedError, AgentCommandTooLongError, AgentStartRefusedError } from './spawn/agent-start-refused';
 import type { ManagedSession } from './session-registry';
 import { HOST_UNREACHABLE_ERROR_NAME } from '../remote/link/host-unreachable-error';
+import { hostRequestWaitOf, isHostLinkStoppedError } from '../remote/link/host-request-unanswered-error';
 
 // Re-exported for the callers that also read this file's report functions. A
 // module that must not reach `electron` imports `launch-output-class.ts` itself.
@@ -222,6 +223,19 @@ function resumeEvidenceTagsOf(session: ManagedSession): Record<string, string> {
   };
 }
 
+/** Where an agent ran, as a tag: this computer, a WSL distro on it, or an SSH host. */
+export type LaunchPlace = 'local' | 'wsl' | 'ssh';
+
+/**
+ * Where a session runs. A host session's report otherwise shows only by what it lacks
+ * (`typed_line_bytes=0`, no `agent_process`), which DESKTOP-2M and 5K could not be read by.
+ */
+export function placeTagOf(session: Pick<ManagedSession, 'hostId' | 'cliTarget' | 'shell'>): LaunchPlace {
+  if (session.hostId || session.cliTarget?.kind === 'ssh') return 'ssh';
+  if (session.cliTarget?.kind === 'wsl' || parseWslShellSpec(session.shell) !== null) return 'wsl';
+  return 'local';
+}
+
 /** A session's facts at this moment. Synchronous, so they survive the kill that follows. */
 export function launchTagsOf(session: ManagedSession, now: number = Date.now()): LaunchTags {
   const startedAtMs = Date.parse(session.startedAt);
@@ -230,6 +244,7 @@ export function launchTagsOf(session: ManagedSession, now: number = Date.now()):
     ...resumeEvidenceTagsOf(session),
     agent: agentTag(session.agentName),
     agent_cli_version: cliVersionTag(session.agentCliVersion),
+    place: placeTagOf(session),
     start_path: session.startPath ?? 'board',
     shell: shellLabelOf(session.shell),
     attempt: attemptOf(session.startPath),
@@ -249,12 +264,15 @@ export function preflightTagsOf(input: {
   agent?: string | null;
   agentCliVersion?: string | null;
   startPath: LaunchStartPath;
+  /** Where the launch was to run, sent only by a caller that knows it (the spawn-failure handler). */
+  place?: LaunchPlace;
 }): LaunchTags {
   return {
     agent: agentTag(input.agent),
     agent_cli_version: cliVersionTag(input.agentCliVersion),
     start_path: input.startPath,
     attempt: attemptOf(input.startPath),
+    ...(input.place ? { place: input.place } : {}),
   };
 }
 
@@ -476,20 +494,39 @@ function preflightCauseOf(cause: string, error: unknown): string {
 const REMOTE_LINK_REFUSALS: ReadonlySet<string> = new Set([HOST_UNREACHABLE_ERROR_NAME, 'UnsupportedOnHostError']);
 
 function isRemoteLinkRefusalClass(error: unknown): boolean {
-  return error instanceof Error && REMOTE_LINK_REFUSALS.has(error.name);
+  return error instanceof Error && (REMOTE_LINK_REFUSALS.has(error.name) || isHostLinkStoppedError(error));
 }
 
 /**
  * True for a remote start the host's link refused, or a wrapper of one (one level
- * of `cause`, as `wrapWorktreeSetupError` wraps): the host has no link here, or the
- * request has no meaning on a host. That is the host's state, not a defect, and
- * the refusal's text has named the host's id. Only these classes: a pty host that
- * timed out or exited during a start is still ours to look at.
+ * of `cause`, as `wrapWorktreeSetupError` wraps): the host has no link here, the
+ * request has no meaning on a host, or the link was stopped with the request out
+ * (a Remove, a quit, a reconnect). That is the host's state, not a defect, and
+ * the refusal's text has named the host's id. Only these: a pty host that timed
+ * out or exited during a start is still ours to look at, and so is a host request
+ * whose wait ran out (`HOST_NO_ANSWER`), which a host too slow for its wait sends.
  */
 export function isRemoteLinkRefusal(error: unknown): boolean {
   if (isRemoteLinkRefusalClass(error)) return true;
   const cause = (error as { cause?: unknown } | null | undefined)?.cause;
   return cause !== undefined && cause !== error && isRemoteLinkRefusalClass(cause);
+}
+
+/** A helper method's name as a tag. Anything else is left out. */
+const HOST_METHOD = /^[A-Za-z]{1,40}$/;
+
+/**
+ * For a start that failed on a host request nobody answered: the helper call (a fixed word) and how
+ * long main waited for it (`ran_for`, a seconds bucket that reaches past five minutes, since a
+ * worktree create waits four). Sentry DESKTOP-4N's newest event had neither.
+ */
+function hostRequestWaitTags(error: unknown): Record<string, string> {
+  const wait = hostRequestWaitOf(error);
+  if (!wait) return {};
+  return {
+    ...(HOST_METHOD.test(wait.method) ? { host_method: wait.method } : {}),
+    ran_for: secondsBucket(wait.waitedMs),
+  };
 }
 
 /** What `reportPreflightFailure` takes. */
@@ -564,6 +601,7 @@ export function reportPreflightFailure(failure: PreflightFailure): void {
     const tags = {
       ...preflightTagsOf({ agent, agentCliVersion, startPath }),
       ...errorShapeTags(error),
+      ...hostRequestWaitTags(error),
     };
     const excluded = isUserConfigurationError(error);
     if (excluded && alreadyCounted !== true) trackEvent('spawn_failed', { agent: tags.agent, reason: cause });
@@ -1125,11 +1163,26 @@ function mayHaveExitedWithNoConversation(
   outcome: SessionIdCaptureOutcome,
   sessionStatus: string | null,
 ): boolean {
-  if (outcome.kind !== 'never' || outcome.settledBy !== 'ceiling' || sessionStatus !== 'exited') return false;
-  if (!endedOnItsOwn(session)) return false;
+  if (!mayHaveDiedAtStart(session, outcome, sessionStatus)) return false;
   if (typeof session.agentRanAt !== 'number' || typeof session.exitedAt !== 'number') return false;
-  if (agentEndedAt(session, session.agentRanAt, session.exitedAt) - session.agentRanAt >= AGENT_EXITED_AT_START_MS) return false;
-  return typeof session.promptObservedAt !== 'number';
+  return agentEndedAt(session, session.agentRanAt, session.exitedAt) - session.agentRanAt < AGENT_EXITED_AT_START_MS;
+}
+
+/**
+ * `mayHaveExitedWithNoConversation` without its minute: a never-captured session whose PTY ended on its
+ * own at the ceiling with no prompt seen, however long its agent seemed to run. The sweep retires a
+ * shell only after two looks a minute apart, and a shell's repaints keep its last output moving, so a
+ * Codex dead 5 s in can measure past the minute (Sentry DESKTOP-36: three reports for one failure in one
+ * run). Its output is read whatever the clock says, and output that names a failure sends it to the
+ * launch report (`exitedWithNamedFailure`).
+ */
+function mayHaveDiedAtStart(
+  session: ManagedSession,
+  outcome: SessionIdCaptureOutcome,
+  sessionStatus: string | null,
+): boolean {
+  if (outcome.kind !== 'never' || outcome.settledBy !== 'ceiling' || sessionStatus !== 'exited') return false;
+  return endedOnItsOwn(session) && typeof session.promptObservedAt !== 'number';
 }
 
 /** `mayHaveExitedWithNoConversation`, with the store read: one that is `present` had a conversation. */
@@ -1140,6 +1193,27 @@ function exitedWithNoConversation(
   idStore: SessionIdStoreEvidence | 'unknown',
 ): boolean {
   return idStore !== 'present' && mayHaveExitedWithNoConversation(session, outcome, sessionStatus);
+}
+
+/**
+ * How long the agent lived by the same measure the death-at-start route uses (`agentEndedAt`), beside
+ * `agent_ran_for_s`, which counts to the PTY's end. A shell the sweep retired outlives its agent by up
+ * to two minutes, so the two differ exactly where DESKTOP-36 could not tell a death at start from a miss.
+ */
+function agentLifeTag(session: ManagedSession): string {
+  if (typeof session.agentRanAt !== 'number') return 'not_run';
+  if (typeof session.exitedAt !== 'number') return session.status === 'running' ? 'running' : 'unknown';
+  return secondsBucket(Math.max(0, agentEndedAt(session, session.agentRanAt, session.exitedAt) - session.agentRanAt));
+}
+
+/** What a dead launch printed, classified once for whichever report it goes to. */
+interface ClassifiedPrint {
+  outputClass: LaunchOutputClass;
+  readTags: Record<string, string>;
+}
+
+function classifiedPrintOf(session: ManagedSession, output: PrintedOutput): ClassifiedPrint {
+  return 'text' in output ? classifiedOutputOf(session, output.text) : { outputClass: output.unread, readTags: {} };
 }
 
 /**
@@ -1165,6 +1239,12 @@ function exitedWithNoConversation(
  * launch printed: the host keeps an exited session's output until its row goes,
  * so it is read here, minutes after the exit. `readOutputOf` gives the read, or
  * null for a row that is gone.
+ *
+ * A death at start the minute missed (`mayHaveDiedAtStart`, DESKTOP-36) has its
+ * output read too, and its report waits for that read: output that names a
+ * failure (`isIdentifiedFailureClass`) with a store not `present` sends it to the
+ * launch report the same way, and anything else files the capture report with
+ * `output_class` and the exit facts.
  */
 export function reportSessionIdCaptureOutcome(
   sessionId: string,
@@ -1179,10 +1259,40 @@ export function reportSessionIdCaptureOutcome(
   const session = pending.session;
   // Asked here too, so an agent that already sent this kind waits on nothing,
   // unless the session may still be a death at start, which is not that kind.
-  const mayHaveDiedAtStart = mayHaveExitedWithNoConversation(session, outcome, sessionStatus);
-  if (outcomeReport.latch.has(pending.agent) && !mayHaveDiedAtStart) return;
-  // Posted now, so a row removed during the waits below cannot lose it.
-  const printed = readPrintedOutput(mayHaveDiedAtStart ? readOutputOf(session) : null);
+  const mayBeDeathAtStart = mayHaveDiedAtStart(session, outcome, sessionStatus);
+  if (outcomeReport.latch.has(pending.agent) && !mayBeDeathAtStart) return;
+  // Posted now, so a row removed during the waits below cannot lose it. Read for
+  // every death at start, however long the clock says it ran (DESKTOP-36).
+  const printed = mayBeDeathAtStart ? readPrintedOutput(readOutputOf(session)) : Promise.resolve(null);
+
+  function sendCaptureReport(captureTags: Record<string, string>, idStore: SessionIdStoreEvidence | 'unknown'): void {
+    const agent = captureTags.agent;
+    if (outcome.kind === 'never' && session.launchFailureNoted === true && idStore !== 'present') {
+      // Its launch report already said why it never started (a failure its CLI
+      // named, or a shell that never ran it), so there was no id to capture. The
+      // sweep can end such a shell long after its agent died: Codex 0.171.0 dead
+      // 6 s in under PowerShell was retired at the 120 s start ceiling.
+      // breadcrumb-ok: a session id and an agent from a fixed list.
+      console.warn(`[AGENT-LAUNCH] session=${sessionId.slice(0, 8)} stage=agent_exited cause=no_conversation agent=${agent} already_reported=yes`);
+      return;
+    }
+    if (explainedByUntouchedTerminal(session, outcome.kind, idStore)) {
+      // The local log still says so: nobody used it, and no event will.
+      console.warn(`[session-manager] ${agent} gave no session ID for session ${sessionId.slice(0, 8)}: no prompt reached it and it wrote no session, so nothing is reported.`);
+      return;
+    }
+    if (outcomeReport.latch.has(agent)) return;
+    outcomeReport.latch.add(agent);
+    const error = new Error(`${outcomeReport.message} (${agent})`);
+    error.name = outcomeReport.errorName;
+    reportHandledError(
+      error,
+      { source: 'agent_session_id', ...captureTags },
+      {},
+      [outcomeReport.fingerprintHead, agent],
+    );
+  }
+
   const lateEvidence = outcome.kind === 'late' ? lateEvidenceSettled(session, outcome.capturedBy) : Promise.resolve();
   const storeEvidence = outcome.kind === 'never' ? settleTimeStoreEvidence(pending) : pending.storeEvidence;
   // The outcome's answer counts a hook layer that loaded after the window. A removal deletes the
@@ -1215,7 +1325,12 @@ export function reportSessionIdCaptureOutcome(
         after_output_s: afterOutputTag(session, outcome.capturedAt),
         captured_by: captureSourceTag(outcome.capturedBy),
       }
-      : { settled_by: outcome.settledBy, session_status: sessionStatus ?? 'removed', agent_ran_for_s: agentRanForTag(session, outcome) };
+      : {
+        settled_by: outcome.settledBy,
+        session_status: sessionStatus ?? 'removed',
+        agent_ran_for_s: agentRanForTag(session, outcome),
+        agent_life_s: agentLifeTag(session),
+      };
     const captureTags: Record<string, string> = {
       agent: pending.agent,
       ...pending.tags,
@@ -1232,34 +1347,28 @@ export function reportSessionIdCaptureOutcome(
       // a hook that never ran, `setup` one that ran and heard nothing (DESKTOP-3A).
       hook_load: hookLoad,
     };
-    if (exitedWithNoConversation(session, outcome, sessionStatus, idStore)) {
-      reportExitedWithNoConversation(session, captureTags, printed);
+    const classified = printed.then((output) => (output ? classifiedPrintOf(session, output) : null));
+    // An agent that ended under a minute in claims its launch report now, before
+    // the read answers, so no other stage can send beside it.
+    if (mayBeDeathAtStart && exitedWithNoConversation(session, outcome, sessionStatus, idStore)) {
+      reportExitedWithNoConversation(session, captureTags, classified);
       return;
     }
-    if (outcome.kind === 'never' && session.launchFailureNoted === true && idStore !== 'present') {
-      // Its launch report already said why it never started (a failure its CLI
-      // named, or a shell that never ran it), so there was no id to capture. The
-      // sweep can end such a shell long after its agent died: Codex 0.171.0 dead
-      // 6 s in under PowerShell was retired at the 120 s start ceiling.
-      // breadcrumb-ok: a session id and an agent from a fixed list.
-      console.warn(`[AGENT-LAUNCH] session=${sessionId.slice(0, 8)} stage=agent_exited cause=no_conversation agent=${pending.agent} already_reported=yes`);
+    if (!mayBeDeathAtStart) {
+      sendCaptureReport(captureTags, idStore);
       return;
     }
-    if (explainedByUntouchedTerminal(session, outcome.kind, idStore)) {
-      // The local log still says so: nobody used it, and no event will.
-      console.warn(`[session-manager] ${pending.agent} gave no session ID for session ${sessionId.slice(0, 8)}: no prompt reached it and it wrote no session, so nothing is reported.`);
-      return;
-    }
-    if (outcomeReport.latch.has(pending.agent)) return;
-    outcomeReport.latch.add(pending.agent);
-    const error = new Error(`${outcomeReport.message} (${pending.agent})`);
-    error.name = outcomeReport.errorName;
-    reportHandledError(
-      error,
-      { source: 'agent_session_id', ...captureTags },
-      {},
-      [outcomeReport.fingerprintHead, pending.agent],
-    );
+    // One the minute missed waits for what it printed: output that names a
+    // failure is a death at start whatever the clock said (DESKTOP-36).
+    void classified.then((print) => {
+      if (isShuttingDown() || !print) return;
+      if (idStore !== 'present' && isIdentifiedFailureClass(print.outputClass)) {
+        reportExitedWithNoConversation(session, captureTags, Promise.resolve(print));
+        return;
+      }
+      // What still files here says what it printed and how it ended (DESKTOP-36 sent neither).
+      sendCaptureReport({ ...captureTags, output_class: print.outputClass, ...print.readTags, ...exitFactTags(session) }, idStore);
+    });
   });
 }
 
@@ -1285,11 +1394,11 @@ function readPrintedOutput(readOutput: LaunchOutputReader): Promise<PrintedOutpu
  * Send a death at start as the session's one launch report, with the class of
  * what it printed and how its PTY ended (Sentry DESKTOP-4Z had neither). A
  * session that already made one (a CLI that named its startup failure) sends
- * nothing more. Its one report is claimed before the read answers, so no other
- * stage can send beside it. The cause stays `no_conversation` whatever the
- * output says, since the issue is grouped on it. `claimLaunchReport` keys on the
- * agent and attempt, so both go in the tags: the agent from the capture window,
- * the attempt from `launchTagsOf`.
+ * nothing more. The output was read and classified by the caller, which needs
+ * the class to route a death the minute missed (DESKTOP-36). The cause stays
+ * `no_conversation` whatever the output says, since the issue is grouped on it.
+ * `claimLaunchReport` keys on the agent and attempt, so both go in the tags: the
+ * agent from the capture window, the attempt from `launchTagsOf`.
  *
  * It carries the launch tags every other launch report sends (`launchTagsOf`),
  * read now, beneath the capture window's tags, which win where both name a fact.
@@ -1300,7 +1409,7 @@ function readPrintedOutput(readOutput: LaunchOutputReader): Promise<PrintedOutpu
 function reportExitedWithNoConversation(
   session: ManagedSession,
   captureTags: Record<string, string>,
-  printed: Promise<PrintedOutput>,
+  classified: Promise<ClassifiedPrint | null>,
 ): void {
   const sessionLabel = session.id.slice(0, 8);
   if (session.launchFailureNoted === true) {
@@ -1310,11 +1419,9 @@ function reportExitedWithNoConversation(
   }
   session.launchFailureNoted = true;
   const tags = { ...launchTagsOf(session), ...captureTags, ...exitFactTags(session) };
-  void printed.then((output) => {
+  void classified.then((print) => {
     if (isShuttingDown()) return;
-    const { outputClass, readTags } = 'text' in output
-      ? classifiedOutputOf(session, output.text)
-      : { outputClass: output.unread, readTags: {} };
+    const { outputClass, readTags } = print ?? { outputClass: 'not_read' as const, readTags: {} };
     sendClassifiedFailure(session, 'agent_exited', 'no_conversation', { ...tags, ...readTags }, outputClass);
   });
 }

@@ -776,6 +776,21 @@ describe('diagnoseSpawnFailure', () => {
     expect(result.scrollbackSuffix).toContain('Error: Terminal output never connected after 5012 ms, longest pty host stall 4870 ms (ConPTY error code: -1)');
   });
 
+  it('asks this computer\'s disk nothing about a spawn on an SSH host (DESKTOP-5T)', () => {
+    const existsSync = vi.spyOn(fs, 'existsSync');
+    const result = diagnoseSpawnFailure({
+      err: Object.assign(new Error('ENOENT: no such file or directory, mkdir'), { code: 'ENOENT' }),
+      shellExe: '$LOGIN_SHELL',
+      effectiveCwd: '/home/dev/api',
+      originalCwd: '/tmp/shell-folder',
+      remote: true,
+    });
+    expect(existsSync).not.toHaveBeenCalled();
+    expect(result.cwdExists).toBeNull();
+    expect(result.shellExists).toBeNull();
+    expect(result.errno).toBe('ENOENT');
+  });
+
   it('gives a real CreateProcessW failure no kind of its own, and prints it', () => {
     const spawnError = fromPtyHostError(toPtyHostError(processNotStartedError(267, 40, 10)));
     const result = diagnoseSpawnFailure({ err: spawnError, shellExe: 'pwsh', effectiveCwd: '/tmp', originalCwd: '/tmp' });
@@ -879,6 +894,29 @@ describe('recordSpawnFailure', () => {
     const timeout = new Error('The pty host did not answer');
     timeout.name = 'PtyHostTimeoutError';
     expect(isRemoteLinkRefusal(timeout)).toBe(false);
+  });
+
+  it('names a host registration that failed as the host\'s, not this computer\'s shell or folder (DESKTOP-5T)', () => {
+    const hostLaunchTags = preflightTagsOf({ agent: 'claude', agentCliVersion: '2.1.302', startPath: 'resume', place: 'ssh' });
+    const diagnostic = diagnoseSpawnFailure({
+      err: Object.assign(new Error('ENOENT: no such file or directory, mkdir'), { code: 'ENOENT' }),
+      shellExe: '$LOGIN_SHELL',
+      effectiveCwd: '/home/dev/api',
+      originalCwd: '/tmp/shell-folder',
+      remote: true,
+    });
+    recordSpawnFailure({ diagnostic, shellExe: '$LOGIN_SHELL', launchTags: hostLaunchTags, remoteStep: 'register' });
+
+    expect(vi.mocked(reportHandledError).mock.calls[0][1]).toMatchObject({
+      stage: 'pty_spawn',
+      place: 'ssh',
+      shell: 'host_login',
+      shellExists: 'unknown',
+      cwdExists: 'unknown',
+      remote_step: 'register',
+      errno: 'ENOENT',
+    });
+    expect(vi.mocked(trackEvent).mock.calls[0][1]).toMatchObject({ shell: 'host_login', shellExists: 'unknown', cwdExists: 'unknown' });
   });
 
   it('sends no path to either service, whatever the shell setting holds', () => {

@@ -12,6 +12,8 @@ import type { HelperServer } from '../../src/main/remote/helper/helper-server';
 import type { HelperSessionRecord } from '../../src/main/remote/protocol/messages';
 import { dialHelper, makeHelperRig, settle, spawnParams, type HelperRig } from './helpers/remote-link-rig';
 import { createFakeRendererPort, receivedOutput } from './helpers/fake-renderer-port';
+import { isHostLinkStoppedError } from '../../src/main/remote/link/host-request-unanswered-error';
+import { fromPtyHostError, toPtyHostError } from '../../src/main/pty/host/protocol';
 
 const FAST = { initialDelayMs: 100, maxDelayMs: 400 };
 const teardown: Array<() => void> = [];
@@ -150,8 +152,11 @@ describe('LinkHub.spawn when the host gives no answer', () => {
     const wireParams = { ...spawnParams('s1', 'task-1', 'host-a'), ptyId: 41, sentAtMs: Date.now() };
     const spawning = hub.request('spawn', wireParams);
     const rejection = expect(spawning).rejects.toThrow('did not answer spawn');
+    // A wait that ran out says so in its code, which a launch report still files (Sentry DESKTOP-4N).
+    const coded = expect(spawning).rejects.toMatchObject({ name: 'HostRequestUnansweredError', code: 'HOST_NO_ANSWER' });
     await settle(300);
     await rejection;
+    await coded;
     expect(hub.hostOfSession('s1')).toBeNull();
 
     // The core now answers: the helper must already know the spawn was killed, and end the PTY.
@@ -256,6 +261,22 @@ describe('RemoteLink state reports and a link that was stopped', () => {
     expect(states).toContain('stopped');
     expect(states).not.toContain('reconnecting');
     expect(link.state).toBe('stopped');
+  });
+
+  it('rejects a request still out at a stop as link-stopped, which holds across the pty host transport (Sentry DESKTOP-4N)', async () => {
+    const helper = makeHelperRig(1);
+    teardown.push(() => helper.helper.dispose());
+    const held = holdCoreSpawns(helper.helper);
+    teardown.push(() => held.release());
+    const { link } = await connectedLink(helper);
+
+    const spawning = link.request('spawn', { ...spawnParams('s1', 'task-1'), ptyId: 1, sentAtMs: Date.now() });
+    await settle();
+    link.stop();
+    const rejected = await spawning.then(() => null, (error: unknown) => error);
+
+    expect(rejected).toMatchObject({ name: 'HostRequestUnansweredError', code: 'HOST_LINK_STOPPED' });
+    expect(isHostLinkStoppedError(fromPtyHostError(toPtyHostError(rejected)))).toBe(true);
   });
 
   it('still reports reconnecting when a running link drops', async () => {

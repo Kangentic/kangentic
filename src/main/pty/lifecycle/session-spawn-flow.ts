@@ -663,6 +663,8 @@ export async function performSpawn(
       shellExe,
       effectiveCwd,
       previousScrollback: spawnOutcome.previousScrollback,
+      // Names the host call that failed, so the report says which (DESKTOP-5T).
+      ...(remotePlan ? { remoteStep: registrationError ? 'register' as const : 'spawn' as const } : {}),
     }, {
       registry: context.registry,
       host: context.host,
