@@ -314,6 +314,16 @@ describe('a conversation that ran on a host', () => {
       expect(runCommand).not.toHaveBeenCalled();
     });
 
+    it('takes the projects folder from the agent\'s status report when the record holds no path', async () => {
+      // The record's column is empty, as before its first status tick was stored; the report names the path.
+      writeStatusReport(HOST_TRANSCRIPT, false);
+      const runCommand = vi.fn(async () => answered('KG:absent\n'));
+
+      expect(await assessOnHost(runCommand, { ...noTurns, transcript_path: null })).toMatchObject({ verdict: 'never-started', promptOwed: true });
+      const [request] = runCommand.mock.calls[0] as unknown as [HostCommandRequest];
+      expect(request.args.slice(2)).toEqual(['kangentic-claude-conversation', '/home/dev/.claude/projects', AGENT_SESSION_ID]);
+    });
+
     it.each<[string, () => Promise<HostCommandResult>]>([
       ['finds the file', async () => answered('KG:present\n')],
       ['cannot read its folders', async () => answered('KG:unknown\n')],
