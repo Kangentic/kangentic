@@ -3873,6 +3873,10 @@ msgstr "Wann Kangentic Agents pausiert, die auf Sie warten."
 msgid "When the app holds many file handles, ranges for how many it held, of which kinds, and how long it had been running"
 msgstr ""
 
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "When the computer runs low on memory, ranges for how much the app, its agents and other programs were using"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/GitTab.tsx
 #, fuzzy
 msgid "Where new work starts, and how current it stays."

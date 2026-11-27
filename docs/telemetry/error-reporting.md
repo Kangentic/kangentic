@@ -18,6 +18,8 @@ sources:
   - resource: src/main/diagnostics/host-memory.ts
   - resource: src/main/diagnostics/descriptor-table.ts
   - resource: src/main/diagnostics/sqlite-busy-holders.ts
+  - resource: src/main/diagnostics/host-memory-census.ts
+  - resource: src/main/pty/process-tag/memory-census.ts
   - resource: src/main/analytics/reportable-module-name.ts
   - resource: src/main/analytics/renderer-classification.ts
   - resource: src/main/utility-process/stderr-tail.ts
@@ -948,7 +950,7 @@ in one Sentry org, one triage surface.
     `orphan_cleanup`, `pty_kill`, `transcript_flush`, `spawn_worker_fallback`, `uncaught`, and,
     added with the stages above, `transcript_open` (every transcript chunk of a project's
     sessions is dropped), `root_exit_read`, `orphan_api_load`, `task_tree_probe`,
-    `process_table_fallback`, `drain_listener` (a phone's stream misses bytes), and for an SSH
+    `host_memory_census` (a low spell's census scan failed), `process_table_fallback`, `drain_listener` (a phone's stream misses bytes), and for an SSH
     link, which runs in the host too, `remote_rebind`, `remote_reconcile`, `remote_handler`,
     `remote_frame` and `port_forward_poll`). The link's codes skip a drop
     (`isLinkDrop`), and `remote_frame` is relayed only for a frame that passed its checksums and
@@ -1662,13 +1664,41 @@ in one Sentry org, one triage surface.
   (`kern.memorystatus_level`, which judges the warn level). The workflow's memory gate reads the
   same samples (`memoryHeadroom`, `src/main/workflows/workflow-memory-gate.ts`), and crash records
   and the renderer give-up dialog read the last one.
-- **A low spell leaves two log lines, and nothing else.** Memory reads low below the smaller of 2 GB
+  On Windows the sample also carries `appCommitBytes`, Kangentic's own commit (the sum of every
+  Electron process's `privateBytes`, which Electron reports in KB), and on every platform
+  `liveSessionCount`, the running agent sessions, so a reading tells Kangentic's share of the
+  commit from the rest of the machine's (Sentry DESKTOP-5P).
+- **A low spell leaves two log lines and, on Windows, one census.** Memory reads low below the smaller of 2 GB
   and 5% of the limit, and recovers at twice that (`updateLowMemoryLatch`). `trackLowMemorySpell`
   logs one `console.warn` tagged `[host-memory]` when a spell starts and one when it ends, with its
   duration, its lowest headroom and the limit at both ends, so a spell can be read back when
   diagnosing a crash. There is no toast, analytics event or automatic pause. A low reading was a
   short spell of reservations on a limit that grows, and the load came from working agents that a
   pause of waiting agents never touched.
+  - At the start of each spell on Windows, main asks the pty host for one read-only census of who
+    holds the commit charge (`src/main/diagnostics/host-memory-census.ts`,
+    `src/main/pty/process-tag/memory-census.ts`; Sentry DESKTOP-5C, 5D, 5E, 5F and 5P, one install
+    out of commit for two days across relaunches, with Kangentic's own live load explaining about
+    10 GB of it). The host's task scan reads each same-user process's `PrivateUsage` on the
+    `PROCESS_VM_READ` handle its environment read already opens, so it never reads another user's
+    or another session's process. It sums them into groups: Kangentic's own Electron processes, the
+    processes under a live PTY, the processes carrying a task tag outside every live PTY tree, and
+    every other process of the user. Main sorts each tag against the open projects: a task with a
+    live session (`mid_board_beside_session`, a second copy a resumed agent started or something it
+    detached), a parked one (`mid_board_no_session`), an archived, To Do or Done one
+    (`terminal_task`), or an id no open project knows (`unknown_tag`).
+  - One `info` event per spell, `Host memory census at low commit` (fingerprint `host-memory-census`),
+    whose tags are `census` (`ok` or `failed`), a `<group>_gb` and a `<group>_count` for each group,
+    and `unmeasured_count` (same-user processes whose commit could not be read). Sizes read `0`,
+    `<0.5`, `0.5-1`, `1-2`, `2-4`, `4-8`, `8-16`, `16-32` or `32+` GB, and counts `0`, `1-4`, `5-19`,
+    `20-99` or `100+`. The same tags go on the ambient scope as the `host_memory_census` context, so
+    the next crash carries them, and `correctNativeCrashEvent` prunes it with `host_memory`. No pid,
+    process name or task id leaves the computer. A census the host did not answer is reported once
+    (`host_memory_census`, stage `census_request`), and a scan that failed in the host is relayed
+    under the host code `host_memory_census` and sent as `census: failed`. Settings > Privacy lists it.
+    It goes through the pty host transport `register-all.ts` hands over
+    (`requestHostMemoryCensus`), not through the session manager's client, since a second client on
+    the transport would take its events.
 - **An EMFILE report says how full main's descriptor table was** (`src/main/diagnostics/descriptor-table.ts`,
   Sentry DESKTOP-59). DESKTOP-59 was a config write that failed with `EMFILE` on Windows: main held
   all 8192 slots of the C runtime's descriptor table, and nothing said whether the table had filled
@@ -2006,7 +2036,7 @@ this".
   is global, grows every event, and widens what `redact-event-paths.ts` walks.
   `tests/unit/gpu-health.test.ts` runs the builder's output through the real `@sentry/core`
   `normalize`. The other contexts were audited for the same flattening and hold only flat values:
-  `host_memory`, `native_crash`, `task_reap`, `descriptor_table`, `descriptor_kinds`, `sqlite_busy`, `call_site` (a list of strings) and
+  `host_memory`, `host_memory_census`, `native_crash`, `task_reap`, `descriptor_table`, `descriptor_kinds`, `sqlite_busy`, `call_site` (a list of strings) and
   `diff_viewer_N`.
 - **A GPU failure that killed the last run also downgrades this one, once.** When
   `killedTheLastRun` (`gpuEndedPreviousRun`, above) holds, `src/main/index.ts` has already started Chromium with

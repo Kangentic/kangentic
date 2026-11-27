@@ -297,6 +297,22 @@ describe('error reporting runtime behavior (module-state gated)', () => {
       expectDescriptorKindsContext(mocks.setContextSpy.mock.calls[0][1] as Record<string, string>);
     });
 
+    // Sentry DESKTOP-5P: one event per low spell, and the same buckets on the
+    // ambient scope so the crash that follows carries them.
+    it('sends the low-memory census as one fixed info message with bucket tags, and keeps it on the scope', async () => {
+      const errorReporting = await importFreshErrorReporting();
+      errorReporting.initErrorReporting();
+      const tags = { census: 'ok', other_same_user_gb: '16-32', mid_board_no_session_gb: '4-8' };
+
+      errorReporting.reportHostMemoryCensus(tags);
+
+      expect(mocks.sentryMock.captureMessage).toHaveBeenCalledWith('Host memory census at low commit');
+      expect(mocks.setLevelSpy).toHaveBeenCalledWith('info');
+      expect(mocks.setFingerprintSpy).toHaveBeenCalledWith(['host-memory-census']);
+      expect(mocks.setTagSpy.mock.calls).toEqual(Object.entries(tags));
+      expect(mocks.sentryMock.setContext).toHaveBeenCalledWith('host_memory_census', tags);
+    });
+
     it('adds no descriptor_table context to a report with another errno', async () => {
       const errorReporting = await importFreshErrorReporting();
       errorReporting.initErrorReporting();

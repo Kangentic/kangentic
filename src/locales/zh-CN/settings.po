@@ -3311,6 +3311,10 @@ msgstr "Kangentic 何时暂停等待你操作的智能体。"
 msgid "When the app holds many file handles, ranges for how many it held, of which kinds, and how long it had been running"
 msgstr ""
 
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "When the computer runs low on memory, ranges for how much the app, its agents and other programs were using"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/GitTab.tsx
 msgid "Where new work starts, and how current it stays."
 msgstr "新工作的起点，以及它如何保持最新。"

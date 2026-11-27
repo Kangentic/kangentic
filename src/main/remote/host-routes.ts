@@ -87,6 +87,7 @@ export const REQUEST_ROUTES = {
   stopReportedProcess: 'core',
   checkReportedProcesses: 'core',
   probeTaskProcesses: 'core',
+  censusHostMemory: 'core',
   awaitAgentExit: 'core',
   spawnRaw: 'core',
   devArmRoundTripProbe: 'core',

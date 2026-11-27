@@ -27,6 +27,7 @@ import type { ActivityState, ExitSequenceStep, HistoryViewOpenResult, SessionEve
 import type { EventLoopLagReport, LagRecord } from '../../diagnostics/event-loop-lag';
 import type { HostRoundTripReading } from '../../diagnostics/pty-round-trip-probe';
 import type { StopProcessRequest, StopProcessResult, TaggedReapRequest, TaggedReapResult, TaskProbeRequest, TaskProbeResult } from '../process-tag/tagged-reap';
+import type { HostMemoryCensusRequest, HostMemoryCensusResult } from '../process-tag/memory-census';
 import type { WriteOrigin } from '../prompt-draft-ledger';
 import type { FromPtyHostPortMessage, ScrollbackInvokeResult } from '../../../shared/pty-port-protocol';
 import type { AgentExitWaitResult } from './exited-root-wait';
@@ -107,6 +108,8 @@ export type PtyHostHandledErrorCode =
   | 'spawn_worker_fallback'
   /** A Stop script's process scan failed, so the script never runs after a pause. */
   | 'task_tree_probe'
+  /** The low-memory census's scan failed, so the spell's census event carries nothing. */
+  | 'host_memory_census'
   /** The Toolhelp process listing failed, and the PowerShell probe stands in for the host's life. */
   | 'process_table_fallback'
   /** A replay's drain listener threw: a phone's tap loses those bytes. */
@@ -445,6 +448,10 @@ export interface PtyHostRequestMap {
    *  outside a task's tree is connected to it. Scans and signals nothing, and
    *  runs outside the reap and Stop queues (`process-tag/task-tree-probe.ts`). */
   probeTaskProcesses: { params: TaskProbeRequest; result: TaskProbeResult };
+  /** One read-only census of the commit charge by who holds it, at the start
+   *  of a low-memory spell (`process-tag/memory-census.ts`). Windows only;
+   *  sums and counts, never a pid or a name. Outside the reap and Stop queues. */
+  censusHostMemory: { params: HostMemoryCensusRequest; result: HostMemoryCensusResult };
   /** Wait, bounded, for what these tasks' exited shells left running to exit
    *  by itself, before a reap (`exited-root-wait.ts`). Runs outside the reap
    *  and Stop queues, so waits for several tasks overlap. */

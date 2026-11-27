@@ -41,6 +41,10 @@
  *   only for a same-session, same-user process above pid 4, never opens
  *   PROCESS_VM_READ, terminates only through a handle whose creation time still
  *   matches, and fails to load when the caller's own session cannot be read.
+ * - The low-memory census (`scan({ readCommit: true })`, Sentry DESKTOP-5P)
+ *   reads a commit charge only through the PROCESS_VM_READ handle the
+ *   environment read opens, so never for another session's or another user's
+ *   process, never in a scan that did not ask, and with no handle of its own.
  *
  * Each refusal is asserted next to a positive control (the open that the gate
  * does allow), so a fake that silently stopped answering cannot pass for free.
@@ -127,6 +131,10 @@ interface FakeProcess {
   claimedEnvironmentSize?: number;
   /** The byte length its CurrentDirectory claims, when not the text's real length. */
   claimedWorkingDirectoryLength?: number;
+  /** Its commit charge (PrivateUsage), as K32GetProcessMemoryInfo reports it. */
+  commitBytes?: number;
+  /** K32GetProcessMemoryInfo reports failure for this pid. */
+  memoryInfoFails?: boolean;
 }
 
 function creationOf(pid: number): bigint {
@@ -249,6 +257,10 @@ class FakeWin32 {
   readonly reads: Array<{ pid: number; address: bigint; size: number }> = [];
   /** Every NtQueryInformationProcess call, in order. */
   readonly processInformationQueries: Array<{ pid: number; infoClass: number }> = [];
+  /** Every K32GetProcessMemoryInfo call: the pid, and the access its handle was opened with. */
+  readonly memoryInfoCalls: Array<{ pid: number; access: number }> = [];
+  /** The access each opened handle was opened with, by handle id. */
+  private readonly handleAccess = new Map<number, number>();
   /** Every GetLongPathNameW call's input. */
   readonly longPathLookups: string[] = [];
   /** What GetLongPathNameW answers for a short path; anything else fails. */
@@ -317,7 +329,10 @@ class FakeWin32 {
     },
     openProcess: (access, _inherit, pid) => {
       this.opens.push({ pid, access });
-      return this.byPid.has(pid) && !this.byPid.get(pid)?.openRefused ? this.create(pid) : null;
+      if (!this.byPid.has(pid) || this.byPid.get(pid)?.openRefused) return null;
+      const handle = this.create(pid);
+      this.handleAccess.set(handle.id, access);
+      return handle;
     },
     closeHandle: (handle) => {
       this.closedHandleIds.push(handleOf(handle).id);
@@ -439,6 +454,16 @@ class FakeWin32 {
       if (long.length + 1 > characters) return long.length + 1;
       buffer.write(`${long}\u0000`, 0, 'utf16le');
       return long.length;
+    },
+    // PROCESS_MEMORY_COUNTERS_EX on a 64-bit process (psapi.h): cb, PageFaultCount,
+    // then nine SIZE_Ts, PrivateUsage the last, at offset 72 of 80.
+    getProcessMemoryInfo: (handle, counters, size) => {
+      const { pid, id } = handleOf(handle);
+      this.memoryInfoCalls.push({ pid, access: this.handleAccess.get(id) ?? 0 });
+      const fakeProcess = this.byPid.get(pid);
+      if (!fakeProcess || fakeProcess.memoryInfoFails || size < 80) return 0;
+      counters.writeBigUInt64LE(BigInt(fakeProcess.commitBytes ?? 0), 72);
+      return 1;
     },
     visibleWindows: () => this.processes.flatMap((fakeProcess) => [
       ...(fakeProcess.visible ? [{ width: 800, height: 600 }] : []),
@@ -1452,4 +1477,53 @@ describe('loadWin32OrphanApi: what a dead shell left running', () => {
       expect(fake.leakedHandleIds()).toEqual([]);
     },
   );
+});
+
+describe('Win32TaggedProcessReader.scan: the low-memory census\'s commit read', () => {
+  it('reads commit only through the PROCESS_VM_READ handle of a same-session, same-user process', async () => {
+    const fake = new FakeWin32([
+      { pid: 400, tag: TASK, commitBytes: 3 * 1024 ** 3 },
+      { pid: 410, commitBytes: 512 * 1024 ** 2 },
+      { pid: 420, sid: OTHER_SID, commitBytes: 9 * 1024 ** 3 },
+      { pid: 430, session: SERVICES_SESSION, commitBytes: 9 * 1024 ** 3 },
+    ]);
+    const scan = await readerFor(fake).scan({ readCommit: true });
+
+    expect(scanned(scan, 400).commitBytes).toBe(3 * 1024 ** 3);
+    expect(scanned(scan, 410).commitBytes).toBe(512 * 1024 ** 2);
+    // Another user's and another session's processes are never read, nor marked unmeasured.
+    expect(scanned(scan, 420).commitBytes).toBeUndefined();
+    expect(scanned(scan, 430).commitBytes).toBeUndefined();
+    expect(fake.memoryInfoCalls.map((call) => call.pid).sort()).toEqual([400, 410]);
+    for (const call of fake.memoryInfoCalls) {
+      expect(call.access & PROCESS_VM_READ).toBe(PROCESS_VM_READ);
+    }
+    // No handle of its own: VM_READ opens are exactly the two the environment read makes.
+    expect(fake.openedPids(PROCESS_VM_READ).sort()).toEqual([400, 410]);
+    expectEveryHandleClosedOnce(fake);
+  });
+
+  it('reads no commit in a scan that did not ask, which is every reap', async () => {
+    const fake = new FakeWin32([{ pid: 400, tag: TASK, commitBytes: 1024 }]);
+    const scan = await readerFor(fake).scan();
+
+    expect(fake.memoryInfoCalls).toEqual([]);
+    expect(scanned(scan, 400).commitBytes).toBeUndefined();
+    expect(scanned(scan, 400).tagValue).toBe(TASK);
+  });
+
+  it('marks a same-user process unmeasured when its memory read or its VM_READ open fails, and still closes every handle', async () => {
+    const fake = new FakeWin32([
+      { pid: 400, memoryInfoFails: true },
+      { pid: 410 },
+    ]);
+    // Opens with the limited rights for the owner check, then refuses PROCESS_VM_READ.
+    const openProcess = fake.api.openProcess;
+    fake.api.openProcess = (access, inherit, pid) => (pid === 410 && (access & PROCESS_VM_READ) ? null : openProcess(access, inherit, pid));
+    const scan = await readerFor(fake).scan({ readCommit: true });
+
+    expect(scanned(scan, 400).commitBytes).toBeNull();
+    expect(scanned(scan, 410).commitBytes).toBeNull();
+    expectEveryHandleClosedOnce(fake);
+  });
 });

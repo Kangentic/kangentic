@@ -5962,6 +5962,13 @@ export interface HostMemorySample {
   /** macOS kernel free memory percentage (`kern.memorystatus_level`), read the
    *  same way. It judges the warn level. Null when unknown and off macOS. */
   memoryFreePercent?: number | null;
+  /** Windows: Kangentic's own commit, the sum of every Electron process's
+   *  `privateBytes` (`app.getAppMetrics()`), so a reading tells Kangentic's
+   *  share from everyone else's (Sentry DESKTOP-5P). Null off Windows and
+   *  when unread; absent from samples recorded before it existed. */
+  appCommitBytes?: number | null;
+  /** How many agent sessions were running. Null when unread. */
+  liveSessionCount?: number | null;
 }
 
 /**

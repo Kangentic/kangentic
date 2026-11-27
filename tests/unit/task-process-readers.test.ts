@@ -1083,6 +1083,25 @@ describe.runIf(process.platform === 'win32')('Windows Toolhelp listing (real)', 
   });
 });
 
+// The census's koffi binding of K32GetProcessMemoryInfo, against the real call:
+// a wrong struct size or offset reads zero or garbage, which the fake cannot show.
+describe.runIf(process.platform === 'win32')('Windows commit read for the low-memory census (real)', () => {
+  it('reads this process\'s commit charge, close to what Node reports, and reads none without readCommit', async () => {
+    const reader = new Win32TaggedProcessReader();
+    const withCommit = await reader.scan({ readCommit: true });
+    const self = withCommit.processes.find((scanned) => scanned.pid === process.pid);
+    const commitBytes = self?.commitBytes ?? 0;
+    // Node's resident set is a different measure, so only a loose band: well
+    // above zero and within a few multiples of it.
+    const rss = process.memoryUsage().rss;
+    expect(commitBytes).toBeGreaterThan(rss / 10);
+    expect(commitBytes).toBeLessThan(rss * 20);
+
+    const plain = await reader.scan();
+    expect(plain.processes.find((scanned) => scanned.pid === process.pid)?.commitBytes).toBeUndefined();
+  });
+});
+
 describe.runIf(process.platform === 'win32')('Windows PTY root pin (real)', () => {
   // The pin's times are the kernel's, `Date.now()` is the JS clock, and the two read a millisecond
   // apart on a runner (an exit time came back one millisecond after the `Date.now()` taken next, and a

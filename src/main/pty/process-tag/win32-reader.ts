@@ -70,7 +70,7 @@ import { recordSyncSpan, timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { TASK_PROCESS_TAG_ENV } from './task-process-tag';
 import { isFileFrom, labelProcess, splitWindowsCommandLine } from './process-label';
 import { ipv4FromBytes, ipv6FromBytes, listeningPidsOf, pairLocalConnections, type SocketRow } from './local-connections';
-import { ScanStepError, seedsAndDescendants, type KillStrength, type LocalConnectionRead, type ProcessScan, type ScannedProcess, type TaggedProcessReader } from './process-scan';
+import { ScanStepError, seedsAndDescendants, type KillStrength, type LocalConnectionRead, type ProcessScan, type ProcessScanOptions, type ScannedProcess, type TaggedProcessReader } from './process-scan';
 import type { DeadRootOrphanApi } from '../host/dead-root-orphans';
 
 /** The part of koffi this reader uses. */
@@ -138,6 +138,12 @@ interface Win32Api {
   getTokenInformation(token: NativeHandle, infoClass: number, buffer: Buffer, length: number, returnLength: number[]): number;
   queryInformationProcess(handle: NativeHandle, infoClass: number, buffer: Buffer, length: number, returnLength: number[]): number;
   getLongPathName(shortPath: string, buffer: Buffer, characters: number): number;
+  /**
+   * `K32GetProcessMemoryInfo` into a `PROCESS_MEMORY_COUNTERS_EX` buffer. The
+   * handle needs `PROCESS_QUERY_LIMITED_INFORMATION` and `PROCESS_VM_READ`, so
+   * only the environment read's handle, past both gates, is ever passed.
+   */
+  getProcessMemoryInfo(handle: NativeHandle, counters: Buffer, size: number): number;
   /** Every visible top-level window, with its owner's pid and its size. */
   visibleWindows(): VisibleWindow[];
   /** `GetExtendedTcpTable`: fills `table`, or returns `ERROR_INSUFFICIENT_BUFFER` with the size it needs in `size[0]`. */
@@ -241,6 +247,7 @@ async function loadWin32Api(): Promise<Win32Api> {
     getTokenInformation: advapi32.func('int GetTokenInformation(void *token, int32 infoClass, _Out_ uint8_t *buffer, uint32 length, _Out_ uint32 *returnLength)'),
     queryInformationProcess: ntdll.func('int32 NtQueryInformationProcess(void *handle, int32 infoClass, _Out_ uint8_t *buffer, uint32 length, _Out_ uint32 *returnLength)'),
     getLongPathName: kernel32.func('uint32 GetLongPathNameW(const char16_t *shortPath, _Out_ uint8_t *buffer, uint32 characters)'),
+    getProcessMemoryInfo: kernel32.func('int K32GetProcessMemoryInfo(void *process, _Out_ uint8_t *counters, uint32 size)'),
     visibleWindows,
     getExtendedTcpTable: iphlpapi.func('uint32 __stdcall GetExtendedTcpTable(_Out_ uint8_t *table, _Inout_ uint32 *size, int order, uint32 family, int tableClass, uint32 reserved)'),
   };
@@ -472,16 +479,43 @@ function longPath(api: Win32Api, directory: string): string {
   return buffer.toString('utf16le', 0, characters * 2);
 }
 
-function readTagAndDirectory(api: Win32Api, pid: number): { tagValue: string | null; workingDirectory: string | null; readable: boolean } {
+/**
+ * `PROCESS_MEMORY_COUNTERS_EX` on a 64-bit process (x64 and arm64, the builds
+ * Kangentic ships): two DWORDs, then nine SIZE_Ts, `PrivateUsage` the last.
+ * `PrivateUsage` is the process's commit charge, what the low-memory census
+ * sums (`memory-census.ts`).
+ */
+const PROCESS_MEMORY_COUNTERS_EX_BYTES = 80;
+const PRIVATE_USAGE_OFFSET = 72;
+
+/** The commit charge in bytes, read on a handle that holds `PROCESS_VM_READ`, or null when the call fails. */
+function readPrivateUsage(api: Win32Api, handle: NativeHandle): number | null {
+  const counters = Buffer.alloc(PROCESS_MEMORY_COUNTERS_EX_BYTES);
+  counters.writeUInt32LE(PROCESS_MEMORY_COUNTERS_EX_BYTES, 0);
+  if (!api.getProcessMemoryInfo(handle, counters, PROCESS_MEMORY_COUNTERS_EX_BYTES)) return null;
+  return Number(counters.readBigUInt64LE(PRIVATE_USAGE_OFFSET));
+}
+
+interface TagAndDirectoryRead {
+  tagValue: string | null;
+  workingDirectory: string | null;
+  readable: boolean;
+  /** Only when asked for (`readCommit`): the commit charge, or null when it could not be read. */
+  commitBytes?: number | null;
+}
+
+function readTagAndDirectory(api: Win32Api, pid: number, readCommit = false): TagAndDirectoryRead {
   const handle = api.openProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, 0, pid);
-  if (isNullHandle(api, handle)) return { tagValue: null, workingDirectory: null, readable: false };
+  const unmeasured = readCommit ? { commitBytes: null } : {};
+  if (isNullHandle(api, handle)) return { tagValue: null, workingDirectory: null, readable: false, ...unmeasured };
   try {
+    const commit = readCommit ? { commitBytes: readPrivateUsage(api, handle) } : {};
     const isWow64 = [0];
     api.isWow64Process(handle, isWow64);
     const parameters = isWow64[0] ? (readWow64Parameters(api, handle) ?? readNativeParameters(api, handle)) : readNativeParameters(api, handle);
     const workingDirectory = parameters?.workingDirectory ? longPath(api, parameters.workingDirectory) : null;
-    if (!parameters?.environment) return { tagValue: null, workingDirectory, readable: false };
-    return { tagValue: findTagInWindowsEnvironment(parameters.environment), workingDirectory, readable: true };
+    if (!parameters?.environment) return { tagValue: null, workingDirectory, readable: false, ...commit };
+    return { tagValue: findTagInWindowsEnvironment(parameters.environment), workingDirectory, readable: true, ...commit };
   } finally {
     api.closeHandle(handle);
   }
@@ -692,7 +726,8 @@ export class Win32TaggedProcessReader implements TaggedProcessReader {
     await this.loadApi();
   }
 
-  async scan(): Promise<ProcessScan> {
+  async scan(options: ProcessScanOptions = {}): Promise<ProcessScan> {
+    const readCommit = options.readCommit === true;
     const api = await this.loadApi();
     // Both gates below need the caller's own session and user. Without the
     // session every process would be compared against session 0, where
@@ -754,13 +789,14 @@ export class Win32TaggedProcessReader implements TaggedProcessReader {
         continue;
       }
       if (!sameUser) continue;
-      const { tagValue, workingDirectory, readable } = readTagAndDirectory(api, row.pid);
+      const { tagValue, workingDirectory, readable, commitBytes } = readTagAndDirectory(api, row.pid, readCommit);
       if (!readable) {
         unreadableCount += 1;
         scanned.environmentUnreadable = true;
       }
       scanned.tagValue = tagValue;
       scanned.workingDirectory = workingDirectory;
+      if (commitBytes !== undefined) scanned.commitBytes = commitBytes;
     }
     recordSyncSpan('reap:read-processes', performance.now() - batchStartedAt);
     // A window makes a visible app only of a tagged process or one below it,
