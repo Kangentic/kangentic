@@ -3308,9 +3308,8 @@ msgid "When Kangentic pauses agents that are waiting on you."
 msgstr "Kangentic 何时暂停等待你操作的智能体。"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
-#, fuzzy
-msgid "When the app holds many file handles, a range for how many it held and how long it had been running"
-msgstr "应用持有大量文件句柄时，其持有句柄数的范围及已运行时长"
+msgid "When the app holds many file handles, ranges for how many it held, of which kinds, and how long it had been running"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
 msgid "Where new work starts, and how current it stays."

@@ -27,7 +27,7 @@ import { rendererNameForReporting } from './renderer-classification';
 import type { PreviousRun } from './run-uptime';
 import { runStateTags } from './run-state-tags';
 import { isShuttingDown } from '../shutdown-state';
-import { getDescriptorTableContext, type DescriptorTableTags } from '../diagnostics/descriptor-table';
+import { getDescriptorKindsContext, getDescriptorTableContext, type DescriptorTableTags } from '../diagnostics/descriptor-table';
 
 /**
  * Sentry DSN for the Kangentic desktop project (kangentic.sentry.io, project
@@ -131,7 +131,14 @@ export type ErrorReportContexts = Record<string, Record<string, unknown>>;
  * also need pruning from a crash a later run uploads.
  */
 function withEnvironmentContexts(tags: Record<string, string>, contexts: ErrorReportContexts): ErrorReportContexts {
-  if (tags.errno === 'EMFILE') return { ...contexts, descriptor_table: getDescriptorTableContext() };
+  if (tags.errno === 'EMFILE') {
+    const kinds = getDescriptorKindsContext();
+    return {
+      ...contexts,
+      descriptor_table: getDescriptorTableContext(),
+      ...(kinds ? { descriptor_kinds: kinds } : {}),
+    };
+  }
   if (tags.errno === 'SQLITE_BUSY') {
     const holders = readSqliteBusyContext();
     return holders ? { ...contexts, sqlite_busy: holders } : contexts;
@@ -203,12 +210,14 @@ export function reportHandledMessage(
   message: string,
   tags: Record<string, string> = {},
   fingerprint?: string[],
+  contexts: ErrorReportContexts = {},
 ): void {
   if (!active) return;
   try {
     Sentry.withScope((scope) => {
       scope.setLevel('info');
       for (const [tagKey, tagValue] of Object.entries(tags)) scope.setTag(tagKey, tagValue);
+      for (const [contextName, contextValue] of Object.entries(contexts)) scope.setContext(contextName, contextValue);
       if (fingerprint) scope.setFingerprint(fingerprint);
       Sentry.captureMessage(message);
     });
@@ -221,10 +230,14 @@ export function reportHandledMessage(
  * The one report a run sends when main's descriptor table crosses the probe's
  * high mark (Sentry DESKTOP-59, `src/main/diagnostics/descriptor-table.ts`): a
  * fixed `info` message grouped by its own fingerprint, tagged with the probe's
- * buckets only. The probe calls it at most once per run.
+ * buckets only. The probe calls it at most once per run. On macOS and Linux it
+ * also carries the `descriptor_kinds` context (Sentry DESKTOP-5W), so the
+ * report says whether sockets, pipes or files filled the table.
  */
 export function reportDescriptorTableHigh(tags: DescriptorTableTags): void {
-  reportHandledMessage('Main process descriptor table high', tags, ['descriptor-table-high']);
+  if (!active) return;
+  const kinds = getDescriptorKindsContext();
+  reportHandledMessage('Main process descriptor table high', tags, ['descriptor-table-high'], kinds ? { descriptor_kinds: kinds } : {});
 }
 
 /**

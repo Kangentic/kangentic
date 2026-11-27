@@ -1694,6 +1694,19 @@ in one Sentry org, one triage surface.
     so the `safeWriteJson` path and every chokepoint reporter carry it. Only those reports carry it:
     on every event it would also need pruning from a crash a later run uploads, as `host_memory`
     does.
+  - On macOS and Linux the high report and every EMFILE report also carry a flat
+    `descriptor_kinds` context: what kind each descriptor main holds is (Sentry DESKTOP-5W, a
+    Fedora install whose table passed 2048 after a day, about 80 an hour, with nothing to say what
+    grew). Linux reads each `/proc/self/fd` link and macOS `fstat`s each descriptor `/dev/fd` lists
+    (`readDescriptorKinds`). The context holds one bucket per kind, `kind_socket`, `kind_pipe`,
+    `kind_eventfd`, `kind_epoll`, `kind_inotify`, `kind_anon_other` (another Linux anonymous
+    inode), `kind_memfd_shm`, `kind_file`, `kind_char_device` and `kind_other`, plus `kinds_at`,
+    the uptime bucket it was read at, and `source`. Listing a directory takes a descriptor, so a
+    full table cannot list itself: the probe reads the breakdown on every reading at or above the
+    mark and keeps it, and a report whose fresh read fails sends that one as `cached`, or every
+    kind `unknown` as `unavailable`. The link text and paths are classified in place and never
+    kept. Windows sends no breakdown, since its probe counts only C runtime descriptors.
+    `kangentic_get_process_metrics` returns the raw counts locally (`main.descriptorTable.kinds`).
   - Each value is a bucket. Counts read `<64`, `64-255`, `256-1023`, `1024-2047`, `2048-4095`,
     `4096-8191`, `8192+`, `full` or `unknown`. Uptime reads `<10m`, `10m-1h`, `1-4h`, `4-12h`,
     `12-24h`, `1-3d` or `3d+`. No raw count, path or message is sent. Settings > Privacy lists it
@@ -1993,7 +2006,7 @@ this".
   is global, grows every event, and widens what `redact-event-paths.ts` walks.
   `tests/unit/gpu-health.test.ts` runs the builder's output through the real `@sentry/core`
   `normalize`. The other contexts were audited for the same flattening and hold only flat values:
-  `host_memory`, `native_crash`, `task_reap`, `descriptor_table`, `sqlite_busy`, `call_site` (a list of strings) and
+  `host_memory`, `native_crash`, `task_reap`, `descriptor_table`, `descriptor_kinds`, `sqlite_busy`, `call_site` (a list of strings) and
   `diff_viewer_N`.
 - **A GPU failure that killed the last run also downgrades this one, once.** When
   `killedTheLastRun` (`gpuEndedPreviousRun`, above) holds, `src/main/index.ts` has already started Chromium with

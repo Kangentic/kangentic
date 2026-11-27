@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { ErrorEvent } from '@sentry/electron/main';
 import type { PreviousRun } from '../../src/main/analytics/run-uptime';
-import { DESCRIPTOR_BUCKETS, UPTIME_BUCKET_LABELS } from '../../src/main/diagnostics/descriptor-table';
+import { DESCRIPTOR_BUCKETS, DESCRIPTOR_KINDS, UPTIME_BUCKET_LABELS } from '../../src/main/diagnostics/descriptor-table';
 import { createRequire } from 'node:module';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -142,6 +142,26 @@ describe('resolveErrorReportingEnabled', () => {
  * stable across resets (same object reference returned by the mock
  * factory), so call history is inspected via those, cleared per test below.
  */
+/** Runs `body` with process.platform reading `platform`, for the one call whose behavior is per platform. */
+function onPlatform<T>(platform: NodeJS.Platform, body: () => T): T {
+  const original = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+  try {
+    return body();
+  } finally {
+    if (original) Object.defineProperty(process, 'platform', original);
+  }
+}
+
+/** A descriptor_kinds context holds one bucket per kind and nothing else. The
+ *  real listing runs here, so on Windows it reads unavailable and on CI fresh. */
+function expectDescriptorKindsContext(context: Record<string, string>): void {
+  expect(Object.keys(context).sort()).toEqual([...DESCRIPTOR_KINDS.map((kind) => 'kind_' + kind), 'kinds_at', 'source'].sort());
+  for (const kind of DESCRIPTOR_KINDS) expect(DESCRIPTOR_BUCKETS).toContain(context['kind_' + kind]);
+  expect(UPTIME_BUCKET_LABELS).toContain(context.kinds_at);
+  expect(['fresh', 'cached', 'unavailable']).toContain(context.source);
+}
+
 async function importFreshErrorReporting() {
   vi.resetModules();
   return import('../../src/main/analytics/error-reporting');
@@ -239,12 +259,12 @@ describe('error reporting runtime behavior (module-state gated)', () => {
       const errorReporting = await importFreshErrorReporting();
       errorReporting.initErrorReporting();
 
-      errorReporting.reportDescriptorTableHigh({
+      onPlatform('win32', () => errorReporting.reportDescriptorTableHigh({
         descriptor_latest: '2048-4095',
         descriptor_peak: '2048-4095',
         uptime: '4-12h',
         pty_host_in_main: 'true',
-      });
+      }));
 
       expect(mocks.sentryMock.captureMessage).toHaveBeenCalledTimes(1);
       expect(mocks.sentryMock.captureMessage).toHaveBeenCalledWith('Main process descriptor table high');
@@ -256,7 +276,25 @@ describe('error reporting runtime behavior (module-state gated)', () => {
         ['uptime', '4-12h'],
         ['pty_host_in_main', 'true'],
       ]);
+      // Windows has no listing to break down, so it carries no context.
       expect(mocks.setContextSpy).not.toHaveBeenCalled();
+    });
+
+    // Sentry DESKTOP-5W: on Linux and macOS the table holds sockets, pipes and
+    // kernel objects too, so the high report says which kind filled it.
+    it('adds a descriptor_kinds context of fixed buckets to the high report on Linux and macOS', async () => {
+      const errorReporting = await importFreshErrorReporting();
+      errorReporting.initErrorReporting();
+
+      onPlatform('linux', () => errorReporting.reportDescriptorTableHigh({
+        descriptor_latest: '2048-4095',
+        descriptor_peak: '2048-4095',
+        uptime: '1-3d',
+        pty_host_in_main: 'false',
+      }));
+
+      expect(mocks.setContextSpy.mock.calls.map(([name]) => name)).toEqual(['descriptor_kinds']);
+      expectDescriptorKindsContext(mocks.setContextSpy.mock.calls[0][1] as Record<string, string>);
     });
 
     it('adds no descriptor_table context to a report with another errno', async () => {
@@ -300,9 +338,19 @@ describe('error reporting runtime behavior (module-state gated)', () => {
       errorReporting.initErrorReporting();
       errorReporting.setSqliteBusyContextSource(() => ({ retrieval_longest_hold: 'none', pty_host_held: 'no' }));
 
-      errorReporting.reportHandledError(new Error('EMFILE: open failed'), { source: 'config', errno: 'EMFILE' });
+      onPlatform('win32', () => errorReporting.reportHandledError(new Error('EMFILE: open failed'), { source: 'config', errno: 'EMFILE' }));
 
       expect(mocks.setContextSpy.mock.calls.map(([name]) => name)).toEqual(['descriptor_table']);
+    });
+
+    it('adds the descriptor_kinds context beside descriptor_table to an EMFILE report on Linux and macOS', async () => {
+      const errorReporting = await importFreshErrorReporting();
+      errorReporting.initErrorReporting();
+
+      onPlatform('darwin', () => errorReporting.reportHandledError(new Error('EMFILE: open failed'), { source: 'config', errno: 'EMFILE' }));
+
+      expect(mocks.setContextSpy.mock.calls.map(([name]) => name)).toEqual(['descriptor_table', 'descriptor_kinds']);
+      expectDescriptorKindsContext(mocks.setContextSpy.mock.calls[1][1] as Record<string, string>);
     });
 
     it('makes ZERO Sentry calls when the module was never initialized (the opt-out promise gate)', async () => {
