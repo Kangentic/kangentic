@@ -1689,8 +1689,9 @@ in one Sentry org, one triage surface.
     detached), a parked one (`mid_board_no_session`), an archived, To Do or Done one
     (`terminal_task`), or an id no open project knows (`unknown_tag`).
   - One `info` event per spell, `Host memory census at low commit` (fingerprint `host-memory-census`),
-    whose tags are `census` (`ok` or `failed`), a `<group>_gb` and a `<group>_count` for each group,
-    and `unmeasured_count` (same-user processes whose commit could not be read). Sizes read `0`,
+    whose tags are `census` (`ok` or `failed`), a `<group>_gb` and a `<group>_count` for each of
+    `kangentic`, `live_pty`, `kangentic_children`, `mid_board_beside_session`,
+    `mid_board_no_session`, `terminal_task`, `unknown_tag` and `other_same_user`, and `unmeasured_count` (same-user processes whose commit could not be read). Sizes read `0`,
     `<0.5`, `0.5-1`, `1-2`, `2-4`, `4-8`, `8-16`, `16-32` or `32+` GB, and counts `0`, `1-4`, `5-19`,
     `20-99` or `100+`. The same tags go on the ambient scope as the `host_memory_census` context, so
     the next crash carries them, and `correctNativeCrashEvent` prunes it with `host_memory`. No pid,
