@@ -713,6 +713,15 @@ describe('reportSessionLaunchFailure', () => {
       expect(tags).not.toHaveProperty('shim_target');
     });
 
+    // The shim is read inside the send, so a head gone by then must cost the
+    // report its shim tags at most, never the report itself.
+    it('still sends the report when the head shim cannot be read, and names it unreadable', async () => {
+      realFs.rmSync(wrapper.shimPath(), { force: true });
+      const tags = await sentShimTags({ agentCliPath: wrapper.shimPath() });
+      expect(tags).toMatchObject({ output_class: 'no_such_file', batch_shim: 'unreadable' });
+      expect(tags).not.toHaveProperty('shim_target');
+    });
+
     it.each([
       ['a WSL shell', { shell: 'wsl.exe -d Ubuntu' }],
       ['a session on an SSH host', { hostId: 'host-1' }],
