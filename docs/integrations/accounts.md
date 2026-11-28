@@ -560,12 +560,25 @@ every account's sign-in, and each scheduled pass reads the sign-in of any accoun
 before its usage. `refreshUsage` skips an account that is signed out, so without those passes
 nothing but the tab set one back. A sign-in read that gives no answer (a timeout, a CLI
 mid-update, JSON with no `loggedIn`) throws `IdentityReadError` from the adapter: the account keeps
-the status it had, and `identity-read-failed` is reported. Only the CLI's own signed-out answer
-marks an account signed out. The one other writer of a set-aside status is the reconcile in "A
-login replaced inside a session", which sets `replaced`. Before this, a failed or unreadable sign-in read marked a working
-account signed out, its usage was never read again, and Automatic put it last until the Accounts
-tab was opened. Any other failure of a sign-in or usage read is a defect, reported through the
-`accounts` reporter (stage `sign_in_read` or `usage_read`).
+the status it had. An answer the adapter cannot read (`unreadable`) is reported as
+`identity-read-failed` on the first read, since it means the CLI changed what it prints. A failed
+run (`run-failed`) is reported from the second in a row for the account, as a usage read's failed
+run is, because one timeout on a host out of memory is not a defect (Sentry DESKTOP-60). Two reads
+of one account that run at once count as one: the tab reads outside the scheduler's queue, and
+both fail at the same moment. The count is in memory and starts again at each launch.
+
+An `ok` account's sign-in runs the CLI when the tab opens, on the startup pass for an agent with
+two or more accounts, after a sign-in, and when its home's own files name another login. So a
+failed `auth status` that runs once per launch is never reported. For Claude with two or more
+accounts, a CLI that cannot run at all also fails the idle usage read on each scheduled pass, and
+that read reports it. Codex has no idle usage read.
+
+Only the CLI's own signed-out answer marks an account signed out. The one other writer of a
+set-aside status is the reconcile in "A login replaced inside a session", which sets `replaced`.
+Before this, a failed or unreadable sign-in read marked a working account signed out, its usage
+was never read again, and Automatic put it last until the Accounts tab was opened. Any other
+failure of a sign-in or usage read is a defect, reported through the `accounts` reporter (stage
+`sign_in_read` or `usage_read`).
 
 Codex reports its plan's windows in its own session files: each rollout `token_count` record
 carries a `rate_limits` snapshot (`primary` and `secondary`, each `used_percent`,
@@ -875,7 +888,7 @@ run, tagged with the agent and the problem, and grouped as one issue per agent a
 | `conversation-refused` | A turn failed with the adapter's words for a conversation tied to another account (`isConversationRefusal`). |
 | `usage-read-unreadable` | The CLI answered a usage read in a shape the adapter does not know, with the answer's field names (`keys`). For Claude, a fresh cache whose `utilization` names none of the known windows, or is missing or not a record. |
 | `usage-read-empty` | A usage read gave no windows, with the account's kind and a fixed reason (`run-failed`, `state-unreadable`, `state-not-record`, `no-cache`, `cache-stale`, `no-windows`, `no-answer`). `no-cache` is not sent for an account that never stored a reading. `run-failed` is sent from the second failed run in a row, with the tags `run_failure`, `run_exit` and `agent_cli_version`. `cache-stale` is sent from the second stale read in a row, with `cache_age` (`under_1h`, `1h_to_1d`, `over_1d` or `unknown`) and `agent_cli_version`. `no-windows` carries `agent_cli_version`. |
-| `identity-read-failed` | A sign-in read gave no answer, with the account's kind and a fixed reason (`run-failed`, `unreadable`). The account kept its status. |
+| `identity-read-failed` | A sign-in read gave no answer, with the account's kind and a fixed reason (`run-failed`, `unreadable`). The account kept its status. `unreadable` is sent on the first read. `run-failed` is sent from the second failed run in a row, counted apart from usage reads, with the tags `run_failure`, `run_exit` and `agent_cli_version`. |
 | `identity-changed` | A home's login was replaced, with the account's kind, how it was reconciled (`to-listed`, `to-new`, `merged`, `already-listed`, `duplicate`) and `default_home`, or `stage: repoint` when its sessions could not be moved. |
 
 Only fixed facts are sent: the agent, the problem, an entry's name, a count. Never a folder path,

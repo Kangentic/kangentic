@@ -53,6 +53,28 @@ describe('CLAUDE_ACCOUNT_SUPPORT.identify', () => {
     expect((failure as IdentityReadError).reason).toBe('run-failed');
   });
 
+  // Sentry DESKTOP-60: the report could not tell a timeout from an exit or a CLI that would not
+  // start, so the error carries the run's rejection and how it ended.
+  it('says a run stopped at its timeout timed out, and hands on the rejection', async () => {
+    const rejection = Object.assign(new Error('Command failed'), { killed: true, signal: 'SIGTERM', stdout: '' });
+    runClaudeCli.mockRejectedValue(rejection);
+    const failure = await CLAUDE_ACCOUNT_SUPPORT.identify('claude', accountFolder).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(IdentityReadError);
+    expect((failure as IdentityReadError).runFailure).toEqual({ kind: 'timeout', exitCode: null });
+    expect((failure as IdentityReadError).cause).toBe(rejection);
+  });
+
+  it.each([
+    ['exited non-zero', Object.assign(new Error('Command failed'), { code: 2, stdout: '' }), { kind: 'exit_code', exitCode: 2 }],
+    ['could not start', Object.assign(new Error('spawn claude ENOENT'), { code: 'ENOENT', stdout: '' }), { kind: 'spawn_error', exitCode: null }],
+  ])('says a run that %s with no answer, and hands on the rejection', async (_label, rejection, expected) => {
+    runClaudeCli.mockRejectedValue(rejection);
+    const failure = await CLAUDE_ACCOUNT_SUPPORT.identify('claude', accountFolder).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(IdentityReadError);
+    expect((failure as IdentityReadError).runFailure).toEqual(expected);
+    expect((failure as IdentityReadError).cause).toBe(rejection);
+  });
+
   it('throws unreadable for a run that finished with output that is not the answer', async () => {
     runClaudeCli.mockResolvedValue('Updating Claude Code...');
     const failure = await CLAUDE_ACCOUNT_SUPPORT.identify('claude', accountFolder).catch((error: unknown) => error);

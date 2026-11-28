@@ -55,20 +55,30 @@ describe('Codex identify without auth.json', () => {
     expect(identity.signedIn).toBe(false);
   });
 
-  // No answer is not a signed-out answer: the account keeps its status (`IdentityReadError`).
+  // No answer is not a signed-out answer: the account keeps its status (`IdentityReadError`). It
+  // says how the run ended, which the service's report sends (Sentry DESKTOP-60).
   it.each([
-    ['a spawn error', () => child.emit('error', new Error('spawn ENOENT'))],
-    ['another exit code', () => child.emit('exit', 2)],
-    ['an exit by signal', () => child.emit('exit', null)],
-  ])('gives no answer on %s', async (_label, settle) => {
-    await expect(identifyThen(settle)).rejects.toMatchObject({ name: 'IdentityReadError', reason: 'run-failed' });
+    ['another exit code', () => child.emit('exit', 2), { kind: 'exit_code', exitCode: 2 }],
+    ['an exit by signal', () => child.emit('exit', null), { kind: 'signal', exitCode: null }],
+  ])('gives no answer on %s, and says how it ended', async (_label, settle, runFailure) => {
+    await expect(identifyThen(settle)).rejects.toMatchObject({ name: 'IdentityReadError', reason: 'run-failed', runFailure });
+  });
+
+  it('gives no answer when login status cannot start, and hands on the error', async () => {
+    const spawnError = Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' });
+    await expect(identifyThen(() => child.emit('error', spawnError))).rejects.toMatchObject({
+      name: 'IdentityReadError',
+      reason: 'run-failed',
+      runFailure: { kind: 'spawn_error', exitCode: null },
+      cause: spawnError,
+    });
   });
 
   it('gives no answer when login status times out, and stops the run', async () => {
     vi.useFakeTimers();
     try {
       const pending = CODEX_ACCOUNT_SUPPORT.identify('codex', home);
-      const outcome = expect(pending).rejects.toMatchObject({ name: 'IdentityReadError', reason: 'run-failed' });
+      const outcome = expect(pending).rejects.toMatchObject({ name: 'IdentityReadError', reason: 'run-failed', runFailure: { kind: 'timeout', exitCode: null } });
       await vi.waitFor(() => expect(spawnCli).toHaveBeenCalledTimes(1));
       await vi.advanceTimersByTimeAsync(20_000);
       await outcome;

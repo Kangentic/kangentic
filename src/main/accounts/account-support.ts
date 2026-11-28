@@ -209,18 +209,34 @@ export class EmptyUsageReadError extends Error {
   }
 }
 
-/** Why a sign-in read gave no answer. A fixed word: the account service logs and reports it. */
+/**
+ * Why a sign-in read gave no answer. A fixed word: the account service logs and reports it, an
+ * `unreadable` answer at once and a `run-failed` read from the second in a row.
+ */
 export type IdentityReadReason = 'run-failed' | 'unreadable';
+
+/** What an adapter knows about a `run-failed` sign-in read: the error it caught and how the run ended. */
+export interface IdentityReadDetail {
+  /** The error the CLI run rejected with. The service reports its class and errno, never its text. */
+  cause?: unknown;
+  /** How the run ended (`execRunFailureOf`), as fixed words. */
+  runFailure?: ExecRunFailure;
+}
 
 /**
  * Thrown by `identify` when the CLI gave no answer about the login: the run failed and printed
  * nothing the adapter can read. Different from an answer that says signed out, which `identify`
  * returns: an account is marked signed out only on the CLI's word, never because a run failed.
+ * For a failed run the adapter hands on what it caught, because the service's report could not
+ * otherwise tell a timeout from an exit or a CLI that would not start (Sentry DESKTOP-60).
  */
 export class IdentityReadError extends Error {
-  constructor(readonly reason: IdentityReadReason) {
-    super(`The CLI gave no answer about the login (${reason})`);
+  readonly runFailure: ExecRunFailure | null;
+
+  constructor(readonly reason: IdentityReadReason, detail: IdentityReadDetail = {}) {
+    super(`The CLI gave no answer about the login (${reason})`, detail.cause === undefined ? undefined : { cause: detail.cause });
     this.name = 'IdentityReadError';
+    this.runFailure = detail.runFailure ?? null;
   }
 }
 
