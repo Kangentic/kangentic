@@ -308,6 +308,9 @@ one column.
 | text_match_source | TEXT | | NULL |
 | filter_json | TEXT | | NULL |
 
+`config_json` and `filter_json` hold the `ColumnAutomation` interface's `config` and `filter`
+fields (`src/shared/types.ts`) as JSON.
+
 Valid types: `send_message`, `run_script`, `webhook`, `notify`, `move_to_column`, plus legacy
 `spawn_agent` on boards that already had one. `trigger` is `enter`, `turn_end` (each time the
 column's agent finishes a turn there) or `exit`. It is TEXT rather than a boolean, so the third

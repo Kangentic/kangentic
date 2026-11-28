@@ -612,6 +612,8 @@ npm run lint                      # ESLint over src/ and packages/protocol/src/,
 npm run i18n:extract              # Update the PO catalogs after changing UI text
 npm run i18n:check                # The catalog gate CI and the release build run
 npm run i18n:compile              # Compile the catalogs main reads into .vite/build/locales
+npm run i18n:translate            # Draft missing translations, marked fuzzy (see translations.md)
+npm run i18n:translate-readme     # Translate the README for shipped languages (translations.md)
 ```
 
 ## Adding Features
