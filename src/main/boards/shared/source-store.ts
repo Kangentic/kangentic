@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import type { ExternalSource, ImportSource } from '../../../shared/types';
+import { abortProjectConfigRefresh } from '../../config/config-manager';
 import { safeWriteJson } from '../../safe-write';
 
 interface ProjectImportConfig {
@@ -154,6 +155,9 @@ export class ImportSourceStore {
     // Degrades rather than throws: an unwritable project directory must not
     // reject the add/remove/updateLabel call the renderer is waiting on. The
     // shared write-failure-notice latch tells the user once (see safe-write.ts).
+    // Close ConfigManager's background read of this same file first: on Windows
+    // a rename onto a file that read still holds is the "in use or read-only" toast.
+    abortProjectConfigRefresh(this.configPath);
     safeWriteJson(this.configPath, existing, 'import_source');
   }
 }

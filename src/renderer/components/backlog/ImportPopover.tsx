@@ -78,7 +78,7 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
 
   const buttonRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
-  const urlInputRef = useRef<HTMLInputElement>(null);
+  const urlInputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
 
   // Portal + fixed: the BacklogView empty-state mount sits inside the backlog
   // content well's `overflow-hidden` (AppLayout), which clipped the in-flow

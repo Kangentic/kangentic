@@ -6093,7 +6093,8 @@ export type ExternalSource =
   | 'obsidian_notes'
   | 'obsidian_checklist'
   | 'gitlab'
-  | 'repo_folder';
+  | 'repo_folder'
+  | 'script';
 
 export interface ImportSource {
   id: string;
@@ -6202,6 +6203,11 @@ export interface ImportExecuteInput {
   repository: string;
   /** The saved source being imported from, whose `taskLabel` goes on every item. */
   sourceId?: string;
+  /**
+   * The Label the Import dialog held. Preferred over a store lookup by
+   * `sourceId`, so a source that has not reached disk still stamps its Label.
+   */
+  taskLabel?: string;
   issues: Array<{
     externalId: string;
     externalUrl: string;

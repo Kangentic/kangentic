@@ -155,6 +155,45 @@ export function pickOverridableSubset(source: DeepPartial<AppConfig>): Partial<A
  */
 const PROJECT_OVERRIDES_REFRESH_MS = 1000;
 
+/**
+ * In-flight background reads of a project's config.json, keyed like the
+ * overrides cache so `C:\p` and `c:\p` abort the same read. A rename onto that
+ * file fails on Windows while the read holds it (Sentry DESKTOP-1Z);
+ * `ImportSourceStore` and `saveProjectOverrides` abort first.
+ */
+const projectConfigRefreshAborts = new Map<string, AbortController>();
+
+function projectConfigAbortKey(configPath: string): string {
+  const resolved = path.resolve(configPath);
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError';
+}
+
+/** Close an in-flight re-read of this config.json so a rename onto it can proceed. */
+export function abortProjectConfigRefresh(configPath: string): void {
+  const key = projectConfigAbortKey(configPath);
+  const controller = projectConfigRefreshAborts.get(key);
+  if (!controller) return;
+  controller.abort();
+  projectConfigRefreshAborts.delete(key);
+}
+
+function beginProjectConfigRefresh(configPath: string): AbortSignal {
+  abortProjectConfigRefresh(configPath);
+  const controller = new AbortController();
+  projectConfigRefreshAborts.set(projectConfigAbortKey(configPath), controller);
+  return controller.signal;
+}
+
+function endProjectConfigRefresh(configPath: string, signal: AbortSignal): void {
+  const key = projectConfigAbortKey(configPath);
+  const controller = projectConfigRefreshAborts.get(key);
+  if (controller?.signal === signal) projectConfigRefreshAborts.delete(key);
+}
+
 /** A project's overrides as `getEffectiveConfig` serves them. */
 interface CachedProjectOverrides {
   /** Never handed out: every read gets its own copy. */
@@ -577,6 +616,7 @@ export class ConfigManager {
    *  to the unchanged file, so the change is lost rather than served unsaved. */
   saveProjectOverrides(projectPath: string, overrides: Partial<AppConfig>): boolean {
     const configPath = path.join(projectPath, '.kangentic', 'config.json');
+    abortProjectConfigRefresh(configPath);
     const persisted = safeWriteJson(configPath, overrides, 'config_project_override');
     if (persisted) {
       this.cacheProjectOverrides(projectPath, overrides, null);
@@ -615,7 +655,8 @@ export class ConfigManager {
     entry.refreshedAt = Date.now();
     const configPath = path.join(projectPath, '.kangentic', 'config.json');
     const cacheKey = this.overridesKey(projectPath);
-    void fs.promises.readFile(configPath, 'utf-8').then((raw) => {
+    const signal = beginProjectConfigRefresh(configPath);
+    void fs.promises.readFile(configPath, { encoding: 'utf-8', signal }).then((raw) => {
       // A save or a fresh read replaced the entry while this one was out.
       if (this.projectOverridesCache.get(cacheKey) !== entry || raw === entry.raw) return;
       const parsed = this.parseProjectOverrides(projectPath, raw);
@@ -623,13 +664,15 @@ export class ConfigManager {
       if (parsed === undefined || this.projectOverridesCache.get(cacheKey) !== entry) return;
       this.cacheProjectOverrides(projectPath, parsed.overrides, parsed.rewritten ? null : raw);
     }, (error: unknown) => {
-      // report-ok: only a missing file means no overrides. A read the disk refused keeps the
-      // last good ones, and the next refresh reads again.
+      // report-ok: an aborted re-read is this process writing the same file. A missing
+      // file means no overrides. A read the disk refused keeps the last good ones.
+      if (isAbortError(error)) return;
       const missing = (error as NodeJS.ErrnoException | null)?.code === 'ENOENT';
       if (missing && this.projectOverridesCache.get(cacheKey) === entry) {
         this.cacheProjectOverrides(projectPath, null, null);
       }
     }).finally(() => {
+      endProjectConfigRefresh(configPath, signal);
       entry.refreshing = false;
     });
   }

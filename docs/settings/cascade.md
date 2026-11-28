@@ -26,7 +26,9 @@ Effective config = deep-merge(global defaults, user config, project overrides).
 Main reads the global file once (`load()`) and a project's `.kangentic/config.json` once per
 project: `getEffectiveConfig` serves a copy of the cached overrides after its first read, and
 starts at most one background re-read a second (`PROJECT_OVERRIDES_REFRESH_MS`) to pick up a
-hand edit or `ImportSourceStore`'s write to the same file. A change Kangentic saves is served at
+hand edit or `ImportSourceStore`'s write to the same file. `saveProjectOverrides` and
+`ImportSourceStore` abort that re-read before they rename onto the file, so Windows does not
+report it in use. A change Kangentic saves is served at
 once. The reason is main's thread: spawns, moves and PR sweeps read the file 14 times for one task
 start and 9 times for a Done move (measured 2026-10-25), and under a disk load one synchronous read took
 176 ms. A re-read that finds the file mid-edit (not JSON) keeps the last good overrides, and one

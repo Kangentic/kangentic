@@ -1,7 +1,7 @@
 ---
 type: Guide
 title: Backlog
-description: "The backlog staging view: creating and editing items, labels and the priority scale, filtering, bulk Move to Board, drag reorder, and Import, which pulls GitHub Issues, GitHub Projects, Azure DevOps, Asana, Jira, Linear, Trello and GitLab items, and Obsidian notes and checklist items, with incremental sync and duplicate detection."
+description: "The backlog staging view: creating and editing items, labels and the priority scale, filtering, bulk Move to Board, drag reorder, and Import, which pulls GitHub Issues, GitHub Projects, Azure DevOps, Asana, Jira, Linear, Trello and GitLab items, Obsidian notes and checklist items, a repository folder, and a project script, with incremental sync and duplicate detection."
 tags: [backlog, import, labels, priorities]
 sources:
   - resource: src/renderer/components/backlog/
@@ -84,6 +84,7 @@ Click **Import** in the backlog toolbar to pull tasks from external project mana
 - **Obsidian Notes** - import each note in a folder of an Obsidian vault as a task
 - **Obsidian Checklist items** - import each task line in a folder's notes (`- [ ]`, and the done, in-progress and cancelled marks) as a task
 - **Repository folder** - import each file or folder inside a folder of this project's repository as a task (an OpenSpec `changes/` folder gives one task per change)
+- **Script** - import each item a command prints as JSON (`id`, `title`, `body`) in this project's folder
 
 **Prerequisites:**
 - **GitHub:** The `gh` CLI must be installed and authenticated. For GitHub Projects, the `project` scope is required (`gh auth refresh -s project`).
@@ -117,11 +118,14 @@ Click **Import** in the backlog toolbar to pull tasks from external project mana
 - **Repository folder:** nothing to sign in to. The folder is read with git from the project's
   default branch, local or `origin` whichever is newer, never from the files checked out, and
   nothing is fetched. A remote project's repository is read on its host.
+- **Script:** nothing to sign in to. The command runs in the project folder, in the same shell the
+  terminals use, and must print a JSON array of items with id, title and body. A remote project's
+  command runs on its host.
 
 **Adding a source:**
 1. Click **Import** > **Add Source**
-2. Choose a provider (GitHub, Azure DevOps, Asana, Jira, Linear, Trello, GitLab, Obsidian, or Repository folder) and source type (GitHub has Issues and Projects, Obsidian has Notes and Checklist items)
-3. Paste the full URL (e.g., `https://github.com/owner/repo`, `https://github.com/orgs/owner/projects/1`, `https://dev.azure.com/org/project`, or `https://app.asana.com/0/1234567890/list`). For Jira, paste a board, project, saved filter or search link (`https://your-site.atlassian.net/jira/software/projects/ENG/boards/12`, `.../browse/ENG`, `.../issues/?filter=10021`, `.../issues/?jql=...`), or type JQL, which runs on your one connected Jira site. With more than one Jira site connected, typed JQL does not say which to use, so the popover asks for a search link instead ("Paste a search link so the site is known."). For GitLab, paste any project, group, issue list, issue or board link (`https://gitlab.com/acme/web`, `https://gitlab.com/groups/acme/-/issues`, `https://gitlab.com/acme/web/-/boards/12`); filters in the link are dropped. A link on a server that is not GitLab is refused ("github.com is not a GitLab instance."). Linear lists your teams instead, and Trello your open boards under their Workspace: click one. One you already added says **Added** and opens its source. Obsidian opens the folder dialog instead: choose the vault, or any folder inside it. For a Repository folder, type the folder's path in the repository or click **Browse**, which lists the folders on the default branch with how many tasks each would import; typing narrows the list, and a folder the branch does not have is refused.
+2. Choose a provider (GitHub, Azure DevOps, Asana, Jira, Linear, Trello, GitLab, Obsidian, Repository folder, or Script) and source type (GitHub has Issues and Projects, Obsidian has Notes and Checklist items)
+3. Paste the full URL (e.g., `https://github.com/owner/repo`, `https://github.com/orgs/owner/projects/1`, `https://dev.azure.com/org/project`, or `https://app.asana.com/0/1234567890/list`). For Jira, paste a board, project, saved filter or search link (`https://your-site.atlassian.net/jira/software/projects/ENG/boards/12`, `.../browse/ENG`, `.../issues/?filter=10021`, `.../issues/?jql=...`), or type JQL, which runs on your one connected Jira site. With more than one Jira site connected, typed JQL does not say which to use, so the popover asks for a search link instead ("Paste a search link so the site is known."). For GitLab, paste any project, group, issue list, issue or board link (`https://gitlab.com/acme/web`, `https://gitlab.com/groups/acme/-/issues`, `https://gitlab.com/acme/web/-/boards/12`); filters in the link are dropped. A link on a server that is not GitLab is refused ("github.com is not a GitLab instance."). Linear lists your teams instead, and Trello your open boards under their Workspace: click one. One you already added says **Added** and opens its source. Obsidian opens the folder dialog instead: choose the vault, or any folder inside it. For a Repository folder, type the folder's path in the repository or click **Browse**, which lists the folders on the default branch with how many tasks each would import; typing narrows the list, and a folder the branch does not have is refused. For a Script, type the command (for example `node scripts/list-changes.js`); Enter starts a new line, and Connect runs nothing yet, it only saves the source.
 4. Optionally set a **Label**. It starts as the last part of the link or folder, and every task the source imports gets it. A source picked from a list (Linear, Trello) gets its Label from **Edit source** afterwards.
 5. Click **Connect** - Kangentic verifies authentication and saves the source. For Jira it also checks that the account can open the board, project or filter, and names the source after it. For GitLab it checks that the account can open the project or group (and the board a board link names), and names the source by its path. The saved source says whether it is a project or a group, and names a self-managed server ("GitLab Group on git.example.com").
 6. For Azure DevOps sprint URLs, items are automatically scoped to that sprint's iteration path

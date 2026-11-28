@@ -705,10 +705,13 @@ export function registerBacklogHandlers(context: IpcContext): void {
     const priorityScale = priorityScaleFrom(
       context.configManager.getEffectiveConfig(context.currentProjectPath).backlog?.priorities,
     );
-    // The saved source's Label goes on every item it imports, beside the item's own.
-    const sourceTaskLabel = input.sourceId
+    // The Label the dialog held, then the saved source's. The dialog's copy is
+    // what the user saw; a source that has not reached disk still stamps it.
+    const fromDialog = typeof input.taskLabel === 'string' ? input.taskLabel.trim() : '';
+    const fromStore = input.sourceId
       ? new ImportSourceStore(context.currentProjectPath).list().find((saved) => saved.id === input.sourceId)?.taskLabel
       : undefined;
+    const sourceTaskLabel = fromDialog || fromStore;
 
     for (const issue of issuesToImport) {
       if (alreadyImportedIds.has(issue.externalId)) {

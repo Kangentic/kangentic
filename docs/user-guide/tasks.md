@@ -153,7 +153,7 @@ While you drag a card into another column, the cards there part at the slot it w
 
 The agent keeps its conversation across these moves; the message is the only new input it sees. A new project has no messages configured, so by default these moves simply carry the session along.
 
-Each column chooses WHEN its message arrives via **Message timing**: `immediate` sends it on arrival (the agent queues it if mid-turn), while `deferred` holds it until the current turn genuinely finishes.
+Each column chooses WHEN its message arrives via **Message timing**: `immediate` sends it on arrival (the agent queues it if mid-turn), while `deferred` holds it until the current turn genuinely finishes. On a cold spawn, an `immediate` slash command is the opening message and the task template is skipped, so the command stays the first word. The card description stays on the card. A warm move still types the slash into the running session.
 
 A message for a column that runs no agent is held until the task's next agent starts, and it is dropped if the task moves to Done. A move to To Do clears what is held.
 

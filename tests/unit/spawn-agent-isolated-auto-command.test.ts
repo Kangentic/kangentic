@@ -18,8 +18,8 @@
  *     waits out its full 30s fallback before the auto_command appears - reading
  *     as "the command never ran". Fixed by delivering the auto_command as the
  *     session's INITIAL PROMPT when there is no task prompt to run (resume, or
- *     fresh + skipPromptTemplate), keeping the keystroke only for a fresh spawn
- *     whose prompt slot is taken by the task description.
+ *     fresh + skipPromptTemplate). An immediate slash command on a cold spawn
+ *     takes that slot too, so the task template does not sit ahead of it.
  *
  * resumePrompt is the 4th arg of resumeSuspendedSession; asserting it carries
  * the command (vs. a scheduleKeystrokes call) tells us which delivery path ran.
@@ -384,6 +384,11 @@ function resumePromptArg(engine: ReturnType<typeof makeDeps>['engine']): unknown
   return engine.resumeSuspendedSession.mock.calls[0]?.[3];
 }
 
+/** Whether the spawn skipped the task template: 3rd arg of resumeSuspendedSession. */
+function skipPromptTemplateArg(engine: ReturnType<typeof makeDeps>['engine']): unknown {
+  return engine.resumeSuspendedSession.mock.calls[0]?.[2];
+}
+
 describe('spawnAgent auto_command injection (isolation-scoped resume check)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -509,25 +514,20 @@ describe('spawnAgent auto_command injection (isolation-scoped resume check)', ()
     expect(deps.scheduleKeystrokes).not.toHaveBeenCalled();
   });
 
-  it('ISOLATED + fresh from To Do (task prompt present): auto_command follows the task prompt as a keystroke', async () => {
+  it('ISOLATED + fresh from To Do: an immediate slash command takes the opening slot', async () => {
     const isolatedLane = makeSwimlane(ISOLATED_LANE_ID, {
       session_target: 'isolated',
       auto_command: '/code-review',
     });
     const deps = makeDeps({ manualPauseRecord: null, resumeRecord: undefined });
 
-    // skipPromptTemplate=false: the task description owns the prompt slot, so the
-    // auto_command must be injected afterward as a keystroke.
+    // skipPromptTemplate=false would otherwise leave the task template in the
+    // slot; an immediate slash takes it instead so the command is the first word.
     await runSpawn(isolatedLane, deps, false);
 
-    expect(resumePromptArg(deps.engine)).toBeUndefined();
-    expect(deps.scheduleKeystrokes).toHaveBeenCalledTimes(1);
-    expect(deps.scheduleKeystrokes).toHaveBeenCalledWith(
-      TASK_ID,
-      FRESH_PTY_SESSION_ID,
-      [{ text: '/code-review', verify: 'submitted' }],
-      expect.objectContaining({ freshlySpawned: true }),
-    );
+    expect(skipPromptTemplateArg(deps.engine)).toBe(true);
+    expect(resumePromptArg(deps.engine)).toBe('/code-review');
+    expect(deps.scheduleKeystrokes).not.toHaveBeenCalled();
   });
 
   it('ISOLATED + resume: re-entering the isolated column resumes with the auto_command as the resume prompt, no keystroke', async () => {
@@ -558,20 +558,15 @@ describe('spawnAgent auto_command injection (isolation-scoped resume check)', ()
     expect(deps.scheduleKeystrokes).not.toHaveBeenCalled();
   });
 
-  it('MAIN + fresh from To Do: auto_command injected as a keystroke after the task prompt (unchanged)', async () => {
+  it('MAIN + fresh from To Do: an immediate slash command is the opening prompt', async () => {
     const normalLane = makeSwimlane(EXEC_LANE_ID, { session_target: 'main', auto_command: '/standup' });
     const deps = makeDeps({ manualPauseRecord: null, resumeRecord: undefined });
 
     await runSpawn(normalLane, deps, false);
 
-    expect(resumePromptArg(deps.engine)).toBeUndefined();
-    expect(deps.scheduleKeystrokes).toHaveBeenCalledTimes(1);
-    expect(deps.scheduleKeystrokes).toHaveBeenCalledWith(
-      TASK_ID,
-      FRESH_PTY_SESSION_ID,
-      [{ text: '/standup', verify: 'submitted' }],
-      expect.objectContaining({ freshlySpawned: true }),
-    );
+    expect(skipPromptTemplateArg(deps.engine)).toBe(true);
+    expect(resumePromptArg(deps.engine)).toBe('/standup');
+    expect(deps.scheduleKeystrokes).not.toHaveBeenCalled();
   });
 });
 
@@ -731,6 +726,8 @@ function spawnOverridesArg(engine: ReturnType<typeof makeDeps>['engine']): { car
  * without it. An `immediate` message that is not a slash command now joins the
  * opening after the template: `spawnAgent` hands it to the engine as the carried
  * message with `carriedMessageJoinsTemplate`, and sends nothing after the spawn.
+ * An immediate slash command takes the opening slot and the spawn skips the
+ * task template, so the command stays the prompt's first word.
  */
 describe('spawnAgent: an immediate column message follows the task template in the opening', () => {
   const CONTRACT = `Design phase. ${'Draw the design canvas and end each turn with the sign-off line. '.repeat(18)}`;
@@ -778,30 +775,58 @@ describe('spawnAgent: an immediate column message follows the task template in t
     expect(deps.scheduleKeystrokes).not.toHaveBeenCalled();
   });
 
-  it('a slash command never follows the template: it runs only as a prompt\'s first word', async () => {
+  it('a slash command never follows the template: on a cold spawn it takes the opening slot', async () => {
     const normalLane = makeSwimlane(EXEC_LANE_ID, { session_target: 'main', auto_command: '/standup' });
     const deps = makeDeps({ manualPauseRecord: null, resumeRecord: undefined });
 
     await runSpawn(normalLane, deps, false);
 
-    expect(resumePromptArg(deps.engine)).toBeUndefined();
+    expect(skipPromptTemplateArg(deps.engine)).toBe(true);
+    expect(resumePromptArg(deps.engine)).toBe('/standup');
     expect(spawnOverridesArg(deps.engine)?.carriedMessageJoinsTemplate).toBe(false);
-    expect(deps.scheduleKeystrokes).toHaveBeenCalledTimes(1);
+    expect(deps.scheduleKeystrokes).not.toHaveBeenCalled();
   });
 
-  it('a task command that is a slash command keeps the row out of the opening too', async () => {
+  it('a task command that is a slash command takes the opening slot too', async () => {
     const normalLane = makeSwimlane(EXEC_LANE_ID, { session_target: 'main', auto_command: SHORT_PROSE });
     const deps = makeDeps({ manualPauseRecord: null, resumeRecord: undefined, taskFields: { auto_command: '/task-command' } });
 
     await runSpawn(normalLane, deps, false);
 
     // The task's command replaces the row's message, and that is what is judged.
+    expect(skipPromptTemplateArg(deps.engine)).toBe(true);
+    expect(resumePromptArg(deps.engine)).toBe('/task-command');
+    expect(deps.scheduleKeystrokes).not.toHaveBeenCalled();
+  });
+
+  it('the opening is only the slash command; the card description stays on the task', async () => {
+    const normalLane = makeSwimlane(EXEC_LANE_ID, { session_target: 'main', auto_command: '/standup' });
+    const deps = makeDeps({ manualPauseRecord: null, resumeRecord: undefined });
+
+    await runSpawn(normalLane, deps, false);
+
+    expect(skipPromptTemplateArg(deps.engine)).toBe(true);
+    expect(resumePromptArg(deps.engine)).toBe('/standup');
+    expect(String(resumePromptArg(deps.engine))).not.toContain('Do the thing');
+    expect(deps.tasks.getById().description).toBe('Do the thing');
+  });
+
+  it('a deferred slash command waits for the template\'s turn, as before', async () => {
+    const normalLane = makeSwimlane(EXEC_LANE_ID, { session_target: 'main', auto_command: '/standup' });
+    columnMessageModes.set(EXEC_LANE_ID, 'deferred');
+    const deps = makeDeps({ manualPauseRecord: null, resumeRecord: undefined });
+
+    await runSpawn(normalLane, deps, false);
+    await settle();
+
+    expect(skipPromptTemplateArg(deps.engine)).toBe(false);
     expect(resumePromptArg(deps.engine)).toBeUndefined();
+    expect(deps.scheduleKeystrokes).toHaveBeenCalledTimes(1);
     expect(deps.scheduleKeystrokes).toHaveBeenCalledWith(
       TASK_ID,
       FRESH_PTY_SESSION_ID,
-      [{ text: '/task-command', verify: 'submitted' }],
-      expect.objectContaining({ freshlySpawned: true }),
+      [{ text: '/standup', verify: 'submitted' }],
+      expect.objectContaining({ freshlySpawned: true, mode: 'deferred' }),
     );
   });
 

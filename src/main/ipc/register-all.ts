@@ -13,6 +13,7 @@ import { trackFeatureUsed, isKnownAnalyticsFeature } from '../analytics/usage';
 import { ProjectRepository } from '../db/repositories/project-repository';
 import { ProjectGroupRepository } from '../db/repositories/project-group-repository';
 import { SessionManager } from '../pty/session-manager';
+import { setImportScriptShellLookup } from '../boards';
 import { UtilityPtyHostTransport } from '../pty/host/utility-pty-host-transport';
 import { setSqliteBusyContextSource } from '../analytics/error-reporting';
 import { buildSqliteBusyContext, SQLITE_BUSY_LOOKBACK_MS } from '../diagnostics/sqlite-busy-holders';
@@ -168,6 +169,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
     stallAtQuitFilePath: path.join(PATHS.configDir, PTY_HOST_STALL_AT_QUIT_FILE_NAME),
   });
   const sessionManager = new SessionManager({ ptyHostTransport });
+  setImportScriptShellLookup(() => sessionManager.getShell());
   ptyHostTransport.start();
   // A `SQLITE_BUSY` report names who else may have held the lock: the
   // retrieval worker's longest recent write hold, and whether the pty host's

@@ -166,7 +166,8 @@ modes and their failure handling: [Worktree creation](../worktrees/worktree-crea
    delivery decides (`shouldPaste`): a bracketed paste for the task template, keystrokes for one
    line or a slash command. It is awaited, so the column's later messages and held messages go
    after it. An `immediate` column message that is not a slash command is already in it, after the
-   task template (`carriedMessageJoinsTemplate`, #1138). A CLI whose interactive session takes no starting prompt (`freshPromptDelivery:
+   task template (`carriedMessageJoinsTemplate`, #1138). An immediate slash command on a cold spawn
+   is the opening itself: the spawn skips the task template so the command is the first word. A CLI whose interactive session takes no starting prompt (`freshPromptDelivery:
    'typed'`) takes this step on every fresh spawn, with no early agent: the engine hands its prompt
    back as `typedOpening` too. So does a [prompt too long for its command line](#a-prompt-too-long-for-its-command-line).
 5. **Discard.** Every path that does not adopt it discards it: a spawn whose launch changed, an

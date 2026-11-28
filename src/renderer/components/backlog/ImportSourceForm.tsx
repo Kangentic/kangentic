@@ -32,7 +32,7 @@ interface ImportSourceFormProps {
   error: string | null;
   onSubmit: () => void;
   onBack: () => void;
-  valueInputRef?: React.RefObject<HTMLInputElement | null>;
+  valueInputRef?: React.Ref<HTMLInputElement | HTMLTextAreaElement>;
 }
 
 /** An (i) beside a field label; its text is the tip and the button's description. */
@@ -78,7 +78,9 @@ export function ImportSourceForm({
   const namesFolder = Boolean(sourceType.repoFolder || sourceType.folder);
   const labelTip = namesFolder
     ? t`From the folder name. Put on every task it imports.`
-    : t`From the link. Put on every task it imports.`;
+    : sourceType.multiline
+      ? t`From the script. Put on every task it imports.`
+      : t`From the link. Put on every task it imports.`;
   const editable = mode === 'add' && Boolean(onValueChange);
   // A folder source shows its Label once a folder is named; a link source always does.
   const showLabel = mode === 'edit' || !sourceType.repoFolder || value.trim() !== '';
@@ -147,10 +149,21 @@ export function ImportSourceForm({
         <span className="text-xs text-fg-muted">{fieldLabel}</span>
         {fieldTip && <FieldInfo about={fieldLabel} tip={fieldTip} testId="import-source-field-info" />}
       </div>
-      <div className="flex items-center gap-1.5 mb-2">
-        {editable ? (
+      <div className={`flex gap-1.5 mb-2 ${sourceType.multiline ? 'items-start' : 'items-center'}`}>
+        {editable && sourceType.multiline ? (
+          <textarea
+            ref={valueInputRef as React.Ref<HTMLTextAreaElement>}
+            value={value}
+            onChange={(event) => onValueChange?.(event.target.value)}
+            placeholder={sourceType.placeholder}
+            rows={4}
+            spellCheck={false}
+            className={`${FIELD_CLASS} min-h-[5.5rem] resize-y`}
+            data-testid="import-source-url-input"
+          />
+        ) : editable ? (
           <input
-            ref={valueInputRef}
+            ref={valueInputRef as React.Ref<HTMLInputElement>}
             type="text"
             value={value}
             onChange={(event) => onValueChange?.(event.target.value)}
@@ -161,6 +174,13 @@ export function ImportSourceForm({
             className={FIELD_CLASS}
             data-testid="import-source-url-input"
           />
+        ) : sourceType.multiline ? (
+          <span
+            className="w-full min-w-0 whitespace-pre-wrap break-words bg-surface/30 border border-edge/40 rounded text-sm text-fg-muted px-2.5 py-1.5"
+            data-testid="import-source-url-readonly"
+          >
+            {value}
+          </span>
         ) : (
           <Tooltip label={value}>
             <span
