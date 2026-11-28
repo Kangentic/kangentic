@@ -49,7 +49,7 @@ vi.mock('../../src/main/pty/spawn/typed-launch', async (importOriginal) => {
     launchRefusal: () => {
       if (commandFits.value) return null;
       return commandFits.refusal === 'shim'
-        ? new refused.AgentBatchShimUnresolvedError('node_path')
+        ? new refused.AgentBatchShimUnresolvedError({ gaveUp: 'node_path' })
         : new refused.AgentCommandTooLongError();
     },
   };
