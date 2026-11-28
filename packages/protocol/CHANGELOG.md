@@ -2,6 +2,25 @@
 
 <!-- releases -->
 
+## [protocol-v0.30.0] - 2026-11-28
+
+Says whether the desktop holds a push registration for the phone that asked, so
+a phone whose registration was lost registers again without an app restart.
+Additive on the wire; `PROTOCOL_VERSION` stays '3'.
+
+The `read-board` project list (`ReadBoardProjectListResponsePayload`) gains
+`pushRegistered`, mirroring desktop commit 3f4513689 (Sentry DESKTOP-5H). The
+desktop sends false for a device with the `register-push` grant whose
+registration it does not hold, for example after it set aside a corrupt
+`mobile-push-registrations.json` and started with an empty store. It omits the
+field for a device without that grant and while the registrations file will not
+read, and an older desktop never sends it: absent reads as registered.
+`parseReadBoardResponsePayload` drops a value that is not a boolean rather than
+failing the listing, as it drops a malformed group.
+
+### Fixes
+- Set a corrupt push registrations file aside and tell the phone to register again (3f4513689)
+
 ## [protocol-v0.29.0] - 2026-11-22
 
 Says who paused a task, and carries the two card switches that hide a card's
