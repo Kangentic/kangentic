@@ -6,6 +6,53 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 <!-- releases -->
 
+## [v0.65.0] - 2026-11-27
+
+### Features
+- Replace an older SSH host program after an app update, between turns (fb1a1ff9)
+- Count Kangentic's own non-PTY children apart in the commit census (34b9e5c2)
+- Census what holds the Windows commit charge at each low-memory spell (7a48efe4)
+- Say what kind of descriptors fill main's table on Linux and macOS (19aa3ac7)
+
+### Fixes
+- Name a refused .ps1 shim, a gone shim target, and what an abandoned launch printed (7129b2ac)
+- Report a failed sign-in read only when it repeats, and say how the run ended (9c15d961)
+- Retry a plan-exit move that found the database busy (809cd689)
+- Re-push stopped pages on registry changes and share one revive (12f38b3a)
+- Mark a stopped page from main, so a lane or a pop-out's crash shows too (f9611e96)
+- Show a crashed Browser pane page and refuse drives on it with page-crashed (9444e52e)
+- Recognize Claude's transcript view opened mid-turn (d7e7b4e5)
+- Let an SSH host say whether a conversation is gone (4a699620)
+- Say where a launch failed and why in host and death-at-start reports (4337515f)
+- Add a worktree or submodule folder on a host as a project (0888ab7e)
+- Stop reporting a churn read whose worktree was removed under it (854a01ef)
+- Wait for the churn read on an MCP delete and pin the new git guards (dd38acbc)
+- Set a corrupt push registrations file aside and tell the phone to register again (3f451368)
+
+### Other
+- Send the launch report when its head shim cannot be read (5cb03709)
+- Build the shim refusal in the folder recheck mock with its detail (0c57db58)
+- Count sign-in read failures apart from usage read failures (e73caa7a)
+- Match the platforms index entry to ssh-remote.md's new description (adeb0c78)
+- Pin the program update's late unheld check, pre-stop checks and second look (ae254839)
+- Pin the SSH host program update's terminal restart and resume paths (3ed2f64f)
+- Name every census group tag (24d14025)
+- Run the tagged-task classifier against real project databases (5eda6ae0)
+- Say which plan-exit retries report (c500e508)
+- Pin the census, write-hold and plan-exit retry edges, tidy the diagnostics (96ea89b3)
+- Draft this branch's three Privacy lines in every shipped language (91b0652f)
+- Cover the stopped-page map's read through the preload and at mount (b740cc03)
+- Cover the stopped-page cover and red marks in the guides and IPC docs (d94194c1)
+- Expect agent_life_s on the never-captured report's full tag set (7d9832e0)
+- Pin the history view's session checks and the host path from a status report (69390539)
+- Pin the host exclude step's ENOTDIR answer (0c60b5a3)
+- Pin the cold-open To Do pass's wait for the churn read (1743670d)
+- Pin that a corrupt registrations file reads as holding no registration (79a3e7d7)
+- Make the session-queue test prove the queue and name its stall (22ecf6ac)
+- Close the prose gaps the v0.64.0 release audit left (5ef0bcdd)
+- Hold the settings-privacy Privacy wrap at whole scales only (40b73d67)
+- Poll the release UI suite's log and wait only for the jobs the site reads (c1c1ec53)
+
 ## [v0.64.0] - 2026-11-25
 
 ### Features

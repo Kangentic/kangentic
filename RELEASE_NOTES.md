@@ -1,13 +1,13 @@
 ## What's New
 
-- A workflow task can wait on a task that is already on a board, even one that has started: pick it from Add blocker in the workflow inspector. ([#957](https://github.com/Kangentic/kangentic/pull/957))
-- `kangentic_create_task` creates a task whose text names another project and says how to move it there, instead of refusing it, and `labels: []` now means the task has no labels. ([#945](https://github.com/Kangentic/kangentic/pull/945), [#944](https://github.com/Kangentic/kangentic/pull/944))
-- More handled failures are reported, with enough detail to diagnose from the first report. Settings > Privacy lists what they carry. ([#951](https://github.com/Kangentic/kangentic/pull/951))
+- An SSH host now moves to the new version of Kangentic's host program by itself after an app update. It waits until every agent and Command Terminal on the host is idle, then resumes them. ([#977](https://github.com/Kangentic/kangentic/pull/977))
+- Error reports from a low-memory spell or a full descriptor table now say what holds the memory or the descriptors. Settings > Privacy lists what they carry. ([#976](https://github.com/Kangentic/kangentic/pull/976))
 
 ## Bug Fixes
 
-- The Changes panel failed to load, and the Changes button counted too few files, in a project with a very large number of untracked files. ([#958](https://github.com/Kangentic/kangentic/issues/958))
-- The Changes panel stopped updating by itself on Windows. ([#952](https://github.com/Kangentic/kangentic/issues/952))
-- OpenCode 2 sessions no longer lose their activity plugin when another session in the project ends. ([#959](https://github.com/Kangentic/kangentic/pull/959))
-- A column's multi-line message at an agent turn end could be cleared by another command sent at the same moment, and a paste that fails now says in plain words what happened. ([#949](https://github.com/Kangentic/kangentic/pull/949))
-- Resuming a task whose agent never got a message showed No conversation found and paused the card. ([#946](https://github.com/Kangentic/kangentic/issues/946))
+- A task did not move to its next column after its agent's plan was approved. ([#967](https://github.com/Kangentic/kangentic/issues/967))
+- A page in the Browser pane stopped working with no message after it crashed. The pane now says the page stopped and offers Reload. ([#969](https://github.com/Kangentic/kangentic/issues/969))
+- Phone push notifications stopped arriving until the phone app was restarted. ([#972](https://github.com/Kangentic/kangentic/pull/972))
+- Searching a Claude terminal while Claude was working found only what was on screen, not the whole conversation. ([#971](https://github.com/Kangentic/kangentic/issues/971))
+- Resuming a task on an SSH host showed No conversation found and every later Resume did the same. ([#970](https://github.com/Kangentic/kangentic/issues/970))
+- Adding a git worktree or submodule folder on an SSH host as a project failed with a not a directory error. ([#966](https://github.com/Kangentic/kangentic/issues/966))
