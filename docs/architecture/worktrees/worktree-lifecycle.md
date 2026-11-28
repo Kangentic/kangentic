@@ -12,6 +12,7 @@ sources:
   - resource: src/main/git/git-fetch-scheduler.ts
   - resource: src/main/git/fetch-throttle.ts
   - resource: src/shared/slugify.ts
+  - resource: src/shared/worktree-choice.ts
   - resource: src/main/ipc/helpers/task-git.ts
   - resource: src/main/transition-engine/session-startup/missing-worktree.ts
   - resource: src/main/transition-engine/resource-cleanup.ts
@@ -214,7 +215,7 @@ persisted: the task keeps its worktree.
 | Reason | Condition | Why |
 |--------|-----------|-----|
 | `reused` (return only) | A worktree already exists at `task.worktree_path` and is genuinely present on disk | Idempotent short-circuit inside `WorktreeManager.ensureWorktree` - `worktree_path` stays exactly what it already was. Recreating a live worktree would be wasted work; `ensureTaskWorktree` runs the base-drift probe on this path instead. |
-| `disabled` | `worktreesEnabled` is `false` for the project, or the task's `use_worktree` is `0` | `task.use_worktree` is checked first when set (`worktree-manager.ts`'s `shouldUseWorktree`): a task can force worktree mode on in a project where it's off, or opt out where it's on. Checked BEFORE the three structural reasons below, so forcing it on can never override them. |
+| `disabled` | `worktreesEnabled` is `false` for the project, or the task's `use_worktree` is `0` | One rule decides it, `taskUsesWorktree` in `src/shared/worktree-choice.ts`, which the New Task dialog and the branch hint read too. The [`git.worktreesEnabled`](../../settings/app-config.md#git) row says how the feature switch and the task's own choice combine. A NULL `use_worktree` means Worktree. Checked after the `reused` short-circuit, so a task with a live worktree keeps it, and before the structural reasons below. |
 | `not-a-repo` | The project is not a git repository | Nothing to branch from. |
 | `nested-worktree` | The project path itself is inside a worktree (`isInsideWorktree(this.projectPath)`) | Prevents nesting a worktree inside a worktree - a worktree checkout is never itself a valid parent for another `git worktree add`. |
 | `no-commits` | The repository has **no commits** (`hasCommits` in `src/main/git/git-checks.ts`) | A freshly `git init`-ed repo has an unborn HEAD: the branch exists in name only, so `git worktree add` fails with `fatal: invalid reference: <branch>`. This is the state Kangentic produces itself when it initialises a repo for a folder that had none (see `ensureGitRepo`), and the user's next action is usually a task move. Worktrees start working on their own once there is a first commit. |
