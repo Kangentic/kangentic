@@ -8,6 +8,7 @@ sources:
     title: AppConfig, DEFAULT_CONFIG
   - resource: src/shared/notification-settings.ts
   - resource: src/shared/terminal-native-defaults.ts
+  - resource: src/shared/worktree-choice.ts
   - resource: src/main/config/legacy-git-keys.ts
   - resource: src/main/dev-ports/dev-port-allocator.ts
   - resource: src/main/agent/shared/execution-target.ts
