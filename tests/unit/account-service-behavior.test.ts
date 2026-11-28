@@ -346,6 +346,31 @@ describe('AccountService.refreshIdentity', () => {
       expect(reports[0][4]).toEqual({ run_failure: 'unknown', agent_cli_version: '2.1.300' });
     });
 
+    // The sign-in streak and the usage streak are separate counts. A failed usage run does not add
+    // to the sign-in count, a usage read that answers does not start it again, and a failed sign-in
+    // run does not add to the usage count.
+    it('counts sign-in reads apart from the usage reads between them', async () => {
+      const usageOutcomes: Array<'answers' | 'run-failed'> = ['run-failed', 'answers', 'run-failed'];
+      const accountService = folderService(folderSupport({
+        identify: async () => { throw timedOut(); },
+        readIdleUsage: async () => {
+          if (usageOutcomes.shift() === 'answers') return [sevenDay(1, NOW + 86_400)];
+          throw new EmptyUsageReadError('run-failed', { runFailure: { kind: 'timeout', exitCode: null } });
+        },
+      }), { resolveCliVersion: async () => '2.1.300' });
+      const own = accountService.ensureDefaultAccount(AGENT)!;
+      await accountService.refreshUsage(own.id);
+      await accountService.refreshIdentity(own.id);
+      expect(reports).toEqual([]);
+      await accountService.refreshUsage(own.id);
+      await accountService.refreshIdentity(own.id);
+      await accountService.refreshUsage(own.id);
+      expect(usageOutcomes).toEqual([]);
+      expect(reports.map(([problem, , facts]) => [problem, facts])).toEqual([
+        ['identity-read-failed', { kind: 'default', reason: 'run-failed' }],
+      ]);
+    });
+
     it('counts two reads that ran at the same time as one failure', async () => {
       const pending: Array<{ reject: (error: Error) => void }> = [];
       const accountService = serviceWith(() => new Promise<AccountIdentity>((_resolve, reject) => { pending.push({ reject }); }));
