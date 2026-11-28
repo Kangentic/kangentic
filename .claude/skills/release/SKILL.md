@@ -335,10 +335,13 @@ unapplied.
    add missing items, remove extras, fix stale references. Do not ask the user; do not offer a skip.
 
    A gap is a missing, extra, or stale item in something the docs enumerate. An observation the
-   auditor itself labels as prose completeness rather than an anchor gap is not one, so record it
-   in the Step 7 report as a follow-up instead. The release commit absorbs a large doc pass
-   happily, but it is not the place to start writing sections the auditor never claimed were
-   missing.
+   auditor itself labels as prose completeness rather than an anchor gap resolves here too, after
+   you check it against the source. Either fix it (write the line it names, or make the two places
+   that disagree say the same thing), or leave the doc as it is when the source shows it was right,
+   and say why in the Step 7 report. Never file it as a task. v0.65.0 did, and board task 1232
+   then held four one-line doc fixes this commit could have carried. Keep each fix to what the observation
+   names. The release commit absorbs a large doc pass happily, but it is not the place to start
+   writing sections the auditor never claimed were missing.
 3. **Document every undocumented `feat:` commit** since the previous tag: scan for features not
    covered in `docs/` and write the missing coverage. Unconditional - do not ask.
 

@@ -146,7 +146,10 @@ runs `/release` once they are all in Done. A kangentic.com task runs that repo's
 checked the published release. The release task's route is Executing alone, so its
 `Findings: applied` line takes it straight to Done. With no bump named, the title is a prediction
 from the commit subjects, and the release task renames both cards if `/release` derives another
-version. See `.claude/skills/release-workflow/SKILL.md`.
+version. The release task files no tasks. Its doc fixes ride the release commit, and once the
+release is verified it lands its fixes to the release process itself, such as a wrong line in
+`/release` or a release script, on main with `/merge-back`. See
+`.claude/skills/release-workflow/SKILL.md`.
 
 ### Commit Conventions
 

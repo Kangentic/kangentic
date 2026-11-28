@@ -1166,7 +1166,7 @@ describe.runIf(HAS_JQ)('deploy-demo.yml README stills release choice, executed',
 // The /release-workflow release brief ends Step 7's wait at three jobs instead of the whole run:
 // the ones kangentic.com's release gate reads (the published release, npm, and the deployed demo
 // whose scenes.json follows the poster zip). poster-gate runs on after them and only ever becomes a
-// follow-up. Two edits would break that without a word. A renamed job leaves the brief's wait
+// line in the release summary. Two edits would break that without a word. A renamed job leaves the brief's wait
 // matching nothing, so the release card holds for the whole run again. A job that starts waiting
 // for poster-gate makes skipping it unsafe.
 const RELEASE_WORKFLOW_SKILL_PATH = path.join(REPO_ROOT, '.claude', 'skills', 'release-workflow', 'SKILL.md');
