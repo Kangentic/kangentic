@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { IdentityReadError, type AccountIdentity, type FolderAccountSupport, type SharedEntry } from '../../../accounts/account-support';
 import type { SessionIdLoginEvidence, StoredCliTarget } from '../../../../shared/types';
+import type { ExecRunFailure } from '../../../utility-process/off-main-exec';
 import { spawnCli, stopCli } from '../../shared/cli-print';
 import { isPlainRecord } from '../../shared/plain-record';
 import { codexHomeDir } from './config-toml';
@@ -119,31 +120,41 @@ function homeEnv(home: string | null): Record<string, string> | undefined {
   return home ? { CODEX_HOME: home, CODEX_SQLITE_HOME: home } : undefined;
 }
 
+/** What `codex login status` said: signed in or out, or how a run that gave no answer ended. */
+type CodexLoginStatus =
+  | { signedIn: boolean }
+  | { runFailure: ExecRunFailure; cause?: unknown };
+
+/** How a `login status` exit that is neither answer ended: its code, or a signal when it has none. */
+function exitRunFailure(code: number | null): ExecRunFailure {
+  return code === null ? { kind: 'signal', exitCode: null } : { kind: 'exit_code', exitCode: code };
+}
+
 /**
  * `codex login status`: exit 0 signed in, 1 signed out, and it creates nothing in the home
  * (measured signed out on 0.163.0). The answer for a login kept outside `auth.json` (the keyring
- * store), which names no person. Null when the CLI gave no answer: it timed out, could not start,
- * or exited with another code.
+ * store), which names no person. When the CLI gave no answer it says how the run ended: it timed
+ * out, could not start (with the error), or exited with another code or by a signal.
  */
-function codexLoginStatus(cliPath: string, home: string | null): Promise<boolean | null> {
+function codexLoginStatus(cliPath: string, home: string | null): Promise<CodexLoginStatus> {
   return new Promise((resolve) => {
     const child = spawnCli(cliPath, ['login', 'status'], os.tmpdir(), homeEnv(home));
     let settled = false;
-    const finish = (signedIn: boolean | null): void => {
+    const finish = (status: CodexLoginStatus): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve(signedIn);
+      resolve(status);
     };
     const timer = setTimeout(() => {
       stopCli(child);
-      finish(null);
+      finish({ runFailure: { kind: 'timeout', exitCode: null } });
     }, 20_000);
     timer.unref?.();
     child.stdout.resume();
     child.stderr.resume();
-    child.once('error', () => finish(null));
-    child.once('exit', (code: number | null) => finish(code === 0 ? true : code === 1 ? false : null));
+    child.once('error', (error: unknown) => finish({ runFailure: { kind: 'spawn_error', exitCode: null }, cause: error }));
+    child.once('exit', (code: number | null) => finish(code === 0 || code === 1 ? { signedIn: code === 0 } : { runFailure: exitRunFailure(code) }));
   });
 }
 
@@ -155,9 +166,9 @@ async function identifyCodexAccount(cliPath: string, home: string | null): Promi
   } catch {
     // No `auth.json`: signed out, or a login kept in the keyring. The CLI knows which.
   }
-  const signedIn = await codexLoginStatus(cliPath, home);
-  if (signedIn === null) throw new IdentityReadError('run-failed');
-  return { signedIn, email: null, plan: null, hasSubscription: null };
+  const status = await codexLoginStatus(cliPath, home);
+  if ('runFailure' in status) throw new IdentityReadError('run-failed', { cause: status.cause, runFailure: status.runFailure });
+  return { signedIn: status.signedIn, email: null, plan: null, hasSubscription: null };
 }
 
 /**

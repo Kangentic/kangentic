@@ -508,18 +508,26 @@ async function readClaudePlanDisplayName(home: string | null): Promise<string | 
  */
 async function identifyClaudeAccount(cliPath: string, home: string | null): Promise<AccountIdentity> {
   let output: string;
+  let runError: unknown;
   let runFailed = false;
   try {
     output = await runClaudeCli(cliPath, ['auth', 'status'], 30_000, homeEnv(home));
   } catch (error) {
     // report-ok: a signed-out home exits non-zero, so its printed answer is read below, and a run
-    // with no answer throws `IdentityReadError`, which the account service reports.
+    // with no answer throws `IdentityReadError` carrying this error. The account service reports
+    // it from the second failed run in a row for the account.
     const failure = error as { stdout?: unknown; killed?: unknown };
     output = failure.killed !== true && typeof failure.stdout === 'string' ? failure.stdout : '';
+    runError = error;
     runFailed = true;
   }
   const identity = parseClaudeAuthStatus(output);
-  if (!identity) throw new IdentityReadError(runFailed ? 'run-failed' : 'unreadable');
+  if (!identity && runFailed) {
+    // The error and how the run ended go on with it: a timeout on a busy machine, an exit and a
+    // CLI that would not start all read `run-failed`, and the report could not tell them apart.
+    throw new IdentityReadError('run-failed', { cause: runError, runFailure: execRunFailureOf(runError) });
+  }
+  if (!identity) throw new IdentityReadError('unreadable');
   if (!identity.signedIn) return identity;
   // The name the user knows their plan by, when Claude has recorded one; the tier otherwise.
   const displayName = await readClaudePlanDisplayName(home);

@@ -20,12 +20,14 @@ import {
 } from './account-support';
 import { accountsReporter, type AccountProblem, type AccountProblemFacts, type AccountProblemTags } from './account-report';
 import { cliVersionTag } from '../agent/shared/cli-version-tag';
+import type { ExecRunFailure } from '../utility-process/off-main-exec';
 
 /**
- * How many usage reads in a row must give a `REPORTED_WHEN_REPEATED` reason before it is reported.
- * One failed run during a network drop is not a defect, and neither is a run that worked while its
- * own usage fetch did not. A flag the CLI does not know, or a cache that never refreshes, gives it
- * every time, so it still reports, one read later.
+ * How many usage reads in a row must give a `REPORTED_WHEN_REPEATED` reason before it is reported,
+ * and how many sign-in reads in a row must fail their CLI run. One failed run during a network drop
+ * or on a host out of memory is not a defect (Sentry DESKTOP-60), and neither is a run that worked
+ * while its own usage fetch did not. A flag the CLI does not know, or a cache that never refreshes,
+ * gives it every time, so it still reports, one read later.
  */
 const REPORTED_REPEATS = 2;
 
@@ -36,6 +38,16 @@ const REPORTED_WHEN_REPEATED: ReadonlySet<EmptyUsageReadReason> = new Set(['run-
 interface EmptyUsageStreak {
   reason: EmptyUsageReadReason;
   reads: number;
+}
+
+/** How many sign-in reads in a row failed their CLI run, and which reads that count has seen. */
+interface IdentityRunFailureStreak {
+  reads: number;
+  /**
+   * The number of the last sign-in read started when this count was last raised. A failed read
+   * numbered at or below it ran beside the one counted, so both fell to the same moment.
+   */
+  countedThrough: number;
 }
 
 /** A child's exit code as a tag: the code itself in the range a shell reports, else `other`. */
@@ -178,6 +190,19 @@ export class AccountService {
    * again, and some reasons are reported only once they repeat (`REPORTED_WHEN_REPEATED`).
    */
   private readonly emptyUsageStreaks = new Map<string, EmptyUsageStreak>();
+
+  /**
+   * Each account's run of sign-in reads whose CLI run failed (`run-failed`), counted apart from
+   * usage reads. Any answer, and any other reason, starts it again.
+   */
+  private readonly identityRunFailures = new Map<string, IdentityRunFailureStreak>();
+
+  /**
+   * How many sign-in reads have started, as a number for each one. The Accounts tab reads outside
+   * the scheduler's queue, so two reads of one account can run at once. Both fail on one host out
+   * of memory, and the number keeps them from counting as two in a row.
+   */
+  private identityReadsStarted = 0;
 
   /** The agents the last checked list held, as saved. Undefined until read; null when nothing is saved. */
   private listedAgents: ListedAgent[] | null | undefined;
@@ -474,7 +499,9 @@ export class AccountService {
   /**
    * Asks the CLI who is signed in to an account's home. `skipped` where nothing can be read (no
    * folder support, no CLI, a CLI in WSL for a folder account); `no-answer` when the CLI gave none,
-   * which is logged and reported and changes nothing. A folder account's links are refreshed
+   * which is logged and changes nothing. An answer the adapter cannot read (`unreadable`) is
+   * reported at once. A failed run is reported from the second in a row for the account, with how
+   * it ended, as a usage read's is (Sentry DESKTOP-60). A folder account's links are refreshed
    * first, so `link-failed` is never overwritten by a good sign-in.
    */
   private async readIdentity(account: AgentAccount): Promise<{ identity: AccountIdentity; linked: boolean } | 'skipped' | 'no-answer'> {
@@ -486,17 +513,43 @@ export class AccountService {
     // for this folder, so a folder account is left as it was.
     if (account.kind === 'folder' && (await this.usesRemoteTarget(account.agent))) return 'skipped';
     const linked = account.kind === 'default' || (await this.refreshFolder(account));
+    this.identityReadsStarted += 1;
+    const readNumber = this.identityReadsStarted;
     try {
-      return { identity: await support.identify(cliPath, account.folderPath), linked };
+      const identity = await support.identify(cliPath, account.folderPath);
+      this.identityRunFailures.delete(account.id);
+      return { identity, linked };
     } catch (error) {
       if (!(error instanceof IdentityReadError)) throw error;
       // No answer is not a signed-out answer: the account keeps the status it had. Marking it
       // signed out here parked a working account at the bottom of Automatic for days, since only
       // a sign-in read sets it back.
       console.warn(`[ACCOUNTS] Could not read who is signed in to a ${account.kind} account (${error.reason}); it keeps its status`);
-      this.reportProblem('identity-read-failed', account.agent, { kind: account.kind, reason: error.reason });
+      await this.noteIdentityReadFailed(account, error, readNumber);
       return 'no-answer';
     }
+  }
+
+  /**
+   * Reports a sign-in read that gave no answer. An answer the adapter cannot read is a CLI format
+   * change, reported on the first read. A failed run waits for the second in a row, as a usage
+   * read's does, and carries the same tags saying how it ended. A failed read that started before
+   * the last counted one ended is not counted again: both failed at the same moment.
+   */
+  private async noteIdentityReadFailed(account: AgentAccount, error: IdentityReadError, readNumber: number): Promise<void> {
+    const facts = { kind: account.kind, reason: error.reason };
+    if (error.reason !== 'run-failed') {
+      this.identityRunFailures.delete(account.id);
+      this.reportProblem('identity-read-failed', account.agent, facts);
+      return;
+    }
+    const previous = this.identityRunFailures.get(account.id);
+    if (previous && readNumber <= previous.countedThrough) return;
+    const reads = (previous?.reads ?? 0) + 1;
+    this.identityRunFailures.set(account.id, { reads, countedThrough: this.identityReadsStarted });
+    if (reads < REPORTED_REPEATS) return;
+    const tags = await this.runFailedTags(account.agent, error.runFailure);
+    this.reportProblem('identity-read-failed', account.agent, facts, error.cause, tags);
   }
 
   /**
@@ -726,14 +779,9 @@ export class AccountService {
    * cause has no tags, and looks up no version.
    */
   private async emptyUsageTags(account: AgentAccount, reason: EmptyUsageReadReason, failure: EmptyUsageReadError | null): Promise<AccountProblemTags> {
-    const runFailure = failure?.runFailure ?? null;
     switch (reason) {
       case 'run-failed':
-        return {
-          run_failure: runFailure?.kind ?? 'unknown',
-          ...(runFailure?.kind === 'exit_code' ? { run_exit: exitCodeTag(runFailure.exitCode) } : {}),
-          agent_cli_version: await this.cliVersionTagOf(account.agent),
-        };
+        return this.runFailedTags(account.agent, failure?.runFailure ?? null);
       case 'cache-stale':
         return { cache_age: failure?.cacheAge ?? 'unknown', agent_cli_version: await this.cliVersionTagOf(account.agent) };
       case 'no-windows':
@@ -741,6 +789,19 @@ export class AccountService {
       default:
         return {};
     }
+  }
+
+  /**
+   * What a failed CLI run's report says, for a usage read and a sign-in read alike: how the run
+   * ended (`unknown` when the adapter did not say), its exit code for an `exit_code`, and the CLI's
+   * version, since a CLI too old for a flag fails every run.
+   */
+  private async runFailedTags(agent: string, runFailure: ExecRunFailure | null): Promise<AccountProblemTags> {
+    return {
+      run_failure: runFailure?.kind ?? 'unknown',
+      ...(runFailure?.kind === 'exit_code' ? { run_exit: exitCodeTag(runFailure.exitCode) } : {}),
+      agent_cli_version: await this.cliVersionTagOf(agent),
+    };
   }
 
   /** The agent CLI's version as detection read it, as a tag: `unknown` when nothing can say. */
@@ -995,6 +1056,8 @@ export class AccountService {
     const account = this.dependencies.repository.getById(accountId);
     if (!account || account.kind === 'default') return false;
     this.dependencies.repository.delete(accountId);
+    this.emptyUsageStreaks.delete(accountId);
+    this.identityRunFailures.delete(accountId);
     this.changed();
     return true;
   }

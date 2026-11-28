@@ -229,7 +229,7 @@ describe('AccountService.refreshIdentity', () => {
 
   // The incident: one `auth status` run that timed out on a busy machine marked the agent's own
   // login signed out, Automatic put it last, and no scheduled pass set it back for two days.
-  it('keeps the status, email and plan when the CLI gives no answer, and reports it', async () => {
+  it('keeps the status, email and plan when the CLI gives no answer', async () => {
     const accountService = folderService(folderSupport({
       identify: async () => { throw new IdentityReadError('run-failed'); },
     }));
@@ -237,7 +237,131 @@ describe('AccountService.refreshIdentity', () => {
     repository.updateIdentity(own.id, { email: 'dev@example.com', plan: 'pro', status: 'ok' });
     const refreshed = await accountService.refreshIdentity(own.id);
     expect(refreshed).toMatchObject({ status: 'ok', email: 'dev@example.com', plan: 'pro' });
-    expect(reports.map((entry) => entry.slice(0, 3))).toEqual([['identity-read-failed', AGENT, { kind: 'default', reason: 'run-failed' }]]);
+  });
+
+  // Sentry DESKTOP-60: one `auth status` run that timed out on a host out of memory was reported
+  // as a defect, with nothing to say how the run ended. A usage read's failed run already waits
+  // for a second in a row; a sign-in read now does too, and says how it ended.
+  describe('reporting a sign-in read that gave no answer', () => {
+    const timedOut = (): IdentityReadError => new IdentityReadError('run-failed', {
+      cause: Object.assign(new Error('Command failed'), { killed: true }),
+      runFailure: { kind: 'timeout', exitCode: null },
+    });
+
+    function serviceWith(identify: FolderAccountSupport['identify']): AccountService {
+      return folderService(folderSupport({ identify }), { resolveCliVersion: async () => '2.1.300' });
+    }
+
+    it('sends nothing for one failed run, and from the second in a row says how it ended', async () => {
+      const accountService = serviceWith(async () => { throw timedOut(); });
+      const own = accountService.ensureDefaultAccount(AGENT)!;
+      await accountService.refreshIdentity(own.id);
+      expect(reports).toEqual([]);
+      await accountService.refreshIdentity(own.id);
+      expect(reports).toHaveLength(1);
+      const [problem, agent, facts, error, tags] = reports[0];
+      expect([problem, agent, facts]).toEqual(['identity-read-failed', AGENT, { kind: 'default', reason: 'run-failed' }]);
+      // The run's own rejection, so the report's cause context gets its class and errno.
+      expect(error).toBeInstanceOf(Error);
+      expect((error as { killed?: unknown }).killed).toBe(true);
+      expect(tags).toEqual({ run_failure: 'timeout', agent_cli_version: '2.1.300' });
+    });
+
+    it('starts the count again after a read that answers', async () => {
+      let fails = true;
+      const accountService = serviceWith(async () => {
+        if (fails) throw timedOut();
+        return identity;
+      });
+      const own = accountService.ensureDefaultAccount(AGENT)!;
+      await accountService.refreshIdentity(own.id);
+      fails = false;
+      await accountService.refreshIdentity(own.id);
+      fails = true;
+      await accountService.refreshIdentity(own.id);
+      expect(reports.filter(([problem]) => problem === 'identity-read-failed')).toEqual([]);
+    });
+
+    it('names the exit code of a run that exited with no answer', async () => {
+      const accountService = serviceWith(async () => {
+        throw new IdentityReadError('run-failed', { runFailure: { kind: 'exit_code', exitCode: 127 } });
+      });
+      const own = accountService.ensureDefaultAccount(AGENT)!;
+      await accountService.refreshIdentity(own.id);
+      await accountService.refreshIdentity(own.id);
+      expect(reports.map((entry) => entry[4])).toEqual([{ run_failure: 'exit_code', run_exit: '127', agent_cli_version: '2.1.300' }]);
+    });
+
+    // A CLI that printed something we cannot parse changed its format: that is a defect at once.
+    it('reports an unreadable answer on the first read', async () => {
+      const accountService = serviceWith(async () => { throw new IdentityReadError('unreadable'); });
+      const own = accountService.ensureDefaultAccount(AGENT)!;
+      await accountService.refreshIdentity(own.id);
+      expect(reports.map((entry) => entry.slice(0, 3))).toEqual([['identity-read-failed', AGENT, { kind: 'default', reason: 'unreadable' }]]);
+      // A format change has no run to describe: no error and no run tags.
+      expect(reports[0][3]).toBeUndefined();
+      expect(reports[0][4]).toBeUndefined();
+    });
+
+    it('starts the count again after an unreadable read between two failed runs', async () => {
+      const outcomes: Array<'run-failed' | 'unreadable'> = ['run-failed', 'unreadable', 'run-failed'];
+      const accountService = serviceWith(async () => { throw new IdentityReadError(outcomes.shift()!); });
+      const own = accountService.ensureDefaultAccount(AGENT)!;
+      await accountService.refreshIdentity(own.id);
+      await accountService.refreshIdentity(own.id);
+      await accountService.refreshIdentity(own.id);
+      expect(reports.map((entry) => entry[2])).toEqual([{ kind: 'default', reason: 'unreadable' }]);
+    });
+
+    it('counts the streak per account', async () => {
+      const accountService = serviceWith(async () => { throw timedOut(); });
+      const own = accountService.ensureDefaultAccount(AGENT)!;
+      const folder = insertFolderAccount('ok');
+      await accountService.refreshIdentity(own.id);
+      await accountService.refreshIdentity(folder.id);
+      expect(reports).toEqual([]);
+      await accountService.refreshIdentity(folder.id);
+      expect(reports.map((entry) => entry[2])).toEqual([{ kind: 'folder', reason: 'run-failed' }]);
+    });
+
+    it('reports every failed run from the second in a row on, not only the second', async () => {
+      const accountService = serviceWith(async () => { throw timedOut(); });
+      const own = accountService.ensureDefaultAccount(AGENT)!;
+      await accountService.refreshIdentity(own.id);
+      await accountService.refreshIdentity(own.id);
+      await accountService.refreshIdentity(own.id);
+      expect(reports.filter(([problem]) => problem === 'identity-read-failed')).toHaveLength(2);
+    });
+
+    it('reports a failed run that carries no detail with unknown as how it ended', async () => {
+      const bare = new IdentityReadError('run-failed');
+      expect(bare.runFailure).toBeNull();
+      expect(bare.cause).toBeUndefined();
+      const accountService = serviceWith(async () => { throw new IdentityReadError('run-failed'); });
+      const own = accountService.ensureDefaultAccount(AGENT)!;
+      await accountService.refreshIdentity(own.id);
+      await accountService.refreshIdentity(own.id);
+      expect(reports).toHaveLength(1);
+      expect(reports[0][3]).toBeUndefined();
+      expect(reports[0][4]).toEqual({ run_failure: 'unknown', agent_cli_version: '2.1.300' });
+    });
+
+    it('counts two reads that ran at the same time as one failure', async () => {
+      const pending: Array<{ reject: (error: Error) => void }> = [];
+      const accountService = serviceWith(() => new Promise<AccountIdentity>((_resolve, reject) => { pending.push({ reject }); }));
+      const own = accountService.ensureDefaultAccount(AGENT)!;
+      const first = accountService.refreshIdentity(own.id);
+      const second = accountService.refreshIdentity(own.id);
+      await expect.poll(() => pending.length).toBe(2);
+      pending.forEach((read) => read.reject(timedOut()));
+      await Promise.all([first, second]);
+      expect(reports).toEqual([]);
+      const third = accountService.refreshIdentity(own.id);
+      await expect.poll(() => pending.length).toBe(3);
+      pending[2].reject(timedOut());
+      await third;
+      expect(reports).toHaveLength(1);
+    });
   });
 
   it('still throws an identify failure it does not know', async () => {

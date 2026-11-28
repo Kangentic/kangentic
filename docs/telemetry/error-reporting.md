@@ -1196,6 +1196,10 @@ in one Sentry org, one triage surface.
     is what tells it. The caught error goes as its class and errno in the `cause` context. A
     failed run is sent from the second read in a row that fails for one account: one failed run
     during a network drop is not a defect, and a flag the CLI does not know fails every time.
+    An `identity-read-failed` whose sign-in run failed carries the same three tags and the same
+    `cause` context. It also waits for a second failed run in a row, counted apart from usage
+    reads, because Sentry DESKTOP-60 was one `claude auth status` that timed out on a host out of
+    memory. An `unreadable` sign-in answer is sent on the first read.
     A `cache-stale` read waits for a second in a row the same way, counted apart from failed runs.
     Its run exited 0 and its own usage fetch refreshed nothing, which a network drop, a refused fetch
     and a sign-in that needs renewing all look like. DESKTOP-4E's one on 0.62.0 was a first read, and
