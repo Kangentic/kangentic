@@ -100,7 +100,10 @@ with `classifySessionOutput` (the launch report's own classifier), and on an ide
 the session and calls `requestAgentAbsenceCheck`, so the sweep looks within seconds instead of at
 its 60s cadence. That also judges a failure such as DESKTOP-2H's `no_such_file`, which sat until
 the person paused it at 47s. At the ceiling the same timer asks the sweep to look once more. The
-read reports nothing; the sweep reports once, when it judges. A retry gets the same bound.
+read reports nothing; the sweep reports once, when it judges. A retry gets the same bound. Each read
+keeps the class it found on the session (`launchOutputSeen`, with who wrote it for `other`),
+because a quit cannot read the host's ring and `abandonedLaunchTags` records that class in its place
+(Sentry DESKTOP-2N, whose quit events all said `not_read`).
 
 The cost is an adapter that shows nothing (no hooks, no alt screen): its agent exiting inside the
 first two minutes is counted until the ceiling, as a Command Terminal's always was. A launch that
@@ -557,6 +560,11 @@ is that listing, so the read sees the shell's children before the hangup re-pare
 Toolhelp starts before the host handles the kill and never loses a parent pid. A listing that no
 longer holds the shell reads `unknown`, never `absent`. Changing the 15 s bound for a resume waits on
 what these numbers show.
+
+The same decision posts the read of what the launch printed (`launchOutputAtEnd`), and the exit's
+report uses it. Read at the exit, the row could already be gone (a kill, then a remove, then the
+exit), and every DESKTOP-2N event said `not_read`, one of them with `shell_printed=after_launch`.
+A launch that printed nothing posts no read.
 
 **A task whose launch never started is paused, not retired.** An exited row has no way forward: its
 surface is the terminal, its PTY is gone so no key lands, and `sessionToggleOffer` offers nothing

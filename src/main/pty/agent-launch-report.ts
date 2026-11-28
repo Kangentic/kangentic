@@ -48,9 +48,16 @@ import {
 } from './lifecycle/session-id-manager';
 import { cliIdentitySinceDetection, type CliIdentitySinceDetection } from '../agent/shared/cli-identity';
 import { cliVersionTag } from '../agent/shared/cli-version-tag';
+import {
+  batchShimGiveUpDetailOf,
+  batchShimTargetPresence,
+  isWindowsBatchShim,
+  onceEachShimReader,
+  type BatchShimGiveUpDetail,
+} from '../agent/shared/npm-shim-target';
 import { WorktreeSetupScriptError } from '../git/worktree-errors';
 import type { AgentProcessPresence } from './host/agent-process-presence';
-import { classifyLaunchOutput, otherFromOf, type LaunchOutputClass } from './launch-output-class';
+import { classifyLaunchOutput, isLaunchOutputClass, otherFromOf, type LaunchOutputClass } from './launch-output-class';
 import { AGENT_READY_CEILING_MS } from './lifecycle/agent-output-tracker';
 import { parseWslShellSpec } from './process-tag/task-process-tag';
 import { AgentBatchShimUnresolvedError, AgentCommandTooLongError, AgentStartRefusedError } from './spawn/agent-start-refused';
@@ -452,12 +459,20 @@ function errorShapeTags(error: unknown): Record<string, string> {
   if (error instanceof AgentStartRefusedError) tags.start_refused_reason = error.reason;
   // A fixed word: why a `.cmd` shim could not be read past (Sentry DESKTOP-3R
   // could not say which shim its user had). With `unparsed`, `batch_shim_shape`
-  // says what the shim's program line looked like (DESKTOP-3Y named none).
+  // says what the shim's program line looked like (DESKTOP-3Y named none), and
+  // with `target_ps1`, `batch_shim_ps1` says which refusal it was.
   if (error instanceof AgentBatchShimUnresolvedError) {
-    tags.batch_shim = error.shimGaveUp;
-    if (error.shimShape) tags.batch_shim_shape = error.shimShape;
+    Object.assign(tags, batchShimDetailTags({ gaveUp: error.shimGaveUp, shape: error.shimShape, ps1: error.shimPs1 }));
   }
   if (error instanceof WorktreeSetupScriptError) Object.assign(tags, setupScriptTags(error));
+  return tags;
+}
+
+/** The `batch_shim` tag and, when the shim named them, `batch_shim_shape` and `batch_shim_ps1`. */
+function batchShimDetailTags(detail: BatchShimGiveUpDetail): Record<string, string> {
+  const tags: Record<string, string> = { batch_shim: detail.gaveUp };
+  if (detail.shape) tags.batch_shim_shape = detail.shape;
+  if (detail.ps1) tags.batch_shim_ps1 = detail.ps1;
   return tags;
 }
 
@@ -638,15 +653,74 @@ function sendClassifiedFailure(
   tags: LaunchTags,
   outputClass: LaunchOutputClass,
 ): void {
+  const shimTags = SHIM_READ_STAGES.has(stage) && outputClass === 'no_such_file' ? batchShimReportTagsOf(session) : {};
+  sendClassOfFailure(stage, cause, { ...tags, ...shimTags }, outputClass, session.id.slice(0, 8));
+}
+
+/** The send `sendClassifiedFailure` and a recorded abandoned launch share. */
+function sendClassOfFailure(
+  stage: LaunchStage,
+  cause: string,
+  tags: LaunchTags,
+  outputClass: LaunchOutputClass,
+  sessionLabel?: string,
+): void {
   const userSetupFailure = isUserSetupFailureClass(outputClass) ? outputClass : null;
   if (userSetupFailure) trackEvent('spawn_failed', { agent: tags.agent, reason: userSetupFailure });
   reportLaunchFailure({
     stage,
     cause,
     tags: { ...tags, output_class: outputClass },
-    sessionLabel: session.id.slice(0, 8),
+    ...(sessionLabel ? { sessionLabel } : {}),
     ...(userSetupFailure ? { error: new AgentUserSetupError(userSetupFailure) } : {}),
   });
+}
+
+/**
+ * Report a launch the last run's quit recorded (`abandoned-launches.ts`). The
+ * class it recorded decides the cause and whether it is the user's own setup,
+ * as for a kill. A value that is not a class reads as `not_read`, since
+ * anything can edit the file on disk.
+ */
+export function reportRecordedAbandonedLaunch(tags: LaunchTags): void {
+  const recorded = tags.output_class;
+  const outputClass: LaunchOutputClass = recorded !== undefined && isLaunchOutputClass(recorded) ? recorded : 'not_read';
+  sendClassOfFailure('abandoned', causeOf(outputClass), tags, outputClass);
+}
+
+/** The stages whose `no_such_file` reads the head's shim: a launch that never ran, or whose agent died at start. */
+const SHIM_READ_STAGES: ReadonlySet<LaunchStage> = new Set<LaunchStage>(['agent_exited', 'never_started']);
+
+/**
+ * What the command head's `.cmd` shim says, for a launch on Windows that
+ * printed cmd's "cannot find the path". Read now, with one small read of the
+ * shim, as `launchRefusal` reads one. The shell ran cmd only because the head
+ * is a shim, so something its chain names is missing (Sentry DESKTOP-4Z, whose
+ * 4271-byte line was typed whole, so nothing had read the shim).
+ *
+ * `batch_shim` is the give-up word, or `resolves` for a shim this would start
+ * directly. `batch_shim_shape` and `batch_shim_ps1` follow it as for a refusal,
+ * and an `absolute_path` shim adds `shim_target`: whether the target it quotes
+ * is on disk. Fixed words only, never the shim's text or a path. Empty off
+ * Windows, for a WSL shell or a CLI on a host (whose head is not on this
+ * disk), and for a head that is not a batch shim.
+ */
+function batchShimReportTagsOf(session: ManagedSession): Record<string, string> {
+  const head = session.agentCliPath;
+  if (process.platform !== 'win32' || !head) return {};
+  if (session.hostId || session.cliTarget || parseWslShellSpec(session.shell) !== null) return {};
+  // A Windows path, read the same way on any host that runs this.
+  if (!path.win32.isAbsolute(head) || !isWindowsBatchShim(head)) return {};
+  // One read of the head serves both questions below.
+  const readFile = onceEachShimReader();
+  const detail = batchShimGiveUpDetailOf(head, { readFile });
+  if (detail === null) return { batch_shim: 'resolves' };
+  const tags = batchShimDetailTags(detail);
+  if (detail.shape === 'absolute_path') {
+    const presence = batchShimTargetPresence(head, { readFile });
+    if (presence) tags.shim_target = presence;
+  }
+  return tags;
 }
 
 /**
@@ -679,7 +753,9 @@ export interface SessionLaunchFailure {
 /**
  * Report a session's launch failure, once per session (`launchFailureNoted`). The
  * tags are read now and the ring's read is posted now, ahead of whatever kill
- * comes next, so a caller that ends the session right after loses nothing. The
+ * comes next, so a caller that ends the session right after loses nothing. An
+ * `abandoned` report is the exception: it is sent at the exit, after the kill,
+ * so its `readOutput` hands back the read posted at the decision to end. The
  * event goes when the read answers, and `launchOutputRead` holds what it found
  * for the retry to wait on. A read still out when the quit starts is dropped,
  * since nothing sent then would land.

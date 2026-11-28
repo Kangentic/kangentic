@@ -121,6 +121,7 @@ import {
   type LaunchTags,
   type SessionLaunchFailure,
 } from './agent-launch-report';
+import { otherFromOf } from './launch-output-class';
 import { agentProcessPresenceOf, type AgentProcessPresence } from './host/agent-process-presence';
 import { leftoverLogLine, type LeftoverProcessEntry, type StopProcessOutcome, type StopProcessRequest, type StopProcessResult, type TaggedReapResult, type TaskProbeEntry } from './process-tag/tagged-reap';
 
@@ -1986,9 +1987,18 @@ export class SessionManager extends EventEmitter {
     for (const session of this.registry.values()) {
       if (session.status !== 'running' || !this.mayReportAbandoned(session, now)) continue;
       const endedBy: LaunchEndedBy = 'quit';
-      // Nothing can read the process table inside a quit.
+      // Nothing can read the process table or the host's ring inside a quit. The
+      // class is the start bound's last read before it (`checkPendingLaunchOutput`).
       const agentProcess: AgentProcessPresence = 'unknown';
-      launches.push({ ...launchTagsOf(session, now), ended_by: endedBy, quit_by: quitBy, agent_process: agentProcess, output_class: 'not_read' });
+      const seen = session.launchOutputSeen;
+      launches.push({
+        ...launchTagsOf(session, now),
+        ended_by: endedBy,
+        quit_by: quitBy,
+        agent_process: agentProcess,
+        output_class: seen?.outputClass ?? 'not_read',
+        ...(seen?.otherFrom ? { other_from: seen.otherFrom } : {}),
+      });
     }
     return launches;
   }
@@ -2014,9 +2024,22 @@ export class SessionManager extends EventEmitter {
    * listing still out (`PtyHostCore`), so the read sees the shell's children
    * before the hangup re-parents them. A WSL shell's agent lives in the distro,
    * where no host listing reaches, so it reads `unknown`.
+   *
+   * The read of what the launch printed is posted here too, for the same
+   * report. At the exit the row may already be gone (a kill, then a remove,
+   * then the exit), and every abandoned report read nothing (Sentry
+   * DESKTOP-2N). A launch that printed nothing posts none.
    */
   private noteAgentProcessBeforeEnd(session: ManagedSession, shellPid: number | null): void {
     if (isShuttingDown() || !this.mayReportAbandoned(session)) return;
+    const readOutput = this.launchOutputReaderOf(session);
+    if (readOutput) {
+      const launchOutput = readOutput();
+      // report-ok: only keeps a rejection that lands before the exit from going unhandled.
+      // The abandoned report reads this same promise and sends `unreadable` for it.
+      launchOutput.catch(() => undefined);
+      session.launchOutputAtEnd = launchOutput;
+    }
     // A host's PTY has no pid here, so no local listing can name its agent: it reads `unknown`.
     if (parseWslShellSpec(session.shell) !== null || shellPid === null || !(shellPid > 0)) {
       session.agentProcessAtEnd = Promise.resolve('unknown');
@@ -2052,12 +2075,13 @@ export class SessionManager extends EventEmitter {
 
   /**
    * Report this session's launch failure. The ring's read is posted now, so a
-   * kill that follows cannot lose it.
+   * kill that follows cannot lose it. A report made after the kill (`abandoned`)
+   * passes the read its ending already posted (`noteAgentProcessBeforeEnd`).
    */
   private reportLaunchOf(
     session: ManagedSession,
     stage: LaunchStage,
-    options: Pick<SessionLaunchFailure, 'extraTags' | 'onlyWhenIdentified' | 'agentProcess'> = {},
+    options: Partial<Pick<SessionLaunchFailure, 'extraTags' | 'onlyWhenIdentified' | 'agentProcess' | 'readOutput'>> = {},
   ): void {
     reportSessionLaunchFailure({
       session,
@@ -2089,6 +2113,9 @@ export class SessionManager extends EventEmitter {
     exit: { exitCode: number; signal: number | null; intentional: boolean },
   ): void {
     if (session.agentParser) logLaunchStep(session, 'exited');
+    // Taken once, here, so a paused row keeps no copy of the ring past its exit.
+    const launchOutputAtEnd = session.launchOutputAtEnd;
+    session.launchOutputAtEnd = undefined;
     if (!session.agentParser) return;
     if (isShuttingDown() || exit.exitCode === PTY_HOST_LOST_EXIT_CODE) return;
     if (this.isHiddenUntilAdopted(session.id) || hasAgentRunEvidence(session)) return;
@@ -2119,6 +2146,8 @@ export class SessionManager extends EventEmitter {
       // Read when the launch was ended (`noteAgentProcessBeforeEnd`). An ending
       // that posted none, a kill from another path, still carries the tag.
       agentProcess: session.agentProcessAtEnd ?? Promise.resolve('unknown'),
+      // Posted at the same decision, before the kill. Without one, read now.
+      ...(launchOutputAtEnd ? { readOutput: () => launchOutputAtEnd } : {}),
     });
   }
 
@@ -4726,7 +4755,10 @@ export class SessionManager extends EventEmitter {
     this.getLaunchOutput(sessionId)
       .then((rawScrollback) => {
         if (this.registry.get(sessionId) !== session || !this.awaitsLaunchStart(session)) return;
-        if (!isIdentifiedFailureClass(classifySessionOutput(session, rawScrollback))) return;
+        const outputClass = classifySessionOutput(session, rawScrollback);
+        // Kept for a quit, which cannot read the ring (`abandonedLaunchTags`, Sentry DESKTOP-2N).
+        session.launchOutputSeen = outputClass === 'other' ? { outputClass, otherFrom: otherFromOf(rawScrollback) } : { outputClass };
+        if (!isIdentifiedFailureClass(outputClass)) return;
         session.launchFailureIdentifiedAt = Date.now();
         if (this.judgesByIdentifiedOutput(session)) {
           // Its report carries `judge: sweep` though no sweep ran: the path is

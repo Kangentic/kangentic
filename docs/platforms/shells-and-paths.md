@@ -186,8 +186,9 @@ a batch file does not read a line the way a prompt does:
   read or parse, a target that is gone, a target that is not a program, a Node script or a `.ps1`,
   a `.ps1` the shim does not hand to one PowerShell this can start, a chain past the bound, or a
   Node script or `.ps1` whose chain sets `NODE_PATH`. An agent's start is refused before its PTY (`launchRefusal`, `AgentBatchShimUnresolvedError`) with the card reason a command too
-  long for its shell gets, and the report names why the shim gave up (`batch_shim`, and for one
-  that did not parse, `batch_shim_shape`, what its program line looked like). Sentry
+  long for its shell gets, and the report names why the shim gave up (`batch_shim`, for one
+  that did not parse `batch_shim_shape`, what its program line looked like, and for a `.ps1`
+  target `batch_shim_ps1`, which refusal it was). Sentry
   DESKTOP-3Q and DESKTOP-3R were such starts, which used to type the refusal below and show a
   working agent for 30 to 60 s. A raw command still types `echo The command line is too long.`,
   which reports like cmd's own refusal.
@@ -201,7 +202,9 @@ a batch file does not read a line the way a prompt does:
   **A shim whose own target is a `.ps1`** is a different case from that sibling. The DESKTOP-3Y
   recurrence on 0.60.0 was a `claude.cmd` that runs a `.ps1`, and every launch past the budget was
   refused with `batch_shim=target_ps1`, again on each restart. The report carries that word and
-  never the shim's text, so which of the shapes below the install had is not known.
+  never the shim's text, so which of the shapes below the install had is not known. It came back
+  on 0.64.0 as `target_ps1` alone, so a refusal now also sends `batch_shim_ps1`, one fixed word per
+  refusal below (`BatchShimPs1Refusal`).
   `powerShellLaunchOf` now reads the shim's own invocation line and the launch starts that: the
   program the shim names (`pwsh` or `powershell`), every flag the shim writes between it and the
   script, then the script and the agent's arguments. Nothing is added, so an execution policy is
@@ -271,9 +274,12 @@ in a WSL distro too. `commandFitsShell` measures a built command against these, 
 refuses an agent's command that does not fit
 ([A prompt too long for its command line](../architecture/sessions/spawn-flow.md#a-prompt-too-long-for-its-command-line)).
 It asks `launchRefusal`, which also refuses a launch past the typed budget whose `.cmd` shim cannot
-be read past (`AgentBatchShimUnresolvedError`, with the `batch_shim` tag, and `batch_shim_shape` for
-one that did not parse), under any Windows shell.
-A raw command has no such refusal and types the named one instead.
+be read past (`AgentBatchShimUnresolvedError`, with the `batch_shim` tag, `batch_shim_shape` for
+one that did not parse, and `batch_shim_ps1` for a `.ps1` target), under any Windows shell.
+A raw command has no such refusal and types the named one instead. A launch within the budget
+reads no shim, so one whose `.cmd` head printed cmd's "cannot find the path" reads it when its
+`agent_exited` or `never_started` report is made, and adds `shim_target` (`present` or `missing`)
+for a wrapper that quotes an absolute target ([Error reporting](../telemetry/error-reporting.md)).
 
 `tests/unit/typed-launch-round-trip.test.ts` runs both lines through real shells with a controlled
 startup delay and asserts what a stub agent received, never the scrollback, since a shell's echo of

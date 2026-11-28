@@ -43,6 +43,32 @@ export type LaunchOutputClass =
   /** The read failed. */
   | 'unreadable';
 
+/** Every class, keyed so a class added above fails `tsc` until it is added here too. */
+const LAUNCH_OUTPUT_CLASSES: Readonly<Record<LaunchOutputClass, true>> = {
+  command_not_found: true,
+  permission_denied: true,
+  no_such_file: true,
+  bad_interpreter: true,
+  launcher_unreadable: true,
+  exec_format: true,
+  bad_cpu_type: true,
+  killed: true,
+  crashed: true,
+  unknown_option: true,
+  line_too_long: true,
+  conversation_missing: true,
+  login_required: true,
+  bad_configuration: true,
+  other: true,
+  not_read: true,
+  unreadable: true,
+};
+
+/** Whether a value read back from disk is a class, so a record edited on disk cannot name a cause. */
+export function isLaunchOutputClass(value: string): value is LaunchOutputClass {
+  return Object.hasOwn(LAUNCH_OUTPUT_CLASSES, value);
+}
+
 const LINE_TOO_LONG_SENTENCES: readonly RegExp[] = [
   /^The input line is too long\.$/,
   /^The command line is too long\.$/,

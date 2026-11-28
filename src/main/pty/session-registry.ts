@@ -13,7 +13,7 @@ import type {
 } from '../../shared/types';
 import { isLiveSessionStatus } from '../../shared/session-liveness';
 import type { LaunchStartPath, OpeningPromptDelivery, ResumeEvidenceSummary, SessionIdCreationOutcome, StartBlockedReason, SuspendedBy } from '../../shared/types';
-import type { LaunchOutputClass } from './launch-output-class';
+import type { LaunchOutputClass, OtherFrom } from './launch-output-class';
 import type { AgentProcessPresence } from './host/agent-process-presence';
 
 /** A suspended row for a task with no live session, so its Resume stays reachable. */
@@ -159,6 +159,21 @@ export interface ManagedSession {
    * exit makes. Never rejects. Unset when no such read was posted.
    */
   agentProcessAtEnd?: Promise<AgentProcessPresence>;
+  /**
+   * The read of this launch's output, posted beside `agentProcessAtEnd` at the
+   * same decision, for the `abandoned` report. Read at the exit instead, the
+   * row may already be gone (a kill, then a remove, then the exit), and the
+   * report read nothing (Sentry DESKTOP-2N). May reject; a handler is attached
+   * when it is posted. Unset when the launch had printed nothing, and again
+   * once the exit has taken it, so a paused row keeps no copy of the ring.
+   */
+  launchOutputAtEnd?: Promise<string>;
+  /**
+   * The class the start bound's read last found in this launch's output
+   * (`checkPendingLaunchOutput`), kept for a quit, whose record cannot read the
+   * host's ring. `otherFrom` says who wrote it, set only when the class is `other`.
+   */
+  launchOutputSeen?: { outputClass: LaunchOutputClass; otherFrom?: OtherFrom };
   /** Bytes the spawn typed into the shell, its Enter included; null with no command. */
   typedLineBytes?: number | null;
   /** The typed line sourced a launcher file instead of carrying the command. */

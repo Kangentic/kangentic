@@ -53,6 +53,7 @@ import realFs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import conptyCaptures from '../fixtures/conpty-cmd-failures.json';
+import { npmDirectCmdShim } from '../fixtures/npm-shim-fixtures';
 import type { ManagedSession } from '../../src/main/pty/session-registry';
 import { HostRequestUnansweredError, noteHostRequestWait } from '../../src/main/remote/link/host-request-unanswered-error';
 import { fromPtyHostError, toPtyHostError } from '../../src/main/pty/host/protocol';
@@ -599,6 +600,42 @@ describe('reportLaunchFailure', () => {
   });
 });
 
+/** What cmd prints for a quoted program path that is not on disk, under a PowerShell that handed it a `.cmd` head. */
+const CMD_PATH_NOT_FOUND = 'PS C:\\project> codex\r\nThe system cannot find the path specified.\r\nPS C:\\project> ';
+
+/** The wrapper's quoted target, which is never on disk. */
+const GONE_WRAPPER_TARGET = 'C:\\tools\\codex\\codex.exe';
+
+/**
+ * Sentry DESKTOP-4Z's shape: a `.cmd` wrapper on disk whose quoted absolute
+ * target is gone, on a platform that reads as Windows. The wrapper is a real
+ * file, so the shim reader runs as it does in production, and the head is
+ * checked as a Windows path on any host. Registers its own hooks.
+ */
+function useGoneWrapperShim(): { shimPath: () => string; setPlatform: (platform: NodeJS.Platform) => void } {
+  const originalPlatform = process.platform;
+  let root = '';
+  let shimPath = '';
+  beforeEach(() => {
+    root = realFs.mkdtempSync(path.join(os.tmpdir(), 'launch-shim-'));
+    shimPath = path.join(root, 'codex.cmd');
+    realFs.writeFileSync(shimPath, `@echo off\r\n"${GONE_WRAPPER_TARGET}" %*\r\n`);
+    existsSync.mockImplementation((candidate: unknown) => candidate !== GONE_WRAPPER_TARGET);
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+  });
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+    existsSync.mockReturnValue(true);
+    realFs.rmSync(root, { recursive: true, force: true });
+  });
+  return {
+    shimPath: () => shimPath,
+    setPlatform: (platform) => Object.defineProperty(process, 'platform', { value: platform, configurable: true }),
+  };
+}
+
+const SHIM_TAG_NAMES = ['batch_shim', 'batch_shim_shape', 'batch_shim_ps1', 'shim_target'] as const;
+
 describe('reportSessionLaunchFailure', () => {
   const COMMAND = "claude --session-id abc 'ship the Acme secret migration'";
   const OUTPUT = `$ ${COMMAND}\r\nzsh: command not found: claude\r\n$ `;
@@ -635,6 +672,63 @@ describe('reportSessionLaunchFailure', () => {
       reportSessionLaunchFailure({ session: target, stage: 'never_started', readOutput: async () => conptyCaptures.claudeResumeMiss });
       await vi.waitFor(() => expect(reportHandledError).toHaveBeenCalledTimes(1));
       expect(reportHandledError.mock.calls[0][1].output_class).not.toBe('conversation_missing');
+    });
+  });
+
+  describe('a launch that never started, whose .cmd head printed cmd\'s cannot-find-the-path', () => {
+    const wrapper = useGoneWrapperShim();
+
+    it('reads the head shim and names the target it quotes as gone', async () => {
+      const target = session({ shell: 'pwsh', agentCliPath: wrapper.shimPath() });
+      reportSessionLaunchFailure({ session: target, stage: 'never_started', readOutput: async () => CMD_PATH_NOT_FOUND });
+      await vi.waitFor(() => expect(reportHandledError).toHaveBeenCalledTimes(1));
+      const tags = reportHandledError.mock.calls[0][1];
+      expect(tags).toMatchObject({ output_class: 'no_such_file', batch_shim: 'unparsed', batch_shim_shape: 'absolute_path', shim_target: 'missing' });
+      expect(JSON.stringify(tags)).not.toContain('codex.exe');
+    });
+
+    it('reads no shim for a shell_exit, a stage whose no_such_file is not the chain\'s', async () => {
+      const target = session({ shell: 'pwsh', agentCliPath: wrapper.shimPath() });
+      reportSessionLaunchFailure({ session: target, stage: 'shell_exit', readOutput: async () => CMD_PATH_NOT_FOUND });
+      await vi.waitFor(() => expect(reportHandledError).toHaveBeenCalledTimes(1));
+      for (const name of SHIM_TAG_NAMES) expect(reportHandledError.mock.calls[0][1]).not.toHaveProperty(name);
+    });
+
+    async function sentShimTags(overrides: Partial<ManagedSession>, stage: 'never_started' | 'abandoned' = 'never_started'): Promise<Record<string, string>> {
+      reportSessionLaunchFailure({ session: session({ shell: 'pwsh', ...overrides }), stage, readOutput: async () => CMD_PATH_NOT_FOUND });
+      await vi.waitFor(() => expect(reportHandledError).toHaveBeenCalledTimes(1));
+      return reportHandledError.mock.calls[0][1];
+    }
+
+    it('says the target is present when the wrapper\'s quoted target is on disk', async () => {
+      existsSync.mockReturnValue(true);
+      const tags = await sentShimTags({ agentCliPath: wrapper.shimPath() });
+      expect(tags).toMatchObject({ output_class: 'no_such_file', batch_shim: 'unparsed', batch_shim_shape: 'absolute_path', shim_target: 'present' });
+    });
+
+    it('names a .ps1 target the shim calls with no program, and sends no shim_target for it', async () => {
+      realFs.writeFileSync(wrapper.shimPath(), npmDirectCmdShim('claude.ps1'));
+      const tags = await sentShimTags({ agentCliPath: wrapper.shimPath() });
+      expect(tags).toMatchObject({ output_class: 'no_such_file', batch_shim: 'target_ps1', batch_shim_ps1: 'no_program' });
+      expect(tags).not.toHaveProperty('shim_target');
+    });
+
+    it.each([
+      ['a WSL shell', { shell: 'wsl.exe -d Ubuntu' }],
+      ['a session on an SSH host', { hostId: 'host-1' }],
+      ['a CLI that runs in a WSL distro', { cliTarget: { kind: 'wsl', distro: 'Ubuntu' } as StoredCliTarget }],
+      ['a relative head', { agentCliPath: 'codex.cmd' }],
+      ['no head at all', { agentCliPath: undefined }],
+    ])('reads no shim for %s, whose head is not this disk\'s Windows shim', async (_label, overrides) => {
+      const tags = await sentShimTags({ agentCliPath: wrapper.shimPath(), ...overrides });
+      expect(tags.output_class).toBe('no_such_file');
+      for (const name of SHIM_TAG_NAMES) expect(tags).not.toHaveProperty(name);
+    });
+
+    it('reads no shim for an abandoned launch, whose no_such_file is not the chain\'s', async () => {
+      const tags = await sentShimTags({ agentCliPath: wrapper.shimPath() }, 'abandoned');
+      expect(tags.output_class).toBe('no_such_file');
+      for (const name of SHIM_TAG_NAMES) expect(tags).not.toHaveProperty(name);
     });
   });
 
@@ -1482,6 +1576,50 @@ describe('the session id capture reports', () => {
         expect(sentTags()).toMatchObject({ output_class: 'other', other_from: 'shell' });
       });
 
+      // DESKTOP-4Z on 0.64.0: `command_head=present` and cmd's cannot-find-the-path,
+      // so a path the head's `.cmd` chain names was gone, and nothing read the shim.
+      describe('a .cmd head whose wrapper quotes a target that is gone', () => {
+        const wrapper = useGoneWrapperShim();
+
+        it('names the shim\'s shape and that its target is missing, never the path', async () => {
+          await settleAtCeiling({ agentCliPath: wrapper.shimPath() }, { readOutput: async () => CMD_PATH_NOT_FOUND });
+          const tags = sentTags();
+          expect(tags).toMatchObject({
+            cause: 'no_conversation',
+            output_class: 'no_such_file',
+            batch_shim: 'unparsed',
+            batch_shim_shape: 'absolute_path',
+            shim_target: 'missing',
+          });
+          expect(JSON.stringify(tags)).not.toContain('codex.exe');
+        });
+
+        it('says a shim this would start resolves, with no shape', async () => {
+          realFs.writeFileSync(wrapper.shimPath(), '@echo off\r\n"%~dp0codex.exe" %*\r\n');
+          await settleAtCeiling({ agentCliPath: wrapper.shimPath() }, { readOutput: async () => CMD_PATH_NOT_FOUND });
+          const tags = sentTags();
+          expect(tags).toMatchObject({ batch_shim: 'resolves' });
+          expect(tags).not.toHaveProperty('batch_shim_shape');
+          expect(tags).not.toHaveProperty('shim_target');
+        });
+
+        it('reads nothing for a head that is not a batch shim', async () => {
+          await settleAtCeiling({ agentCliPath: path.join(os.tmpdir(), 'codex.exe') }, { readOutput: async () => CMD_PATH_NOT_FOUND });
+          for (const name of SHIM_TAG_NAMES) expect(sentTags()).not.toHaveProperty(name);
+        });
+
+        it('reads nothing off Windows', async () => {
+          wrapper.setPlatform('linux');
+          await settleAtCeiling({ agentCliPath: wrapper.shimPath() }, { readOutput: async () => CMD_PATH_NOT_FOUND });
+          for (const name of SHIM_TAG_NAMES) expect(sentTags()).not.toHaveProperty(name);
+        });
+
+        it('reads nothing for output that is not no_such_file', async () => {
+          await settleAtCeiling({ agentCliPath: wrapper.shimPath() }, { readOutput: async () => 'Segmentation fault\r\n' });
+          for (const name of SHIM_TAG_NAMES) expect(sentTags()).not.toHaveProperty(name);
+        });
+      });
+
       // The sweep's retirement masks the code to 0, so the code alone would read as a clean end.
       it('says the sweep ended it, beside the code that retirement masked', async () => {
         await settleAtCeiling({ intentionalExit: true, overrideExitCode: 0, exitCode: 0 });
@@ -2204,7 +2342,7 @@ describe('reportPreflightFailure', () => {
   });
 
   it('files a start refused for a .cmd shim under a cause of its own, with why the shim gave up', () => {
-    reportPreflightFailure({ ...base, cause: 'agent_start', error: new AgentBatchShimUnresolvedError('node_path') });
+    reportPreflightFailure({ ...base, cause: 'agent_start', error: new AgentBatchShimUnresolvedError({ gaveUp: 'node_path' }) });
 
     const [sent, eventTags, , fingerprint] = reportHandledError.mock.calls[0];
     expect(eventTags).toMatchObject({
@@ -2216,12 +2354,19 @@ describe('reportPreflightFailure', () => {
     expect((sent as Error).message).toBe('Agent launch failed: preflight (batch_shim_unresolved)');
     expect(fingerprint).toEqual(['agent-launch', 'preflight', 'batch_shim_unresolved']);
     expect(eventTags).not.toHaveProperty('batch_shim_shape');
+    expect(eventTags).not.toHaveProperty('batch_shim_ps1');
   });
 
   // Sentry DESKTOP-3Y recurred as `unparsed`, which named no shape to support next.
   it('names the shape of a shim it could not parse', () => {
-    reportPreflightFailure({ ...base, cause: 'agent_start', error: new AgentBatchShimUnresolvedError('unparsed', 'absolute_path') });
+    reportPreflightFailure({ ...base, cause: 'agent_start', error: new AgentBatchShimUnresolvedError({ gaveUp: 'unparsed', shape: 'absolute_path' }) });
     expect(reportHandledError.mock.calls[0][1]).toMatchObject({ batch_shim: 'unparsed', batch_shim_shape: 'absolute_path' });
+  });
+
+  // DESKTOP-3Y again, on 0.64.0: `target_ps1` named none of the refusals behind it.
+  it('names which refusal a .ps1 target was', () => {
+    reportPreflightFailure({ ...base, cause: 'agent_start', error: new AgentBatchShimUnresolvedError({ gaveUp: 'target_ps1', ps1: 'program_missing' }) });
+    expect(reportHandledError.mock.calls[0][1]).toMatchObject({ batch_shim: 'target_ps1', batch_shim_ps1: 'program_missing' });
   });
 
   it('sends a fixed message, never the text git wrote', () => {
