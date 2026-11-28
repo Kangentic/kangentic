@@ -11,11 +11,15 @@
  * The file holds only the fixed values a report would have carried, so it needs
  * none of a report's care about commands, output or paths. Its values are read
  * back through a pattern anyway, since anything can edit a file on disk.
+ *
+ * Its `output_class` is the class the start bound's read found before the quit
+ * (`SessionManager.abandonedLaunchTags`), or `not_read` when none ran, and it
+ * names the report's cause as a kill's class does (`reportRecordedAbandonedLaunch`).
  */
 
 import fs from 'node:fs';
 import { atomicWriteJson } from '../config/board-config/atomic-write';
-import { reportLaunchFailure, type LaunchTags } from './agent-launch-report';
+import { reportRecordedAbandonedLaunch, type LaunchTags } from './agent-launch-report';
 
 /**
  * More than this came from a quit with many broken launches, and the first few say
@@ -63,6 +67,6 @@ export function reportAbandonedLaunches(filePath: string): void {
   }
   if (!Array.isArray(launches)) return;
   for (const tags of launches.slice(0, MAX_RECORDED_LAUNCHES)) {
-    if (isSafeTags(tags)) reportLaunchFailure({ stage: 'abandoned', cause: 'unknown', tags });
+    if (isSafeTags(tags)) reportRecordedAbandonedLaunch(tags);
   }
 }

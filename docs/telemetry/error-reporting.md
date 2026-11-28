@@ -1446,7 +1446,14 @@ in one Sentry org, one triage surface.
   different fixes, and both read `other` (Sentry DESKTOP-2J). A class that names a cause has no
   `other_from`. An ending adds `exit_code`, `exit_signal` and, for `abandoned`, `ended_by`
   (`pause`, `kill`, `quit`) and `agent_process` (`present`, `absent`, `unknown`). An `abandoned`
-  report from a quit adds `quit_by` (below).
+  report from a quit adds `quit_by` (below). A pause or kill's `abandoned` report is sent at the
+  PTY's exit, after the kill, so its output is read where the launch is ended, beside
+  `agent_process` (`noteAgentProcessBeforeEnd`), and the report uses that read. Read at the exit,
+  the row could already be gone (a kill, then a remove, then the exit), and every event of Sentry
+  DESKTOP-2N said `not_read`, one of them with `shell_printed=after_launch`. A launch that printed
+  nothing posts no read and still says `not_read`. So does one ended just inside
+  `LAUNCH_ABANDON_MS` whose exit lands past it with its row already gone. Its ending posted no read,
+  since a quick Stop is no failure, and its exit finds no ring.
   `never_started` adds `judge` (`sweep`, `timer`). A launch on an SSH host judged on its output sends `sweep` though no sweep ran, with no `agent_process` tag and a `typed_line_bytes` of 0. An `agent_exited` report with cause
   `no_conversation` carries this list, read when the report is made and before its output is read, with the `agent_session_id` report's
   tags over it, which win where both name a fact (`agent`, `agent_cli_version`, `start_path`,
@@ -1458,7 +1465,18 @@ in one Sentry org, one triage surface.
   read when the ceiling settles it, minutes after the exit, because the host keeps an exited
   session's output until its row is removed. A row that is gone, or a ring a restarted host no
   longer holds, reads `not_read`, and a read that fails `unreadable`; either way it is sent. Its
-  cause stays `no_conversation` whatever the class, so one issue holds them all. A preflight report
+  cause stays `no_conversation` whatever the class, so one issue holds them all. On 0.64.0 it said
+  `command_head=present` beside `no_such_file` under PowerShell, so cmd ran only because the head
+  is a `.cmd` shim and a path its chain names was gone. Nothing had read the shim, because the
+  4271-byte line was typed whole. So an `agent_exited` or `never_started` report on Windows whose
+  class is `no_such_file` and whose head is a batch shim (`isWindowsBatchShim`) on this disk (no WSL
+  shell, no SSH host, no CLI run on another host through `cliTarget`) reads the shim when it reports (`batchShimReportTagsOf`, one read of the head
+  shared by both questions). `batch_shim` is its give-up word as above, or
+  `resolves` for a shim this would start directly, with `batch_shim_shape` and `batch_shim_ps1` as
+  above. An `absolute_path` shim adds `shim_target`, `present` or `missing`, from one `existsSync`
+  of the target it quotes (`batchShimTargetPresence`). `target_missing` then says an npm-shaped
+  shim's own target is gone, and `absolute_path` with `missing` says a wrapper points at a file
+  that is gone. Fixed words only, never the shim's text or a path. A preflight report
   adds `error_type` and `errno` when the error has them, and `start_refused_reason` for a start
   refused before it had a PTY (`AgentStartRefusedError`): `worktree-missing` or `folder-missing`
   for a gone folder. The folder's path is redacted, so this tag is what tells a gone worktree from
@@ -1497,9 +1515,19 @@ in one Sentry org, one triage surface.
   target that names its drive or share), `env_var_path` (a quoted target under a `%NAME%` other than
   the shim's folder), `unquoted_shim_folder`, `unquoted_program`, `calls_batch` (a `call`, or a
   `.cmd` or `.bat` program), `no_program_line` (no line passes `%*` on) or `other`.
+  With `target_ps1`, `batch_shim_ps1` says which of `powerShellLaunchOf`'s refusals it was
+  (`BatchShimPs1Refusal`): `own_variable` (a shim of the chain sets a variable of its own),
+  `no_start_line` (no line hands the arguments to the script), `after_script` (an argument or a
+  second command after it), `inside_quotes`, `no_program` (the script called with no program, npm's
+  shim for a `.ps1` with no shebang), `unquotable_flag`, `unset_variable` (a `%NAME%` program the
+  shim never sets), `other_program` (not `pwsh` or `powershell`), `program_not_full_path` (relative,
+  no drive, or a name that is not set), `two_starts` (other flags, another PowerShell or another
+  path on a second line) or `program_missing` (a named path not on disk, with no bare name).
   Sentry DESKTOP-3R saw only the typed refusal, 30 to 60 s later, and could not say which shim, and
   DESKTOP-3Y's one `target_not_script` covered every target that was not a program or a script.
-  DESKTOP-3Y came back on 0.63.0 as a Claude shim that was `unparsed` and nothing more. A
+  DESKTOP-3Y came back on 0.63.0 as a Claude shim that was `unparsed` and nothing more, and on
+  0.64.0 as `target_ps1` and nothing more, after #1119 had started a `.ps1` through the PowerShell
+  its shim names. `batch_shim_ps1` is what says which shape to support next. A
   Post-Worktree Script failure (`WorktreeSetupScriptError`) adds how the script ended, from
   `spawnWithAbort`'s fields: `script_exit` (its exit code), `script_signal` (a `SIG` name, for a
   script something else killed) and `timed_out` (`yes`, `no`). Sentry DESKTOP-3D had none and could
@@ -1629,6 +1657,20 @@ in one Sentry org, one triage surface.
   launch a person quit on goes on disk, as `abandoned-launches.json` in the config directory, and
   the next launch reports it (`src/main/pty/abandoned-launches.ts`). A person who never opens the
   app again is not reported.
+
+  Nothing inside the quit can read the host's ring, so the record's `output_class` is the class the
+  start bound's read last found (`checkPendingLaunchOutput`, with `other_from` for `other`), or
+  `not_read` when none ran, and it names the cause as a kill's class does
+  (`reportRecordedAbandonedLaunch`). The ready ceiling could not carry this: a launch whose typed
+  line printed anything marks the agent ready and disarms it, which is DESKTOP-2N's
+  `shell_printed=after_launch` shape. The start bound's read runs at the 30 s grace and again on new
+  output, so three gaps stay. A quit between `LAUNCH_ABANDON_MS` (15 s) and that read records
+  `not_read`. A launch the sweep cannot judge from its process tree (a WSL shell) is never read.
+  And output that names a cause has the sweep report it first, so a quit record mostly carries
+  `other`. The class names the cause on a kill and a quit alike, so an `abandoned` launch that was
+  read files under `abandoned (other)`, `abandoned (no_such_file)` and the like, and only a launch
+  still `not_read` or `unreadable` joins DESKTOP-2N's `abandoned (unknown)`. That issue going quiet
+  means its launches were read, not that they stopped.
 
   That report says what began the quit, as `quit_by`: `update` (the updater's install, which every
   `quitAndInstall` call goes through), `os` (the Windows `session-end` route and the macOS and Linux

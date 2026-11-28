@@ -712,7 +712,7 @@ describe('startCommandTerminal: main owns the cap and the slots', () => {
   it('reports a shim the launcher cannot resolve: a gap in the launcher, unlike the refusals beside it', async () => {
     mockReportPreflightFailure.mockClear();
     const context = createMockContext();
-    const gap = new AgentBatchShimUnresolvedError('unparsed');
+    const gap = new AgentBatchShimUnresolvedError({ gaveUp: 'unparsed' });
     context.sessionManager.spawn.mockRejectedValueOnce(gap);
 
     await expect(startCommandTerminal(context as never, { projectId: 'proj-1' })).rejects.toBe(gap);

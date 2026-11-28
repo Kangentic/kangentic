@@ -121,6 +121,38 @@ describe('abandoned launches', () => {
     expect(reportHandledError).not.toHaveBeenCalled();
   });
 
+  // Sentry DESKTOP-2N: five quit events, every one `not_read`. The quit now records
+  // the class the start bound read before it, and that class names the cause as a kill's does.
+  it('reports the class the quit recorded, under the cause it names', () => {
+    recordAbandonedLaunches(filePath, [{ ...LAUNCH, output_class: 'no_such_file' }]);
+    reportAbandonedLaunches(filePath);
+
+    const [error, tags, , fingerprint] = reportHandledError.mock.calls[0];
+    expect(tags).toMatchObject({ stage: 'abandoned', cause: 'no_such_file', output_class: 'no_such_file' });
+    expect(fingerprint).toEqual(['agent-launch', 'abandoned', 'no_such_file']);
+    expect((error as Error).name).toBe('AgentLaunchAbandonedError');
+  });
+
+  it('files a class that named no cause as other, as a kill does, and keeps the user\'s own setup out of the defects', () => {
+    recordAbandonedLaunches(filePath, [{ ...LAUNCH, output_class: 'other', other_from: 'shell' }, { ...LAUNCH, agent: 'codex', output_class: 'login_required' }]);
+    reportAbandonedLaunches(filePath);
+
+    expect(reportHandledError.mock.calls[0][1]).toMatchObject({ cause: 'other', output_class: 'other', other_from: 'shell' });
+    expect((reportHandledError.mock.calls[1][0] as Error).name).toBe('AgentUserSetupError');
+  });
+
+  it('reads a class it does not know as not_read, since anything can edit the file', () => {
+    recordAbandonedLaunches(filePath, [{ ...LAUNCH, output_class: 'made_up' }]);
+    reportAbandonedLaunches(filePath);
+    expect(reportHandledError.mock.calls[0][1]).toMatchObject({ cause: 'unknown', output_class: 'not_read' });
+  });
+
+  it.each(['constructor', 'toString', '__proto__'])('reads the inherited object key %s as not_read, not as a class', (inheritedKey) => {
+    recordAbandonedLaunches(filePath, [{ ...LAUNCH, output_class: inheritedKey }]);
+    reportAbandonedLaunches(filePath);
+    expect(reportHandledError.mock.calls[0][1]).toMatchObject({ cause: 'unknown', output_class: 'not_read' });
+  });
+
   it('keeps a quit with many broken launches to a few', () => {
     recordAbandonedLaunches(filePath, Array.from({ length: 50 }, () => LAUNCH));
     expect(JSON.parse(fs.readFileSync(filePath, 'utf-8'))).toHaveLength(8);

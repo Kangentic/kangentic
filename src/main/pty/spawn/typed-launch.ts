@@ -221,7 +221,7 @@ export function launchRefusal(input: {
   shell: string;
   platform: NodeJS.Platform;
   typedLaunch: TypedLaunch | null;
-  /** Why the shim gave up, and its shape when it did not parse (`batchShimGiveUpDetailOf`). Production reads the file again; tests inject. */
+  /** Why the shim gave up, with its shape or its `.ps1` refusal (`batchShimGiveUpDetailOf`). Production reads the file again; tests inject. */
   shimGiveUpDetailOf: (shimPath: string) => BatchShimGiveUpDetail | null;
 }): AgentStartRefusedError | null {
   if (!commandFitsShell(input)) return new AgentCommandTooLongError();
@@ -229,8 +229,7 @@ export function launchRefusal(input: {
   if (!shimPath) return null;
   // The shim was read moments ago and could not be resolved. Read again only to
   // name why; a file that changed in between names whatever it says now.
-  const giveUpDetail = input.shimGiveUpDetailOf(shimPath);
-  return new AgentBatchShimUnresolvedError(giveUpDetail?.gaveUp ?? 'unreadable', giveUpDetail?.shape);
+  return new AgentBatchShimUnresolvedError(input.shimGiveUpDetailOf(shimPath) ?? { gaveUp: 'unreadable' });
 }
 
 /**

@@ -8,6 +8,7 @@
  * Windows dev machine and the Linux CI runner.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -18,6 +19,9 @@ import {
   directLaunchOfBatchShim,
   batchShimGiveUpOf,
   batchShimGiveUpDetailOf,
+  batchShimTargetPresence,
+  batchShimShapeOf,
+  onceEachShimReader,
   MAX_SHIM_HOPS,
 } from '../../src/main/agent/shared/npm-shim-target';
 import {
@@ -161,17 +165,58 @@ describe('directLaunchOfBatchShim', () => {
     });
   });
 
+  // Sentry DESKTOP-4Z: cmd printed "cannot find the path" under a `.cmd` head on
+  // disk. A wrapper whose quoted target is gone prints exactly that line.
+  describe('batchShimTargetPresence', () => {
+    const wrapperTarget = 'C:\\tools\\claude\\claude.exe';
+    const wrapperShim = `@echo off\r\n"${wrapperTarget}" %*\r\n`;
+
+    it('says whether the target a wrapper quotes in full is on disk, checking only that path', () => {
+      const checked: string[] = [];
+      const fileExists = (candidate: string): boolean => {
+        checked.push(candidate);
+        return false;
+      };
+      expect(batchShimTargetPresence(shimPath, { readFile: () => wrapperShim, fileExists })).toBe('missing');
+      expect(checked).toEqual([wrapperTarget]);
+      expect(batchShimTargetPresence(shimPath, { readFile: () => wrapperShim, fileExists: () => true })).toBe('present');
+    });
+
+    it('reads a scoop-style wrapper, whose rem line also names the target, and checks only the called one', () => {
+      const scoopTarget = 'C:\\tools\\scoop\\apps\\claude\\current\\claude.exe';
+      const scoopWrapper = `@rem ${scoopTarget}\r\n@"${scoopTarget}"  %*\r\n`;
+      expect(batchShimShapeOf(scoopWrapper)).toBe('absolute_path');
+      expect(batchShimGiveUpDetailOf(shimPath, { readFile: () => scoopWrapper, fileExists: () => true }))
+        .toEqual({ gaveUp: 'unparsed', shape: 'absolute_path' });
+      const checked: string[] = [];
+      const fileExists = (candidate: string): boolean => {
+        checked.push(candidate);
+        return false;
+      };
+      expect(batchShimTargetPresence(shimPath, { readFile: () => scoopWrapper, fileExists })).toBe('missing');
+      expect(checked).toEqual([scoopTarget]);
+      expect(batchShimTargetPresence(shimPath, { readFile: () => scoopWrapper, fileExists: () => true })).toBe('present');
+    });
+
+    it('says nothing for a shim of another shape, or one it cannot read', () => {
+      expect(batchShimTargetPresence(shimPath, { readFile: () => npmCmdShim(CMD_TARGET), fileExists: () => false })).toBeNull();
+      const unreadable = { readFile: (): string => { throw new Error('EACCES'); }, fileExists: () => true };
+      expect(batchShimTargetPresence(shimPath, unreadable)).toBeNull();
+    });
+  });
+
   // Sentry DESKTOP-3Y gave up with one word for every such target, so the
   // report could not say which layout its user had. Each shape has its own.
   it.each([
-    ['a PowerShell script the shim hands to node', 'bin\\tool.ps1', 'target_ps1'],
-    ['the extensionless sh script cmd-shim hands to sh', 'node_modules\\.bin\\claude', 'target_extensionless'],
-    ['a shell script', 'bin\\tool.sh', 'target_other'],
-    ['a Python script', 'bin\\tool.py', 'target_other'],
+    ['a PowerShell script the shim hands to node', 'bin\\tool.ps1', { gaveUp: 'target_ps1', ps1: 'other_program' }],
+    ['the extensionless sh script cmd-shim hands to sh', 'node_modules\\.bin\\claude', { gaveUp: 'target_extensionless' }],
+    ['a shell script', 'bin\\tool.sh', { gaveUp: 'target_other' }],
+    ['a Python script', 'bin\\tool.py', { gaveUp: 'target_other' }],
   ])('refuses %s target and names its shape', (_label, relativeTarget, expected) => {
     const dependencies = { readFile: () => npmCmdShim(relativeTarget), fileExists: () => true };
     expect(directLaunchOfBatchShim(shimPath, dependencies)).toBeNull();
-    expect(batchShimGiveUpOf(shimPath, dependencies)).toBe(expected);
+    expect(batchShimGiveUpOf(shimPath, dependencies)).toBe(expected.gaveUp);
+    expect(batchShimGiveUpDetailOf(shimPath, dependencies)).toEqual(expected);
   });
 
   // Sentry DESKTOP-3Y again, on 0.60.0: `target_ps1` refused every launch past
@@ -242,6 +287,7 @@ describe('directLaunchOfBatchShim', () => {
         const unset = { readFile: () => systemRootShim, fileExists: () => true, environment: {} };
         expect(directLaunchOfBatchShim(shimPath, unset)).toBeNull();
         expect(batchShimGiveUpOf(shimPath, unset)).toBe('target_ps1');
+        expect(batchShimGiveUpDetailOf(shimPath, unset)).toEqual({ gaveUp: 'target_ps1', ps1: 'program_not_full_path' });
 
         const missing = {
           readFile: () => systemRootShim,
@@ -249,11 +295,14 @@ describe('directLaunchOfBatchShim', () => {
           environment: { SystemRoot: 'C:\\Windows' },
         };
         expect(batchShimGiveUpOf(shimPath, missing)).toBe('target_ps1');
+        expect(batchShimGiveUpDetailOf(shimPath, missing)).toEqual({ gaveUp: 'target_ps1', ps1: 'program_missing' });
       });
 
       it('refuses a path relative to wherever the shim is run from', () => {
         const shim = powerShellTrampolineCmdShim('"tools\\pwsh.exe" -File', 'claude.ps1');
-        expect(batchShimGiveUpOf(shimPath, { readFile: () => shim, fileExists: () => true })).toBe('target_ps1');
+        const dependencies = { readFile: () => shim, fileExists: () => true };
+        expect(batchShimGiveUpOf(shimPath, dependencies)).toBe('target_ps1');
+        expect(batchShimGiveUpDetailOf(shimPath, dependencies)).toEqual({ gaveUp: 'target_ps1', ps1: 'program_not_full_path' });
       });
 
       describe('with no environment passed', () => {
@@ -278,6 +327,7 @@ describe('directLaunchOfBatchShim', () => {
           const dependencies = { readFile: () => shim, fileExists: () => true, environment: { SystemRoot: '' } };
           expect(directLaunchOfBatchShim(shimPath, dependencies)).toBeNull();
           expect(batchShimGiveUpOf(shimPath, dependencies)).toBe('target_ps1');
+          expect(batchShimGiveUpDetailOf(shimPath, dependencies)).toEqual({ gaveUp: 'target_ps1', ps1: 'program_not_full_path' });
         }
       });
 
@@ -327,12 +377,15 @@ describe('directLaunchOfBatchShim', () => {
         });
         expect(directLaunchOfBatchShim(shimPath, dependencies)).toBeNull();
         expect(batchShimGiveUpOf(shimPath, dependencies)).toBe('target_ps1');
+        expect(batchShimGiveUpDetailOf(shimPath, dependencies)).toEqual({ gaveUp: 'target_ps1', ps1: 'own_variable' });
       });
     });
 
     it('names the shape of a script called with no program before it names NODE_PATH', () => {
       const shim = '@SET "NODE_PATH=C:\\mock\\node_modules"\r\n' + npmDirectCmdShim(ps1Target);
-      expect(batchShimGiveUpOf(shimPath, { readFile: () => shim, fileExists: () => true })).toBe('target_ps1');
+      const dependencies = { readFile: () => shim, fileExists: () => true };
+      expect(batchShimGiveUpOf(shimPath, dependencies)).toBe('target_ps1');
+      expect(batchShimGiveUpDetailOf(shimPath, dependencies)).toEqual({ gaveUp: 'target_ps1', ps1: 'no_program' });
     });
 
     it('starts a target whose extension is upper case as any other', () => {
@@ -395,12 +448,13 @@ describe('directLaunchOfBatchShim', () => {
         const dependencies = { readFile: () => shim, fileExists: everythingBut(siblingPwsh) };
         expect(directLaunchOfBatchShim(shimPath, dependencies)).toBeNull();
         expect(batchShimGiveUpOf(shimPath, dependencies)).toBe('target_ps1');
+        expect(batchShimGiveUpDetailOf(shimPath, dependencies)).toEqual({ gaveUp: 'target_ps1', ps1: 'program_missing' });
       });
     });
 
     const trampolineLine = '@powershell -NoProfile -File "%~dp0claude.ps1"';
     it.each([
-      ['calls the script with no program, as npm does for one with no shebang', npmDirectCmdShim(ps1Target)],
+      ['calls the script with no program, as npm does for one with no shebang', npmDirectCmdShim(ps1Target), 'no_program'],
       // Scoop's shim picks this way too, but around an absolute path, so it reads
       // as `unparsed` before it gets here (the `parseNpmShimTarget` case below).
       [
@@ -415,14 +469,16 @@ describe('directLaunchOfBatchShim', () => {
           ')',
           '',
         ].join('\r\n'),
+        'two_starts',
       ],
-      ['gives its PowerShell a flag that is not a plain word', powerShellTrampolineCmdShim('@powershell -WindowStyle "Hidden" -File', 'claude.ps1')],
-      ['adds an argument of its own after the script', ['@echo off', `${trampolineLine} --verbose %*`, ''].join('\r\n')],
+      ['gives its PowerShell a flag that is not a plain word', powerShellTrampolineCmdShim('@powershell -WindowStyle "Hidden" -File', 'claude.ps1'), 'unquotable_flag'],
+      ['adds an argument of its own after the script', ['@echo off', `${trampolineLine} --verbose %*`, ''].join('\r\n'), 'after_script'],
       [
         'sets a variable of its own, which a direct start would lose',
         ['@echo off', 'set ANTHROPIC_BASE_URL=https://proxy.invalid', `${trampolineLine} %*`, ''].join('\r\n'),
+        'own_variable',
       ],
-      ['gives its PowerShell a flag that starts with a slash, which Git Bash would rewrite into a path', powerShellTrampolineCmdShim('@powershell /NoProfile -File', 'claude.ps1')],
+      ['gives its PowerShell a flag that starts with a slash, which Git Bash would rewrite into a path', powerShellTrampolineCmdShim('@powershell /NoProfile -File', 'claude.ps1'), 'unquotable_flag'],
       [
         'starts the same program with different flags on two lines',
         [
@@ -434,6 +490,7 @@ describe('directLaunchOfBatchShim', () => {
           ')',
           '',
         ].join('\r\n'),
+        'two_starts',
       ],
       [
         'names different program paths on two lines',
@@ -446,8 +503,9 @@ describe('directLaunchOfBatchShim', () => {
           ')',
           '',
         ].join('\r\n'),
+        'two_starts',
       ],
-      ['names the script only where it never passes the arguments on', ['@echo off', trampolineLine, ''].join('\r\n')],
+      ['names the script only where it never passes the arguments on', ['@echo off', trampolineLine, ''].join('\r\n'), 'no_start_line'],
       [
         'runs a second command after the arguments on one start line, beside a clean one',
         [
@@ -459,8 +517,9 @@ describe('directLaunchOfBatchShim', () => {
           ')',
           '',
         ].join('\r\n'),
+        'after_script',
       ],
-      ['puts the script inside an open quote', powerShellTrampolineCmdShim('@powershell -Command "echo', 'claude.ps1')],
+      ['puts the script inside an open quote', powerShellTrampolineCmdShim('@powershell -Command "echo', 'claude.ps1'), 'inside_quotes'],
       [
         'holds its program in a variable it never sets, beside a clean start line',
         [
@@ -472,11 +531,13 @@ describe('directLaunchOfBatchShim', () => {
           ')',
           '',
         ].join('\r\n'),
+        'unset_variable',
       ],
-    ])('still refuses a shim that %s', (_label, shim) => {
+    ])('still refuses a shim that %s, and names which refusal it was', (_label, shim, refusal) => {
       const dependencies = { readFile: () => shim, fileExists: () => true };
       expect(directLaunchOfBatchShim(shimPath, dependencies)).toBeNull();
       expect(batchShimGiveUpOf(shimPath, dependencies)).toBe('target_ps1');
+      expect(batchShimGiveUpDetailOf(shimPath, dependencies)).toEqual({ gaveUp: 'target_ps1', ps1: refusal });
     });
 
     it.each([
@@ -492,7 +553,7 @@ describe('directLaunchOfBatchShim', () => {
       const shim = ['@echo off', setLine, `${trampolineLine} %*`, ''].join('\r\n');
       const dependencies = { readFile: () => shim, fileExists: () => true };
       expect(directLaunchOfBatchShim(shimPath, dependencies)).toBeNull();
-      expect(batchShimGiveUpOf(shimPath, dependencies)).toBe('target_ps1');
+      expect(batchShimGiveUpDetailOf(shimPath, dependencies)).toEqual({ gaveUp: 'target_ps1', ps1: 'own_variable' });
     });
 
     it('refuses one behind a shim that sets NODE_PATH, since the script may start node', () => {
@@ -794,5 +855,36 @@ describe('missingNpmShimTarget', () => {
       },
     });
     expect(missing).toBeNull();
+  });
+});
+
+describe('onceEachShimReader', () => {
+  it('reads a path from disk once, so a later rewrite does not change what it answers', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'once-shim-'));
+    try {
+      const shimFile = path.join(root, 'claude.cmd');
+      fs.writeFileSync(shimFile, 'first');
+      const readFile = onceEachShimReader();
+      expect(readFile(shimFile)).toBe('first');
+      fs.writeFileSync(shimFile, 'second');
+      expect(readFile(shimFile)).toBe('first');
+      // A new reader has no memory of it.
+      expect(onceEachShimReader()(shimFile)).toBe('second');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps no failed read, so a shim that appears later is read', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'once-shim-'));
+    try {
+      const shimFile = path.join(root, 'claude.cmd');
+      const readFile = onceEachShimReader();
+      expect(() => readFile(shimFile)).toThrow();
+      fs.writeFileSync(shimFile, 'now here');
+      expect(readFile(shimFile)).toBe('now here');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });

@@ -181,6 +181,7 @@ export type BatchShimGiveUp =
    * The target is a `.ps1` script, and the shim does not hand it to one
    * PowerShell this can start in its place (`powerShellLaunchOf`), or a shim
    * of the chain sets a variable of its own (`setsVariableOfItsOwn`).
+   * `BatchShimPs1Refusal` says which.
    */
   | 'target_ps1'
   /** The target has no extension, such as the sh script cmd-shim hands to `sh`. */
@@ -217,10 +218,42 @@ export type BatchShimShape =
   /** A program line none of the above fits, such as a quoted relative path. */
   | 'other';
 
-/** Why a shim was not read past, and, for one that did not parse, its shape. */
+/**
+ * Which of `powerShellLaunchOf`'s refusals a `target_ps1` was, as a fixed word
+ * and never the shim's text. Sent as the `batch_shim_ps1` tag, so a report says
+ * which shape to support next: Sentry DESKTOP-3Y recurred on 0.64.0 as
+ * `target_ps1` and nothing more, after #1119 had started a `.ps1` through the
+ * PowerShell its shim names.
+ */
+export type BatchShimPs1Refusal =
+  /** A shim of the chain sets a variable of its own (`setsVariableOfItsOwn`), which a direct start would drop. */
+  | 'own_variable'
+  /** No line hands the arguments on to the script. */
+  | 'no_start_line'
+  /** Something of the shim's own follows the script on its start line: an argument, a second command. */
+  | 'after_script'
+  /** The script sits inside a longer quoted string. */
+  | 'inside_quotes'
+  /** The script is called with no program, which cmd hands to the file association (npm's shim for a `.ps1` with no shebang). */
+  | 'no_program'
+  /** A flag between the program and the script would need quoting, or holds a `/`. */
+  | 'unquotable_flag'
+  /** The program is a `%NAME%` the shim never sets. */
+  | 'unset_variable'
+  /** The script is handed to a program that is not `pwsh` or `powershell`. */
+  | 'other_program'
+  /** The program's path is relative, names no drive, or holds a name that is not set (`programPathInFull`). */
+  | 'program_not_full_path'
+  /** The shim's lines name two different starts: other flags, another PowerShell, or another path. */
+  | 'two_starts'
+  /** The path the shim names is not on disk, and it names no bare program to fall back to. */
+  | 'program_missing';
+
+/** Why a shim was not read past, with the shape of one that did not parse and the refusal of a `.ps1`. */
 export interface BatchShimGiveUpDetail {
   gaveUp: BatchShimGiveUp;
   shape?: BatchShimShape;
+  ps1?: BatchShimPs1Refusal;
 }
 
 type BatchShimOutcome = { launch: BatchShimLaunch } | BatchShimGiveUpDetail;
@@ -233,12 +266,13 @@ type BatchShimOutcome = { launch: BatchShimLaunch } | BatchShimGiveUpDetail;
  */
 export const MAX_SHIM_HOPS = 3;
 
-/** Why a target that is neither a program, a Node script nor a batch shim cannot be started, by its shape. */
+/**
+ * Why a target that is neither a program, a Node script, a batch shim nor a
+ * `.ps1` cannot be started, by its shape. A `.ps1` has its own refusals
+ * (`powerShellLaunchOf`) and never gets here.
+ */
 function unsupportedTargetOf(target: string): BatchShimGiveUp {
-  const extension = path.extname(target).toLowerCase();
-  if (extension === '') return 'target_extensionless';
-  if (extension === '.ps1') return 'target_ps1';
-  return 'target_other';
+  return path.extname(target) === '' ? 'target_extensionless' : 'target_other';
 }
 
 /** The programs a shim may hand a `.ps1` to: PowerShell 7 and Windows PowerShell. */
@@ -345,6 +379,15 @@ function commandBeforeArguments(line: string): string {
  * or `(`, and of it, the last quoted word before `%*`, which is the target.
  */
 export function batchShimShapeOf(content: string): BatchShimShape {
+  return programLineOf(content).shape;
+}
+
+/**
+ * The shape of a shim's program line, and the quoted target it names when that
+ * shape is `absolute_path`. The one reading of the line, so the shape and the
+ * target check (`batchShimTargetPresence`) cannot disagree.
+ */
+function programLineOf(content: string): { shape: BatchShimShape; absoluteTarget?: string } {
   const programCommand = content
     .replace(/\^\r?\n/g, '')
     .split(/\r?\n/)
@@ -353,23 +396,47 @@ export function batchShimShapeOf(content: string): BatchShimShape {
     .map(commandBeforeArguments)
     .filter((command) => !NON_PROGRAM_COMMAND.test(command))
     .at(-1);
-  if (programCommand === undefined) return 'no_program_line';
+  if (programCommand === undefined) return { shape: 'no_program_line' };
 
   const commandWords = lastCommandWords(programCommand);
   const programWord = unquoted((commandWords[0] ?? '').replace(/^@/, ''));
-  if (/^call$/i.test(programWord) || isWindowsBatchShim(programWord)) return 'calls_batch';
+  if (/^call$/i.test(programWord) || isWindowsBatchShim(programWord)) return { shape: 'calls_batch' };
   // A `set ARGS=%*` keeps the arguments for a later line that names no `%*`.
-  if (/^set$/i.test(programWord)) return 'other';
+  if (/^set$/i.test(programWord)) return { shape: 'other' };
 
   const quotedWord = commandWords.filter((word) => word.startsWith('"')).at(-1);
   if (quotedWord === undefined) {
-    return commandWords.some((word) => SHIM_FOLDER_REFERENCE.test(word)) ? 'unquoted_shim_folder' : 'unquoted_program';
+    return { shape: commandWords.some((word) => SHIM_FOLDER_REFERENCE.test(word)) ? 'unquoted_shim_folder' : 'unquoted_program' };
   }
   const target = unquoted(quotedWord);
-  if (FULLY_QUALIFIED_WINDOWS_PATH.test(target)) return 'absolute_path';
+  if (FULLY_QUALIFIED_WINDOWS_PATH.test(target)) return { shape: 'absolute_path', absoluteTarget: target };
   const variable = VARIABLE_ROOT.exec(target);
-  if (variable && !/^~?dp0$/i.test(variable[1])) return 'env_var_path';
-  return 'other';
+  if (variable && !/^~?dp0$/i.test(variable[1])) return { shape: 'env_var_path' };
+  return { shape: 'other' };
+}
+
+/**
+ * Whether the target a shim's program line names in full is on disk, for a
+ * shim whose shape is `absolute_path`, or null for any other shape or a shim
+ * that cannot be read. A fixed word and never the path. Sentry DESKTOP-4Z
+ * printed cmd's "cannot find the path" under a `.cmd` head that was on disk,
+ * and a wrapper whose quoted target is gone prints exactly that line.
+ */
+export function batchShimTargetPresence(
+  shimPath: string,
+  dependencies: NpmShimTargetDependencies = {},
+): 'present' | 'missing' | null {
+  const readFile = dependencies.readFile ?? readShimFromDisk;
+  const fileExists = dependencies.fileExists ?? fs.existsSync;
+  try {
+    const { absoluteTarget } = programLineOf(readFile(shimPath));
+    if (absoluteTarget === undefined) return null;
+    return fileExists(absoluteTarget) ? 'present' : 'missing';
+  } catch {
+    // report-ok: a shim that cannot be read, or a target that cannot be checked, sends no
+    // `shim_target` tag; the report's other tags still go.
+    return null;
+  }
 }
 
 /**
@@ -419,14 +486,15 @@ function programPathInFull(spelling: string, environment: Record<string, string 
  * is on disk, else the bare name. The path may be beside the shim or written
  * out in full (`programPathInFull`).
  *
- * Null, which the caller reports as `target_ps1`, for any shim this cannot
- * repeat exactly: one that calls the script with no program (npm's, for a
- * `.ps1` with no shebang, which cmd hands to the file association), one that
- * hands it to another program, one whose lines name two different starts (a
- * shim that picks `pwsh` or `powershell` when it runs), a program path that is
- * relative, names no drive or holds a name that is not set, a flag that would
- * need quoting or holds a `/`, anything of the shim's own after the script on
- * a line that passes the arguments on (an argument, a second command), and a
+ * Refused, which the caller reports as `target_ps1` with the refusal as its
+ * second word (`BatchShimPs1Refusal`), for any shim this cannot repeat exactly:
+ * one that calls the script with no program (npm's, for a `.ps1` with no
+ * shebang, which cmd hands to the file association), one that hands it to
+ * another program, one whose lines name two different starts (a shim that
+ * picks `pwsh` or `powershell` when it runs), a program path that is relative,
+ * names no drive or holds a name that is not set, a flag that would need
+ * quoting or holds a `/`, anything of the shim's own after the script on a
+ * line that passes the arguments on (an argument, a second command), and a
  * script inside a longer quoted string. A shim that sets a variable of its own
  * never gets here: the caller refuses it first, for the whole chain.
  */
@@ -434,7 +502,7 @@ function powerShellLaunchOf(
   shim: { path: string; content: string; relativeTarget: string },
   fileExists: (candidatePath: string) => boolean,
   environment: Record<string, string | undefined>,
-): Pick<BatchShimLaunch, 'program' | 'programArguments'> | null {
+): { launch: Pick<BatchShimLaunch, 'program' | 'programArguments'> } | { refused: BatchShimPs1Refusal } {
   let powerShellName: string | null = null;
   let flags: string[] | null = null;
   let programPath: string | null = null;
@@ -447,35 +515,40 @@ function powerShellLaunchOf(
       if (match[1] !== shim.relativeTarget || !afterTarget.includes('%*')) continue;
       const beforeTarget = line.slice(0, match.index);
       const insideQuotes = (beforeTarget.match(/"/g)?.length ?? 0) % 2 !== 0;
-      if (afterTarget !== '%*' || insideQuotes) return null;
+      if (afterTarget !== '%*') return { refused: 'after_script' };
+      if (insideQuotes) return { refused: 'inside_quotes' };
 
       const [programWord, ...lineFlags] = lastCommandWords(beforeTarget);
-      if (programWord === undefined || !lineFlags.every((flag) => PLAIN_FLAG.test(flag))) return null;
-      if (flags !== null && flags.join(' ') !== lineFlags.join(' ')) return null;
+      if (programWord === undefined) return { refused: 'no_program' };
+      if (!lineFlags.every((flag) => PLAIN_FLAG.test(flag))) return { refused: 'unquotable_flag' };
+      if (flags !== null && flags.join(' ') !== lineFlags.join(' ')) return { refused: 'two_starts' };
       flags = lineFlags;
 
       const spellings = programSpellings(programWord.replace(/^@/, ''), shim.content);
-      if (spellings.length === 0) return null;
+      if (spellings.length === 0) return { refused: 'unset_variable' };
       for (const spelling of spellings) {
         // Read first, since `%~dp0pwsh.exe` has no separator for the name to follow.
         const besideShim = ROOTED_PROGRAM_PATH.exec(spelling);
         const name = lastPathSegment(besideShim ? besideShim[1] : spelling).toLowerCase().replace(/\.exe$/, '');
-        if (!POWERSHELL_NAMES.has(name) || (powerShellName !== null && powerShellName !== name)) return null;
+        if (!POWERSHELL_NAMES.has(name)) return { refused: 'other_program' };
+        if (powerShellName !== null && powerShellName !== name) return { refused: 'two_starts' };
         powerShellName = name;
         if (/^[\w.-]+$/.test(spelling)) {
           bareName = spelling;
           continue;
         }
         const namedPath = besideShim ? underShimFolder(shim.path, besideShim[1]) : programPathInFull(spelling, environment);
-        if (namedPath === null || (programPath !== null && programPath !== namedPath)) return null;
+        if (namedPath === null) return { refused: 'program_not_full_path' };
+        if (programPath !== null && programPath !== namedPath) return { refused: 'two_starts' };
         programPath = namedPath;
       }
     }
   }
 
+  if (flags === null) return { refused: 'no_start_line' };
   const program = programPath !== null && fileExists(programPath) ? programPath : bareName;
-  if (program === null || flags === null) return null;
-  return flags.length > 0 ? { program, programArguments: flags } : { program };
+  if (program === null) return { refused: 'program_missing' };
+  return { launch: flags.length > 0 ? { program, programArguments: flags } : { program } };
 }
 
 /**
@@ -548,11 +621,10 @@ function shimChainOutcome(
       return shimChainOutcome(target, dependencies, { hop: chain.hop + 1, nodePathSet: setsNodePath, ownVariableSet: setsOwnVariable });
     }
     if (/\.ps1$/i.test(target)) {
-      const powerShell = setsOwnVariable
-        ? null
-        : powerShellLaunchOf({ path: shimPath, content, relativeTarget }, fileExists, dependencies.environment ?? process.env);
-      if (powerShell === null) return { gaveUp: unsupportedTargetOf(target) };
-      return setsNodePath ? { gaveUp: 'node_path' } : { launch: { ...powerShell, script: target } };
+      if (setsOwnVariable) return { gaveUp: 'target_ps1', ps1: 'own_variable' };
+      const powerShell = powerShellLaunchOf({ path: shimPath, content, relativeTarget }, fileExists, dependencies.environment ?? process.env);
+      if ('refused' in powerShell) return { gaveUp: 'target_ps1', ps1: powerShell.refused };
+      return setsNodePath ? { gaveUp: 'node_path' } : { launch: { ...powerShell.launch, script: target } };
     }
     if (!/\.[cm]?js$/i.test(target)) return { gaveUp: unsupportedTargetOf(target) };
     if (setsNodePath) return { gaveUp: 'node_path' };
@@ -581,13 +653,32 @@ export function batchShimGiveUpOf(shimPath: string, dependencies: NpmShimTargetD
   return batchShimGiveUpDetailOf(shimPath, dependencies)?.gaveUp ?? null;
 }
 
-/** Why `directLaunchOfBatchShim` gave up on a shim, with the shape of one that did not parse, or null when it did not. */
+/**
+ * Why `directLaunchOfBatchShim` gave up on a shim, with the shape of one that
+ * did not parse and the refusal of a `.ps1` target, or null when it did not.
+ */
 export function batchShimGiveUpDetailOf(
   shimPath: string,
   dependencies: NpmShimTargetDependencies = {},
 ): BatchShimGiveUpDetail | null {
   const outcome = batchShimLaunchOutcome(shimPath, dependencies);
   return 'gaveUp' in outcome ? outcome : null;
+}
+
+/**
+ * A shim reader that reads each path from disk once, for a caller that asks
+ * several of the questions above of one shim (`readFile` in their
+ * dependencies). A read that throws is not kept, so the next asks again.
+ */
+export function onceEachShimReader(): (shimPath: string) => string {
+  const contentByPath = new Map<string, string>();
+  return (shimPath) => {
+    const known = contentByPath.get(shimPath);
+    if (known !== undefined) return known;
+    const content = readShimFromDisk(shimPath);
+    contentByPath.set(shimPath, content);
+    return content;
+  };
 }
 
 function readShimFromDisk(candidatePath: string): string {

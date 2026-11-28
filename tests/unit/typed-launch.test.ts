@@ -652,6 +652,13 @@ describe('buildTypedLaunch', () => {
           expect((refusalOf(command) as AgentBatchShimUnresolvedError).shimShape).toBeUndefined();
         });
 
+        it('carries which refusal a .ps1 target was onto the refusal', () => {
+          const refusal = refusalOf(command, { gaveUp: 'target_ps1', ps1: 'no_program' }) as AgentBatchShimUnresolvedError;
+          expect(refusal.shimGaveUp).toBe('target_ps1');
+          expect(refusal.shimPs1).toBe('no_program');
+          expect((refusalOf(command) as AgentBatchShimUnresolvedError).shimPs1).toBeUndefined();
+        });
+
         it('names a shim that changed into one it can read as unreadable, never as nothing', () => {
           expect((refusalOf(command, null) as AgentBatchShimUnresolvedError).shimGaveUp).toBe('unreadable');
         });

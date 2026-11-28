@@ -409,6 +409,52 @@ describe('SessionManager agent-absence wiring', () => {
         expect(await exitAfterEnd(session)).toMatchObject({ stage: 'abandoned', ended_by: 'pause', agent_process: 'present' });
       });
 
+      // Sentry DESKTOP-2N on 0.64.0: a kill with `shell_printed=after_launch` still
+      // sent `not_read`. The output was read at the exit, after the row had gone.
+      it('reads what the launch printed when it was ended, so a row gone before the exit still says it', async () => {
+        const session = seedAbandonable({ firstOutputAt: Date.now() - 60_000 });
+        const read = vi.spyOn(manager, 'getLaunchOutput').mockResolvedValue('$ claude\r\nzsh: command not found: claude\r\n$ ');
+        manager.kill('session-1');
+        answerListing([{ pid: SHELL_PID, ppid: 1, comm: 'zsh' }]);
+        // The row goes before the PTY's exit lands, as a kill then a remove does.
+        (manager as unknown as { registry: { delete(id: string): void } }).registry.delete('session-1');
+
+        expect(await exitAfterEnd(session)).toMatchObject({ stage: 'abandoned', ended_by: 'kill', output_class: 'command_not_found', cause: 'command_not_found' });
+        expect(read).toHaveBeenCalledTimes(1);
+      });
+
+      it('lets go of the read at the exit, so a row that outlives it keeps no copy of the ring', async () => {
+        const session = seedAbandonable({ firstOutputAt: Date.now() - 60_000 });
+        vi.spyOn(manager, 'getLaunchOutput').mockResolvedValue('$ claude\r\nzsh: command not found: claude\r\n$ ');
+        manager.kill('session-1');
+        answerListing([{ pid: SHELL_PID, ppid: 1, comm: 'zsh' }]);
+        expect(session.launchOutputAtEnd).toBeDefined();
+
+        await exitAfterEnd(session);
+
+        expect(session.launchOutputAtEnd).toBeUndefined();
+      });
+
+      it('reads unreadable when that read fails, and leaves no rejection unhandled', async () => {
+        const session = seedAbandonable({ firstOutputAt: Date.now() - 60_000 });
+        vi.spyOn(manager, 'getLaunchOutput').mockRejectedValue(new Error('pty host timed out'));
+        manager.kill('session-1');
+        answerListing([]);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(await exitAfterEnd(session)).toMatchObject({ stage: 'abandoned', output_class: 'unreadable' });
+      });
+
+      it('posts no output read for a launch that printed nothing', async () => {
+        const session = seedAbandonable();
+        const read = vi.spyOn(manager, 'getLaunchOutput').mockResolvedValue('');
+        manager.kill('session-1');
+        answerListing([]);
+
+        expect(await exitAfterEnd(session)).toMatchObject({ stage: 'abandoned', output_class: 'not_read' });
+        expect(read).not.toHaveBeenCalled();
+      });
+
       it('posts no read for a quick Stop, which is no failure', () => {
         seedAbandonable({ startedAt: new Date(Date.now() - (ABANDON_MS - 1_000)).toISOString(), consoleCloseIsGraceful: true });
         manager.kill('session-1');
@@ -1265,6 +1311,43 @@ describe('SessionManager agent-absence wiring', () => {
 
       expect(isCandidate()).toBe(false);
       expect(requestAgentAbsenceCheck).not.toHaveBeenCalled();
+    });
+
+    // Sentry DESKTOP-2N: five quit events, each `not_read`, since a quit cannot read
+    // the host's ring. The start bound's read before it keeps its class for the quit.
+    it('keeps the class it read for a quit to record, with who wrote output that named no cause', async () => {
+      seedSession({ reportsAgentStart: true, startedAt: insideStartBound(), firstOutputAt: Date.now() - (SPAWN_GRACE_MS + 3_000) });
+      expect(manager.abandonedLaunchTags()[0]).toMatchObject({ output_class: 'not_read' });
+      const read = vi.spyOn(manager, 'getLaunchOutput').mockResolvedValue('    + CategoryInfo          : ParserError: (:) []\r\nPS C:\\project> ');
+
+      outputSeen();
+      await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const [launch] = manager.abandonedLaunchTags();
+      expect(launch).toMatchObject({ ended_by: 'quit', output_class: 'other', other_from: 'shell' });
+      expect(JSON.stringify(launch)).not.toContain('ParserError');
+    });
+
+    it('replaces what an earlier read kept when a later read names a cause, and drops who wrote it', async () => {
+      vi.useFakeTimers();
+      seedSession({ reportsAgentStart: true, startedAt: insideStartBound(), firstOutputAt: Date.now() - (SPAWN_GRACE_MS + 3_000) });
+      const read = vi.spyOn(manager, 'getLaunchOutput')
+        .mockResolvedValueOnce('    + CategoryInfo          : ParserError: (:) []\r\nPS C:\\project> ')
+        .mockResolvedValueOnce('$ claude\r\nzsh: command not found: claude\r\n$ ');
+
+      outputSeen();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(read).toHaveBeenCalledTimes(1);
+      expect(manager.abandonedLaunchTags()[0]).toMatchObject({ output_class: 'other', other_from: 'shell' });
+
+      outputSeen();
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(read).toHaveBeenCalledTimes(2);
+
+      const [launch] = manager.abandonedLaunchTags();
+      expect(launch).toMatchObject({ ended_by: 'quit', output_class: 'command_not_found' });
+      expect(launch).not.toHaveProperty('other_from');
     });
 
     it('reads one output at a time, and reads again for output that landed during a read', async () => {
